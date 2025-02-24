@@ -122,32 +122,36 @@ def save_files(html_code, js_code):
     Saves the HTML and JavaScript code blocks in a new game folder under "games".
     Also updates the central index.
     """
+    # Determine the next available game folder inside "games"
     os.makedirs("games", exist_ok=True)
-    # Determine next available game folder
     game_folders = [d for d in os.listdir("games") if os.path.isdir(os.path.join("games", d)) and d.startswith("game_")]
     next_index = 1
     if game_folders:
-        indices = []
-        for folder in game_folders:
-            try:
-                idx = int(folder.split('_')[1])
-                indices.append(idx)
-            except Exception:
-                continue
-        if indices:
-            next_index = max(indices) + 1
+         indices = []
+         for folder in game_folders:
+             try:
+                 idx = int(folder.split('_')[1])
+                 indices.append(idx)
+             except Exception:
+                 continue
+         if indices:
+             next_index = max(indices) + 1
+
     game_folder = os.path.join("games", f"game_{next_index}")
     os.makedirs(game_folder, exist_ok=True)
+    # Create an intermediate folder inside the game folder.
+    intermediate_folder = os.path.join(game_folder, "intermediate")
+    os.makedirs(intermediate_folder, exist_ok=True)
 
     new_js_filename = os.path.join(game_folder, "game.js")
     new_html_filename = os.path.join(game_folder, "index.html")
-    # Assume "game.js" string in HTML should remain the same.
     with open(new_html_filename, "w", encoding="utf-8") as html_file:
-        html_file.write(html_code)
+         html_file.write(html_code)
     with open(new_js_filename, "w", encoding="utf-8") as js_file:
-        js_file.write(js_code)
-    print(f"Files '{new_html_filename}' and '{new_js_filename}' have been saved.")
+         js_file.write(js_code)
+    print(f"Final game files saved in '{game_folder}': '{new_html_filename}' and '{new_js_filename}'.")
     update_games_index()
+    return game_folder
 
 
 def update_games_index():
@@ -197,14 +201,17 @@ def save_intermediate_files(game_folder, html_code, js_code, round_number):
     The JS file is saved as "game_intermediate_R{round_number}.js" and the corresponding HTML file
     as "index_intermediate_R{round_number}.html".
     """
-    new_js_filename = os.path.join(game_folder, f"game_intermediate_R{round_number}.js")
-    new_html_filename = os.path.join(game_folder, f"index_intermediate_R{round_number}.html")
+    # Save the intermediate files inside the "intermediate" subfolder of game_folder.
+    intermediate_folder = os.path.join(game_folder, "intermediate")
+    os.makedirs(intermediate_folder, exist_ok=True)
+    new_js_filename = os.path.join(intermediate_folder, f"game_intermediate_R{round_number}.js")
+    new_html_filename = os.path.join(intermediate_folder, f"index_intermediate_R{round_number}.html")
     new_html_code = html_code.replace("game.js", f"game_intermediate_R{round_number}.js")
     with open(new_html_filename, "w", encoding="utf-8") as html_file:
-        html_file.write(new_html_code)
+         html_file.write(new_html_code)
     with open(new_js_filename, "w", encoding="utf-8") as js_file:
-        js_file.write(js_code)
-    print(f"Intermediate files for round {round_number} saved: '{new_html_filename}', '{new_js_filename}'.")
+         js_file.write(js_code)
+    print(f"Intermediate files for round {round_number} saved in '{intermediate_folder}': '{new_html_filename}', '{new_js_filename}'.")
 
 
 ######################################
@@ -446,7 +453,9 @@ def main():
         print("Please enter a valid integer for number of agents.")
         return
 
-    actions = "arrow keys, space bar, w, a, s, d"
+    # Prompt the user for actions for each controllable agent.
+    actions_input = input("Enter actions for each controllable agent (or press Enter to use default 'arrow keys, space bar, w, a, s, d'): ").strip()
+    actions = actions_input if actions_input else "arrow keys, space bar, w, a, s, d"
     initial_game_description = input("Enter an initial game description for the game: ").strip()
     if initial_game_description == "":
          print("No initial game description provided. Using default game description.")
@@ -479,7 +488,7 @@ def main():
     if html_code and js_code:
          # Simulate a multi-agent debate for 3 rounds to improve the game code.
          improved_js_code = simulate_debate(html_code, js_code, initial_game_description, objectives, num_agents, rounds=3, allow_description_update=allow_description_update_flag)
-         save_files(html_code, improved_js_code)
+         game_folder = save_files(html_code, improved_js_code)
     else:
          print("Failed to parse code blocks from the model response.")
          with open("full_game_output.txt", "w", encoding="utf-8") as f:

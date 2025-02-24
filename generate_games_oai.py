@@ -15,6 +15,7 @@ from openai import OpenAI
 import glob
 import random
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+selected_openai_model = "o3-mini"  # Default OpenAI model
 from langchain.prompts import PromptTemplate
 
 
@@ -58,7 +59,7 @@ def generate_game_code(prompt):
     to generate the game code.
     """
     response = client.chat.completions.create(
-        model="o3-mini",
+        model=selected_openai_model,
         messages=[{"role": "user", "content": prompt}]
     )
     game_code = response.choices[0].message.content
@@ -81,32 +82,36 @@ def save_files(html_code, js_code):
     """
     Saves the HTML and JavaScript code blocks to "index.html" and "game.js", respectively.
     """
-    # Determine the next available game file index based on existing files.
-    js_files = glob.glob("game_*.js")
+    # Determine the next available game folder inside "games"
+    os.makedirs("games", exist_ok=True)
+    game_folders = [d for d in os.listdir("games") if os.path.isdir(os.path.join("games", d)) and d.startswith("game_")]
     next_index = 1
-    if js_files:
-        indices = []
-        for file in js_files:
-            try:
-                idx = int(file.split('_')[1].split('.')[0])
-                indices.append(idx)
-            except Exception:
-                continue
-        if indices:
-            next_index = max(indices) + 1
+    if game_folders:
+         indices = []
+         for folder in game_folders:
+             try:
+                 idx = int(folder.split('_')[1])
+                 indices.append(idx)
+             except Exception:
+                 continue
+         if indices:
+             next_index = max(indices) + 1
 
-    new_js_filename = f"game_{next_index}.js"
-    new_html_filename = f"index_{next_index}.html"
+    game_folder = os.path.join("games", f"game_{next_index}")
+    os.makedirs(game_folder, exist_ok=True)
+    # Create an intermediate folder inside the game folder.
+    intermediate_folder = os.path.join(game_folder, "intermediate")
+    os.makedirs(intermediate_folder, exist_ok=True)
 
-    # Update the HTML code to reference the correct new JS file.
-    new_html_code = html_code.replace("game.js", new_js_filename)
-
+    new_js_filename = os.path.join(game_folder, "game.js")
+    new_html_filename = os.path.join(game_folder, "index.html")
     with open(new_html_filename, "w", encoding="utf-8") as html_file:
-        html_file.write(new_html_code)
+         html_file.write(html_code)
     with open(new_js_filename, "w", encoding="utf-8") as js_file:
-        js_file.write(js_code)
-    print(f"Files '{new_html_filename}' and '{new_js_filename}' have been saved.")
+         js_file.write(js_code)
+    print(f"Final game files saved in '{game_folder}': '{new_html_filename}' and '{new_js_filename}'.")
     update_games_index()
+    return game_folder
 
 
 def update_games_index():
@@ -141,20 +146,23 @@ def update_games_index():
     print("Central index 'games_index.html' has been updated.")
 
 
-def save_intermediate_files(html_code, js_code, round_number):
+def save_intermediate_files(game_folder, html_code, js_code, round_number):
     """
     Saves the intermediate game files for a given round.
     The JS file is saved as "game_intermediate_R{round_number}.js" and 
     the corresponding HTML file as "index_intermediate_R{round_number}.html".
     """
-    new_js_filename = f"game_intermediate_R{round_number}.js"
-    new_html_filename = f"index_intermediate_R{round_number}.html"
-    new_html_code = html_code.replace("game.js", new_js_filename)
+    # Save the intermediate files inside the "intermediate" subfolder of game_folder.
+    intermediate_folder = os.path.join(game_folder, "intermediate")
+    os.makedirs(intermediate_folder, exist_ok=True)
+    new_js_filename = os.path.join(intermediate_folder, f"game_intermediate_R{round_number}.js")
+    new_html_filename = os.path.join(intermediate_folder, f"index_intermediate_R{round_number}.html")
+    new_html_code = html_code.replace("game.js", f"game_intermediate_R{round_number}.js")
     with open(new_html_filename, "w", encoding="utf-8") as html_file:
-        html_file.write(new_html_code)
+         html_file.write(new_html_code)
     with open(new_js_filename, "w", encoding="utf-8") as js_file:
-        js_file.write(js_code)
-    print(f"Intermediate files for round {round_number} saved: '{new_html_filename}', '{new_js_filename}'.")
+         js_file.write(js_code)
+    print(f"Intermediate files for round {round_number} saved in '{intermediate_folder}': '{new_html_filename}', '{new_js_filename}'.")
 
 
 def sample_objectives(initial_game_description):
@@ -191,7 +199,7 @@ def sample_initial_game_description(genre, num_agents):
     return response.choices[0].message.content.strip()
 
 
-def simulate_debate(html_code, js_code, initial_game_description, objectives, num_agents, rounds=3, allow_description_update=True):
+def simulate_debate(game_folder, html_code, js_code, initial_game_description, objectives, num_agents, rounds=3, allow_description_update=True):
     """
     Implements an iterative multi-agent debate.
     Saves the intermediate game files for round 0 (initial version) and after each debate round.
@@ -202,7 +210,7 @@ def simulate_debate(html_code, js_code, initial_game_description, objectives, nu
     debate_log = ""
 
     # Save the initial game version as round 0.
-    save_intermediate_files(html_code, current_js, 0)
+    save_intermediate_files(game_folder, html_code, current_js, 0)
 
     for r in range(1, rounds+1):
          print(f"--- Round {r} ---")
@@ -227,7 +235,7 @@ def simulate_debate(html_code, js_code, initial_game_description, objectives, nu
          current_js = apply_proposals(proposals, current_js)
 
          # Save intermediate game version for this round.
-         save_intermediate_files(html_code, current_js, r)
+         save_intermediate_files(game_folder, html_code, current_js, r)
 
     print("\n--- Complete Debate Log ---")
     print(debate_log)
@@ -330,6 +338,46 @@ def apply_proposals(proposals, current_js):
     return updated_code
 
 
+def create_game_folder():
+    """
+    Creates a new game folder under 'games/' with an 'intermediate' subfolder.
+    Returns the path to the created game folder.
+    """
+    os.makedirs("games", exist_ok=True)
+    game_folders = [d for d in os.listdir("games") if os.path.isdir(os.path.join("games", d)) and d.startswith("game_")]
+    next_index = 1
+    if game_folders:
+         indices = []
+         for folder in game_folders:
+             try:
+                 idx = int(folder.split('_')[1])
+                 indices.append(idx)
+             except Exception:
+                 continue
+         if indices:
+             next_index = max(indices) + 1
+    game_folder = os.path.join("games", f"game_{next_index}")
+    os.makedirs(game_folder, exist_ok=True)
+    # Create the intermediate subfolder.
+    intermediate_folder = os.path.join(game_folder, "intermediate")
+    os.makedirs(intermediate_folder, exist_ok=True)
+    return game_folder
+
+
+def save_final_files(game_folder, html_code, js_code):
+    """
+    Saves the final game files (index.html and game.js) in the given game folder.
+    """
+    new_js_filename = os.path.join(game_folder, "game.js")
+    new_html_filename = os.path.join(game_folder, "index.html")
+    with open(new_html_filename, "w", encoding="utf-8") as html_file:
+         html_file.write(html_code)
+    with open(new_js_filename, "w", encoding="utf-8") as js_file:
+         js_file.write(js_code)
+    print(f"Final game files saved in '{game_folder}': '{new_html_filename}' and '{new_js_filename}'.")
+    update_games_index()
+
+
 def main():
     # List of valid genres
     valid_genres = [
@@ -372,8 +420,9 @@ def main():
         print("Please enter a valid integer for number of agents.")
         return
 
-    # Fixed actions for each agent
-    actions = "arrow keys, space bar, w, a, s, d"
+    # Prompt the user for actions for each controllable agent.
+    actions_input = input("Enter actions for each controllable agent (or press Enter to use default 'arrow keys, space bar, w, a, s, d'): ").strip()
+    actions = actions_input if actions_input else "arrow keys, space bar, w, a, s, d"
     initial_game_description = input("Enter an initial game description for the game: ").strip()
     if initial_game_description == "":
          print("No initial game description provided. Using default game description.")
@@ -392,27 +441,49 @@ def main():
     print(prompt)
     print("--- End of Prompt ---\n")
 
-    # Ensure the API key is set. The client object was initialized with the OPENAI_API_KEY.
+    # Ensure the API key is set.
     if not client.api_key:
-        print("Error: OPENAI_API_KEY environment variable is not set.")
-        return
+         print("Error: OPENAI_API_KEY environment variable is not set.")
+         return
+
+    # Select the OpenAI model to use.
+    print("Select an OpenAI model to use:")
+    print("- 1: o3-mini")
+    print("- 2: gpt-3.5-turbo")
+    openai_model_choice = input("Enter your choice (1 or 2): ").strip()
+    global selected_openai_model
+    if openai_model_choice == "2":
+         selected_openai_model = "gpt-3.5-turbo"
+         print("Using GPT-3.5-turbo for API calls.")
+    else:
+         selected_openai_model = "o3-mini"
+         print("Using o3-mini for API calls.")
 
     print("Generating game code from OpenAI API...")
     game_response = generate_game_code(prompt)
     print("Received response from API.")
-
+    num_rounds = int(input("Enter number of debate rounds (default 3): ").strip())
     # Attempt to parse the HTML and JavaScript code blocks
     html_code, js_code = parse_code_blocks(game_response)
     if html_code and js_code:
-        # Simulate a multi-agent debate for at most 3 rounds to improve the game code.
-        improved_js_code = simulate_debate(html_code, js_code, initial_game_description, objectives, num_agents, rounds=3, allow_description_update=allow_description_update_flag)
-        save_files(html_code, improved_js_code)
+         # Create a new game folder.
+         game_folder = create_game_folder()
+         # Simulate a multi-agent debate for 3 rounds to improve the game code.
+         improved_js_code = simulate_debate(game_folder, 
+                                            html_code, 
+                                            js_code, 
+                                            initial_game_description, 
+                                            objectives, 
+                                            num_agents, 
+                                            rounds=num_rounds, 
+                                            allow_description_update=allow_description_update_flag)
+         # Save final game files in the existing game folder.
+         save_final_files(game_folder, html_code, improved_js_code)
     else:
-        print("Failed to parse code blocks from the API response.")
-        # As a fallback, save the full response to a text file
-        with open("full_game_output.txt", "w", encoding="utf-8") as f:
-            f.write(game_response)
-        print("Saved full API response to 'full_game_output.txt'.")
+         print("Failed to parse code blocks from the API response.")
+         with open("full_game_output.txt", "w", encoding="utf-8") as f:
+              f.write(game_response)
+         print("Saved full API response to 'full_game_output.txt'.")
 
 
 if __name__ == "__main__":
