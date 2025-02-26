@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-This script generates a playable p5.js game embedded in a webpage.
+This script generates a playable Three.js 3D game embedded in a webpage.
 It uses LangChain to construct a structured prompt and the OpenAI API to generate two code blocks:
-    - index.html: HTML code that loads p5.js from a CDN and references game.js.
-    - game.js: The p5.js game JavaScript code with decoupled Dynamics and Rendering modules.
+    - index.html: HTML code that loads Three.js from a CDN and references game.js.
+    - game.js: The Three.js game JavaScript code with decoupled Dynamics and Rendering modules.
 
 Before running, ensure that the environment variable OPENAI_API_KEY is set.
 """
@@ -23,29 +23,31 @@ def generate_prompt(genre, num_agents, actions, objectives):
     """
     Constructs a structured prompt using LangChain's PromptTemplate.
     The prompt instructs the model to generate two code blocks:
-      - HTML (index.html) with p5.js and a script tag referencing game.js.
-      - JavaScript (game.js) with a playable p5.js game.
+      - HTML (index.html) with Three.js CDN and a script tag referencing game.js.
+      - JavaScript (game.js) with a playable Three.js 3D game.
 
     The game must have decoupled modules for Dynamics and Rendering. The Dynamics module
-    should include probabilistic policy functions for non-human agents and the environment so that
-    game behavior varies with each playthrough.
+    should include separate functions for each agent's policy so that behavior and game state can be updated independently.
     """
     template = (
-        "Generate a 2D game using p5.js. The game must be playable on a basic HTML webpage.\n"
+        "You are to generate a JavaScript 3D game using Three.js. The game must be playable on a basic HTML webpage.\n"
         "Game details:\n"
         "- Genre: {genre}\n"
         "- Total number of agents: {num_agents}\n"
         "- Number of controllable agents: 1\n"
         "- Actions available for each controllable agent: {actions}\n"
         "- No audio should be used in the game.\n"
-        "- The user interface (UI) should continuously display detailed game information including: score, lap count, damage, current lap time, lap times, Nitro status, Shield status, and a drift meter (as a percentage). Additionally, it should display on-screen notifications for events such as 'Perfect Drift!'.\n"
+        "- The game should follow physical laws such as gravity, friction, and proper collision dynamics.\n"
         "- Objectives (success and failure conditions): {objectives}\n"
+        "- Allow the AI to automatically define the characters (names and roles) if not specified.\n"
+        "- Define each character with their role, objective, and actions. The default actions are moving using arrows, with optional actions including space, shift, w, a, s, d.\n"
         "- DECOUPLE GAME DYNAMICS AND RENDERING: The game should be separated into two modules:\n"
-        "    a) Dynamics Module: Define a game state that includes the state of each agent and the environment. Implement probabilistic policy functions for each non-human agent so that behavior and game state change with every playthrough.\n"
-        "    b) Rendering Module: Create a function that uses p5.js to render the current game state. This module should be easily enabled or disabled to allow iterative improvements to aesthetics independently.\n\n"
+        "    a) Dynamics Module: Define a game state that includes the state of each agent and the environment. Include separate functions for each agent's policy so that behavior and game state can be updated independently.\n"
+        "    b) Rendering Module: Create a function that uses Three.js to render the current game state. This module should be easily enabled or disabled to allow iterative improvements to aesthetics independently.\n"
+        "- ADDITIONAL UI REQUIREMENT: The generated game must include a start screen that lists the game rules and provides a brief description, an end screen that displays the player's score and whether they won or lost, and an on-screen score HUD that continuously shows the current score along with other relevant text information.\n\n"
         "Please output your answer as two Markdown code blocks with language tags, exactly as follows:\n"
-        "1. The first code block should be labeled with ```html and contain the full HTML code (index.html) that loads the p5.js library (e.g., from a CDN) and includes a <script> tag referencing 'game.js'.\n"
-        "2. The second code block should be labeled with ```javascript and contain the complete JavaScript code (game.js) for the p5.js game, including both the decoupled dynamics and rendering modules.\n\n"
+        "1. The first code block should be labeled with ```html and contain the full HTML code (index.html) that loads the Three.js library (e.g., from a CDN) and includes a <script> tag referencing 'game.js'.\n"
+        "2. The second code block should be labeled with ```javascript and contain the complete JavaScript code (game.js) for the 3D game, including both the decoupled dynamics and rendering modules, and clearly defined functions for each agent's policy.\n\n"
         "Ensure that when the HTML file is opened in a browser, the game runs correctly."
     )
     prompt = PromptTemplate(
@@ -132,7 +134,7 @@ def update_games_index():
         "    <title>Games Index</title>\n"
         "  </head>\n"
         "  <body>\n"
-        "    <h1>Available Games</h1>\n"
+        "    <h1>Available 3D Games</h1>\n"
         "    <ul>\n"
     )
     for fname in index_files:
@@ -171,7 +173,7 @@ def sample_success_failure_criteria(initial_game_description):
     """
     sample_prompt = (
         f"Based on the following game description: {initial_game_description}\n"
-        "Provide a set of criteria for success and failure conditions for a JavaScript game. "
+        "Provide a set of criteria for success and failure conditions for a JavaScript 3D game. "
         "They should be engaging, clear, and challenging."
     )
     response = client.chat.completions.create(
@@ -192,7 +194,7 @@ def environment_agent_policy(current_js, current_description, objectives, round_
         desc_instruction = "Do NOT update the game description; only propose improvements to gameplay mechanics and user engagement."
 
     prompt = (
-        f"Round {round_number}, as the Environment Agent, review the current game code and game description below.\n"
+        f"Round {round_number}, as the Environment Agent, review the current 3D game code and game description below.\n"
         "Your task is to propose controlled improvements to enhance the game dynamics and user engagement. "
         f"{desc_instruction}\n"
         "Game Code:\n---------------------------\n"
@@ -231,7 +233,7 @@ def character_agent_policy(agent_index, current_js, current_description, objecti
         char_info = "No specific character definition found for Character " + str(agent_index)
 
     prompt = (
-        f"Round {round_number}, as Character Agent {agent_index}, review the current game code and game description below.\n"
+        f"Round {round_number}, as Character Agent {agent_index}, review the current 3D game code and game description below.\n"
         "Your task is to propose controlled improvements for the section of the game code managing your character. "
         "Provide only natural language suggestions; do not output any code.\n"
         "Game Code:\n---------------------------\n"
@@ -260,8 +262,8 @@ def apply_proposals(proposals, current_js):
     modularity_instructions = (
         "Important: The updated JavaScript game code must maintain a clear separation between game dynamics and rendering. "
         "Specifically, the code should include two distinct modules:\n"
-        "a) Dynamics Module: Define a game state that includes the state of each agent and the environment, with probabilistic policy functions so that behavior and game state vary on each playthrough.\n"
-        "b) Rendering Module: Create a function that uses p5.js to render the current game state, which can be enabled or disabled independently for iterative improvements.\n\n"
+        "a) Dynamics Module: Define a game state for the 3D game including states of each agent and the environment, with separate functions for each agent's policy.\n"
+        "b) Rendering Module: Create a function that uses Three.js to render the current game state, which can be enabled or disabled independently for iterative improvements.\n\n"
     )
     prompt = (
         modularity_instructions +
@@ -447,7 +449,7 @@ def main():
     initial_game_description = input("Enter an initial game description for the game: ").strip()
     if initial_game_description == "":
         print("No initial game description provided. Using default game description.")
-        initial_game_description = f"Generate a {genre} 2D game with {num_agents} characters. Only one player will be controlled by a human player."
+        initial_game_description = f"Generate a {genre} 3D game with {num_agents} characters. Only one player will be controlled by a human player."
 
     # Ask user for character definitions
     character_definitions = input(
@@ -478,15 +480,14 @@ def main():
     if not client.api_key:
         print("Error: OPENAI_API_KEY environment variable is not set.")
         return
-    
+
+    print("Generating game code from OpenAI API...")
+    game_response = generate_game_code(prompt)
+    print("Received response from API.")
     try:
         num_rounds = int(input("Enter number of debate rounds (default 3): ").strip())
     except ValueError:
         num_rounds = 3
-    print("Generating game code from OpenAI API...")
-    game_response = generate_game_code(prompt)
-    print("Received response from API.")
-
     html_code, js_code = parse_code_blocks(game_response)
     if html_code and js_code:
         game_folder = create_game_folder()
