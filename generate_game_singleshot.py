@@ -13,12 +13,12 @@ import os
 import re
 from openai import OpenAI
 import glob
-
+import random
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 from langchain.prompts import PromptTemplate
 
 
-def generate_prompt(genre, num_agents, actions, objectives):
+def generate_prompt(genre, num_agents, actions):
     """
     Constructs a structured prompt using LangChain's PromptTemplate.
     The prompt instructs the model to generate two code blocks:
@@ -26,24 +26,31 @@ def generate_prompt(genre, num_agents, actions, objectives):
       - JavaScript (game.js) with a playable p5.js game.
     """
     template = (
-        "You are to generate a JavaScript game using p5.js. The game must be playable on a basic HTML webpage.\n"
+        "Generate a interesting engaging continual {genre} game with intelligent{num_agents} agents using p5.js. The game must be playable on a basic HTML webpage.\n"
         "Game details:\n"
         "- Genre: {genre}\n"
         "- Total number of agents: {num_agents}\n"
         "- Number of controllable agents: 1\n"
         "- Actions available for each controllable agent: {actions}\n"
-        "- Objectives (success and failure conditions): {objectives}\n\n"
+        "- Decide the state of the game and the state of each agent with variables and their types ranges.\n"
+        "- Decide the objectives for success and failure conditions and the rewards for each agent.\n"
+        "- Decide the random initial conditions of the game and the initial state of each agent for each restart of the game.\n"
+        "- On success or failure, the game should be over with a message to the human player in the game window.\n"
+        "- The gameplay should be engaging and interesting and should look aesthetically pleasing.\n"
+        "- Mention the name of the game and the actions in the html above the game canvas.\n"
+        "- No audio should be used.\n"
+        # "- Objectives (success and failure conditions): {objectives}\n\n"
         "Please output your answer as two Markdown code blocks with language tags, exactly as follows:\n"
         "1. The first code block should be labeled with ```html and contain the full HTML code (index.html) that loads the p5.js library (e.g., from a CDN) and includes a <script> tag referencing 'game.js'.\n"
         "2. The second code block should be labeled with ```javascript and contain the complete JavaScript code (game.js) for the p5.js game.\n\n"
-        "Ensure that when the HTML file is opened in a browser, the game runs correctly."
+        "Ensure that when the HTML file is opened in a browser, the {genre} game runs correctly."
     )
     prompt = PromptTemplate(
-        input_variables=["genre", "num_agents", "actions", "objectives"],
+        input_variables=["genre", "num_agents", "actions"],
         template=template,
     )
     return prompt.format(
-        genre=genre, num_agents=num_agents, actions=actions, objectives=objectives
+        genre=genre, num_agents=num_agents, actions=actions,  #objectives=objectives
     )
 
 
@@ -78,17 +85,17 @@ def save_files(html_code, js_code):
     """
     # Determine the next available game file index based on existing files.
     js_files = glob.glob("game_*.js")
+    indices = set()
+    for file in js_files:
+        try:
+            idx = int(file.split('_')[1].split('.')[0])
+            indices.add(idx)
+        except Exception:
+            continue
+            
     next_index = 1
-    if js_files:
-        indices = []
-        for file in js_files:
-            try:
-                idx = int(file.split('_')[1].split('.')[0])
-                indices.append(idx)
-            except Exception:
-                continue
-        if indices:
-            next_index = max(indices) + 1
+    while next_index in indices:
+        next_index += 1
 
     new_js_filename = f"game_{next_index}.js"
     new_html_filename = f"index_{next_index}.html"
@@ -139,25 +146,39 @@ def update_games_index():
 def main():
     # List of valid genres
     valid_genres = [
-        "Arcade",
+        # "Arcade",
+        "Action",
         "Platformer",
         "Puzzle",
-        "Shooter",
+        # "Shooter",
         "Racing",
-        "Strategy",
-        "Simulation",
+        # "Strategy",
+        # "Simulation",
+        # "Adventure",
+        "Maze",
+        "Tower Defense",
+        "Sports",
+        # "Fighting",
+        # "Space",
     ]
     print("Select a game genre from the following list:")
     for valid_genre in valid_genres:
         print(f"- {valid_genre}")
-    genre = input("Enter game genre: ").strip()
+    genre = "" # input("Enter game genre: ").strip()
+    if genre == "":
+        print("No genre selected. Using default genre 'Arcade'.")
+        genre = random.choice(valid_genres)
     if genre not in valid_genres:
         print("Invalid genre selected.")
         return
 
     try:
-        num_agents = int(input("Enter number of agents (1-5): ").strip())
-        if num_agents < 1 or num_agents > 5:
+        num_agents = "" # input("Enter number of agents (1-5): ").strip()
+        if num_agents == "":
+            num_agents = random.randint(1, 6)
+        else:
+            num_agents = int(num_agents)
+        if num_agents < 1 or num_agents > 6:
             print("Number of agents must be between 1 and 5.")
             return
     except ValueError:
@@ -165,13 +186,13 @@ def main():
         return
 
     # Fixed actions for each agent
-    actions = "arrow keys, space bar, w, a, s, d"
-    objectives = input(
-        "Enter objectives for success and failure conditions: "
-    ).strip()
+    actions = "arrow keys, shift, space bar, w, a, s, d"
+    # objectives = input(
+    #     "Enter objectives for success and failure conditions: "
+    # ).strip()
 
     # Generate the structured prompt using LangChain
-    prompt = generate_prompt(genre, num_agents, actions, objectives)
+    prompt = generate_prompt(genre, num_agents, actions)
     print("\n--- Generated Prompt ---")
     print(prompt)
     print("--- End of Prompt ---\n")
