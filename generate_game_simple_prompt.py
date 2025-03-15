@@ -13,7 +13,7 @@ The script generates games with the following features:
 - Any JavaScript library can be used
 
 The generated games are saved in the folder structure:
-    games/MODEL_NAME/game_{i}/
+    games/MODEL_NAME/GENRE/game_{i}/
 
 Where i is the index of the game for that model.
 """
@@ -61,8 +61,9 @@ VALID_GENRES = [
 
 # Available models
 AVAILABLE_MODELS = {
-    "gpt4o": "gpt-4o",
-    "claude-3.7": "claude-3-7-sonnet-20240307",
+    "o3-mini": "o3-mini",
+    "gpt-4o": "gpt-4o",
+    "claude-3.7": "claude-3-7-sonnet-20250219",
     "gemini-2.0": "gemini-2.0-flash-exp"
 }
 
@@ -79,7 +80,7 @@ def setup_argparse() -> argparse.Namespace:
 
 def check_api_keys(model: str) -> bool:
     """Check if the required API key for the selected model is available."""
-    if model.startswith("gpt"):
+    if model.startswith("gpt") or model.startswith("o3"):
         if not os.environ.get("OPENAI_API_KEY"):
             print("Error: OPENAI_API_KEY environment variable is not set.")
             return False
@@ -102,12 +103,12 @@ def check_api_keys(model: str) -> bool:
             return False
     return True
 
-def create_game_folder(model_name: str) -> Tuple[str, int]:
+def create_game_folder(model_name: str, genre: str) -> Tuple[str, int]:
     """
-    Create a new game folder under 'games/MODEL_NAME/game_{i}'.
+    Create a new game folder under 'games/MODEL_NAME/GENRE/game_{i}'.
     Returns the path to the created game folder and the game index.
     """
-    base_path = Path("games") / model_name
+    base_path = Path("games") / model_name / genre
     base_path.mkdir(parents=True, exist_ok=True)
     
     # Find the next game index
@@ -134,16 +135,20 @@ def generate_prompt(genre: str, num_players: int) -> str:
     """Generate the prompt for the AI model."""
     article = "an" if genre[0].lower() in ['a', 'e', 'i', 'o', 'u'] else "a"
     prompt = (
-        f"Generate {article} {genre} game with {num_players} players. One player will be controlled by a human and the other players will be controlled by the AI. The game should be fun and engaging.\n\n"
+        f"Generate {article} {genre} game with {num_players} characters with interesting and engaging gameplay. One character will be controlled by a human player and the rest will be controlled by AI.\n"
+        "First, write the description of the game that is fun and engaging.\n" 
         "Requirements:\n"
-        "1. The game must be playable in a web browser.\n"
-        "2. The game must have a clear start screen with start button and an end screen that shows the result (win/lose/score).\n"
-        "3. Only keyboard controls are allowed like arrow keys, space, shift, w, a, s, d\n"
-        "4. You can use any JavaScript library for the game, rendering, physics, etc. and import it accordingly.\n"
-        "Please provide your response as two code blocks:\n"
-        "1. The first code block should be labeled with ```html and contain the complete HTML code with instructions on how to play.\n"
-        "2. The second code block should be labeled with ```javascript and contain the complete JavaScript code.\n"
-        "If you include the JavaScript directly in the HTML, just provide the HTML code block."
+        "- The game must be playable in a web browser using [arrow keys, space, shift, w, a, s, d] for human player controls.\n"
+        "- No audio should be used in the game.\n"
+        "- You can use any JavaScript library (like p5.js [https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.11.1/p5.js]) for the game.\n"
+        "- Ensure that the game code has correctly implemented game mechanics and correct action mapping faithful to the game description.\n"
+        "- There should be a start screen with instructions on how to play the game and a game over screen with the score. Display any other information you want on the screen.\n"
+        "- Please provide a creative title for your game at the beginning of your response, prefixed with 'GAME TITLE: '.\n"
+        "Then, generate the game code as two Markdown code blocks with language tags, exactly as follows:\n"
+        "1. The first code block should be labeled with ```html. It should contain the game title and instructions at the center top with the game under the instructions."
+        "Include a <script> tag in the <head> tag with the path to the game.js file and other javascript libraries.\n"
+        "2. The second code block should be labeled with ```javascript and contain the complete working JavaScript game code (game.js).\n"
+        "Ensure that when the HTML file is opened in a browser, the game runs correctly."
     )
     return prompt
 
@@ -153,8 +158,6 @@ def generate_game_with_openai(prompt: str, model_name: str) -> str:
     response = client.chat.completions.create(
         model=AVAILABLE_MODELS[model_name],
         messages=[{"role": "user", "content": prompt}],
-        temperature=0.7,
-        max_tokens=4000
     )
     return response.choices[0].message.content
 
@@ -163,8 +166,6 @@ def generate_game_with_anthropic(prompt: str, model_name: str) -> str:
     client = Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
     response = client.messages.create(
         model=AVAILABLE_MODELS[model_name],
-        max_tokens=4000,
-        temperature=0.7,
         messages=[
             {"role": "user", "content": prompt}
         ]
@@ -174,17 +175,22 @@ def generate_game_with_anthropic(prompt: str, model_name: str) -> str:
 def generate_game_with_gemini(prompt: str, model_name: str) -> str:
     """Generate game code using Google Gemini API."""
     genai.configure(api_key=os.environ.get("GOOGLE_API_KEY"))
+    # gen_config = genai.GenerationConfig(
+    #     temperature=0.7,
+    # )
     model = genai.GenerativeModel(AVAILABLE_MODELS[model_name])
     response = model.generate_content(prompt)
     return response.text
 
 def generate_game_code(prompt: str, model_name: str) -> str:
     """Generate game code using the specified AI model."""
-    if model_name == "gpt4o":
+    if model_name == "gpt-4o":
+        return generate_game_with_openai(prompt, model_name)
+    elif model_name == "o3-mini":
         return generate_game_with_openai(prompt, model_name)
     elif model_name == "claude-3.7":
         return generate_game_with_anthropic(prompt, model_name)
-    elif model_name == "gemini-2.0-flash-exp":
+    elif model_name == "gemini-2.0":
         return generate_game_with_gemini(prompt, model_name)
     else:
         raise ValueError(f"Unsupported model: {model_name}")
@@ -224,13 +230,14 @@ def save_game_files(game_folder: str, html_code: str, js_code: Optional[str]) ->
     with open(html_path, "w", encoding="utf-8") as html_file:
         html_file.write(html_code)
 
-def save_metadata(game_folder: str, prompt: str, response: str, genre: str, num_players: int, game_index: int) -> None:
+def save_metadata(game_folder: str, prompt: str, response: str, genre: str, num_players: int, game_index: int, game_title: str) -> None:
     """Save metadata about the generated game."""
     metadata = {
         "prompt": prompt,
         "genre": genre,
         "num_players": num_players,
         "game_index": game_index,
+        "game_title": game_title,
         "timestamp": str(Path(game_folder).stat().st_mtime)
     }
     
@@ -242,175 +249,23 @@ def save_metadata(game_folder: str, prompt: str, response: str, genre: str, num_
     with open(os.path.join(game_folder, "metadata.json"), "w", encoding="utf-8") as f:
         json.dump(metadata, f, indent=2)
 
-def update_master_index() -> None:
-    """
-    Update the master index HTML file that lists all games by model and genre.
-    This allows filtering games by genre using a dropdown menu.
-    """
-    games_dir = Path("games")
-    if not games_dir.exists():
-        return
+def extract_game_title(response_text: str) -> str:
+    """Extract the game title from the AI's response."""
+    # Look for a line starting with "GAME TITLE: "
+    title_match = re.search(r"GAME TITLE:\s*(.*?)(?:\n|$)", response_text, re.IGNORECASE)
+    if title_match:
+        return title_match.group(1).strip()
     
-    # Collect all games and their metadata
-    all_games = []
-    for model_dir in games_dir.iterdir():
-        if not model_dir.is_dir():
-            continue
-        
-        model_name = model_dir.name
-        for game_dir in model_dir.iterdir():
-            if not (game_dir.is_dir() and game_dir.name.startswith("game_")):
-                continue
-            
-            metadata_file = game_dir / "metadata.json"
-            if metadata_file.exists():
-                try:
-                    with open(metadata_file, "r", encoding="utf-8") as f:
-                        metadata = json.load(f)
-                    
-                    all_games.append({
-                        "model": model_name,
-                        "path": str(game_dir.relative_to(games_dir)),
-                        "genre": metadata.get("genre", "unknown"),
-                        "num_players": metadata.get("num_players", 0),
-                        "game_index": metadata.get("game_index", 0)
-                    })
-                except (json.JSONDecodeError, IOError) as e:
-                    print(f"Error reading metadata from {metadata_file}: {e}")
+    # If not found, try to extract from HTML title tag
+    html_match = re.search(r"```html\s*(.*?)```", response_text, re.DOTALL)
+    if html_match:
+        html_code = html_match.group(1)
+        title_tag_match = re.search(r"<title>(.*?)</title>", html_code, re.IGNORECASE)
+        if title_tag_match:
+            return title_tag_match.group(1).strip()
     
-    # Generate HTML for the master index
-    html = """<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Generated Games Index</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 20px;
-        }
-        h1 {
-            text-align: center;
-            color: #333;
-        }
-        .filters {
-            display: flex;
-            justify-content: center;
-            gap: 20px;
-            margin-bottom: 30px;
-        }
-        .game-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-            gap: 20px;
-        }
-        .game-card {
-            border: 1px solid #ddd;
-            border-radius: 8px;
-            padding: 15px;
-            transition: transform 0.2s;
-        }
-        .game-card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
-        }
-        .game-title {
-            font-weight: bold;
-            margin-bottom: 10px;
-        }
-        .game-info {
-            color: #666;
-            font-size: 0.9em;
-        }
-        .hidden {
-            display: none;
-        }
-    </style>
-</head>
-<body>
-    <h1>AI Generated Games</h1>
-    
-    <div class="filters">
-        <div>
-            <label for="model-filter">Model:</label>
-            <select id="model-filter">
-                <option value="all">All Models</option>
-"""
-    
-    # Add model options
-    models = sorted(set(game["model"] for game in all_games))
-    for model in models:
-        html += f'                <option value="{model}">{model}</option>\n'
-    
-    html += """            </select>
-        </div>
-        <div>
-            <label for="genre-filter">Genre:</label>
-            <select id="genre-filter">
-                <option value="all">All Genres</option>
-"""
-    
-    # Add genre options
-    genres = sorted(set(game["genre"] for game in all_games))
-    for genre in genres:
-        html += f'                <option value="{genre}">{genre}</option>\n'
-    
-    html += """            </select>
-        </div>
-    </div>
-    
-    <div class="game-grid" id="game-container">
-"""
-    
-    # Add game cards
-    for game in all_games:
-        html += f"""        <div class="game-card" data-model="{game['model']}" data-genre="{game['genre']}">
-            <div class="game-title">Game {game['game_index']}</div>
-            <div class="game-info">
-                <div>Model: {game['model']}</div>
-                <div>Genre: {game['genre']}</div>
-                <div>Players: {game['num_players']}</div>
-            </div>
-            <a href="{game['path']}/index.html" target="_blank">Play Game</a>
-        </div>
-"""
-    
-    html += """    </div>
-
-    <script>
-        document.getElementById('model-filter').addEventListener('change', filterGames);
-        document.getElementById('genre-filter').addEventListener('change', filterGames);
-        
-        function filterGames() {
-            const modelFilter = document.getElementById('model-filter').value;
-            const genreFilter = document.getElementById('genre-filter').value;
-            
-            const gameCards = document.querySelectorAll('.game-card');
-            
-            gameCards.forEach(card => {
-                const modelMatch = modelFilter === 'all' || card.dataset.model === modelFilter;
-                const genreMatch = genreFilter === 'all' || card.dataset.genre === genreFilter;
-                
-                if (modelMatch && genreMatch) {
-                    card.classList.remove('hidden');
-                } else {
-                    card.classList.add('hidden');
-                }
-            });
-        }
-    </script>
-</body>
-</html>
-"""
-    
-    # Write the master index HTML file
-    with open(games_dir / "index.html", "w", encoding="utf-8") as f:
-        f.write(html)
-    
-    print(f"Master index updated at {games_dir / 'index.html'}")
+    # Default title if nothing found
+    return "Untitled Game"
 
 def main():
     """Main function to generate a game."""
@@ -422,10 +277,9 @@ def main():
     
     # Choose a random genre if not specified
     genre = args.genre if args.genre else random.choice(VALID_GENRES)
-    num_players = max(1, args.players) if args.players else random.randint(1, 5)
-    
-    # Create game folder
-    game_folder, game_index = create_game_folder(args.model)
+    num_players = args.players if args.players else random.randint(1, 5)
+    # Create game folder with genre subfolder
+    game_folder, game_index = create_game_folder(args.model, genre)
     print(f"Game will be saved in: {game_folder}")
     
     # Generate prompt
@@ -440,6 +294,10 @@ def main():
         response = generate_game_code(prompt, args.model)
         print("Received response from API.")
         
+        # Extract game title
+        game_title = extract_game_title(response)
+        print(f"Game title: {game_title}")
+        
         # Parse code blocks
         html_code, js_code = parse_code_blocks(response)
         
@@ -447,13 +305,10 @@ def main():
             # Save game files
             save_game_files(game_folder, html_code, js_code)
             
-            # Save metadata
-            save_metadata(game_folder, prompt, response, genre, num_players, game_index)
+            # Save metadata with game title
+            save_metadata(game_folder, prompt, response, genre, num_players, game_index, game_title)
             
-            # Update master index
-            update_master_index()
-            
-            print(f"Game successfully generated and saved in {game_folder}")
+            print(f"Game '{game_title}' successfully generated and saved in {game_folder}")
             print(f"You can play the game by opening {os.path.join(game_folder, 'index.html')} in a web browser")
         else:
             print("Failed to parse code blocks from the API response.")
