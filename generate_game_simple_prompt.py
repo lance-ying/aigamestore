@@ -133,21 +133,24 @@ def create_game_folder(model_name: str, genre: str) -> Tuple[str, int]:
 
 def generate_prompt(genre: str, num_players: int) -> str:
     """Generate the prompt for the AI model."""
-    article = "an" if genre[0].lower() in ['a', 'e', 'i', 'o', 'u'] else "a"
     prompt = (
-        f"Generate {article} {genre} game with {num_players} characters with interesting and engaging gameplay. One character will be controlled by a human player and the rest will be controlled by AI.\n"
+        f"Generate an interesting and fun {genre} game with {num_players} characters. One character will be controlled by a human player and the rest will be controlled by AI.\n"
         "First, write the description of the game that is fun and engaging.\n" 
         "Requirements:\n"
-        "- The game must be playable in a web browser using [arrow keys, space, shift, w, a, s, d] for human player controls.\n"
+        "- The game must be playable in a web browser using JavaScript key codes for controls: \n"
+        "  * Arrow keys (keyCode 37/38/39/40 for LEFT/UP/RIGHT/DOWN) \n"
+        "  * Space bar (key === ' ') \n"
+        "  * Shift key (keyCode === SHIFT or keyCode === 16) \n"
+        "  * WASD keys (key === 'w'/'a'/'s'/'d' or key === 'W'/'A'/'S'/'D') \n"
         "- No audio should be used in the game.\n"
         "- You can use any JavaScript library (like p5.js [https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.11.1/p5.js]) for the game.\n"
-        "- Ensure that the game code has correctly implemented game mechanics and correct action mapping faithful to the game description.\n"
+        "- Ensure that the game code has correctly implemented game mechanics to the game description.\n"
         "- There should be a start screen with instructions on how to play the game and a game over screen with the score. Display any other information you want on the screen.\n"
         "- Please provide a creative title for your game at the beginning of your response, prefixed with 'GAME TITLE: '.\n"
+        "- Ensure proper key event handling with correct JavaScript key codes, not undefined constants\n"
         "Then, generate the game code as two Markdown code blocks with language tags, exactly as follows:\n"
-        "1. The first code block should be labeled with ```html. It should contain the game title and instructions at the center top with the game under the instructions."
-        "Include a <script> tag in the <head> tag with the path to the game.js file and other javascript libraries.\n"
-        "2. The second code block should be labeled with ```javascript and contain the complete working JavaScript game code (game.js).\n"
+        "1. The first code block should be labeled with ```html and ```. Mention the game title and instructions above the game. Center all contents. Include a <script> tag in the <head> tag with the path to the game.js file and other javascript libraries.\n"
+        "2. The second code block should be labeled with ```javascript and ```. It should contain the complete working JavaScript game code (game.js).\n"
         "Ensure that when the HTML file is opened in a browser, the game runs correctly."
     )
     return prompt
