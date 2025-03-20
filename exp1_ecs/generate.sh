@@ -6,6 +6,9 @@ MODEL="o3-mini"
 # Number of games per genre and architecture type
 GAMES_PER_TYPE=5
 
+# Number of players
+NUM_PLAYERS=2
+
 # Valid genres
 GENRES=(
     "action"
@@ -35,13 +38,13 @@ generate_games() {
             python code_generator.py \
                 --model ${MODEL} \
                 --genre ${genre} \
-                --num-players 2 \
+                --num-players ${NUM_PLAYERS} \
                 --use-ecs
         else
             python code_generator.py \
                 --model ${MODEL} \
                 --genre ${genre} \
-                --num-players 2
+                --num-players ${NUM_PLAYERS}
         fi
         
         # Add a small delay between generations to avoid rate limiting
