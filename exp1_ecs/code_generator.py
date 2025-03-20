@@ -142,6 +142,11 @@ class SimpleCodeGenerator:
         
         # Generate response
         response = self.generate_response(prompt)
+
+        #print prompt in green, response in yellow
+        print(f"\033[92m{prompt}\033[0m")
+        print(f"\033[93m{response}\033[0m")
+        import pdb; pdb.set_trace()
         
         # Parse the response
         code_blocks = self.parse_code_blocks(response)
@@ -191,7 +196,7 @@ def parse_args():
     parser.add_argument("--output-dir", type=str, default="games", help="Output directory")
     return parser.parse_args()
 
-# Example usage:
+
 if __name__ == "__main__":
     args = parse_args()
     try:
