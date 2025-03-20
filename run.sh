@@ -20,7 +20,7 @@ python main.py \
     --device $DEVICE \
     --num_games $NUM_GAMES
 
-python main.py --mode generate --model o3-mini --genre platformer,action,sports --work_dir trial --num_games 3
+python main.py --mode generate --model o3-mini --genre arcade,platformer,action,sports --work_dir trial --num_games 3
 
 # 2. Improve the game
 echo "Improving the game..."
@@ -31,7 +31,7 @@ python main.py \
     --work_dir $WORK_DIR \
     --device $DEVICE
 
-python main.py --mode improve --model o3-mini --work_dir trial --num_iterations 10 
+python main.py --mode improve --model o3-mini --work_dir trial --num_iterations 10  --is_global_improvement
 
 
 # 3. Train reward model

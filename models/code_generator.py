@@ -105,7 +105,7 @@ class CodeGenerator:
             "- There should be a start screen with instructions and a game over screen with the score.\n"
             "- Please provide a creative title for your game at the beginning, prefixed with 'GAME TITLE: '.\n"
             "- Ensure proper key event handling with correct JavaScript key codes.\n"
-            "Then, generate the game code as two markdown blocks:\n"
+            "Then, generate the game code as two markdown blocks (the JavaScript code is later stored in game.js):\n"
             "1. ```html for the HTML code\n"
             "2. ```javascript for the JavaScript code\n"
         )

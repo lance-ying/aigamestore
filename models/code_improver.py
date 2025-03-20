@@ -96,6 +96,7 @@ class CodeImprover:
             "1. ```description for the game description\n"
             "2. ```html for the HTML code\n"
             "3. ```javascript for the JavaScript code\n"
+            "For your reference, the JavaScript code is stored in game.js.\n"
             "Make sure to include all three code blocks in your response."
         )
 
