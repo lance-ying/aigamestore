@@ -3,8 +3,8 @@
 # Models to use
 MODEL="o3-mini"
 
-# Number of games per genre and architecture type
-GAMES_PER_TYPE=5
+# Number of games per genre
+GAMES_PER_GENRE=5
 
 # Number of players
 NUM_PLAYERS=2
@@ -23,29 +23,20 @@ GENRES=(
     # "adventure"
 )
 
-# Function to generate games
-generate_games() {
+# Function to generate game variants
+generate_game_variants() {
     local genre=$1
-    local use_ecs=$2
-    local count=$3
+    local count=$2
     
-    echo "Generating ${count} games for genre: ${genre} (ECS: ${use_ecs})"
+    echo "Generating ${count} games for genre: ${genre} (both ECS and non-ECS versions)"
     
     for ((i=1; i<=$count; i++)); do
         echo "Generating game ${i}/${count}..."
         
-        if [ "$use_ecs" = true ]; then
-            python code_generator.py \
-                --model ${MODEL} \
-                --genre ${genre} \
-                --num-players ${NUM_PLAYERS} \
-                --use-ecs
-        else
-            python code_generator.py \
-                --model ${MODEL} \
-                --genre ${genre} \
-                --num-players ${NUM_PLAYERS}
-        fi
+        python code_generator_two_prompt.py \
+            --model ${MODEL} \
+            --genre ${genre} \
+            --num-players ${NUM_PLAYERS}
         
         # Add a small delay between generations to avoid rate limiting
         sleep 10
@@ -54,16 +45,13 @@ generate_games() {
 
 # Main execution
 echo "Starting game generation process..."
-echo "Will generate ${GAMES_PER_TYPE} games per genre for both ECS and non-ECS architectures"
+echo "Will generate ${GAMES_PER_GENRE} games per genre (each with both ECS and non-ECS versions)"
 
 for genre in "${GENRES[@]}"; do
     echo "Processing genre: ${genre}"
     
-    # Generate ECS games
-    generate_games "${genre}" true ${GAMES_PER_TYPE}
-    
-    # Generate non-ECS games
-    generate_games "${genre}" false ${GAMES_PER_TYPE}
+    # Generate both ECS and non-ECS versions in one go
+    generate_game_variants "${genre}" ${GAMES_PER_GENRE}
     
     # Add a longer delay between genres
     echo "Completed genre: ${genre}"
