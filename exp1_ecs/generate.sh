@@ -4,10 +4,10 @@
 MODEL="o3-mini"
 
 # Number of games per genre
-GAMES_PER_GENRE=5
+GAMES_PER_GENRE=3
 
 # Number of players
-NUM_PLAYERS=2
+NUM_PLAYERS=1
 
 # Valid genres
 GENRES=(

@@ -111,7 +111,9 @@ if __name__ == "__main__":
 
         # Save both variants
         for variant, result in results.items():
-            game_dir = games_dir / variant / args.genre / safe_title
+            game_dir = (
+                games_dir / f"{args.num_players}p" / variant / args.genre / safe_title
+            )
             game_dir.mkdir(parents=True, exist_ok=True)
 
             if result["code_blocks"].get("html"):
