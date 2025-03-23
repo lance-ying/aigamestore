@@ -8,6 +8,7 @@ from prompt import (
     GAME_DESCRIPTION_PROMPT,
     GAME_CODE_PROMPT_NO_ECS,
     GAME_CODE_PROMPT_ECS,
+    HTML_TEMPLATE,
 )
 import argparse
 import json
@@ -61,6 +62,7 @@ class TwoStepCodeGenerator(SimpleCodeGenerator):
                 num_players=num_players,
                 title=title,
                 description=description,
+                html_template=HTML_TEMPLATE,
             )
 
             print(f"\033[92m{code_prompt}\033[0m")
@@ -70,9 +72,10 @@ class TwoStepCodeGenerator(SimpleCodeGenerator):
             code_blocks = self.parse_code_blocks(code_response)
 
             meta_data = {
+                "game_name": title,
+                "game_description": description,
                 "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "model": self.config.model_name,
-                "model_id": self.config.model_id,
                 "genre": genre,
                 "num_players": num_players,
                 "use_ecs": use_ecs,
@@ -112,7 +115,7 @@ if __name__ == "__main__":
         # Save both variants
         for variant, result in results.items():
             game_dir = (
-                games_dir / f"{args.num_players}p" / variant / args.genre / safe_title
+                games_dir / f"{args.approach_name}" / variant / args.genre / safe_title
             )
             game_dir.mkdir(parents=True, exist_ok=True)
 

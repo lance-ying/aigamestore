@@ -23,7 +23,6 @@ Then, generate the game code as two markdown blocks:
 """
 
 
-
 GAME_PROMPT_ECS = """Generate an interesting and fun {genre} game with {num_players} characters. **You should use ECS (Entity-Component-System) architecture for the game.**
 
 One character will be controlled by a human player and the rest will be controlled by AI.
@@ -67,23 +66,25 @@ The game title is: {title}
 The description is:
 {description}
 
-
+------------------------------------------------
+Primary Requirements:
 One character will be controlled by a human player and the rest will be controlled by AI.
 
-Requirements:
+Other Requirements:
 - The game must be playable in a web browser using JavaScript key codes for controls: 
   * Arrow keys (use keyCode 37/38/39/40 for LEFT/UP/RIGHT/DOWN respectively) 
   * Space bar (use key === ' ') 
   * Shift key (use keyCode === SHIFT or keyCode === 16) 
   * WASD keys (use key === 'w'/'a'/'s'/'d' or key === 'W'/'A'/'S'/'D' respectively) 
-- No audio should be used in the game.
-- You can use any JavaScript library (like p5.js [https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.11.1/p5.js]) for the game.
+- You can use p5.js for the game, no audio.
 - Ensure that the game code has correctly implemented game mechanics to the game description.
 - There should be a start screen with instructions and a game over screen with the score.
 - Ensure proper key event handling with correct JavaScript key codes.
 
 Then, generate the game code as two markdown blocks:
-1. ```html for the HTML code
+1. ```html for the HTML code, based on the following template:
+{html_template}
+
 2. ```javascript for the JavaScript code
 """
 
@@ -97,30 +98,81 @@ The game title is: {title}
 The description is:
 {description}
 
+------------------------------------------------
+Primary Requirements:
+**You should use the Entity-Component-System (ECS) architecture for the game.**
 
 One character will be controlled by a human player and the rest will be controlled by AI.
 
-Requirements:
+Some of the mandatory systems in ECS are:
+- RewardSystem (handles the process leading to rewards for certain game states or actions)
+- RenderingSystem (rendering of the game, clear UI/UX)
+- CheckGameOverSystem
+- StartScreenSystem and EndScreenSystem
+**Each system should be independent from each other, and only take entities as input.**
+
+Other Requirements:
 - The game must be playable in a web browser using JavaScript key codes for controls: 
   * Arrow keys (use keyCode 37/38/39/40 for LEFT/UP/RIGHT/DOWN respectively) 
   * Space bar (use key === ' ') 
   * Shift key (use keyCode === SHIFT or keyCode === 16) 
   * WASD keys (use key === 'w'/'a'/'s'/'d' or key === 'W'/'A'/'S'/'D' respectively) 
-- No audio should be used in the game.
-- You can use any JavaScript library (like p5.js [https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.11.1/p5.js]) for the game.
+- You can use p5.js for the game, no audio.
 - Ensure that the game code has correctly implemented game mechanics to the game description.
 - There should be a start screen with instructions and a game over screen with the score.
 - Ensure proper key event handling with correct JavaScript key codes.
 
 Then, generate the game code as two markdown blocks:
-1. ```html for the HTML code
+1. ```html for the HTML code, based on the following template:
+{html_template}
+
 2. ```javascript for the JavaScript code
 
-**You should use the Entity-Component-System (ECS) architecture for the game.**
 """
 
 
-
+HTML_TEMPLATE = """
+```html
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Game Title</title>
+    <!-- p5.js library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.11.1/p5.js"></script>
+    <style>
+      body {
+        margin: 0;
+        padding: 20px 0 0 0; /* Add top padding */
+        overflow: hidden;
+        background: #222;
+        color: #fff;
+        font-family: sans-serif;
+        display: flex;
+        justify-content: center;
+        align-items: flex-start;
+      }
+      canvas {
+        /* Fixed size canvas */
+        width: 800px !important;
+        height: 600px !important;
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Game code must be loaded after p5.js -->
+    <script>
+      // Ensure p5.js creates a fixed-size canvas
+      function setup() {
+        createCanvas(800, 600);
+      }
+    </script>
+    <script src="game.js"></script>
+  </body>
+</html>
+```
+"""
 
 
 GAME_REVIEW_PROMPT = """Review the following game code and provide feedback on:
@@ -132,4 +184,3 @@ GAME_REVIEW_PROMPT = """Review the following game code and provide feedback on:
 Game code:
 {code}
 """
-

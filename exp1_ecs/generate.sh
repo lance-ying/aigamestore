@@ -4,18 +4,21 @@
 MODEL="o3-mini"
 
 # Number of games per genre
-GAMES_PER_GENRE=3
+GAMES_PER_GENRE=1
 
 # Number of players
 NUM_PLAYERS=1
 
+# Approach to use
+APPROACH="2prompt_desc_code"
+
 # Valid genres
 GENRES=(
     "action"
-    "arcade"
-    "platformer"
-    "puzzle"
-    "shooting"
+    # "arcade"
+    # "platformer"
+    # "puzzle"
+    # "shooting"
     # "sports"
     # "stealth"
     # "strategy"
@@ -36,7 +39,8 @@ generate_game_variants() {
         python code_generator_two_prompt.py \
             --model ${MODEL} \
             --genre ${genre} \
-            --num-players ${NUM_PLAYERS}
+            --num-players ${NUM_PLAYERS} \
+            --approach ${APPROACH}
         
         # Add a small delay between generations to avoid rate limiting
         sleep 10
