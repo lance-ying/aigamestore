@@ -4,7 +4,7 @@
 MODEL="o3-mini"
 
 # Number of games per genre
-GAMES_PER_GENRE=1
+GAMES_PER_GENRE=5
 
 # Number of players
 NUM_PLAYERS=1
@@ -15,10 +15,10 @@ APPROACH="2prompt_desc_code"
 # Valid genres
 GENRES=(
     "action"
-    # "arcade"
-    # "platformer"
-    # "puzzle"
-    # "shooting"
+    "arcade"
+    "platformer"
+    "puzzle"
+    "shooting"
     # "sports"
     # "stealth"
     # "strategy"

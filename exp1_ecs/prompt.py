@@ -68,7 +68,7 @@ The description is:
 
 ------------------------------------------------
 Primary Requirements:
-One character will be controlled by a human player and the rest will be controlled by AI.
+One character will be controlled by a human player and the rest (if any) will be controlled by AI.
 
 Other Requirements:
 - The game must be playable in a web browser using JavaScript key codes for controls: 
@@ -102,7 +102,7 @@ The description is:
 Primary Requirements:
 **You should use the Entity-Component-System (ECS) architecture for the game.**
 
-One character will be controlled by a human player and the rest will be controlled by AI.
+One character will be controlled by a human player and the rest (if any) will be controlled by AI.
 
 Some of the mandatory systems in ECS are:
 - RewardSystem (handles the process leading to rewards for certain game states or actions)
