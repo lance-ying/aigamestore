@@ -648,7 +648,7 @@ async def _run_headless_browser(url: str, timeout: int) -> Dict[str, Any]:
     
     async with async_playwright() as p:
         # Use Firefox instead of Chromium
-        browser = await p.firefox.launch(headless=True)
+        browser = await p.firefox.launch(headless=True, slow_mo=1000)
         context = await browser.new_context()
         page = await context.new_page()
         
@@ -864,10 +864,38 @@ async def _run_headless_browser(url: str, timeout: int) -> Dict[str, Any]:
             # Direct extraction from global entities
             extracted_entities = await page.evaluate("""() => {
                 // Check for global entities variable
-                if (window.entities) {
-                    window.extractEntitiesFromGlobal();
+                // Try to access entities directly first
+                if (typeof entities !== 'undefined') {
+                    console.log("Found entities directly in global scope");
+                    
+                    // Store entities in our capture structure
+                    if (Array.isArray(entities)) {
+                        entities.forEach((entity, index) => {
+                            if (entity && typeof entity === 'object') {
+                                const entityId = entity.id || entity.name || entity.type || `entity_${index}`;
+                                window.capturedECS.entities[entityId] = entity.components || {};
+                            }
+                        });
+                    } else if (typeof entities === 'object') {
+                        Object.entries(entities).forEach(([id, entity]) => {
+                            if (entity && typeof entity === 'object') {
+                                window.capturedECS.entities[id] = entity.components || {};
+                            }
+                        });
+                    }
                     
                     // Return info about extracted entities
+                    return {
+                        found: true,
+                        count: Object.keys(window.capturedECS.entities).length,
+                        entitySample: Object.keys(window.capturedECS.entities).slice(0, 5),
+                        componentsSample: Object.keys(window.capturedECS.components),
+                        entityDetails: window.capturedECS.entities
+                    };
+                } else if (window.entities) {
+                    // Fall back to window.entities if direct access fails
+                    window.extractEntitiesFromGlobal();
+                    
                     return {
                         found: true,
                         count: Object.keys(window.capturedECS.entities).length,
