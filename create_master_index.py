@@ -179,6 +179,12 @@ def generate_html(games, output_file):
         .game-link:hover {
             background-color: #2980b9;
         }
+        .random-button {
+            background-color: #27ae60;
+        }
+        .random-button:hover {
+            background-color: #219653;
+        }
         .model-section {
             margin-bottom: 30px;
         }
@@ -242,6 +248,10 @@ def generate_html(games, output_file):
         
         <div class="filter-group" style="justify-content: flex-end;">
             <button id="reset-filters">Reset Filters</button>
+        </div>
+        
+        <div class="filter-group" style="justify-content: flex-end;">
+            <button id="random-game" class="random-button">Play Random Game</button>
         </div>
     </div>
     
@@ -307,6 +317,7 @@ def generate_html(games, output_file):
             const modelFilter = document.getElementById('model-filter');
             const genreFilter = document.getElementById('genre-filter');
             const resetButton = document.getElementById('reset-filters');
+            const randomButton = document.getElementById('random-game');
             const noGamesMessage = document.getElementById('no-games-message');
             
             // Function to apply filters
@@ -405,6 +416,25 @@ def generate_html(games, output_file):
                 modelFilter.value = 'all';
                 genreFilter.value = 'all';
                 applyFilters();
+            });
+            
+            // Play a random game based on current filters
+            randomButton.addEventListener('click', function() {
+                const visibleCards = document.querySelectorAll('.game-card:not(.hidden)');
+                
+                if (visibleCards.length > 0) {
+                    // Select a random game from the visible ones
+                    const randomIndex = Math.floor(Math.random() * visibleCards.length);
+                    const randomGame = visibleCards[randomIndex];
+                    
+                    // Get the game link and navigate to it
+                    const gameLink = randomGame.querySelector('.game-link');
+                    if (gameLink) {
+                        window.location.href = gameLink.href;
+                    }
+                } else {
+                    alert('No games available with the current filters.');
+                }
             });
         });
     </script>

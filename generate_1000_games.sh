@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Script to generate 100 games for each genre using the o3-mini model
+# Script to generate games in parallel batches, with one game from each genre per batch
 # Usage: ./generate_1000_games.sh
 
 # Define the genres
@@ -9,40 +9,48 @@ GENRES=("action" "arcade" "platformer" "sports" "stealth" "strategy" "puzzle" "s
 # Set the number of games to generate per genre
 GAMES_PER_GENRE=100
 
-echo "Starting to generate $GAMES_PER_GENRE games for each of the 10 genres using o3-mini model..."
+echo "Starting to generate $GAMES_PER_GENRE games for each of the ${#GENRES[@]} genres using o3-mini model..."
+echo "Running in parallel batches (one game per genre in each batch)"
 
-# Loop through each genre
-for GENRE in "${GENRES[@]}"
-do
-    echo "Starting generation for genre: $GENRE"
+# Function to generate a single game for a specific genre
+generate_single_game() {
+    local genre=$1
+    local game_number=$2
     
-    # Initialize counter for this genre
-    COUNTER=1
+    echo "Generating $genre game $game_number of $GAMES_PER_GENRE..."
     
-    # Loop until we've generated all games for this genre
-    while [ $COUNTER -le $GAMES_PER_GENRE ]
-    do
-        echo "Generating $GENRE game $COUNTER of $GAMES_PER_GENRE..."
-        
-        # Run the Python script with the o3-mini model and specified genre
-        python generate_game_simple_prompt.py --model o3-mini --genre "$GENRE"
-        
-        # Check if the command was successful
-        if [ $? -eq 0 ]; then
-            echo "$GENRE game $COUNTER successfully generated."
-            # Increment counter only if the generation was successful
-            COUNTER=$((COUNTER+1))
-        else
-            echo "Error generating $GENRE game $COUNTER. Retrying..."
-            # Sleep for a moment before retrying to avoid API rate limits
-            sleep 5
-        fi
-        
-        # Add a small delay between requests to avoid overwhelming the API
-        sleep 2
+    # Run the Python script with the o3-mini model and specified genre
+    python generate_game_simple_prompt.py --model o3-mini --genre "$genre"
+    
+    # Check if the command was successful
+    if [ $? -eq 0 ]; then
+        echo "$genre game $game_number successfully generated."
+        return 0
+    else
+        echo "Error generating $genre game $game_number."
+        return 1
+    fi
+}
+
+# Loop through each batch (1 to GAMES_PER_GENRE)
+for ((batch=1; batch<=GAMES_PER_GENRE; batch++)); do
+    echo "Starting batch $batch of $GAMES_PER_GENRE..."
+    
+    # Run one game for each genre in parallel
+    for ((i=0; i<${#GENRES[@]}-1; i++)); do
+        generate_single_game "${GENRES[$i]}" $batch &
     done
     
-    echo "Completed generation of $GAMES_PER_GENRE games for genre: $GENRE"
+    # Run the last genre in the foreground
+    generate_single_game "${GENRES[${#GENRES[@]}-1]}" $batch
+    
+    # Wait for all background processes in this batch to complete
+    wait
+    
+    echo "Completed batch $batch of $GAMES_PER_GENRE"
+    
+    # Add a small delay between batches to avoid overwhelming the API
+    sleep 2
 done
 
 echo "All games have been generated successfully! Total: $((${#GENRES[@]} * $GAMES_PER_GENRE)) games" 
