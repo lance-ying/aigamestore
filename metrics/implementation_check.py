@@ -47,8 +47,7 @@ def check_p5js_imports(html_file_path: str) -> Tuple[bool, Dict[str, Any]]:
         }
         
         # Success if p5.js is found and all referenced local files exist
-        success = len(p5js_imports) > 0 and len(missing_files) == 0
-        
+        success = len(p5js_imports) > 0 and len(missing_files) == 0     
         return success, results
         
     except Exception as e:
