@@ -835,7 +835,7 @@ async def _run_headless_browser(url: str, timeout: int) -> Dict[str, Any]:
             """
             window.capturedECS = {
                 entities: {},
-                components: {},
+                components: {},  
                 systems: {}
             };
             
@@ -910,14 +910,32 @@ async def _run_headless_browser(url: str, timeout: int) -> Dict[str, Any]:
             window.captureSystems = function() {
                 const systems = {};
                 
-                // Look for common system containers
+                // Look for common system containers and patterns
                 const systemContainers = [
                     window.systems,
                     window.game?.systems,
                     window.world?.systems,
-                    window.systemManager?.systems
+                    window.systemManager?.systems,
+                    // Add more common patterns
+                    window.game?.systemManager?.systems,
+                    window.ecs?.systems,
+                    window.engine?.systems
                 ];
                 
+                // Also look for individual system objects in global scope
+                for (const key in window) {
+                    if (key.endsWith('System') && typeof window[key] === 'object') {
+                        const system = window[key];
+                        systems[key] = {
+                            update: typeof system.update === 'function',
+                            properties: Object.keys(system).filter(k => 
+                                typeof system[k] !== 'function' && !['id', 'name', 'type'].includes(k)
+                            )
+                        };
+                    }
+                }
+                
+                // Process system containers
                 for (const container of systemContainers) {
                     if (Array.isArray(container)) {
                         container.forEach((system, index) => {
@@ -1123,10 +1141,13 @@ async def _run_headless_browser(url: str, timeout: int) -> Dict[str, Any]:
 
                     for seq in key_sequences:
                         try:
+                            print("\n")
+                            logging.info(f"Testing key sequence: {seq['key']}")
+
                             # Get initial state
                             initial_entities = await get_entities_from_global(page)
                             logging.info(
-                                f"Initial state: {len(initial_entities) if initial_entities else 0} entities"
+                                f"Initial state: {initial_entities.get('count', 0) if initial_entities else 0} entities"
                             )
 
                             # Enable slow-mo
@@ -1157,11 +1178,9 @@ async def _run_headless_browser(url: str, timeout: int) -> Dict[str, Any]:
                             await page.wait_for_timeout(300)
 
                             # Get final state for comparison
-                            final_entities = await page.evaluate(
-                                "window.extractEntitiesFromGlobal()"
-                            )
+                            final_entities = await get_entities_from_global(page)
                             logging.info(
-                                f"Final state: {len(final_entities) if final_entities else 0} entities"
+                                f"Final state: {final_entities.get('count', 0) if final_entities else 0} entities"
                             )
 
                         except Exception as seq_err:
@@ -1207,7 +1226,7 @@ async def get_entities_from_global(page):
         """
         window.capturedECS = {
             entities: {},
-            components: new Set(),  // Changed to Set for easier unique component tracking
+            components: {},  
             systems: {}
         };
         
@@ -1352,20 +1371,12 @@ async def check_entities_frozen(page) -> bool:
         snapshots = []
         for i in range(3):  # Take 3 snapshots
             extracted = await get_entities_from_global(page)
-
-            if extracted:
-                logging.info(f"Snapshot {i + 1}: Found {len(extracted)} entities")
-                for entity_id, components in extracted.items():
-                    pos = {
-                        "x": components.get("position", {}).get("x", 0),
-                        "y": components.get("position", {}).get("y", 0),
-                    }
-                    logging.info(f"Entity {entity_id}: pos=({pos['x']}, {pos['y']})")
+            if extracted and extracted.get("found"):
+                logging.info(f"Snapshot {i + 1}: Found {extracted['count']} entities")
+                snapshots.append(extracted.get("entityDetails", {}))
             else:
                 logging.warning(f"Snapshot {i + 1}: No entities found")
-
-            snapshots.append(extracted)
-            await page.wait_for_timeout(100)  # Wait 100ms between snapshots
+            await page.wait_for_timeout(1000)
 
         # Compare snapshots
         if not snapshots[0]:  # No entities found
@@ -1486,10 +1497,15 @@ async def analyze_ecs_structure_with_runtime(
             if comp_name in merged_results["components"]:
                 # Combine static and runtime properties
                 merged_props = set(merged_results["components"][comp_name])
-                merged_props.update(props)
+                # Handle case where props is a boolean
+                if isinstance(props, (list, set)):
+                    merged_props.update(props)
                 merged_results["components"][comp_name] = sorted(list(merged_props))
             else:
-                merged_results["components"][comp_name] = sorted(props)
+                # Handle case where props is a boolean
+                merged_results["components"][comp_name] = (
+                    sorted(list(props)) if isinstance(props, (list, set)) else []
+                )
 
         # Merge entities (prefer runtime entities but keep static ones)
         for entity_name, comps in static_results.get("entities", {}).items():
