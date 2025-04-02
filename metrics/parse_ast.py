@@ -1207,11 +1207,10 @@ async def get_entities_from_global(page):
         """
         window.capturedECS = {
             entities: {},
-            components: {},
+            components: new Set(),  // Changed to Set for easier unique component tracking
             systems: {}
         };
         
-        // Hook to directly extract entities from the global entities variable
         window.extractEntitiesFromGlobal = function() {
             const result = {};
             
@@ -1294,12 +1293,26 @@ async def get_entities_from_global(page):
                     if (entity && typeof entity === 'object') {
                         const entityId = entity.id || entity.name || entity.type || `entity_${index}`;
                         window.capturedECS.entities[entityId] = entity.components || {};
+                        
+                        // Extract component names from the entity
+                        if (entity.components) {
+                            Object.keys(entity.components).forEach(compName => {
+                                window.capturedECS.components[compName] = true;
+                            });
+                        }
                     }
                 });
             } else if (typeof entities === 'object') {
                 Object.entries(entities).forEach(([id, entity]) => {
                     if (entity && typeof entity === 'object') {
                         window.capturedECS.entities[id] = entity.components || {};
+                        
+                        // Extract component names from the entity
+                        if (entity.components) {
+                            Object.keys(entity.components).forEach(compName => {
+                                window.capturedECS.components[compName] = true;
+                            });
+                        }
                     }
                 });
             }
