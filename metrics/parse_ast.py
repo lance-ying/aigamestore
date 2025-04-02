@@ -1139,49 +1139,79 @@ async def _run_headless_browser(url: str, timeout: int) -> Dict[str, Any]:
                         {"key": " ", "duration": 300},
                     ]
 
+                    logging.info("Test Slow-Mo")
+                    # Enable slow-mo
+                    await page.evaluate("window.setSlowMo(true)")
+                    await page.wait_for_timeout(
+                        100
+                    )  # Give time for slow-mo to take effect
+
+                    # Check if entities are frozen
+                    is_frozen = await check_entities_frozen(page)
+                    if not is_frozen:
+                        logging.warning(
+                            f"Entities appear to be moving during slow-mo period"
+                        )
+                    else:
+                        logging.info(f"Entities confirmed frozen during slow-mo")
+
+                    # Disable slow-mo
+                    await page.evaluate("window.setSlowMo(false)")
+                    await page.wait_for_timeout(100)
+
+                    print("\n")
+
                     for seq in key_sequences:
                         try:
-                            print("\n")
                             logging.info(f"Testing key sequence: {seq['key']}")
 
-                            # Get initial state
-                            initial_entities = await get_entities_from_global(page)
-                            logging.info(
-                                f"Initial state: {initial_entities.get('count', 0) if initial_entities else 0} entities"
-                            )
-
-                            # Enable slow-mo
-                            await page.evaluate("window.setSlowMo(true)")
-                            await page.wait_for_timeout(
-                                100
-                            )  # Give time for slow-mo to take effect
-
                             # Press the key
+                            before_entities = await get_entities_from_global(page)
+                            logging.info(
+                                f"Before state: {before_entities.get('count', 0) if before_entities else 0} entities"
+                            )
+                            # Take a screenshot for reference
+                            try:
+                                if not os.path.exists("metrics_results/screenshots"):
+                                    os.makedirs(
+                                        "metrics_results/screenshots", exist_ok=True
+                                    )
+                                await page.screenshot(
+                                    path=f"metrics_results/screenshots/before_{seq['key'] if seq['key'] != ' ' else 'space'}.png"
+                                )
+                                logging.info(f"Before {seq['key']} screenshot saved")
+                            except Exception as ss_err:
+                                logging.warning(f"Failed to save screenshot: {ss_err}")
+
                             await page.keyboard.down(seq["key"])
                             await page.wait_for_timeout(seq["duration"])
+                            await page.keyboard.up(seq["key"])
+                            await page.wait_for_timeout(200)
 
-                            # Check if entities are frozen
-                            is_frozen = await check_entities_frozen(page)
-                            if not is_frozen:
+                            # Take a screenshot for reference
+                            try:
+                                if not os.path.exists("metrics_results/screenshots"):
+                                    os.makedirs(
+                                        "metrics_results/screenshots", exist_ok=True
+                                    )
+                                await page.screenshot(
+                                    path=f"metrics_results/screenshots/after_{seq['key'] if seq['key'] != ' ' else 'space'}.png"
+                                )
+                                logging.info(f"After {seq['key']} screenshot saved")
+                            except Exception as ss_err:
+                                logging.warning(f"Failed to save screenshot: {ss_err}")
+
+                            after_entities = await get_entities_from_global(page)
+                            logging.info(
+                                f"After state: {after_entities.get('count', 0) if after_entities else 0} entities"
+                            )
+                            # check if the key sequence is influencing any entities
+                            if before_entities == after_entities:
                                 logging.warning(
-                                    f"Entities appear to be moving during slow-mo period for key: {seq['key']}"
+                                    f"Key sequence {seq['key']} is not working"
                                 )
                             else:
-                                logging.info(
-                                    f"Entities confirmed frozen during slow-mo for key: {seq['key']}"
-                                )
-
-                            await page.keyboard.up(seq["key"])
-
-                            # Disable slow-mo
-                            await page.evaluate("window.setSlowMo(false)")
-                            await page.wait_for_timeout(300)
-
-                            # Get final state for comparison
-                            final_entities = await get_entities_from_global(page)
-                            logging.info(
-                                f"Final state: {final_entities.get('count', 0) if final_entities else 0} entities"
-                            )
+                                logging.info(f"Key sequence {seq['key']} is working")
 
                         except Exception as seq_err:
                             logging.error(
