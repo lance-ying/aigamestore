@@ -56,7 +56,8 @@ class BaseGameGenerator(ABC):
         """
         Generate instructions on the requirements on output with resources that the model can use and the format of the output based on the config.
         """
-        pass
+        requirements = self.config["requirements"]
+        
     
     @abstractmethod
     def generate_game(self, genre: str, num_players: int) -> Tuple[str, List[Tuple[str, str]], str, str, str]:
