@@ -1,245 +1,294 @@
+#!/usr/bin/env python3
+"""
+Run all available metrics on a game implementation.
+"""
+
 import os
-import argparse
-import json
-import asyncio
 import sys
-from typing import Dict, List, Any, Tuple
+# Add parent directory to path to ensure imports work from both project root and metrics directory
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))  # Add current directory as well
+import json
+import argparse
+import logging
+import asyncio
+from typing import Dict, Any, Optional
 
-# Add the parent directory to path to make imports work when run directly
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+try:
+    # Try relative imports (if running from project root)
+    from metrics.core.ecs_analyzer import analyze_ecs_structure, merge_static_runtime_results, test_game_playability
+    from metrics.core.browser import extract_runtime_ecs_data
+    from metrics.checks.implementation import check_js_implementation
+except ImportError:
+    # Fall back to direct imports (if running from metrics directory)
+    from core.ecs_analyzer import analyze_ecs_structure, merge_static_runtime_results, test_game_playability
+    from core.browser import extract_runtime_ecs_data
+    from checks.implementation import check_js_implementation
 
-# Import from our new module structure
-from metrics.checks.implementation import check_js_implementation
-from metrics.core.ecs_analyzer import analyze_ecs_structure
-from metrics.core.browser import extract_runtime_ecs_data
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 
 
-async def run_metrics_async(game_path: str, disable_browser: bool = False) -> Dict[str, Any]:
+async def run_metrics_async(
+    game_path: str, 
+    output_dir: Optional[str] = None, 
+    record_gameplay: bool = False,
+    recording_duration: int = 30,
+    test_playability: bool = False,
+    playability_duration: int = 15
+) -> Dict[str, Any]:
     """
-    Run all available metrics on the game implementation (async version).
+    Run all available metrics on a game implementation (async version).
     
     Args:
-        game_path: Path to the directory containing the game files
-        disable_browser: Whether to disable headless browser analysis
+        game_path: Path to the game implementation directory
+        output_dir: Directory to store output files like visualizations
+        record_gameplay: Whether to record gameplay with screenshots
+        recording_duration: Duration in seconds to record gameplay
+        test_playability: Whether to run the simple playability test
+        playability_duration: Duration in seconds for playability interaction
         
     Returns:
-        Dictionary with results from all metrics
+        Dictionary with all metrics results
     """
-    if not os.path.isdir(game_path):
-        return {"error": f"Invalid game path: {game_path} is not a directory"}
-    
-    # Create output directory for all metrics
-    output_dir = os.path.join(game_path, "metrics_results")
-    os.makedirs(output_dir, exist_ok=True)
-    
-    results = {}
-    
-    # Run implementation check
-    implementation_success, implementation_results = check_js_implementation(game_path)
-    results["implementation_check"] = {
-        "success": implementation_success,
-        "details": implementation_results
+    if not os.path.exists(game_path):
+        return {"error": f"Game path does not exist: {game_path}"}
+        
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+        
+    results = {
+        "game_path": game_path,
+        "implementation_check": {},
+        "ecs_structure": {},
+        "playability_test": {},
+        "errors": []
     }
     
-    # Run ECS structure analysis
-    ecs_output_dir = os.path.join(output_dir, "ecs_analysis")
-    os.makedirs(ecs_output_dir, exist_ok=True)
-    
-    # First run static analysis
-    static_results = analyze_ecs_structure(game_path, ecs_output_dir)
-    
-    # Get results from browser analysis if not disabled
-    ecs_results = static_results
-    runtime_analysis_success = False
-    
-    if not disable_browser:
-        try:
-            # Run browser-based analysis
-            runtime_results = await extract_runtime_ecs_data(game_path)
+    try:
+        # Run implementation check
+        impl_result = check_js_implementation(game_path)
+        results["implementation_check"] = impl_result
+        print("Implementation check completed")
+        print("--------------------------------")
+        print("Test: ", impl_result[0])
+        print("Details: \n", json.dumps(impl_result[1], indent=2))
+        print("--------------------------------")
+
+        # Run playability test if requested
+        if test_playability:
+            logging.info(f"Running simplified playability test with {playability_duration}s interaction time...")
+            print("\n" + "-"*80)
+            print("PLAYABILITY TEST INSTRUCTIONS:")
+            print("1. The game will load in a headless browser")
+            print("2. The script will first capture the initial ECS state")
+            print(f"3. You will have {playability_duration} seconds to interact with the game")
+            print("4. After the time expires, the script will capture the final state")
+            print("5. The states will be compared to determine if the game is playable")
+            print("-"*80 + "\n")
             
-            # Check if browser analysis was successful
-            if "error" not in runtime_results:
-                # Combine static and runtime results (could be moved to a separate function)
-                ecs_results = merge_static_runtime_results(static_results, runtime_results)
-                runtime_analysis_success = True
+            # Run the playability test
+            playability_result = test_game_playability(game_path, playability_duration)
+            results["playability_test"] = playability_result
+            
+            # Log the result
+            if playability_result.get("playable", False):
+                logging.info("Game appears to be playable - detected ECS state changes")
             else:
-                # Add error to the static results
-                static_results["_meta"]["errors"].append(runtime_results["error"])
-        except Exception as e:
-            static_results["_meta"]["errors"].append(f"Runtime analysis error: {str(e)}")
-    
-    # Consider analysis successful if we found any ECS components
-    ecs_success = (
-        len(ecs_results.get("entities", [])) > 0 or
-        len(ecs_results.get("components", [])) > 0 or
-        len(ecs_results.get("systems", [])) > 0
-    )
-    
-    # Add analysis mode information
-    if "_meta" not in ecs_results:
-        ecs_results["_meta"] = {}
-    
-    if "analysis_modes" not in ecs_results["_meta"]:
-        ecs_results["_meta"]["analysis_modes"] = ["static"]
-        if runtime_analysis_success:
-            ecs_results["_meta"]["analysis_modes"].append("runtime")
-    
-    results["ecs_analysis"] = {
-        "success": ecs_success,
-        "details": ecs_results
-    }
-    
-    # Additional metrics will be added here as they are implemented
-    
+                logging.info(f"Game may not be playable: {playability_result.get('reason', 'No state changes detected')}")
+            
+            # If playability test was successful and we have state data, use it to boost our ECS structure info
+            if playability_result.get("playable", False) and not record_gameplay:
+                # Extract static analysis results
+                _, static_results = analyze_ecs_structure(game_path)
+                
+                # Add entity and component data from playability test
+                if "changes" in playability_result:
+                    entities_data = {}
+                    components_data = {}
+                    
+                    # Process entity changes
+                    for entity_id in playability_result["changes"].get("changed_entities", {}):
+                        entities_data[entity_id] = []
+                        for comp_name in playability_result["changes"]["changed_entities"][entity_id].get("changed_components", {}):
+                            entities_data[entity_id].append(comp_name)
+                            if comp_name not in components_data:
+                                components_data[comp_name] = []
+                                
+                    # Create a minimal ECS structure result
+                    ecs_result = {
+                        "components": components_data,
+                        "entities": entities_data,
+                        "systems": {},
+                        "_meta": {
+                            "analysis_modes": ["playability-test"],
+                            "errors": []
+                        }
+                    }
+                    
+                    # Merge with static results
+                    results["ecs_structure"] = merge_static_runtime_results(static_results, ecs_result)
+                    logging.info(f"ECS structure enriched with playability test data")
+                else:
+                    # Fall back to static analysis only
+                    results["ecs_structure"] = static_results
+        else:
+            # Run full ECS structure analysis (both static and runtime)
+            try:
+                ecs_result = analyze_ecs_structure(
+                    game_path, 
+                    output_dir=output_dir, 
+                    record_gameplay=record_gameplay,
+                    recording_duration=recording_duration
+                )
+                results["ecs_structure"] = ecs_result
+                
+                # Add screenshot info to the main results if available
+                if "_meta" in ecs_result and "screenshots" in ecs_result["_meta"]:
+                    results["screenshots"] = {
+                        "count": ecs_result["_meta"]["screenshot_count"],
+                        "interval": ecs_result["_meta"]["screenshot_interval"],
+                        "paths": ecs_result["_meta"]["screenshots"]
+                    }
+                    logging.info(f"Captured {len(ecs_result['_meta']['screenshots'])} gameplay screenshots")
+                
+                # Add visualization path to results if generated
+                if "visualization_path" in ecs_result:
+                    results["visualization_path"] = ecs_result["visualization_path"]
+            except TimeoutError as te:
+                logging.warning(f"ECS analysis timed out: {te}. Falling back to static analysis only.")
+                # Run just the static analysis as fallback
+                _, static_results = analyze_ecs_structure(game_path)
+                results["ecs_structure"] = static_results
+                results["errors"].append(f"Runtime analysis timed out: {str(te)}")
+            
+        logging.info(f"ECS structure analysis completed with {len(results['ecs_structure'].get('components', {}))} components, {len(results['ecs_structure'].get('entities', {}))} entities")
+        
+        # TODO: Add more metrics as they become available
+        
+    except Exception as e:
+        logging.error(f"Error running metrics: {e}", exc_info=True)
+        results["errors"].append(f"Metrics Error: {str(e)}")
+        
     return results
 
 
-def merge_static_runtime_results(static_results: Dict[str, Any], runtime_results: Dict[str, Any]) -> Dict[str, Any]:
+def run_metrics(
+    game_path: str, 
+    output_dir: Optional[str] = None,
+    record_gameplay: bool = False,
+    recording_duration: int = 30,
+    test_playability: bool = False,
+    playability_duration: int = 15
+) -> Dict[str, Any]:
     """
-    Merge static and runtime analysis results.
+    Run all available metrics on a game implementation (synchronous wrapper).
     
     Args:
-        static_results: Results from static analysis
-        runtime_results: Results from runtime analysis
+        game_path: Path to the game implementation directory
+        output_dir: Directory to store output files like visualizations
+        record_gameplay: Whether to record gameplay with screenshots
+        recording_duration: Duration in seconds to record gameplay
+        test_playability: Whether to run the simple playability test
+        playability_duration: Duration in seconds for playability interaction
         
     Returns:
-        Merged results dictionary
+        Dictionary with all metrics results
     """
-    # Create a new dictionary for merged results
-    merged_results = {
-        "components": {},
-        "entities": {},
-        "systems": {},
-        "_meta": {
-            "component_definitions": static_results.get("_meta", {}).get("component_definitions", []),
-            "entity_definitions": static_results.get("_meta", {}).get("entity_definitions", []),
-            "system_definitions": static_results.get("_meta", {}).get("system_definitions", []),
-            "errors": static_results.get("_meta", {}).get("errors", []) + runtime_results.get("errors", []),
-            "analysis_modes": ["static", "runtime"],
-        },
-    }
-    
-    # Merge components (combine properties)
-    for comp_name, props in static_results.get("components", {}).items():
-        merged_results["components"][comp_name] = list(props)
-
-    for comp_name, props in runtime_results.get("components", {}).items():
-        if comp_name in merged_results["components"]:
-            # Combine static and runtime properties
-            merged_props = set(merged_results["components"][comp_name])
-            # Handle case where props is a boolean
-            if isinstance(props, (list, set)):
-                merged_props.update(props)
-            merged_results["components"][comp_name] = sorted(list(merged_props))
-        else:
-            # Handle case where props is a boolean
-            merged_results["components"][comp_name] = (
-                sorted(list(props)) if isinstance(props, (list, set)) else []
-            )
-
-    # Merge entities (prefer runtime entities but keep static ones)
-    for entity_name, comps in static_results.get("entities", {}).items():
-        merged_results["entities"][entity_name] = sorted(list(comps))
-
-    for entity_name, comps_data in runtime_results.get("entities", {}).items():
-        components_set = set()
-        # Extract component names from runtime data
-        for comp_name in comps_data.keys():
-            components_set.add(comp_name)
-
-        if entity_name in merged_results["entities"]:
-            existing_comps = set(merged_results["entities"][entity_name])
-            existing_comps.update(components_set)
-            merged_results["entities"][entity_name] = sorted(list(existing_comps))
-        else:
-            merged_results["entities"][entity_name] = sorted(list(components_set))
-
-    # Merge systems (combine read/write dependencies)
-    for sys_name, deps in static_results.get("systems", {}).items():
-        merged_results["systems"][sys_name] = {
-            "reads": sorted(list(deps.get("reads", []))),
-            "writes": sorted(list(deps.get("writes", []))),
-            "properties": [],
-        }
-
-    for sys_name, sys_data in runtime_results.get("systems", {}).items():
-        if sys_name in merged_results["systems"]:
-            # Keep existing read/write info from static analysis
-            if "properties" in sys_data:
-                merged_results["systems"][sys_name]["properties"] = sys_data[
-                    "properties"
-                ]
-        else:
-            # For systems only found at runtime, we don't know read/write access
-            merged_results["systems"][sys_name] = {
-                "reads": [],
-                "writes": [],
-                "properties": sys_data.get("properties", []),
-                "runtime_only": True,
-            }
-            
-    # Use visualization from static analysis if it exists
-    if "visualization_path" in static_results:
-        merged_results["visualization_path"] = static_results["visualization_path"]
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
         
-    return merged_results
-
-
-def run_metrics(game_path: str, disable_browser: bool = False) -> Dict[str, Any]:
-    """
-    Synchronous wrapper for run_metrics_async.
-    
-    Args:
-        game_path: Path to the directory containing the game files
-        disable_browser: Whether to disable headless browser analysis
-        
-    Returns:
-        Dictionary with results from all metrics
-    """
-    return asyncio.run(run_metrics_async(game_path, disable_browser))
+    return loop.run_until_complete(
+        run_metrics_async(
+            game_path, 
+            output_dir, 
+            record_gameplay, 
+            recording_duration,
+            test_playability,
+            playability_duration
+        )
+    )
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run all metrics on a game implementation")
+    parser = argparse.ArgumentParser(description="Run metrics on a game implementation")
     parser.add_argument("game_path", help="Path to the game implementation directory")
-    parser.add_argument("--output", help="Path to save the JSON output file", default=None)
-    parser.add_argument("--disable-browser", help="Disable headless browser analysis", action="store_true")
+    parser.add_argument("--output", "-o", help="Output file path for metrics results (JSON)")
+    parser.add_argument("--output-dir", "-d", help="Directory to store output files like visualizations")
+    parser.add_argument("--record", "-r", action="store_true", help="Record gameplay with screenshots every 5 seconds")
+    parser.add_argument("--duration", "-t", type=int, default=30, help="Duration in seconds to record gameplay (default: 30)")
+    parser.add_argument("--playability", "-p", action="store_true", default=True, help="Run simplified playability test (default: enabled)")
+    parser.add_argument("--play-duration", type=int, default=15, help="Duration in seconds for playability test interaction (default: 15)")
+    parser.add_argument("--no-playability", action="store_true", help="Disable the playability test")
+    
     args = parser.parse_args()
     
-    results = run_metrics(args.game_path, args.disable_browser)
+    # Normalize the game path
+    game_path = args.game_path
+    # If the path is relative and we're running from the metrics directory
+    # and the path doesn't exist as-is, try to resolve it from parent directory
+    if not os.path.isabs(game_path) and not os.path.exists(game_path):
+        # Check if we're being run from the metrics directory
+        if os.path.basename(os.getcwd()) == "metrics":
+            # Try to resolve from parent directory
+            parent_dir_path = os.path.join("..", game_path)
+            if os.path.exists(parent_dir_path):
+                game_path = os.path.abspath(parent_dir_path)
+                logging.info(f"Resolved game path to: {game_path}")
     
-    # Print results summary
-    print("\n=== Metrics Results ===")
-    for metric_name, metric_results in results.items():
-        if "success" in metric_results:
-            status = "PASSED" if metric_results["success"] else "FAILED"
-            print(f"{metric_name}: {status}")
+    # If --no-playability is specified, disable playability testing
+    if args.no_playability:
+        args.playability = False
     
-    # Print ECS analysis summary if available
-    if "ecs_analysis" in results and "details" in results["ecs_analysis"]:
-        ecs = results["ecs_analysis"]["details"]
-        print("\nECS Analysis:")
-        print(f"- Found {len(ecs.get('entities', []))} entities")
-        print(f"- Found {len(ecs.get('components', []))} components")
-        print(f"- Found {len(ecs.get('systems', []))} systems")
-        
-        # Print analysis modes
-        if "_meta" in ecs and "analysis_modes" in ecs["_meta"]:
-            modes = ", ".join(ecs["_meta"]["analysis_modes"])
-            print(f"- Analysis modes: {modes}")
-        
-        if "visualization_path" in ecs:
-            print(f"\nECS visualization: {ecs['visualization_path']}")
+    # Run the metrics
+    results = run_metrics(
+        game_path, 
+        args.output_dir,
+        record_gameplay=args.record,
+        recording_duration=args.duration,
+        test_playability=args.playability,
+        playability_duration=args.play_duration
+    )
     
-    # Save to file if requested
+    # Print summary
+    print("\n--- Metrics Results Summary ---")
+    print(f"ECS Structure: {len(results.get('ecs_structure', {}).get('components', {}))} components, {len(results.get('ecs_structure', {}).get('entities', {}))} entities")
+    
+    if "playability_test" in results and results["playability_test"]:
+        print(f"Playability Test: Game appears to be playable: {results['playability_test'].get('playable', False)}")
+        if results['playability_test'].get('playable', False):
+            changes = results['playability_test'].get('changes', {})
+            if changes.get('new_entities'):
+                print(f"  - {len(changes['new_entities'])} new entities appeared")
+            if changes.get('removed_entities'):
+                print(f"  - {len(changes['removed_entities'])} entities were removed")
+            if changes.get('changed_entities'):
+                print(f"  - {len(changes['changed_entities'])} entities changed state")
+        else:
+            print(f"  - Reason: {results['playability_test'].get('reason', 'No state changes detected')}")
+    
+    if "screenshots" in results:
+        print(f"Gameplay Screenshots: {results['screenshots']['count']} images captured (every {results['screenshots']['interval']}s)")
+    
+    if "errors" in results and results["errors"]:
+        print(f"Errors: {len(results['errors'])}")
+        for error in results["errors"]:
+            print(f"  - {error}")
+    
+    # Save to file if output path specified
     if args.output:
-        with open(args.output, 'w') as f:
-            json.dump(results, f, indent=2)
-        print(f"\nDetailed results saved to {args.output}")
-    else:
-        print("\nDetailed results:")
-        print(json.dumps(results, indent=2))
-
-
+        try:
+            with open(args.output, "w") as f:
+                json.dump(results, f, indent=2)
+            print(f"\nResults saved to: {args.output}")
+        except Exception as e:
+            print(f"Error saving results: {e}")
+    
+    
 if __name__ == "__main__":
     main()
