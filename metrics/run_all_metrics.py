@@ -8,14 +8,10 @@ from typing import Dict, List, Any, Tuple
 # Add the parent directory to path to make imports work when run directly
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-try:
-    # For when run as a module
-    from metrics.implementation_check import check_js_implementation
-    from metrics.parse_ast import analyze_ecs_structure, analyze_ecs_structure_with_runtime
-except ImportError:
-    # For when run directly
-    from implementation_check import check_js_implementation
-    from parse_ast import analyze_ecs_structure, analyze_ecs_structure_with_runtime
+# Import from our new module structure
+from metrics.checks.implementation import check_js_implementation
+from metrics.core.ecs_analyzer import analyze_ecs_structure
+from metrics.core.browser import extract_runtime_ecs_data
 
 
 async def run_metrics_async(game_path: str, disable_browser: bool = False) -> Dict[str, Any]:
@@ -45,16 +41,32 @@ async def run_metrics_async(game_path: str, disable_browser: bool = False) -> Di
         "details": implementation_results
     }
     
-    # Run ECS structure analysis (with runtime analysis if enabled)
+    # Run ECS structure analysis
     ecs_output_dir = os.path.join(output_dir, "ecs_analysis")
     os.makedirs(ecs_output_dir, exist_ok=True)
     
-    # Use combined static and runtime analysis
-    ecs_results = await analyze_ecs_structure_with_runtime(
-        game_path, 
-        ecs_output_dir,
-        run_browser=not disable_browser
-    )
+    # First run static analysis
+    static_results = analyze_ecs_structure(game_path, ecs_output_dir)
+    
+    # Get results from browser analysis if not disabled
+    ecs_results = static_results
+    runtime_analysis_success = False
+    
+    if not disable_browser:
+        try:
+            # Run browser-based analysis
+            runtime_results = await extract_runtime_ecs_data(game_path)
+            
+            # Check if browser analysis was successful
+            if "error" not in runtime_results:
+                # Combine static and runtime results (could be moved to a separate function)
+                ecs_results = merge_static_runtime_results(static_results, runtime_results)
+                runtime_analysis_success = True
+            else:
+                # Add error to the static results
+                static_results["_meta"]["errors"].append(runtime_results["error"])
+        except Exception as e:
+            static_results["_meta"]["errors"].append(f"Runtime analysis error: {str(e)}")
     
     # Consider analysis successful if we found any ECS components
     ecs_success = (
@@ -62,6 +74,15 @@ async def run_metrics_async(game_path: str, disable_browser: bool = False) -> Di
         len(ecs_results.get("components", [])) > 0 or
         len(ecs_results.get("systems", [])) > 0
     )
+    
+    # Add analysis mode information
+    if "_meta" not in ecs_results:
+        ecs_results["_meta"] = {}
+    
+    if "analysis_modes" not in ecs_results["_meta"]:
+        ecs_results["_meta"]["analysis_modes"] = ["static"]
+        if runtime_analysis_success:
+            ecs_results["_meta"]["analysis_modes"].append("runtime")
     
     results["ecs_analysis"] = {
         "success": ecs_success,
@@ -71,6 +92,97 @@ async def run_metrics_async(game_path: str, disable_browser: bool = False) -> Di
     # Additional metrics will be added here as they are implemented
     
     return results
+
+
+def merge_static_runtime_results(static_results: Dict[str, Any], runtime_results: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Merge static and runtime analysis results.
+    
+    Args:
+        static_results: Results from static analysis
+        runtime_results: Results from runtime analysis
+        
+    Returns:
+        Merged results dictionary
+    """
+    # Create a new dictionary for merged results
+    merged_results = {
+        "components": {},
+        "entities": {},
+        "systems": {},
+        "_meta": {
+            "component_definitions": static_results.get("_meta", {}).get("component_definitions", []),
+            "entity_definitions": static_results.get("_meta", {}).get("entity_definitions", []),
+            "system_definitions": static_results.get("_meta", {}).get("system_definitions", []),
+            "errors": static_results.get("_meta", {}).get("errors", []) + runtime_results.get("errors", []),
+            "analysis_modes": ["static", "runtime"],
+        },
+    }
+    
+    # Merge components (combine properties)
+    for comp_name, props in static_results.get("components", {}).items():
+        merged_results["components"][comp_name] = list(props)
+
+    for comp_name, props in runtime_results.get("components", {}).items():
+        if comp_name in merged_results["components"]:
+            # Combine static and runtime properties
+            merged_props = set(merged_results["components"][comp_name])
+            # Handle case where props is a boolean
+            if isinstance(props, (list, set)):
+                merged_props.update(props)
+            merged_results["components"][comp_name] = sorted(list(merged_props))
+        else:
+            # Handle case where props is a boolean
+            merged_results["components"][comp_name] = (
+                sorted(list(props)) if isinstance(props, (list, set)) else []
+            )
+
+    # Merge entities (prefer runtime entities but keep static ones)
+    for entity_name, comps in static_results.get("entities", {}).items():
+        merged_results["entities"][entity_name] = sorted(list(comps))
+
+    for entity_name, comps_data in runtime_results.get("entities", {}).items():
+        components_set = set()
+        # Extract component names from runtime data
+        for comp_name in comps_data.keys():
+            components_set.add(comp_name)
+
+        if entity_name in merged_results["entities"]:
+            existing_comps = set(merged_results["entities"][entity_name])
+            existing_comps.update(components_set)
+            merged_results["entities"][entity_name] = sorted(list(existing_comps))
+        else:
+            merged_results["entities"][entity_name] = sorted(list(components_set))
+
+    # Merge systems (combine read/write dependencies)
+    for sys_name, deps in static_results.get("systems", {}).items():
+        merged_results["systems"][sys_name] = {
+            "reads": sorted(list(deps.get("reads", []))),
+            "writes": sorted(list(deps.get("writes", []))),
+            "properties": [],
+        }
+
+    for sys_name, sys_data in runtime_results.get("systems", {}).items():
+        if sys_name in merged_results["systems"]:
+            # Keep existing read/write info from static analysis
+            if "properties" in sys_data:
+                merged_results["systems"][sys_name]["properties"] = sys_data[
+                    "properties"
+                ]
+        else:
+            # For systems only found at runtime, we don't know read/write access
+            merged_results["systems"][sys_name] = {
+                "reads": [],
+                "writes": [],
+                "properties": sys_data.get("properties", []),
+                "runtime_only": True,
+            }
+            
+    # Use visualization from static analysis if it exists
+    if "visualization_path" in static_results:
+        merged_results["visualization_path"] = static_results["visualization_path"]
+        
+    return merged_results
 
 
 def run_metrics(game_path: str, disable_browser: bool = False) -> Dict[str, Any]:

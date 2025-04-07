@@ -52,12 +52,33 @@ class BaseGameGenerator(ABC):
         pass
 
     @abstractmethod
-    def generate_instructions():
+    def generate_instructions(self):
         """
         Generate instructions on the requirements on output with resources that the model can use and the format of the output based on the config.
         """
-        requirements = self.config["requirements"]
+        self.generate_default_instructions()
+
+    def generate_default_instructions(self):
+        """
+        Generate default instructions on the requirements on output with resources that the model can use and the format of the output based on the config.
+        """
+        requirements = self.config.get("requirements", {})
+        allowed_libraries = requirements.get("allowed_libraries", {"p5.js": "https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"})
         
+        instructions = "Your generated game should follow these requirements:\n"
+        
+        if allowed_libraries:
+            instructions += "- You can use these libraries:\n"
+            for lib, url in allowed_libraries.items():
+                instructions += f"  * {lib}: {url}\n"
+        
+        if not requirements.get("audio", False):
+            instructions += "- Do not use audio in the game\n"
+            
+        if requirements.get("start_end_screen", True):
+            instructions += "- Include a start screen and a game over screen\n"
+            
+        return instructions
     
     @abstractmethod
     def generate_game(self, genre: str, num_players: int) -> Tuple[str, List[Tuple[str, str]], str, str, str]:
