@@ -23,6 +23,8 @@ class SimplePromptGen(BaseGameGenerator):
     Simple game generator that uses a single-shot prompt to generate games
     based on the approach in generate_game_singleshot.py
     """
+
+    method_name = "simple_prompt"
     
     def __init__(self, config_path: str = "config/gamegen/base_prompt.yaml", 
                  model_name: str = "openai:o3-mini"):

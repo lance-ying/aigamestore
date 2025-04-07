@@ -15,6 +15,8 @@ class CharacterDrivenGameGenerator(BaseGameGenerator):
     improving their own mechanics in the game.
     """
 
+    method_name = "character_driven"
+
     def __init__(self, config_path: str = "config/gamegen/character_driven_prompt.yaml"):
         """
         Initialize the character-driven game generator
