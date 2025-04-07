@@ -16,7 +16,12 @@ from typing import Dict, Any, Optional
 
 try:
     # Try relative imports (if running from project root)
-    from metrics.core.ecs_analyzer import analyze_ecs_structure, merge_static_runtime_results, test_game_playability
+    from metrics.core.ecs_analyzer import (
+        analyze_ecs_structure,
+        merge_static_runtime_results,
+        test_game_playability,
+        test_game_playability_async,
+    )
     from metrics.core.browser import extract_runtime_ecs_data
     from metrics.checks.implementation import check_js_implementation
 except ImportError:
@@ -88,11 +93,11 @@ async def run_metrics_async(
             print("4. After the time expires, the script will capture the final state")
             print("5. The states will be compared to determine if the game is playable")
             print("-"*80 + "\n")
-            
+
             # Run the playability test
-            playability_result = test_game_playability(game_path, playability_duration)
+            playability_result = await test_game_playability_async(game_path, playability_duration)
             results["playability_test"] = playability_result
-            
+
             # Log the result
             if playability_result.get("playable", False):
                 logging.info("Game appears to be playable - detected ECS state changes")
