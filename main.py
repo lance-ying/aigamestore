@@ -2,6 +2,9 @@ import os
 import argparse
 from pathlib import Path
 from game_generators.conv_gamegen import ConversationGameGen
+from game_generators.simple_prompt_gamegen import SimplePromptGen
+from game_generators.freeform_conv_gamegen import FreeFormConversationGameGen
+from game_generators.character_driven_gamegen import CharacterDrivenGameGenerator
 
 VALID_GENRES = [
     "action",
@@ -16,10 +19,22 @@ VALID_GENRES = [
     "adventure",
 ]
 
+VALID_METHODS = {
+    "simple_prompt": SimplePromptGen,
+    "conversation": ConversationGameGen,
+    "freeform_conversation": FreeFormConversationGameGen,
+    "character_driven": CharacterDrivenGameGenerator,
+}
+
 
 def parse_args():
-    parser = argparse.ArgumentParser(
-        description="Generate a game using conversational AI"
+    parser = argparse.ArgumentParser(description="Generate a game using AI")
+    parser.add_argument(
+        "--method",
+        type=str,
+        default="conversation",
+        choices=list(VALID_METHODS.keys()),
+        help="Generation method to use (simple, conversation, freeform, or character)",
     )
     parser.add_argument(
         "--model",
@@ -40,7 +55,7 @@ def parse_args():
     parser.add_argument(
         "--output-dir",
         type=str,
-        default="generated_games",
+        default="games",
         help="Output directory for generated games",
     )
     parser.add_argument(
@@ -60,14 +75,16 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
 
     try:
+        # Get the generator class based on method
+        GeneratorClass = VALID_METHODS[args.method]
+
         # Initialize the generator
-        generator = ConversationGameGen(
-            config_path=args.config_path, model_name=args.model
-        )
+        generator = GeneratorClass(config_path=args.config_path, model_name=args.model)
 
         print(f"\nGenerating {args.genre} game with {args.num_players} players...")
+        print(f"Using method: {args.method}")
         print(f"Using model: {args.model}")
-        print("\nStarting conversation phase...")
+        print("\nStarting generation process...")
 
         # Generate the game
         html_code, js_files, title, description, full_response = (
