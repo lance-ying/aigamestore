@@ -3,7 +3,7 @@ import argparse
 from pathlib import Path
 from game_generators.conv_gamegen import ConversationGameGen
 from game_generators.simple_prompt_gamegen import SimplePromptGen
-from game_generators.freeform_conv_gamegen import FreeFormConversationGameGen
+from game_generators.judge_conv_gamegen import JudgeConvGameGen
 from game_generators.character_driven_gamegen import CharacterDrivenGameGenerator
 
 VALID_GENRES = [
@@ -22,7 +22,7 @@ VALID_GENRES = [
 VALID_METHODS = {
     "simple_prompt": SimplePromptGen,
     "conversation": ConversationGameGen,
-    "freeform_conversation": FreeFormConversationGameGen,
+    "judge_conversation": JudgeConvGameGen,
     "character_driven": CharacterDrivenGameGenerator,
 }
 

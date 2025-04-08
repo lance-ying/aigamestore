@@ -19,6 +19,8 @@ try:
 except ImportError:
     genai = None
 
+from game_generators.utils import GREEN, YELLOW, RESET
+
 
 class ConversationGameGen(BaseGameGenerator):
     """
@@ -307,10 +309,6 @@ Generated Code:
         Returns:
             dict containing game plan details
         """
-        # ANSI color codes
-        GREEN = "\033[92m"
-        YELLOW = "\033[93m"
-        RESET = "\033[0m"
 
         initial_prompt = f"""Hey there! Let's kick off a fun brainstorming session for creating an awesome {genre} game for {num_players} players.
 Imagine some cool, unexpected mechanics that could make the game not just engaging, but really fun. 
