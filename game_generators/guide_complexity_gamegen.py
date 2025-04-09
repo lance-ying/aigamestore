@@ -22,13 +22,13 @@ except ImportError:
 from game_generators.utils import GREEN, YELLOW, RESET
 
 
-class ConversationGameGen(BaseGameGenerator):
+class GuideComplexityGameGen(BaseGameGenerator):
     """
     Simple game generator that uses a single-shot prompt to generate games
     based on the approach in generate_game_singleshot.py
     """
 
-    method_name = "conversation"
+    method_name = "guide_complexity"
 
     def __init__(
         self,
