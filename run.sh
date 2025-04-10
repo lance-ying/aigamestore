@@ -2,23 +2,23 @@
 
 # Define arrays
 VALID_GENRES=(
-    # "action"
+    "action"
     "arcade"
-    # "platformer"
-    # "sports"
-    # "stealth"
-    # "strategy"
-    # "puzzle"
+    "platformer"
+    "sports"
+    "stealth"
+    "strategy"
+    "puzzle"
     "shooting"
-    # "racing"
-    # "adventure"
+    "racing"
+    "adventure"
 )
 
 VALID_METHODS=(
     # "simple_prompt"
-    # "guide_complexity"
+    "guide_complexity"
     "conversation"
-    # "judge_conversation"
+    "judge_conversation"
     # "character_driven"
 )
 
@@ -30,7 +30,7 @@ NUM_PLAYERS=(
     # 5
 )
 
-NUM_GAMES_PER_GENRE=5
+NUM_GAMES_PER_GENRE=3
 
 # Loop through all combinations
 for method in "${VALID_METHODS[@]}"; do

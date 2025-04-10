@@ -709,7 +709,7 @@ Keep the tone enthusiastic but make sure all important technical details are inc
             library_info += f"- {lib}: {url}\n"
 
         # Create system message with implementation requirements
-        system_message = f"""You are a game developer who creates p5.js games. Follow these implementation requirements:
+        system_message = f"""You are a game developer who creates p5.js games with the Entity-Component-System (ECS) architecture. Follow these implementation requirements:
 {control_info}
 {library_info}
 - The game must be playable on a basic HTML webpage
@@ -719,7 +719,12 @@ Keep the tone enthusiastic but make sure all important technical details are inc
 - Canvas size should be 800x600 pixels
 - All code must be provided in properly formatted markdown code blocks
 - HTML code must be wrapped in ```html tags
-- JavaScript code must be wrapped in ```javascript tags"""
+- JavaScript code must be wrapped in ```javascript tags
+
+The JavaScript code should contain the complete game implementation following the plan and requirements above.
+
+The game should be implemented using the Entity-Component-System (ECS) architecture.
+"""
 
         # Create user message with game details
         user_message = f"""Generate a p5.js game based on this creative design:
@@ -738,7 +743,7 @@ Please output your code in exactly two Markdown code blocks:
 
 2. Second block of JavaScript code based on the plan and given requirements:
 ```javascript
-// Game implementation here
+// Game implementation here, using Entity-Component-System (ECS) architecture
 ```
 """
         return {"system": system_message, "user": user_message}

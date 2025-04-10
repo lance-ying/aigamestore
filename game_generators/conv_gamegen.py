@@ -591,8 +591,8 @@ Instructions: [Clear steps for playing]
         align-items: flex-start;
       }}
       canvas {{
-        width: 800px !important;
-        height: 600px !important;
+        width: 600px !important;
+        height: 400px !important;
         display: block;
       }}
     </style>
@@ -623,45 +623,10 @@ Key handling must use these exact values:
    SHIFT, SPACE
 4. You could choose to use all of the keys or SOME of them.
 
-Required key handling structure:
-```javascript
-function keyPressed() {
-  if (gameState === "start") {
-    // Start game with any valid key
-    gameState = "playing";
-    initGame();
-    return;
-  }
-  
-  if (gameState === "playing") {
-    // Handle movement keys with proper state tracking
-    switch(keyCode) {
-      case LEFT_ARROW: playerKeys.left = true; break;
-      case 'w': playerKeys.left = true; break;
-      case RIGHT_ARROW: playerKeys.right = true; break;
-      case 'd': playerKeys.right = true; break;
-      // ... other keys
-    }
-    
-    // Handle special actions
-    if (keyCode === SPACE) {
-      // Special action logic
-    }
-  }
-}
-
-function keyReleased() {
-  if (gameState === "playing") {
-    // Reset key states when released
-    switch(keyCode) {
-      case LEFT_ARROW: playerKeys.left = false; break;
-      // ... other keys
-    }
-  }
-}
-```
 
 CRITICAL REQUIREMENTS:
+0. Use Entity-Component-System (ECS) architecture for the game
+
 1. Key Handling:
    - Track key states for smooth movement (pressed/released)
    - Handle multiple simultaneous key presses
@@ -678,18 +643,7 @@ CRITICAL REQUIREMENTS:
    - Maintain proper game states (start, playing, gameover)
    - Only process relevant keys in each state
    - Ensure smooth state transitions
-
-4. Movement Implementation:
-   - Responsive, smooth character movement
-   - Proper boundary checking
-   - Consistent movement speed
-   - No input lag or stuttering
-
-5. Testing Requirements:
-   - Test all control combinations
-   - Verify smooth movement in all directions
-   - Check state transitions
-   - Ensure no key conflicts"""
+"""
 
         return f"""Generate a p5.js game based on the following detailed plan:
 
@@ -732,7 +686,12 @@ Quality Control Checklist:
 Please provide your code in two markdown code blocks with specific language tags:
 
 1. First block should be HTML code with ```html tag
-2. Second block should be JavaScript code with ```javascript tag"""
+2. Second block should be JavaScript code with ```javascript tag
+
+The JavaScript code should contain the complete game implementation following the plan and requirements above.
+
+The game should be implemented using the Entity-Component-System (ECS) architecture.
+"""
 
     def _call_model_api(self, prompt: str, system_prompt: str = None) -> str:
         """

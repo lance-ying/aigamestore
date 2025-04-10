@@ -451,6 +451,7 @@ Technical Requirements:
 - Include start and game over screens with clear instructions
 - No audio should be used
 - The game should be visually appealing
+- Use Entity-Component-System (ECS) architecture for the game
 
 Game Features (from configuration):
 - Start screen: {self.config.get('constraints', {}).get('features', {}).get('require_start_screen', True)}
@@ -466,11 +467,14 @@ Please provide your code in two markdown code blocks with specific language tags
 
 2. Second block should be JavaScript code with ```javascript tag:
 ```javascript
-// Game implementation here
+// Game implementation here, using Entity-Component-System (ECS) architecture
 ```
 
 Make sure each code block is properly formatted with the correct language tag and triple backticks.
-The JavaScript code should contain the complete game implementation following the plan and requirements above."""
+The JavaScript code should contain the complete game implementation following the plan and requirements above.
+
+The game should be implemented using the Entity-Component-System (ECS) architecture.
+"""
 
     def _call_model_api(self, prompt: str) -> str:
         """
