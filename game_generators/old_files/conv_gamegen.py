@@ -22,10 +22,11 @@ except ImportError:
 from game_generators.utils import GREEN, YELLOW, RESET
 
 
-class ConversationGameGen(BaseGameGenerator):
+class ConvGameGen(BaseGameGenerator):
     """
-    Simple game generator that uses a single-shot prompt to generate games
-    based on the approach in generate_game_singleshot.py
+    Conversational game generator that uses two agents:
+    1. Game Generator - Creates games following instructions and requirements
+    2. Commenter - Suggests improvements and refinements
     """
 
     method_name = "conversation"
@@ -48,6 +49,43 @@ class ConversationGameGen(BaseGameGenerator):
         self.model_provider, self.model = self._parse_model_name(model_name)
         # Initialize appropriate client based on model provider
         self.client = self._initialize_client()
+
+        # Add configuration for discussion rounds
+        self.max_discussion_rounds = 2
+
+        # Add fixed actions
+        self.actions = "arrow keys, shift, space bar, w, a, s, d"
+
+        # Update generator system prompt to include action constraints
+        self.generator_system_prompt = """You are a creative and innovative game generator focused on creating unique p5.js games.
+Your role is to:
+1. Create novel and unexpected game mechanics that surprise players
+2. Think beyond traditional game conventions while using the fixed action space:
+   - Arrow keys (LEFT, UP, RIGHT, DOWN)
+   - WASD keys
+   - Space bar
+   - Shift key
+3. Combine mechanics in interesting and unique ways within these controls
+4. Follow technical requirements while being creative
+5. Write clean, well-documented code
+6. Ensure all game mechanics are clearly explained
+7. Maintain visual appeal while keeping implementation practical
+8. Always provide a clear title and game instructions for players"""
+
+        # Update commenter system prompt to focus on innovation
+        self.commenter_system_prompt = """You are an experienced game design critic with a focus on innovation.
+Your role is to:
+1. Analyze proposed game designs and push for more creative solutions
+2. Suggest specific improvements for:
+   - Novelty: Look for opportunities to add unexpected twists
+   - Innovation: Identify ways to combine mechanics in unique ways
+   - Player engagement: Focus on surprising and delightful interactions
+   - Game mechanics: Challenge conventional approaches
+   - Visual appeal: Suggest unique visual elements
+   - User experience: Balance innovation with usability
+3. Keep suggestions practical within p5.js constraints
+4. Focus on constructive feedback that enhances uniqueness
+5. Question traditional genre conventions and suggest creative alternatives"""
 
     def _parse_model_name(self, model_name: str) -> Tuple[str, str]:
         """
@@ -105,10 +143,11 @@ class ConversationGameGen(BaseGameGenerator):
         actions = "arrow keys, shift, space bar, w, a, s, d"
 
         template = (
-            "Generate a interesting engaging continual {genre} game with intelligent{num_agents} agents using p5.js. "
+            "Generate a interesting engaging continual {genre} game with intelligent{num_agents} agents using p5.js. All agents should be controllable by the game itself, as the player is only controlling one character."
             "The game must be playable on a basic HTML webpage.\n"
             "Game details:\n"
             "- Genre: {genre}\n"
+            "- Number of players: {num_players}\n"
             "- Total number of agents: {num_agents}\n"
             "- Number of controllable agents: 1\n"
             "- Actions available for each controllable agent: {actions}\n"
@@ -127,7 +166,10 @@ class ConversationGameGen(BaseGameGenerator):
         )
 
         return prompt_template.format(
-            genre=genre, num_agents=num_players, actions=actions
+            genre=genre,
+            num_players=num_players,
+            num_agents=num_players - 1,
+            actions=actions,
         )
 
     def generate_instructions(self) -> str:
@@ -199,7 +241,8 @@ class ConversationGameGen(BaseGameGenerator):
         # Get title and description from the planning phase
         game_title = plan.get("title", f"A {genre} Game")
         description = plan.get(
-            "description", f"A {genre} game with {num_players} agents"
+            "description",
+            f"A {genre} game with 1 player and {num_players - 1} intelligent agents",
         )
 
         # Combine all responses for the conversation log
@@ -276,9 +319,12 @@ Generated Code:
                 f.write(content)
                 print(f"Saved {filename}")
 
-        # Save description
+        # Create a formatted game summary
+        game_summary = self._create_game_summary(title, description, genre, num_players)
+
+        # Save description with enhanced format
         with open(game_dir / "description.txt", "w", encoding="utf-8") as f:
-            f.write(f"Title: {title}\n\n{description}")
+            f.write(game_summary)
             print(f"Saved description.txt")
 
         # Save conversation log
@@ -286,14 +332,17 @@ Generated Code:
             f.write(full_response)
             print(f"Saved conversation_log.txt")
 
-        # Save metadata
+        # Enhanced metadata with more game details
         metadata = {
             "game_name": title,
             "game_description": description,
-            "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "model": f"{self.model_provider}:{self.model}",
+            "game_summary": game_summary,
             "genre": genre,
             "num_players": num_players,
+            "num_autonomous_agents": num_players - 1,
+            "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "model": f"{self.model_provider}:{self.model}",
+            "controls": self.actions,
         }
 
         with open(game_dir / "metadata.json", "w", encoding="utf-8") as f:
@@ -302,58 +351,174 @@ Generated Code:
 
         print(f"\nAll files saved in: {game_dir}")
 
+    def _create_game_summary(
+        self, title: str, description: str, genre: str, num_players: int
+    ) -> str:
+        """
+        Create a user-friendly game summary focusing on gameplay rather than implementation
+        """
+        # Clean up the description by removing technical details
+        cleaned_description = re.sub(
+            r"using p5\.js|implementation|technical|function|variable|code",
+            "",
+            description,
+            flags=re.IGNORECASE,
+        )
+        cleaned_description = re.sub(
+            r"\s+", " ", cleaned_description
+        ).strip()  # Clean up extra spaces
+
+        summary_parts = [
+            f"Game Title: {title}",
+            f"\nGame Type: {genre.capitalize()} game",
+            f"\nDescription:\n{cleaned_description}",
+            "\nControls:",
+            "- Arrow Keys or WASD: Movement",
+            "- Space Bar: Action/Jump",
+            "- Shift Key: Special Action",
+            "\nHow to Play:",
+        ]
+
+        # Extract and clean up instructions from description
+        instructions_match = re.search(
+            r"instructions:?\s*(.*?)(?=\n\n|\n*$)",
+            description,
+            re.IGNORECASE | re.DOTALL,
+        )
+        if instructions_match:
+            # Clean up instructions to focus on gameplay
+            instructions = instructions_match.group(1).strip()
+            instructions = re.sub(
+                r"using p5\.js|implementation|technical|function|variable|code",
+                "",
+                instructions,
+                flags=re.IGNORECASE,
+            )
+            instructions = re.sub(r"\s+", " ", instructions).strip()
+            summary_parts.append(instructions)
+        else:
+            # Provide basic gameplay instructions
+            summary_parts.append(
+                "1. Use movement controls to navigate\n"
+                "2. Press Space to perform main actions\n"
+                "3. Use Shift for special abilities\n"
+                "4. Follow on-screen prompts during gameplay"
+            )
+
+        return "\n".join(summary_parts)
+
     def _conversational_planning(self, genre: str, num_players: int) -> dict:
         """
-        Conduct a conversation to plan the game design
-
-        Returns:
-            dict containing game plan details
+        Enhanced conversational planning with multiple rounds of discussion
         """
+        # Calculate number of AI-controlled agents
+        num_ai_agents = max(0, num_players - 1)
 
-        initial_prompt = f"""Hey there! Let's kick off a fun brainstorming session for creating an awesome {genre} game for {num_players} players.
-Imagine some cool, unexpected mechanics that could make the game not just engaging, but really fun. 
-What unique ideas do you have to shake up the usual {genre} experience?"""
+        # Update initial prompt to be explicit about single player + AI agents
+        initial_prompt = f"""Let's create an innovative single-player **{genre}** game with {num_ai_agents} AI-controlled agents.
 
-        print(f"\n{GREEN}[Planning Phase - Brainstorm Kickoff]{RESET}")
-        print(f"{GREEN}{initial_prompt}{RESET}")
-        mechanics_response = self._call_model_api(initial_prompt)
-        print(f"{YELLOW}{mechanics_response}{RESET}")
+Game Structure:
+- One player-controlled character using these controls:
+  - {self.actions}
+- {num_ai_agents} computer-controlled agents that interact with the player
+- Each AI agent should have its own behavior and purpose
 
-        complexity_prompt = f"""Cool ideas so far:
-{mechanics_response}
+Please propose:
+1. A catchy game title
+2. Core game concept focusing on player interaction with AI agents
+3. Novel mechanics for the player character
+4. Creative objectives involving the AI agents
+5. Clear player instructions
+6. At least two unique gameplay elements
+7. Innovative ways to use the control scheme
 
-Now, let's chat more casually—how might we balance these fun twists so the game stays both exciting and easy to pick up?
-What surprising interactions or playful challenges could naturally emerge from these ideas?"""
+Think about:
+- How can the AI agents create interesting challenges?
+- What unique interactions can occur between player and AI agents?
+- How can we make the single player controls feel responsive and fun?"""
 
-        print(f"\n{GREEN}[Planning Phase - Fun Twists Discussion]{RESET}")
-        print(f"{GREEN}{complexity_prompt}{RESET}")
-        complexity_response = self._call_model_api(complexity_prompt)
-        print(f"{YELLOW}{complexity_response}{RESET}")
+        print(f"\n{GREEN}[Generator - Initial Proposal (Round 1)]{RESET}")
+        current_proposal = self._call_model_api(
+            initial_prompt, self.generator_system_prompt
+        )
+        print(f"{YELLOW}{current_proposal}{RESET}")
 
-        final_prompt = f"""Alright, based on our laid-back brainstorm:
-{mechanics_response}
-{complexity_response}
+        final_proposal = current_proposal
+        improvements_history = []
 
-Now, let's wrap it up with a final game plan that includes:
-1. A catchy, fun title for the game
-2. A brief, creative description of what makes the gameplay enjoyable
-3. The key mechanics and how they interact in a playful way
-4. Conditions that define winning and losing in a fun context
-5. How the challenge gradually ramps up to keep players engaged
+        # Multiple rounds of discussion
+        for round_num in range(self.max_discussion_rounds):
+            # Update commenter prompt
+            commenter_prompt = f"""Review this game proposal:
+{current_proposal}
 
-Share your final, inspiring game plan!"""
+How can we make this game more innovative and unique? Focus on:
+1. Unexpected gameplay mechanics
+2. Novel twists on familiar elements
+3. Surprising player interactions
+4. Creative combinations of mechanics
+5. Unique visual elements
+6. Innovative progression systems
 
-        print(f"\n{GREEN}[Planning Phase - Final Brainstorm]{RESET}")
-        print(f"{GREEN}{final_prompt}{RESET}")
-        final_response = self._call_model_api(final_prompt)
-        print(f"{YELLOW}{final_response}{RESET}")
+Consider:
+- What conventional elements could be replaced with more creative alternatives?
+- How can we surprise players while maintaining engaging gameplay?
+- What unique mechanics could make this game memorable?"""
 
-        # Extract plan details from the final response
+            print(f"\n{GREEN}[Commenter - Feedback (Round {round_num + 1})]{RESET}")
+            commenter_response = self._call_model_api(
+                commenter_prompt, self.commenter_system_prompt
+            )
+            print(f"{YELLOW}{commenter_response}{RESET}")
+
+            improvements_history.append(commenter_response)
+
+            # Update refinement prompt to explicitly request formatted description and instructions
+            refinement_prompt = f"""Consider this feedback on your game proposal:
+{commenter_response}
+
+Please provide an improved version that emphasizes innovation and includes:
+1. Game title (keep it catchy and relevant)
+2. Game description: A clear, concise summary of the game concept and unique features
+3. Instructions: Step-by-step guide on how to play the game, including:
+   - Basic controls and what they do
+   - Main objectives
+   - Special mechanics or features
+   - Scoring system (if applicable)
+4. Novel mechanics and unique interactions
+5. Creative win/lose conditions
+6. Innovative progression system
+7. Unexpected visual elements
+
+Format your response with clear sections:
+Title: [Game Title]
+Description: [2-3 sentences describing the game]
+Instructions: [Clear steps for playing]
+[Rest of the game details]"""
+
+            print(f"\n{GREEN}[Generator - Refinement (Round {round_num + 1})]{RESET}")
+            current_proposal = self._call_model_api(
+                refinement_prompt, self.generator_system_prompt
+            )
+            print(f"{YELLOW}{current_proposal}{RESET}")
+
+            final_proposal = current_proposal
+
+        # Extract final details
         title_match = re.search(
-            r"title:?\s*(.*?)(?:\n|$)", final_response, re.IGNORECASE
+            r"title:?\s*(.*?)(?:\n|$)", final_proposal, re.IGNORECASE
         )
         description_match = re.search(
-            r"description:?\s*(.*?)(?:\n|$)", final_response, re.IGNORECASE
+            r"description:?\s*(.*?)(?:\n|$)", final_proposal, re.IGNORECASE
+        )
+        instructions_match = re.search(
+            r"instructions:?\s*(.*?)(?:\n|$)", final_proposal, re.IGNORECASE
+        )
+
+        # Fix the string formatting in the return statement
+        discussion_history = "\n".join(
+            f"Round {i+1} Feedback:\n{feedback}"
+            for i, feedback in enumerate(improvements_history)
         )
 
         return {
@@ -361,7 +526,14 @@ Share your final, inspiring game plan!"""
             "description": (
                 description_match.group(1).strip() if description_match else None
             ),
-            "full_plan": final_response,
+            "instructions": (
+                instructions_match.group(1).strip() if instructions_match else None
+            ),
+            "full_plan": {
+                "initial_proposal": current_proposal,
+                "discussion_history": discussion_history,
+                "final_proposal": final_proposal,
+            },
         }
 
     def _create_code_gen_prompt(self, plan: dict, genre: str, num_players: int) -> str:
@@ -419,8 +591,8 @@ Share your final, inspiring game plan!"""
         align-items: flex-start;
       }}
       canvas {{
-        width: 800px !important;
-        height: 600px !important;
+        width: 600px !important;
+        height: 400px !important;
         display: block;
       }}
     </style>
@@ -440,69 +612,136 @@ Share your final, inspiring game plan!"""
             else default_html.format(title=plan.get("title", "Game"), p5js_url=p5js_url)
         )
 
+        # Update key mappings to be more implementation-focused
+        key_mappings = """
+IMPLEMENTATION NOTES (Keep these technical details in comments only, not visible to players):
+Key handling must use these exact values:
+1. Arrow keys (keyCode) or WASD keys (key.toLowerCase()):
+   LEFT_ARROW (37), UP_ARROW (38), RIGHT_ARROW (39), DOWN_ARROW (40)
+   'w', 'a', 's', 'd'
+3. Special keys (keyCode):
+   SHIFT, SPACE
+4. You could choose to use all of the keys or SOME of them.
+
+
+CRITICAL REQUIREMENTS:
+0. Use Entity-Component-System (ECS) architecture for the game
+
+1. Key Handling:
+   - Track key states for smooth movement (pressed/released)
+   - Handle multiple simultaneous key presses
+   - Prevent key actions in wrong game states
+   - Use exact key values as specified above
+
+2. Player-Facing Instructions:
+   - Show only user-friendly control descriptions
+   - NO technical details or key codes in visible text
+   - Example: "Arrow Keys: Move" (not "Arrow Keys (37,38,39,40)")
+   - Clear, concise action descriptions
+
+3. Game State Management:
+   - Maintain proper game states (start, playing, gameover)
+   - Only process relevant keys in each state
+   - Ensure smooth state transitions
+"""
+
         return f"""Generate a p5.js game based on the following detailed plan:
 
-{plan['full_plan']}
+{plan['full_plan']['final_proposal']}
+
+---------------------------------------------------
+Here are the requirements for the game code implementation:
+
+You should follow the example html here:
+{formatted_html}
+
+Here are the key mappings for the game code implementation:
+{key_mappings}
 
 Technical Requirements:
-{control_info}
-{library_info}
 - The game must be playable on a basic HTML webpage
-- Include start and game over screens with clear instructions
+- Include start screen with:
+  * Game title: "{plan.get('title', 'Game')}"
+  * User-friendly control instructions
+  * Clear gameplay objectives
+- Include game over screen with win/lose message
 - No audio should be used
 - The game should be visually appealing
 
-Game Features (from configuration):
+Game Features:
 - Start screen: {self.config.get('constraints', {}).get('features', {}).get('require_start_screen', True)}
 - Game over screen: {self.config.get('constraints', {}).get('features', {}).get('require_game_over_screen', True)}
 - Score display: {self.config.get('constraints', {}).get('features', {}).get('require_score_display', True)}
 
+Quality Control Checklist:
+✓ Smooth, responsive controls
+✓ Clear, non-technical instructions
+✓ Proper game state management
+✓ Tested all key combinations
+✓ No visible key codes in game text
+✓ Consistent movement behavior
+✓ Proper collision detection
+✓ Working state transitions
+
 Please provide your code in two markdown code blocks with specific language tags:
 
-1. First block should be HTML code with ```html tag:
-```html
-{formatted_html}
-```
+1. First block should be HTML code with ```html tag
+2. Second block should be JavaScript code with ```javascript tag
 
-2. Second block should be JavaScript code with ```javascript tag:
-```javascript
-// Game implementation here
-```
+The JavaScript code should contain the complete game implementation following the plan and requirements above.
 
-Make sure each code block is properly formatted with the correct language tag and triple backticks.
-The JavaScript code should contain the complete game implementation following the plan and requirements above."""
+The game should be implemented using the Entity-Component-System (ECS) architecture.
+"""
 
-    def _call_model_api(self, prompt: str) -> str:
+    def _call_model_api(self, prompt: str, system_prompt: str = None) -> str:
         """
-        Call the appropriate model API based on the provider
+        Enhanced model API call that includes system prompts
 
         Args:
             prompt: The prompt to send to the model
-
-        Returns:
-            str: The model's response text
+            system_prompt: Optional system prompt to set agent role
         """
+        # Print the prompts
+        if system_prompt:
+            print(f"\n{GREEN}System Prompt:{RESET}\n{system_prompt}")
+        print(f"\n{GREEN}User Prompt:{RESET}\n{prompt}")
+
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        # Get response from appropriate model
         if self.model_provider == "openai":
             response = self.client.chat.completions.create(
-                model=self.model, messages=[{"role": "user", "content": prompt}]
+                model=self.model, messages=messages, max_completion_tokens=8000
             )
-            return response.choices[0].message.content
+            response_text = response.choices[0].message.content
 
         elif self.model_provider == "claude":
             response = self.client.messages.create(
                 model=self.model,
                 max_tokens=4000,
-                messages=[{"role": "user", "content": prompt}],
+                messages=messages,
             )
-            return response.content[0].text
+            response_text = response.content[0].text
 
         elif self.model_provider == "gemini":
             model = self.client.GenerativeModel(model_name=self.model)
-            response = model.generate_content(prompt)
-            return response.text
+            response = model.generate_content(messages)
+            response_text = response.text
 
         else:
             raise ValueError(f"Unsupported model provider: {self.model_provider}")
+
+        # Print the model's response
+        print(f"\n{YELLOW}Model Response:{RESET}\n{response_text}")
+
+        # Add control scheme reminder to system prompt if it exists
+        if system_prompt:
+            system_prompt += "\nIMPORTANT: Always use only the specified control scheme: arrow keys, WASD, space bar, and shift key. No other inputs are allowed."
+
+        return response_text
 
     def _parse_html_js_blocks(self, response_text: str) -> Tuple[str, str]:
         """
