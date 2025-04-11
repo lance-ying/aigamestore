@@ -2,6 +2,8 @@ import os
 from typing import Dict, Any, Optional, List, Union
 from openai import OpenAI
 
+from game_generators.prompts import GREEN, YELLOW, RED, BLUE, RESET
+
 # Import additional clients based on model type
 try:
     import anthropic
@@ -12,13 +14,6 @@ try:
     import google.generativeai as genai
 except ImportError:
     genai = None
-
-# Terminal colors
-GREEN = "\033[92m"
-YELLOW = "\033[93m"
-BLUE = "\033[94m"
-RED = "\033[91m"
-RESET = "\033[0m"
 
 
 from dotenv import load_dotenv
@@ -139,11 +134,18 @@ class ModelAPI:
         if debug:
             print(f"\n{BLUE}Debug: API Call{RESET}")
             if system_prompt:
-                print(f"{GREEN}System Prompt:{RESET}\n{system_prompt}")
+                print(f"{BLUE}System Prompt:{RESET}\n{system_prompt}")
             if chat_history:
-                print(f"{GREEN}Chat History:{RESET}")
+                print(f"{BLUE}Chat History:{RESET}")
                 for msg in chat_history:
-                    print(f"{msg['role'].title()}: {msg['content'][:100]}...")
+                    if msg["role"] == "user":
+                        print(
+                            f"{GREEN}{msg['role'].title()}: {msg['content'][:100]}...{RESET}"
+                        )
+                    else:
+                        print(
+                            f"{YELLOW}{msg['role'].title()}: {msg['content'][:100]}...{RESET}"
+                        )
             print(f"{GREEN}User Prompt:{RESET}\n{user_prompt}")
 
         try:
@@ -205,7 +207,7 @@ class ModelAPI:
                 result = response.text
 
             if debug:
-                print(f"{YELLOW}Model Response:{RESET}\n{result}")
+                print(f"{YELLOW}Model Response:\n{result}{RESET}")
 
             return result
 
@@ -226,8 +228,6 @@ class ModelAPI:
             else:
                 formatted.append(f"{role}: {content}")
         return "\n".join(formatted)
-
-  
 
 
 if __name__ == "__main__":
