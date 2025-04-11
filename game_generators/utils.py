@@ -227,8 +227,10 @@ class ModelAPI:
                 formatted.append(f"{role}: {content}")
         return "\n".join(formatted)
 
+  
 
-def main():
+
+if __name__ == "__main__":
     """Test different model providers"""
 
     def run_test(model_name: str):
@@ -302,7 +304,3 @@ def main():
         print(
             f"\n{YELLOW}Skipping Gemini tests - google-generativeai package not installed{RESET}"
         )
-
-
-if __name__ == "__main__":
-    main()
