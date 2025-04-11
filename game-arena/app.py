@@ -1,883 +1,673 @@
-import os
-import streamlit as st
-# Must be the first Streamlit command
-st.set_page_config(layout="wide")
-
-import streamlit.components.v1 as components
 from pathlib import Path
-import json
 import random
-import numpy as np
-import math
-from datetime import datetime
-import uuid
-from datasets import load_dataset, Dataset
-from scheduler import ParquetScheduler
+from flask import Flask, render_template_string, request, jsonify
+import os
+import glob
+import json
+import datetime
 
-from st_bridge import bridge
+# folder structure in game dir: {method} / {model} / {genre} / {name} / index.html
+GAME_DIR = Path(__file__).parent / "games"
+RESULTS_DIR = Path(__file__).parent / "results"
+RATINGS_FILE = RESULTS_DIR / "all_ratings.json"
 
+# Create results directory if it doesn't exist
+RESULTS_DIR.mkdir(exist_ok=True)
 
-HF_TOKEN = os.environ.get("HF_TOKEN")
+app = Flask(__name__)
 
-
-# Elo rating parameters
-K_FACTOR = 32
-INITIAL_RATING = 1500
-SCALE = 400
-BASE = 10
-
-PREFERENCE_DATASET = "nacloos/gen-games-preferences-test"
-GAMES_DATASET = "nacloos/gen-games"
-
-
-@st.cache_resource
-def get_scheduler():
-    """Initialize and cache schedulers."""
-    preferences_scheduler = ParquetScheduler(
-        repo_id=PREFERENCE_DATASET,
-        private=True,
-        every=15,  # Upload every 15 minutes
-        token=HF_TOKEN
-    )
-    return preferences_scheduler
-
-
-def compute_ratings_from_preferences(preferences):
-    """Compute all Elo ratings from scratch using the preferences dataset."""
-    # Initialize ratings dictionary
-    ratings = {}
-
-    # Sort preferences by timestamp to replay them in order
-    preferences_list = sorted(preferences, key=lambda x: x["timestamp"])
+def get_random_games(num_games=2):
+    """Get random games from the game directory"""
+    all_games = []
     
-    # Replay all preferences and update ratings
-    for pref in preferences_list:
-        # Initialize ratings for games if they don't exist
-        if pref["game_a_id"] not in ratings:
-            ratings[pref["game_a_id"]] = INITIAL_RATING
-        if pref["game_b_id"] not in ratings:
-            ratings[pref["game_b_id"]] = INITIAL_RATING
-        
-        # Update ratings based on preference
-        if pref["winner"] != "tie":  # Skip ties as they don't affect Elo
-            winner = "A" if pref["winner"] == "game_a" else "B"
-            new_rating_a, new_rating_b = update_elo(
-                ratings[pref["game_a_id"]],
-                ratings[pref["game_b_id"]],
-                winner
-            )
-            ratings[pref["game_a_id"]] = new_rating_a
-            ratings[pref["game_b_id"]] = new_rating_b
-    
-    return ratings
-
-
-def load_datasets():
-    """Load datasets."""
-    with st.spinner('Loading datasets...'):
-        games_dataset = load_dataset(GAMES_DATASET, split="train", token=HF_TOKEN)
-        preferences = load_dataset(PREFERENCE_DATASET, split="train", token=HF_TOKEN)
-
-        initial_ratings = compute_ratings_from_preferences(preferences)
-        
-        # Get unique game descriptions from dataset
-        game_descriptions = []
-        seen_indices = []
-        for item in games_dataset:
-            idx = item["game_description_index"]
-            if idx not in seen_indices:
-                game_descriptions.append(item["game_description"])
-                seen_indices.append(idx)
-        # Sort game descriptions based on their original indices
-        game_descriptions = [x for _, x in sorted(zip(seen_indices, game_descriptions))]
-        
-        return games_dataset, initial_ratings, game_descriptions
-
-
-def get_game_samples(games_dataset, game_idx):
-    """Get list of available samples for a given game from the dataset."""
-    samples = []
-    for i, item in enumerate(games_dataset):
-        if item["game_description_index"] == game_idx:
-            samples.append(item)
-    return samples
-
-
-def create_game_html(html_content, game_id):    
-    # Add event listener to prevent arrow keys from scrolling
-    # prevent_scroll_js = """
-    # <script>
-    # window.addEventListener("keydown", function(e) {
-    #     if([32, 37, 38, 39, 40].indexOf(e.keyCode) > -1) {
-    #         e.preventDefault();
-    #     }
-    # }, false);
-    # """
-
-    # Add event listener for when the window loses focus
-    focus_event_js = f"""
-    <script>
-    // Add event buffering and focus/blur handling
-    const eventBuffer = [];
-    const focusState = {{
-      isFocused: document.hasFocus(),
-      lastFocusTime: Date.now(),
-      p5Ready: false    // Track whether p5.js sketch is initialized
-    }};
-    
-    // Function to record events to the buffer
-    function recordAction(eventType, data) {{
-        if (focusState.isFocused && focusState.p5Ready) {{
-            eventBuffer.push({{
-                type: eventType,
-                timestamp: Date.now(),
-                framecount: frameCount,
-                ...data
-            }});
-        }}
-    }}
-    
-    // Function to send buffered events
-    function sendBufferedEvents() {{
-        if (eventBuffer.length > 0) {{
-            events = eventBuffer.slice();
-            // Clear the buffer before sending
-            console.log('length of eventBuffer before clearing', eventBuffer.length);
-            eventBuffer.length = 0;
-            console.log('length of eventBuffer after clearing', eventBuffer.length);
-
-            window.parent.stBridges.send('bridge-{game_id}', {{
-                type: 'buffered_events',
-                timestamp: Date.now(),
-                events: events // Send a copy of the buffer
-            }});
-
-            console.log('length of eventBuffer after sending', eventBuffer.length);
-        }}
-    }}
-
-    // Minimal p5.js setup function detection
-    const wrappedSetup = function() {{
-        // Store original setup if it exists
-        const originalSetup = window.setup;
-        
-        // Create new setup wrapper
-        window.setup = function() {{
-            // Call original setup
-            const result = originalSetup.apply(this, arguments);
+    # Walk through the game directory structure
+    for method_dir in GAME_DIR.iterdir():
+        if not method_dir.is_dir():
+            continue
             
-            // Mark as ready
-            focusState.p5Ready = true;
+        for model_dir in method_dir.iterdir():
+            if not model_dir.is_dir():
+                continue
+                
+            for genre_dir in model_dir.iterdir():
+                if not genre_dir.is_dir():
+                    continue
+                    
+                for game_dir in genre_dir.iterdir():
+                    if not game_dir.is_dir():
+                        continue
+                    
+                    game_html = game_dir / "index.html"
+                    if game_html.exists():
+                        # Store game info
+                        all_games.append({
+                            "path": str(game_html.relative_to(GAME_DIR)),
+                            "name": game_dir.name,
+                            "genre": genre_dir.name,
+                            "model": model_dir.name,
+                            "method": method_dir.name
+                        })
+    
+    if len(all_games) < num_games:
+        return all_games
+    
+    return random.sample(all_games, num_games)
 
-            // Clear the buffer
-            eventBuffer.length = 0;
-            
-            // window.parent.stBridges.send('focus-{game_id}', {{
-            //     type: 'p5_ready',
-            //     timestamp: Date.now()
-            // }});
-            recordAction('p5_ready', {{}});
-            return result;
-        }};
-    }};
-    
-    wrappedSetup();
-
-
-    // Focus/blur event handling
-    window.addEventListener('blur', function() {{
-        // Only act if we were previously focused and loaded
-        if (focusState.isFocused && focusState.p5Ready) {{
-            focusState.isFocused = false;
-            const focusTime = Date.now() - focusState.lastFocusTime;
-            
-            // Send focus event
-            // window.parent.stBridges.send('focus-{game_id}', {{
-            //     type: 'blur',
-            //     timestamp: Date.now(),
-            //     timeFocused: focusTime
-            // }});
-
-            recordAction('blur', {{
-                timeFocused: focusTime
-            }});
-            
-            // Send all buffered events when lose focus
-            sendBufferedEvents();
-        }}
-    }});
-
-    window.addEventListener('focus', function() {{
-        // Only act if we were previously blurred and loaded
-        if (!focusState.isFocused && focusState.p5Ready) {{
-            focusState.isFocused = true;
-            focusState.lastFocusTime = Date.now();
-            // window.parent.stBridges.send('focus-{game_id}', {{
-            //    type: 'focus',
-            //    timestamp: Date.now()
-            // }});
-
-            recordAction('focus', {{}});
-        }}
-    }});
-    
-    // Add key event listeners
-    window.addEventListener("keydown", function(e) {{
-        // Record all key presses
-        recordAction('keydown', {{
-            keyCode: e.keyCode,
-            key: e.key
-        }});
-        
-        // Prevent default for navigation keys
-        if([32, 37, 38, 39, 40].indexOf(e.keyCode) > -1) {{
-            e.preventDefault();
-        }}
-    }}, false);
-    
-    // Add keyup event listener
-    window.addEventListener("keyup", function(e) {{
-        // Record all key releases
-        recordAction('keyup', {{
-            keyCode: e.keyCode,
-            key: e.key
-        }});
-    }}, false);
-    
-    // Mouse movement tracking
-    let lastX = null;
-    let lastY = null;
-    let lastMoveTime = 0;
-    
-    document.addEventListener('mousemove', function(e) {{
-        const now = Date.now();
-        // Only record if position changed AND at 60 FPS
-        if ((lastX !== e.clientX || lastY !== e.clientY) && now - lastMoveTime > 16.66) {{
-            recordAction('mousemove', {{
-                x: e.clientX,
-                y: e.clientY
-            }});
-            lastX = e.clientX;
-            lastY = e.clientY;
-            lastMoveTime = now;
-        }}
-    }});
-    
-    // Mouse clicks
-    document.addEventListener('click', function(e) {{
-        recordAction('click', {{
-            x: e.clientX,
-            y: e.clientY,
-            button: e.button
-        }});
-    }});
-    
-    // Mouse down/up
-    document.addEventListener('mousedown', function(e) {{
-        recordAction('mousedown', {{
-            x: e.clientX,
-            y: e.clientY,
-            button: e.button
-        }});
-    }});
-    
-    document.addEventListener('mouseup', function(e) {{
-        recordAction('mouseup', {{
-            x: e.clientX,
-            y: e.clientY,
-            button: e.button
-        }});
-    }});
-    
-    // Track when mouse enters/leaves the game area
-    document.addEventListener('mouseenter', function(e) {{
-        recordAction('mouseenter', {{
-            x: e.clientX,
-            y: e.clientY
-        }});
-    }});
-    
-    document.addEventListener('mouseleave', function(e) {{
-        recordAction('mouseleave', {{
-            x: e.clientX,
-            y: e.clientY
-        }});
-    }});
-    </script>
-    """
-    
-    # Insert event handlers before the closing </body> tag
-    # html_content = html_content.replace("</body>", f"{prevent_scroll_js}{focus_event_js}</body>")
-    html_content = html_content.replace("</body>", f"{focus_event_js}</body>")
-    
-    return html_content
-
-
-def display_game_pair(game_a, game_b):
-    """Display two games side by side."""
-    # Custom CSS for the game containers
-    st.markdown("""
+# HTML template for the main page
+HTML_TEMPLATE = '''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+    <title>Game Evaluation</title>
         <style>
-        .game-title {
-            text-align: center;
-            margin: 5px 0;
-            font-size: 1.2em;
-            font-weight: bold;
+        html, body {
+            overscroll-behavior: none; /* Prevent pull-to-refresh and overscrolling */
+            height: 100%;
+            margin: 0;
+            padding: 0;
         }
-        .stButton button {
-            width: 100%;
-            margin: 5px 0;
-        }
-        div[data-testid="column"] {
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1300px;
+            margin: 0 auto;
+            padding: 10px;
             display: flex;
             flex-direction: column;
-            align-items: center;
-            justify-content: center;
+            min-height: 100%;
+            background-color: #f8f8f8;
         }
-        div.element-container {
+        .game-container {
             display: flex;
-            justify-content: center;
+            justify-content: space-between;
+            gap: 15px;
+            margin-bottom: 10px;
+        }
+        .game-box {
+            flex: 1;
+            border: none;
+            padding: 10px;
+            background: transparent;
+            display: flex;
+            flex-direction: column;
+            height: auto;
+        }
+        .game-frame {
+            width: 600px;
+            height: 380px;
+            border: none;
+            background: #222;
+            overflow: hidden; /* Prevent scrolling within iframe */
+            margin: 0 auto;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .rating-sliders {
+            margin-top: 8px;
+            background: white;
+            padding: 8px;
+            border-radius: 6px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+        }
+        .rating-item {
+            margin-bottom: 8px;
+        }
+        .rating-item:last-child {
+            margin-bottom: 0;
+        }
+        label {
+            display: block;
+            margin-bottom: 2px;
+            font-weight: bold;
+            font-size: 14px;
+            color: #444;
+        }
+        .actions {
+            text-align: center;
+            padding: 0;
+            margin-top: 0;
+        }
+        button {
+            padding: 8px 16px;
+            font-size: 14px;
+            cursor: pointer;
+            border: none;
+            border-radius: 4px;
+            margin: 0 5px;
+            transition: background-color 0.2s, transform 0.1s;
+        }
+        button#submit-ratings {
+            background-color: #3498db;
+            color: white;
+        }
+        button#show-instructions {
+            background-color: #f1f1f1;
+            color: #555;
+        }
+        button:hover {
+            opacity: 0.9;
+            transform: translateY(-1px);
+        }
+        button:active {
+            transform: translateY(1px);
+        }
+        .slider-container {
+            display: flex;
+            align-items: center;
+            position: relative;
+        }
+        .slider-value {
+            margin-left: 10px;
+            min-width: 30px;
+            font-size: 15px;
+            color: #3498db;
+            font-weight: bold;
+            text-align: center;
+        }
+        .scale-labels {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 2px;
+            font-size: 10px;
+            color: #888;
+        }
+        .game-label {
+            text-align: center;
+            margin-bottom: 5px;
+            font-weight: bold;
+            font-size: 20px;
+            color: #333;
+        }
+        .rating-description {
+            font-size: 11px;
+            color: #666;
+            margin-bottom: 3px;
+            font-style: italic;
+        }
+        /* Make sliders more compact and minimal */
+        input[type="range"] {
+            height: 6px;
+            -webkit-appearance: none;
             width: 100%;
+            background: #e0e0e0;
+            border-radius: 3px;
+            outline: none;
         }
-        iframe {
-            width: 400px !important;
-            height: 400px !important;
-            border: none !important;
-            margin: 0 !important;
-            padding: 0 !important;
-            display: block !important;
-            background: transparent !important;
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 18px;
+            height: 18px;
+            background: #3498db;
+            border-radius: 50%;
+            cursor: pointer;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
         }
-        /* Hide bridge components completely */
-        iframe.stCustomComponentV1[title="st_bridge.bridge.bridge"] {
-            position: absolute !important;
-            width: 0 !important;
-            height: 0 !important;
-            border: 0 !important;
-            padding: 0 !important;
-            margin: 0 !important;
-            overflow: hidden !important;
-            display: block !important;
-            visibility: hidden !important;
+        input[type="range"]::-moz-range-thumb {
+            width: 18px;
+            height: 18px;
+            background: #3498db;
+            border: none;
+            border-radius: 50%;
+            cursor: pointer;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
         }
-        </style>
-    """, unsafe_allow_html=True)
-    
-    # Create two columns with equal width
-    col1, col2 = st.columns([1, 1])
-    
-    # Display games
-    with col1:
-        st.markdown('<p class="game-title">Game A</p>', unsafe_allow_html=True)
-        html_a = create_game_html(game_a["game_code"], "A")
-        components.html(html_a, height=400, scrolling=False)
-    
-    with col2:
-        st.markdown('<p class="game-title">Game B</p>', unsafe_allow_html=True)
-        html_b = create_game_html(game_b["game_code"], "B")
-        components.html(html_b, height=400, scrolling=False)
-
-    # Store player actions in session state
-    if "game_a_actions" not in st.session_state:
-        st.session_state.game_a_actions = []
-    if "game_b_actions" not in st.session_state:
-        st.session_state.game_b_actions = []
-    # if "game_a_focus_events" not in st.session_state:
-    #     st.session_state.game_a_focus_events = []
-    # if "game_b_focus_events" not in st.session_state:
-    #     st.session_state.game_b_focus_events = []
-    # Store processed timestamps in session state
-    if "processed_timestamps_a" not in st.session_state:
-        st.session_state.processed_timestamps_a = set()
-    if "processed_timestamps_b" not in st.session_state:
-        st.session_state.processed_timestamps_b = set()
-    # if "processed_focus_timestamps_a" not in st.session_state:
-    #     st.session_state.processed_focus_timestamps_a = set()
-    # if "processed_focus_timestamps_b" not in st.session_state:
-    #     st.session_state.processed_focus_timestamps_b = set()
-    
-    # Get latest event data using bridges with height=0
-    event_a = bridge("bridge-A", default=None)
-    event_b = bridge("bridge-B", default=None)
-
-    server_time = datetime.now().isoformat()
-    # Process new events if available
-    if event_a is not None:
-        # Only add events with timestamps we haven't seen before
-        new_events = []
-        for event in event_a["events"]:
-            timestamp = event.get("timestamp")
-            if timestamp and timestamp not in st.session_state.processed_timestamps_a:
-                event["server_timestamp"] = server_time
-                st.session_state.game_a_actions.append(event)
-                st.session_state.processed_timestamps_a.add(timestamp)
-                new_events.append(event)
         
-        if new_events:
-            st.write(f"Received {len(new_events)} new buffered events from Game A")
-
-    if event_b is not None:
-        # Only add events with timestamps we haven't seen before
-        new_events = []
-        for event in event_b["events"]:
-            timestamp = event.get("timestamp")
-            if timestamp and timestamp not in st.session_state.processed_timestamps_b:
-                event["server_timestamp"] = server_time
-                st.session_state.game_b_actions.append(event)
-                st.session_state.processed_timestamps_b.add(timestamp)
-                new_events.append(event)
-        
-        if new_events:
-            st.write(f"Received {len(new_events)} new buffered events from Game B")
-
-    
-    # Get focus/blur events
-    # focus_event_a = bridge("focus-A", default=None)
-    # focus_event_b = bridge("focus-B", default=None)
-    
-    # Process focus events if available
-    # if focus_event_a is not None:
-    #     timestamp = focus_event_a.get("timestamp")
-    #     if timestamp and timestamp not in st.session_state.processed_focus_timestamps_a:
-    #         focus_event_a["server_timestamp"] = datetime.now().isoformat()
-    #         st.session_state.game_a_focus_events.append(focus_event_a)
-    #         st.session_state.processed_focus_timestamps_a.add(timestamp)
-    
-    # if focus_event_b is not None:
-    #     timestamp = focus_event_b.get("timestamp")
-    #     if timestamp and timestamp not in st.session_state.processed_focus_timestamps_b:
-    #         focus_event_b["server_timestamp"] = datetime.now().isoformat()
-    #         st.session_state.game_b_focus_events.append(focus_event_b)
-    #         st.session_state.processed_focus_timestamps_b.add(timestamp)
-    
-    # Display summary of recorded actions
-    col1, col2 = st.columns(2)
-    
-    def count_events_by_type(actions):
-        event_counts = {}
-        for action in actions:
-            if isinstance(action, dict) and "type" in action:
-                event_type = action["type"]
-                event_counts[event_type] = event_counts.get(event_type, 0) + 1
-        return event_counts
-    
-    # Display event summaries
-    with col1:
-        st.write("### Game A actions")
-        event_counts_a = count_events_by_type(st.session_state.game_a_actions)
-        for event_type, count in event_counts_a.items():
-            st.write(f"- {event_type}: {count}")
-        st.write(f"Total: {len(st.session_state.game_a_actions)} events")
-
-        # Display focus events
-        # st.write("### Game A focus events")
-        # for focus_event in st.session_state.game_a_focus_events:
-        #     event_type = focus_event.get('type', 'unknown')
-        #     if event_type == 'blur' and 'timeFocused' in focus_event:
-        #         focus_time_sec = focus_event['timeFocused'] / 1000
-        #         st.write(f"- {event_type} after {focus_time_sec:.1f} seconds of focus")
-        #     elif event_type in ['p5_ready', 'p5_ready_fallback', 'ready_fallback']:
-        #         st.write(f"- {event_type} at {focus_event.get('timestamp', 'unknown')}")
-        #     else:
-        #         st.write(f"- {event_type} at {focus_event.get('timestamp', 'unknown')}")
-
-    
-    with col2:
-        st.write("### Game B actions")
-        event_counts_b = count_events_by_type(st.session_state.game_b_actions)
-        for event_type, count in event_counts_b.items():
-            st.write(f"- {event_type}: {count}")
-        st.write(f"Total: {len(st.session_state.game_b_actions)} events")
-
-        # Display focus events
-        # st.write("### Game B focus events")
-        # for focus_event in st.session_state.game_b_focus_events:
-        #     event_type = focus_event.get('type', 'unknown')
-        #     if event_type == 'blur' and 'timeFocused' in focus_event:
-        #         focus_time_sec = focus_event['timeFocused'] / 1000
-        #         st.write(f"- {event_type} after {focus_time_sec:.1f} seconds of focus")
-        #     elif event_type in ['p5_ready', 'p5_ready_fallback', 'ready_fallback']:
-        #         st.write(f"- {event_type} at {focus_event.get('timestamp', 'unknown')}")
-        #     else:
-        #         st.write(f"- {event_type} at {focus_event.get('timestamp', 'unknown')}")
-
-
-def get_display_name(sample):
-    """Get formatted display name for a sample."""
-    model_short = sample["model"].split('/')[-1]  # Get last part of model name
-    return f"{model_short} - sample {sample['sample_index']}"
-
-
-def update_elo(rating_a, rating_b, winner):
-    """Update Elo ratings based on game outcome."""
-    expected_a = 1.0 / (1.0 + math.pow(BASE, (rating_b - rating_a) / SCALE))
-    actual_a = 1.0 if winner == "A" else 0.0
-    
-    # Update ratings
-    rating_change = K_FACTOR * (actual_a - expected_a)
-    new_rating_a = rating_a + rating_change
-    new_rating_b = rating_b - rating_change
-    
-    return new_rating_a, new_rating_b
-
-
-def display_leaderboard(samples):
-    """Display the leaderboard in a formatted way."""
-    # Add CSS for leaderboard buttons
-    st.markdown("""
-        <style>
-        /* Make buttons show ellipsis when text overflows */
-        .leaderboard-button {
-            white-space: nowrap !important;
-            overflow: hidden !important;
-            text-overflow: ellipsis !important;
-            max-width: 100% !important;
+        /* Modal styles */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+        }
+        .modal-content {
+            background-color: #fff;
+            margin: 15% auto;
+            padding: 20px;
+            border: none;
+            border-radius: 5px;
+            width: 60%;
+            max-width: 500px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        .close {
+            color: #bbb;
+            float: right;
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        .close:hover {
+            color: #555;
+        }
+        #startButton {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 8px 16px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        #startButton:hover {
+            background-color: #2980b9;
+        }
+        .overall-comparison {
+            background: white;
+            padding: 10px;
+            border-radius: 6px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+            text-align: center;
+            max-width: 500px;
+            margin: 10px auto;
+        }
+        .overall-comparison h3 {
+            display: inline-block;
+            margin: 0 10px 0 0;
+            color: #444;
+            font-size: 16px;
+            vertical-align: middle;
+        }
+        .comparison-options {
+            display: inline-block;
+            vertical-align: middle;
+        }
+        .comparison-options label {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 16px;
+            margin: 0 10px;
+        }
+        .comparison-options input[type="radio"] {
+            margin: 0;
+            width: 18px;
+            height: 18px;
         }
         </style>
-    """, unsafe_allow_html=True)
-    
-    st.write("### Game Rankings")
-    
-    # Sort samples by rating
-    ranked_samples = sorted(
-        [(sample, st.session_state.ratings.get(sample["id"], INITIAL_RATING)) for sample in samples],
-        key=lambda x: x[1],
-        reverse=True
-    )
-    
-    # Create two columns: rankings and game preview
-    col1, col2 = st.columns([1, 1])
-    
-    with col1:
-        # Create table header with adjusted column widths
-        cols = st.columns([0.5, 2.5, 1])
-        with cols[0]:
-            st.write("**#**")
-        with cols[1]:
-            st.write("**Sample**")
-        with cols[2]:
-            st.write("**Rating**")
+    </head>
+    <body>
+    <!-- Instructions Modal -->
+    <div id="instructionsModal" class="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <h2>Game Evaluation</h2>
+            <p>Play and rate these two randomly selected games.</p>
+            <p>For each game, you'll rate:</p>
+            <ul>
+                <li><strong>Fun Factor</strong> - How enjoyable was the game?</li>
+                <li><strong>Difficulty</strong> - How challenging was the game?</li>
+                <li><strong>Controls</strong> - How intuitive were the controls?</li>
+            </ul>
+            <p>Finally, you'll be asked to choose which game you think is <strong>better overall</strong>.</p>
+            <p>Click "Submit Ratings" when you're done to save your ratings and load new games.</p>
+            <button id="startButton" style="margin-top: 10px;">Start Playing</button>
+        </div>
+    </div>
         
-        # Add table rows with clickable buttons
-        for i, (sample, rating) in enumerate(ranked_samples, 1):
-            cols = st.columns([0.5, 2.5, 1])
-            with cols[0]:
-                st.write(f"#{i}")
-            with cols[1]:
-                display_name = get_display_name(sample)
-                if st.button(display_name, key=f"game_{i}", use_container_width=True, type="secondary"):
-                    st.session_state.selected_game = sample
-            with cols[2]:
-                st.write(f"{rating:.0f}")
-    
-    with col2:
-        st.write("### Game Preview")
-        # Display selected game if any
-        if "selected_game" in st.session_state:
-            html = create_game_html(st.session_state.selected_game["game_code"], "leaderboard_preview")
-            components.html(html, height=400, scrolling=False)
-            st.write(f"Model: {st.session_state.selected_game['model']}")
-        else:
-            st.write("Click on a game to preview it")
-
-
-# def preprocess_actions_for_storage(actions):
-#     """Convert complex action data to a format suitable for Parquet storage."""
-#     processed_actions = []
-    
-#     for action in actions:
-#         if not isinstance(action, dict):
-#             continue
-
-#         # Create a flat structure with all essential information
-#         processed_action = {
-#             "type": action.get("type", "unknown"),
-#             "client_timestamp": action.get("timestamp"),
-#             "server_timestamp": action.get("server_timestamp"),
-#             "framecount": action.get("framecount")
-#         }
-        
-#         # Add coordinates for mouse/touch events
-#         if "x" in action and "y" in action:
-#             processed_action["x"] = action["x"]
-#             processed_action["y"] = action["y"]
-        
-#         # Add key information for keyboard events
-#         if "key" in action:
-#             processed_action["key"] = action["key"]
-#             processed_action["keyCode"] = action.get("keyCode")
-#             processed_action["isShift"] = action.get("isShift", False)
-#             processed_action["isCtrl"] = action.get("isCtrl", False)
-#             processed_action["isAlt"] = action.get("isAlt", False)
-        
-#         # Add button information for mouse events
-#         if "button" in action:
-#             processed_action["button"] = action["button"]
+        <div class="game-container">
+        {% for game in games %}
+        <div class="game-box">
+            <div class="game-label">Game {% if loop.index == 1 %}A{% else %}B{% endif %}</div>
+            <iframe class="game-frame" src="/game/{{ game.path }}"></iframe>
             
-#         processed_actions.append(processed_action)
+            <div class="rating-sliders">
+                <div class="rating-item">
+                    <label>Fun</label>
+                    <div class="rating-description">How enjoyable was the game to play?</div>
+                    <div class="slider-container">
+                        <input type="range" min="1" max="10" value="5" class="slider" id="fun-{{ loop.index }}">
+                        <span class="slider-value" id="fun-value-{{ loop.index }}">5</span>
+                    </div>
+                    <div class="scale-labels">
+                        <span>Not fun</span>
+                        <span>Very fun</span>
+                    </div>
+                </div>
+                
+                <div class="rating-item">
+                    <label>Difficulty</label>
+                    <div class="rating-description">How challenging was the game to play?</div>
+                    <div class="slider-container">
+                        <input type="range" min="1" max="10" value="5" class="slider" id="difficulty-{{ loop.index }}">
+                        <span class="slider-value" id="difficulty-value-{{ loop.index }}">5</span>
+                    </div>
+                    <div class="scale-labels">
+                        <span>Too easy</span>
+                        <span>Very challenging</span>
+                    </div>
+                </div>
+                
+                <div class="rating-item">
+                    <label>Controls</label>
+                    <div class="rating-description">How intuitive and responsive were the controls?</div>
+                    <div class="slider-container">
+                        <input type="range" min="1" max="10" value="5" class="slider" id="controls-{{ loop.index }}">
+                        <span class="slider-value" id="controls-value-{{ loop.index }}">5</span>
+                    </div>
+                    <div class="scale-labels">
+                        <span>Confusing</span>
+                        <span>Intuitive</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
     
-#     return processed_actions
-
-
-def save_preference(preferences_scheduler, game_a, game_b, winner):
-    """Save user preference using ParquetScheduler."""
-    # Process actions for storage
-    # processed_game_a_actions = preprocess_actions_for_storage(st.session_state.game_a_actions)
-    # processed_game_b_actions = preprocess_actions_for_storage(st.session_state.game_b_actions)
+    <div class="overall-comparison">
+        <h3>Which game is better overall?</h3>
+        <div class="comparison-options">
+            <label>
+                <input type="radio" name="better-game" value="1"> Game A
+            </label>
+            <label>
+                <input type="radio" name="better-game" value="2"> Game B
+            </label>
+        </div>
+    </div>
     
-    # # Process focus events for storage
-    # processed_game_a_focus = preprocess_actions_for_storage(st.session_state.game_a_focus_events)
-    # processed_game_b_focus = preprocess_actions_for_storage(st.session_state.game_b_focus_events)
-    
-    # st.write(processed_game_a_focus)
-    # st.write(processed_game_b_focus)
-    # st.write(processed_game_a_actions)
-    # st.write(processed_game_b_actions)
-    # st.stop()
+    <div class="actions">
+        <button id="submit-ratings">Submit Ratings</button>
+        <button id="show-instructions">Instructions</button>
+    </div>
 
-    # Create preference entry
-    preference = {
-        "id": str(uuid.uuid4()),
-        "model_a": game_a["model"],
-        "model_b": game_b["model"],
-        "game_a": game_a["game_code"],
-        "game_b": game_b["game_code"],
-        "game_a_id": game_a["id"],
-        "game_b_id": game_b["id"],
-        "winner": f"game_{winner.lower()}" if winner in ["A", "B"] else "tie",
-        "judge": st.session_state.username,
-        "timestamp": datetime.now().isoformat(),
-        "game_description_index": st.session_state.game_idx,
+    <script>
+        // Modal functionality
+        const modal = document.getElementById("instructionsModal");
+        const closeBtn = document.getElementsByClassName("close")[0];
+        const startBtn = document.getElementById("startButton");
+        const showInstructionsBtn = document.getElementById("show-instructions");
         
-        # Add processed player action data to the preference entry
-        # "actions_a": json.dumps(processed_game_a_actions),
-        # "actions_b": json.dumps(processed_game_b_actions)
-        "actions_a": json.dumps(st.session_state.game_a_actions),
-        "actions_b": json.dumps(st.session_state.game_b_actions)
+        // Check if this is the first visit
+        if (!localStorage.getItem("gameArenaVisited")) {
+            // First visit, show modal
+            modal.style.display = "block";
+            localStorage.setItem("gameArenaVisited", "true");
+        }
+        
+        // Function to reset all sliders to default value
+        function resetAllSliders() {
+            document.querySelectorAll('input[type="range"]').forEach(slider => {
+                slider.value = 5;
+                const valueId = slider.id.replace(slider.id.split('-')[0], slider.id.split('-')[0] + '-value');
+                document.getElementById(valueId).textContent = '5';
+                document.getElementById(valueId).style.color = '#3498db'; // Reset to blue (average)
+            });
+            
+            // Also reset the final comparison radio buttons
+            document.querySelectorAll('input[name="better-game"]').forEach(radio => {
+                radio.checked = false;
+            });
+        }
+        
+        // Close modal when clicking close button
+        closeBtn.onclick = function() {
+            modal.style.display = "none";
+        }
+        
+        // Close modal when clicking Start button
+        startBtn.onclick = function() {
+            modal.style.display = "none";
+        }
+        
+        // Show instructions when clicking Instructions button
+        showInstructionsBtn.onclick = function() {
+            modal.style.display = "block";
+        }
+        
+        // Close modal when clicking outside of it
+        window.onclick = function(event) {
+            if (event.target == modal) {
+                modal.style.display = "none";
+            }
+        }
+        
+        // Prevent scrolling with keyboard
+        window.addEventListener("keydown", function(e) {
+            // Prevent default for navigation keys (space, arrow keys)
+            if([32, 37, 38, 39, 40].indexOf(e.keyCode) > -1) {
+                e.preventDefault();
+            }
+        }, false);
+        
+        // Prevent scrolling with mouse wheel when over iframes
+        document.querySelectorAll('.game-frame').forEach(iframe => {
+            iframe.addEventListener('mouseover', function() {
+                document.body.style.overflow = 'hidden';
+            });
+            
+            iframe.addEventListener('mouseout', function() {
+                document.body.style.overflow = 'auto';
+            });
+        });
+        
+        // Update the displayed values as sliders change
+        document.querySelectorAll('.slider').forEach(slider => {
+            slider.addEventListener('input', function() {
+                const valueId = this.id.replace(this.id.split('-')[0], this.id.split('-')[0] + '-value');
+                const value = this.value;
+                document.getElementById(valueId).textContent = value;
+                
+                // Update qualitative description based on value
+                const valueSpan = document.getElementById(valueId);
+                if (value >= 9) {
+                    valueSpan.style.color = '#27ae60'; // Green for excellent
+                } else if (value >= 7) {
+                    valueSpan.style.color = '#2ecc71'; // Light green for good
+                } else if (value >= 5) {
+                    valueSpan.style.color = '#3498db'; // Blue for average
+                } else if (value >= 3) {
+                    valueSpan.style.color = '#e67e22'; // Orange for below average
+                } else {
+                    valueSpan.style.color = '#e74c3c'; // Red for poor
+                }
+            });
+            
+            // Trigger once to set initial colors
+            slider.dispatchEvent(new Event('input'));
+        });
+        
+        // Make sure the comparison radio buttons are unchecked when the page loads
+        window.addEventListener('DOMContentLoaded', function() {
+            document.querySelectorAll('input[name="better-game"]').forEach(radio => {
+                radio.checked = false;
+            });
+        });
+        
+        // Submit ratings
+        document.getElementById('submit-ratings').addEventListener('click', function() {
+            // Check if a game has been selected for comparison
+            const selectedGame = document.querySelector('input[name="better-game"]:checked');
+            if (!selectedGame) {
+                alert('Please select which game you think is better overall before submitting');
+                return;
+            }
+            
+            const ratings = {};
+            
+            // Add games with more descriptive keys
+            {% for game in games %}
+            ratings['game_{{ loop.index }}'] = {
+                url: '{{ game.path }}',
+                fun: document.getElementById('fun-{{ loop.index }}').value,
+                difficulty: document.getElementById('difficulty-{{ loop.index }}').value,
+                controls: document.getElementById('controls-{{ loop.index }}').value
+            };
+            {% endfor %}
+            
+            // Get which game was selected as better overall
+            const betterGameValue = selectedGame.value;
+            ratings['comparison'] = {
+                better_game: 'game_' + betterGameValue
+            };
+            
+            fetch('/submit-ratings', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(ratings),
+            })
+            .then(response => response.json())
+            .then(data => {
+                resetAllSliders(); // Reset sliders before reloading
+                window.location.reload(); // Reload page to get new games
+            })
+            .catch((error) => {
+                console.error('Error:', error);
+                alert('Error submitting ratings');
+            });
+        });
+    </script>
+    </body>
+    </html>
+'''
+
+@app.route('/')
+def index():
+    """Main page that displays random games and rating interface"""
+    games = get_random_games(2)
+    return render_template_string(HTML_TEMPLATE, games=games)
+
+@app.route('/game/<path:game_path>')
+def serve_game(game_path):
+    """Serve game HTML files and other assets"""
+    game_file = GAME_DIR / game_path
+    if not game_file.exists():
+        return "Game not found", 404
+    
+    # JavaScript files
+    if game_path.endswith('.js'):
+        try:
+            with open(game_file, 'r') as f:
+                content = f.read()
+            return content, 200, {'Content-Type': 'application/javascript'}
+        except Exception as e:
+            return f"Error serving JavaScript file: {str(e)}", 500
+    
+    # CSS files
+    elif game_path.endswith('.css'):
+        try:
+            with open(game_file, 'r') as f:
+                content = f.read()
+            return content, 200, {'Content-Type': 'text/css'}
+        except Exception as e:
+            return f"Error serving CSS file: {str(e)}", 500
+    
+    # HTML files
+    elif game_path.endswith('.html'):
+        try:
+            with open(game_file, 'r') as f:
+                content = f.read()
+            
+            # Anti-scrolling JavaScript
+            prevent_scroll_js = """
+            <script>
+            // Prevent scrolling with keyboard
+            window.addEventListener("keydown", function(e) {
+                // Prevent default for navigation keys (space, arrow keys)
+                if([32, 37, 38, 39, 40].indexOf(e.keyCode) > -1) {
+                    e.preventDefault();
+                }
+            }, false);
+            
+            // Prevent scrolling with wheel
+            document.addEventListener('wheel', function(e) {
+                if (e.target.closest('canvas')) {
+                    e.preventDefault();
+                }
+            }, { passive: false });
+            </script>
+            """
+            
+            # Insert the script before the closing </body> tag
+            if "</body>" in content:
+                content = content.replace("</body>", prevent_scroll_js + "</body>")
+            else:
+                # If no body tag, append to the end
+                content += prevent_scroll_js
+            
+            return content, 200, {'Content-Type': 'text/html'}
+        except Exception as e:
+            return f"Error serving HTML file: {str(e)}", 500
+    
+    # For image files and other binary assets
+    else:
+        try:
+            with open(game_file, 'rb') as f:
+                content = f.read()
+            
+            # Set appropriate MIME type for common file formats
+            if game_path.endswith('.png'):
+                mime_type = 'image/png'
+            elif game_path.endswith('.jpg') or game_path.endswith('.jpeg'):
+                mime_type = 'image/jpeg'
+            elif game_path.endswith('.gif'):
+                mime_type = 'image/gif'
+            elif game_path.endswith('.svg'):
+                mime_type = 'image/svg+xml'
+            elif game_path.endswith('.json'):
+                mime_type = 'application/json'
+            elif game_path.endswith('.mp3'):
+                mime_type = 'audio/mpeg'
+            elif game_path.endswith('.wav'):
+                mime_type = 'audio/wav'
+            elif game_path.endswith('.ogg'):
+                mime_type = 'audio/ogg'
+            elif game_path.endswith('.ttf'):
+                mime_type = 'font/ttf'
+            elif game_path.endswith('.woff'):
+                mime_type = 'font/woff'
+            elif game_path.endswith('.woff2'):
+                mime_type = 'font/woff2'
+            else:
+                # Default to octet-stream for unknown binary types
+                mime_type = 'application/octet-stream'
+            
+            return content, 200, {'Content-Type': mime_type}
+        except Exception as e:
+            return f"Error serving file: {str(e)}", 500
+
+@app.route('/submit-ratings', methods=['POST'])
+def submit_ratings():
+    """Handle game ratings submission"""
+    ratings = request.json
+    
+    # Print ratings to console for debugging
+    print("Received ratings:", ratings)
+    
+    # Create a timestamp for this pair of ratings
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    # Prepare entry for this pair
+    rating_entry = {
+        "timestamp": timestamp,
+        "ratings": ratings
     }
     
-    # Add to scheduler
-    preferences_scheduler.append(preference)
+    # Load existing ratings or create new file
+    all_ratings = []
+    if RATINGS_FILE.exists():
+        try:
+            with open(RATINGS_FILE, 'r') as f:
+                all_ratings = json.load(f)
+        except json.JSONDecodeError:
+            # If file is corrupted, start fresh
+            all_ratings = []
     
-    # Clear the action lists
-    st.session_state.game_a_actions = []
-    st.session_state.game_b_actions = []
-    # st.session_state.game_a_focus_events = []
-    # st.session_state.game_b_focus_events = []
-    # Don't clear the processed timestamps (used to make sure actions sent from the bridge are not saved twice when the app is rerun)
+    # Add new ratings
+    all_ratings.append(rating_entry)
+    
+    # Save all ratings back to file
+    with open(RATINGS_FILE, 'w') as f:
+        json.dump(all_ratings, f, indent=4)
+    
+    return jsonify({"status": "success"})
 
-
-def sample_new_pair():
-    """Sample a new pair of games different from current ones."""
-    current_pair = st.session_state.current_pair
-    
-    # Reset action tracking for new pair
-    st.session_state.game_a_actions = []
-    st.session_state.game_b_actions = []
-    # st.session_state.game_a_focus_events = []
-    # st.session_state.game_b_focus_events = []
-
-    # If random game mode is active, potentially select a new game
-    if st.session_state.random_game_mode:
-        # Randomly select a game index
-        new_game_idx = random.randint(0, len(st.session_state.game_descriptions) - 1)
-        if new_game_idx != st.session_state.game_idx:
-            st.session_state.game_idx = new_game_idx
-            new_samples = get_game_samples(st.session_state.games_dataset, st.session_state.game_idx)
-            if len(new_samples) >= 2:
-                return random.sample(new_samples, 2)
-    
-    # Original logic for sampling from current game
-    samples = get_game_samples(st.session_state.games_dataset, st.session_state.game_idx)
-    while True:
-        new_pair = random.sample(samples, 2)
-        # Only accept if both games are different from current ones
-        if new_pair[0]["id"] != current_pair[0]["id"] and new_pair[1]["id"] != current_pair[1]["id"]:
-            return new_pair
-
-
-def main():
-    # Initialize cached resources
-    preferences_scheduler = get_scheduler()
-    
-    # Load datasets only if not already in session state
-    if "games_dataset" not in st.session_state:
-        games_dataset, initial_ratings, game_descriptions = load_datasets()
-        st.session_state.games_dataset = games_dataset
-        st.session_state.initial_ratings = initial_ratings
-        st.session_state.game_descriptions = game_descriptions
-    
-    # Initialize ratings in session state if not already present
-    if "ratings" not in st.session_state:
-        st.session_state.ratings = st.session_state.initial_ratings.copy()
-    
-    # Add CSS for sidebar text wrapping
-    st.markdown("""
-        <style>
-        .stSelectbox div div div {
-            white-space: normal !important;
-            line-height: normal !important;
-        }
-        div[data-baseweb="select"] > div {
-            min-height: fit-content !important;
-            max-height: none !important;
-        }
-        div[data-baseweb="select"] span {
-            white-space: normal !important;
-            line-height: normal !important;
-        }
-        </style>
-    """, unsafe_allow_html=True)
-    
-    # User authentication
-    if "username" not in st.session_state:
-        st.title("Welcome to Game Evaluation")
-        
-        # Add username to session state when submitted
-        def set_username():
-            if st.session_state.username_input:
-                st.session_state.username = st.session_state.username_input
-        
-        username = st.text_input(
-            "Please enter your username:",
-            key="username_input",
-            on_change=set_username
-        )
-        
-        if st.button("Start"):
-            if username:
-                st.session_state.username = username
-            else:
-                st.error("Please enter a username")
-        return
-    
-    # Rest of the main function
-    st.sidebar.title(f"Welcome, {st.session_state.username}!")
-    
-    # Add logout button in sidebar
-    if st.sidebar.button("Logout"):
-        del st.session_state.username
-        st.rerun()
-    
-    # Sidebar for game selection
-    st.sidebar.title("Game Selection")
-    game_options = [f"Game {i}: {desc}" for i, desc in enumerate(st.session_state.game_descriptions)]
-    
-    # Random game mode checkbox
-    if "random_game_mode" not in st.session_state:
-        st.session_state.random_game_mode = True
-    
-    st.session_state.random_game_mode = st.sidebar.checkbox("Randomly select games", value=st.session_state.random_game_mode)
-    
-    # Initialize or update game index in session state
-    if "game_idx" not in st.session_state:
-        st.session_state.game_idx = 0
-    
-    # Initialize leaderboard game index
-    if "leaderboard_game_idx" not in st.session_state:
-        st.session_state.leaderboard_game_idx = st.session_state.game_idx
-    
-    # Show game selection dropdown (disabled if in random mode)
-    selected_idx = st.sidebar.selectbox(
-        "Select Game to Evaluate" if not st.session_state.random_game_mode else "Current Game (disabled in random mode)",
-        range(len(game_options)),
-        format_func=lambda x: game_options[x],
-        index=st.session_state.game_idx,
-        disabled=st.session_state.random_game_mode
-    )
-    
-    # If game changed through dropdown and not in random mode, update game_idx
-    if selected_idx != st.session_state.game_idx and not st.session_state.random_game_mode:
-        st.session_state.game_idx = selected_idx
-        st.session_state.leaderboard_game_idx = selected_idx
-        if "current_pair" in st.session_state:
-            del st.session_state.current_pair
-        if "selected_game" in st.session_state:
-            del st.session_state.selected_game
-        st.rerun()
-    
-    # Get available samples for current game from dataset
-    samples = get_game_samples(st.session_state.games_dataset, st.session_state.game_idx)
-    if len(samples) < 2:
-        st.error(f"Not enough samples available for Game {st.session_state.game_idx}.")
-        return
-    
-    # Initialize ratings for new samples
-    for sample in samples:
-        if sample["id"] not in st.session_state.ratings:
-            st.session_state.ratings[sample["id"]] = INITIAL_RATING
-    
-    # Create tabs for comparison and leaderboard
-    tab1, tab2 = st.tabs(["Compare Games", "Leaderboard"])
-    
-    with tab1:
-        st.write(st.session_state.game_descriptions[st.session_state.game_idx])
-        st.write("Play both games and choose which one is better.")
-        
-        # Select two random samples
-        if "current_pair" not in st.session_state:
-            st.session_state.current_pair = random.sample(samples, 2)
-        
-        # Display the games
-        display_game_pair(st.session_state.current_pair[0], st.session_state.current_pair[1])
-        
-        # Voting interface with three columns
-        col1, col2, col3 = st.columns([1, 1, 1])
-        
-        with col1:
-            if st.button("Game A is Better", use_container_width=True):
-                new_rating_a, new_rating_b = update_elo(
-                    st.session_state.ratings[st.session_state.current_pair[0]["id"]],
-                    st.session_state.ratings[st.session_state.current_pair[1]["id"]],
-                    "A"
-                )
-                st.session_state.ratings[st.session_state.current_pair[0]["id"]] = new_rating_a
-                st.session_state.ratings[st.session_state.current_pair[1]["id"]] = new_rating_b
-                save_preference(preferences_scheduler, st.session_state.current_pair[0], st.session_state.current_pair[1], "A")
-                st.session_state.current_pair = sample_new_pair()
-                st.rerun()
-        
-        with col2:
-            if st.button("Equal", use_container_width=True):
-                save_preference(preferences_scheduler, st.session_state.current_pair[0], st.session_state.current_pair[1], "tie")
-                st.session_state.current_pair = sample_new_pair()
-                st.rerun()
-        
-        with col3:
-            if st.button("Game B is Better", use_container_width=True):
-                new_rating_a, new_rating_b = update_elo(
-                    st.session_state.ratings[st.session_state.current_pair[0]["id"]],
-                    st.session_state.ratings[st.session_state.current_pair[1]["id"]],
-                    "B"
-                )
-                st.session_state.ratings[st.session_state.current_pair[0]["id"]] = new_rating_a
-                st.session_state.ratings[st.session_state.current_pair[1]["id"]] = new_rating_b
-                save_preference(preferences_scheduler, st.session_state.current_pair[0], st.session_state.current_pair[1], "B")
-                st.session_state.current_pair = sample_new_pair()
-                st.rerun()
-    
-    with tab2:
-        # Add separate game selector for leaderboard when in random mode
-        if st.session_state.random_game_mode:
-            leaderboard_selected_idx = st.selectbox(
-                "Select Game Leaderboard to View",
-                range(len(game_options)),
-                format_func=lambda x: game_options[x],
-                index=st.session_state.leaderboard_game_idx
-            )
-            
-            if leaderboard_selected_idx != st.session_state.leaderboard_game_idx:
-                st.session_state.leaderboard_game_idx = leaderboard_selected_idx
-                if "selected_game" in st.session_state:
-                    del st.session_state.selected_game
-                st.rerun()
-                
-            # Get samples for leaderboard-specific game
-            leaderboard_samples = get_game_samples(st.session_state.games_dataset, st.session_state.leaderboard_game_idx)
-            display_leaderboard(leaderboard_samples)
-        else:
-            # Original behavior - leaderboard matches comparison game
-            display_leaderboard(samples)
-
-if __name__ == "__main__":
-    main() 
+if __name__ == '__main__':
+    app.run(debug=True)
