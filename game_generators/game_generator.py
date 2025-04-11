@@ -27,7 +27,6 @@ class GameGenerator:
         self,
         method_name: str,
         model_name: str = "openai:gpt-3.5-turbo",
-        config_path: str = "config/gamegen/base_prompt.yaml",
     ):
         """
         Initialize the game generator
@@ -44,14 +43,13 @@ class GameGenerator:
 
         self.method_name = method_name
         self.model_name = model_name
-        self.config_path = config_path
 
         # Initialize model API
         self.model_api = ModelAPI(model_name)
 
         # Initialize appropriate designer
         designer_class = self.VALID_METHODS[method_name]
-        self.designer = designer_class(self.model_api, config_path)
+        self.designer = designer_class(self.model_api)
 
         # Initialize code generator
         self.code_generator = P5JSGenerator(self.model_api)
