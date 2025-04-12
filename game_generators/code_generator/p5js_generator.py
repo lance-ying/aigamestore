@@ -20,19 +20,84 @@ class P5JSGenerator:
         self.p5js_url = "https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"
         self.debug = False
 
+    def _create_user_prompt(self, game_concept: str) -> str:
+        """Create the user prompt for code generation"""
+        # Create HTML example with proper script tags
+        html_example = FORMAT_HTML_TEMPLATE.format(
+            title="{title}", p5js_url=self.p5js_url  # Keep as template placeholder
+        )
+
+        return f"""Create a complete p5.js game based on this concept:
+{game_concept}
+
+Technical Specifications:
+1. Canvas Size: {CANVAS_SIZE['width']}x{CANVAS_SIZE['height']} pixels
+2. Controls: Arrow keys or WASD for movement, SPACE for actions
+3. Required Elements:
+- Start screen with instructions
+- Main gameplay
+- Game over condition
+- Basic score or progress tracking
+
+Please provide the implementation in two code blocks:
+1. ```html block for index.html
+2. ```javascript block for game.js
+
+You should use Entity-Component-System (ECS) pattern for the JavaScript code:
+- Create separate classes for entities (Player, Enemy, etc.)
+- Use components for shared behaviors
+- Implement systems for game logic
+- Follow naming convention: xxxEntity, xxxComponent, xxxSystem
+
+HTML structure to follow:
+```html
+{html_example}
+```
+"""
+
+    def _extract_code_block(
+        self, text: str, language: str
+    ) -> Union[str, Dict[str, str]]:
+        """Extract code blocks from text"""
+        if language == "javascript":
+            # First try to find named JavaScript files
+            js_files = {}
+            pattern = rf"```javascript:([\w.]+)\s*(.*?)```"
+            matches = re.finditer(pattern, text, re.DOTALL)
+
+            for match in matches:
+                filename = match.group(1)
+                code = match.group(2).strip()
+                # Remove filename if it appears at the start of the code
+                if code.startswith(f":{filename}"):
+                    code = code[len(filename) + 1 :].strip()
+                js_files[filename] = code
+
+            if js_files:
+                return js_files
+
+            # If no named files found, look for generic javascript block
+            pattern = rf"```javascript\s*(.*?)```"
+            match = re.search(pattern, text, re.DOTALL)
+            if match:
+                code = match.group(1).strip()
+                # If code starts with ":game.js" or similar, remove it
+                if code.startswith(":"):
+                    code = code.split("\n", 1)[1].strip()
+                return code
+
+            return ""
+
+        else:
+            # For HTML, just extract the content
+            pattern = rf"```{language}\s*(.*?)```"
+            match = re.search(pattern, text, re.DOTALL)
+            return match.group(1).strip() if match else ""
+
     def generate_code(
         self, design: Dict[str, Any], debug: bool = False
     ) -> Tuple[str, List[Tuple[str, str]]]:
-        """
-        Generate complete game code from design
-
-        Args:
-            design: Dictionary containing game design details
-            debug: Whether to print debug information
-
-        Returns:
-            Tuple of (html_code, js_files) where js_files is list of (filename, content)
-        """
+        """Generate complete game code from design"""
         self.debug = debug
         try:
             if debug:
@@ -53,6 +118,22 @@ class P5JSGenerator:
             js_code = self._extract_code_block(response, "javascript")
             html_code = self._extract_code_block(response, "html") or ""
 
+            # If HTML is empty or doesn't contain proper script tags, create it
+            if not html_code or "<script src=" not in html_code:
+                if isinstance(js_code, dict):
+                    js_includes = "\n    ".join(
+                        f'<script src="{filename}"></script>'
+                        for filename in js_code.keys()
+                    )
+                else:
+                    js_includes = '<script src="game.js"></script>'
+
+                html_code = FORMAT_HTML_TEMPLATE.format(
+                    title=design.get("title", "Game"),
+                    p5js_url=self.p5js_url,
+                    js_includes=js_includes,
+                )
+
             if debug:
                 print(f"\n{BLUE}Extracted JavaScript code:{RESET}")
                 if isinstance(js_code, dict):
@@ -62,7 +143,7 @@ class P5JSGenerator:
                     print(f"\n{YELLOW}game.js:{RESET}\n{js_code}")
                 print(f"\n{BLUE}Extracted HTML code:{RESET}\n{html_code}")
 
-            # Convert js_code to list of tuples
+            # Convert js_code to proper format
             if isinstance(js_code, dict):
                 js_files = [(filename, code) for filename, code in js_code.items()]
             else:
@@ -78,78 +159,6 @@ class P5JSGenerator:
                 import traceback
 
                 traceback.print_exc()
-            raise
-
-    def _create_user_prompt(self, game_concept: str) -> str:
-        """Create the user prompt for code generation"""
-        return f"""Create a complete p5.js game based on this concept:
-{game_concept}
-
-Technical Specifications:
-1. Canvas Size: {CANVAS_SIZE['width']}x{CANVAS_SIZE['height']} pixels
-2. Controls: Arrow keys or WASD for movement, SPACE for actions
-3. Required Elements:
-- Start screen with instructions
-- Main gameplay
-- Game over condition
-- Basic score or progress tracking
-
-Please provide the implementation in two code blocks:
-1. HTML block labeled ```html
-2. JavaScript block labeled ```javascript
-
-For complex games, you may split JavaScript into multiple files using:
-```javascript:filename.js
-"""
-
-    def _extract_code_block(
-        self, text: str, language: str
-    ) -> Union[str, Dict[str, str]]:
-        """
-        Extract code block(s) of specified language from text
-
-        Args:
-            text: Text containing code blocks
-            language: Language identifier (e.g., 'javascript', 'html')
-
-        Returns:
-            Union[str, Dict[str, str]]: Either a single code block or dictionary of named blocks
-        """
-        if self.debug:
-            print(f"\n{BLUE}Extracting {language} code block(s){RESET}")
-
-        try:
-            if language == "javascript":
-                # First try to find a single javascript block
-                pattern = rf"```javascript\s*(.*?)```"
-                match = re.search(pattern, text, re.DOTALL)
-                if match:
-                    return match.group(1).strip()
-
-                # If not found, look for named JavaScript files
-                js_files = {}
-                pattern = rf"```javascript:([\w.]+)\s*(.*?)```"
-                matches = re.finditer(pattern, text, re.DOTALL)
-
-                for match in matches:
-                    filename = match.group(1)
-                    code = match.group(2).strip()
-                    js_files[filename] = code
-
-                    if self.debug:
-                        print(f"{GREEN}Found JavaScript file: {filename}{RESET}")
-
-                return js_files if js_files else ""
-
-            else:
-                # For HTML, just extract the content
-                pattern = rf"```{language}\s*(.*?)```"
-                match = re.search(pattern, text, re.DOTALL)
-                return match.group(1).strip() if match else ""
-
-        except Exception as e:
-            if self.debug:
-                print(f"{RED}Error extracting {language} code block: {str(e)}{RESET}")
             raise
 
     def _extract_title(self, text: str) -> str:

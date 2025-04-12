@@ -18,6 +18,7 @@ from game_generators.prompts import (
     CODE_GENERATION_SYSTEM_PROMPT,
 )
 from game_generators.game_designer.simple_designer import SimpleDesigner
+from game_generators.game_designer.conversational_designer import ConversationalDesigner
 from game_generators.code_generator.p5js_generator import P5JSGenerator
 
 
@@ -25,7 +26,10 @@ class GameGenerator:
     """Controller class for game generation process"""
 
     VALID_METHODS = {
-        # "conversation": ConversationalDesigner,
+        "conversation": {
+            "designer": ConversationalDesigner,
+            "code_generator": P5JSGenerator,
+        },
         # "character_driven": CharacterDrivenDesigner,
         # "judge_conversation": JudgeDesigner,
         "simple_prompt": {
@@ -196,13 +200,14 @@ class GameGenerator:
             .lower()
         )
 
-        # Create game directory
+        # Create game directory with timestamp
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         game_dir = (
             Path("games")
             / self.method_name
             / self.model_name.split(":")[1]
             / genre
-            / safe_title
+            / f"{safe_title}"
         )
         game_dir.mkdir(parents=True, exist_ok=True)
 
@@ -211,30 +216,54 @@ class GameGenerator:
             f.write(html_code)
 
         # Save JavaScript files
+        js_filenames = []
         for filename, content in js_files:
             with open(game_dir / filename, "w", encoding="utf-8") as f:
                 f.write(content)
+                js_filenames.append(filename)
 
-        # Save generation log
+        # Save generation log with structured format
+        log_content = f"""=== Game Generation Log ===
+Timestamp: {timestamp}
+Method: {self.method_name}
+Model: {self.model_name}
+
+=== Game Details ===
+Title: {title}
+Genre: {genre}
+Players: {num_players}
+Narrative Constraints: {narratives if narratives else "None"}
+
+=== Game Description ===
+{description}
+
+=== Player Guidance ===
+{guidance}
+
+=== Generation Process ===
+{full_response}
+"""
         with open(game_dir / "generation_log.txt", "w", encoding="utf-8") as f:
-            f.write(full_response)
+            f.write(log_content)
 
-        # Save metadata with all required information
+        # Save metadata with comprehensive information
         metadata = {
-            "game_name": title,
-            "game_description": description,
-            "game_guidance": guidance,
-            "genre": genre,
-            "num_players": num_players,
-            "narratives": (
-                narratives if narratives else "No specific narrative constraints"
-            ),
-            "generation_method": self.method_name,
-            "model": self.model_name,
-            "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "game_info": {
+                "title": title,
+                "description": description,
+                "guidance": guidance,
+                "genre": genre,
+                "num_players": num_players,
+                "narratives": narratives if narratives else "None",
+            },
+            "generation_info": {
+                "method": self.method_name,
+                "model": self.model_name,
+                "timestamp": timestamp,
+            },
             "files": {
                 "html": "index.html",
-                "javascript": [f for f, _ in js_files],
+                "javascript": js_filenames,
                 "log": "generation_log.txt",
             },
         }

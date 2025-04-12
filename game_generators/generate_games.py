@@ -78,7 +78,7 @@ def main():
             "simple_prompt",
             "guide_complexity",
         ],
-        default="simple_prompt",
+        default="conversation",
         help="Game generation method to use",
     )
 
@@ -108,7 +108,7 @@ def main():
     parser.add_argument(
         "--model",
         type=str,
-        default="openai:gpt-4o",
+        default="openai:o3-mini",
         choices=[
             "openai:gpt-4",
             "openai:gpt-4o",
