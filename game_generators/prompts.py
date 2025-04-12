@@ -103,8 +103,7 @@ VALID_GENRES = [
 ]
 
 
-FORMAT_HTML_TEMPLATE = """
-<!DOCTYPE html>
+FORMAT_HTML_TEMPLATE = """<!DOCTYPE html>
 <html>
   <head>
     <meta charset="UTF-8" />
@@ -132,7 +131,6 @@ FORMAT_HTML_TEMPLATE = """
     <!-- Load the p5.js library from CDN -->
     <script src="{p5js_url}"></script>
     <!-- Load game code -->
-{js_includes}
+    <script src="game.js"></script>
   </body>
-</html>
-"""
+</html>"""
