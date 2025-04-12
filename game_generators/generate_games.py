@@ -113,12 +113,13 @@ def main():
             "openai:gpt-4",
             "openai:gpt-4o",
             "openai:o3-mini",
-            "claude:3.5-sonnet",
-            "claude:3.5-haiku",
-            "claude:3.7-sonnet",
+            "anthropic:claude-3.5-sonnet",
+            "anthropic:claude-3.5-haiku",
+            "anthropic:claude-3.7-sonnet",
             "gemini:1.5-pro",
             "gemini:1.5-flash",
         ],
+        help="LLM to use",
     )
 
     parser.add_argument(
