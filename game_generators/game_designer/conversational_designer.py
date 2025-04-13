@@ -56,7 +56,7 @@ Provide specific, actionable feedback that will make the game more engaging whil
                 print(f"\n{BLUE}Starting game design conversation...{RESET}")
 
             # Phase 1: Conversational Planning
-            plan = self._conversational_planning(genre, num_players, narratives)
+            plan = self._conversational_planning(genre, num_players, narratives, debug)
 
             # Extract final details
             title = self._extract_title(plan["final_proposal"])
@@ -105,27 +105,33 @@ Design Evolution:
             raise
 
     def _conversational_planning(
-        self, genre: str, num_players: int, narratives: Optional[str]
+        self,
+        genre: str,
+        num_players: int,
+        narratives: Optional[str],
+        debug: bool = False,
     ) -> Dict[str, Any]:
         """Run the conversation between generator and commenter"""
         num_ai_agents = max(0, num_players - 1)
 
         initial_prompt = self._create_initial_prompt(genre, num_ai_agents, narratives)
-        current_proposal = self._call_model_api(initial_prompt, self.system_prompt)
+        current_proposal = self._call_model_api(
+            initial_prompt, self.system_prompt, debug=debug
+        )
 
         discussion_history = []
         for round_num in range(self.max_discussion_rounds):
             # Get commenter feedback
             commenter_prompt = self._create_commenter_prompt(current_proposal)
             commenter_response = self._call_model_api(
-                commenter_prompt, self.commenter_system_prompt
+                commenter_prompt, self.commenter_system_prompt, debug=debug
             )
             discussion_history.append(("commenter", commenter_response))
 
             # Get generator refinement
             refinement_prompt = self._create_refinement_prompt(commenter_response)
             current_proposal = self._call_model_api(
-                refinement_prompt, self.system_prompt
+                refinement_prompt, self.system_prompt, debug=debug
             )
             discussion_history.append(("generator", current_proposal))
 
@@ -303,7 +309,9 @@ The guidance block will be shown directly on the game's start screen, so make it
             )
         return match.group(1).strip()
 
-    def _call_model_api(self, prompt: str, system_prompt: str = None) -> str:
+    def _call_model_api(
+        self, prompt: str, system_prompt: str = None, debug: bool = False
+    ) -> str:
         """Call the model API with proper prompts"""
         messages = []
         if system_prompt:
@@ -311,7 +319,7 @@ The guidance block will be shown directly on the game's start screen, so make it
         messages.append({"role": "user", "content": prompt})
 
         response = self.model_api.call(
-            user_prompt=prompt, system_prompt=system_prompt, debug=True
+            user_prompt=prompt, system_prompt=system_prompt, debug=debug
         )
 
         return response

@@ -74,11 +74,11 @@ def main():
         choices=[
             "conversation",
             "character_driven",
-            "judge_conversation",
+            "judge",
             "simple_prompt",
             "complexity_guide",
         ],
-        default="complexity_guide",
+        default="judge",
         help="Game generation method to use",
     )
 

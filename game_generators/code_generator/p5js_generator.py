@@ -29,6 +29,8 @@ class P5JSGenerator:
 
         return f"""Create a complete p5.js game based on this concept:
 {game_concept}
+-------------------------------------
+Here are the implementation instructions:
 
 Technical Specifications:
 1. Canvas Size: {CANVAS_SIZE['width']}x{CANVAS_SIZE['height']} pixels

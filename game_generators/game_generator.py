@@ -22,6 +22,7 @@ from game_generators.game_designer.conversational_designer import Conversational
 from game_generators.game_designer.complexity_guide_designer import (
     ComplexityGuideDesigner,
 )
+from game_generators.game_designer.judge_designer import JudgeDesigner
 from game_generators.code_generator.p5js_generator import P5JSGenerator
 
 
@@ -34,7 +35,10 @@ class GameGenerator:
             "code_generator": P5JSGenerator,
         },
         # "character_driven": CharacterDrivenDesigner,
-        # "judge_conversation": JudgeDesigner,
+        "judge": {
+            "designer": JudgeDesigner,
+            "code_generator": P5JSGenerator,
+        },
         "simple_prompt": {
             "designer": SimpleDesigner,
             "code_generator": None,
