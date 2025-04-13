@@ -74,11 +74,12 @@ def main():
         choices=[
             "conversation",
             "character_driven",
+            "template",
             "judge",
             "simple_prompt",
             "complexity_guide",
         ],
-        default="judge",
+        default="template",
         help="Game generation method to use",
     )
 
@@ -108,7 +109,7 @@ def main():
     parser.add_argument(
         "--model",
         type=str,
-        default="openai:o3-mini",
+        default="anthropic:claude-3.5-sonnet",
         choices=[
             "openai:gpt-4",
             "openai:gpt-4o",

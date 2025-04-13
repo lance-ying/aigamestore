@@ -22,9 +22,8 @@ class P5JSGenerator:
 
     def _create_user_prompt(self, game_concept: str) -> str:
         """Create the user prompt for code generation"""
-        # Create HTML example with proper script tags
         html_example = FORMAT_HTML_TEMPLATE.format(
-            title="{title}", p5js_url=self.p5js_url  # Keep as template placeholder
+            title="{title}", p5js_url=self.p5js_url
         )
 
         return f"""Create a complete p5.js game based on this concept:
@@ -32,29 +31,65 @@ class P5JSGenerator:
 -------------------------------------
 Here are the implementation instructions:
 
-Technical Specifications:
-1. Canvas Size: {CANVAS_SIZE['width']}x{CANVAS_SIZE['height']} pixels
-2. Controls: Arrow keys or WASD for movement, SPACE for actions
-3. Required Elements:
-- Start screen with instructions
-- Main gameplay
-- Game over condition
-- Basic score or progress tracking
-
-Please provide the implementation in two code blocks:
-1. ```html block for index.html
-2. ```javascript block for game.js
-
-You should use Entity-Component-System (ECS) pattern for the JavaScript code:
-- Create separate classes for entities (Player, Enemy, etc.)
-- Use components for shared behaviors
-- Implement systems for game logic
-- Follow naming convention: xxxEntity, xxxComponent, xxxSystem
-
-HTML structure to follow:
-```html
-{html_example}
+1. Visual Style and Effects:
+```visuals
+- Theme: Create a cohesive visual style with a clear color palette
+- Particles: Add particle systems for impacts, movement trails, explosions
+- Animations: Smooth transitions, scaling, rotation effects
+- Polish: Add screen shake, flash effects, and visual juice
+- Atmosphere: Use gradients, patterns, or parallax backgrounds
 ```
+
+2. Canvas and Layers:
+```canvas
+- Size: {CANVAS_SIZE['width']}x{CANVAS_SIZE['height']} pixels
+- Background Layer: Dynamic, animated game world
+- Entity Layer: Characters, objects, interactions
+- Particle Layer: Effects and feedback
+- UI Layer: Clean, responsive interface elements
+```
+
+3. Core Systems with Visual Feedback:
+```systems
+- RenderSystem: Handle layered drawing with depth
+- AnimationSystem: Manage sprites, tweens, transitions
+- ParticleSystem: Create and update effect particles
+- FeedbackSystem: Screen effects, flashes, camera shake
+```
+
+4. Player Experience:
+```feedback
+- Movement: Smooth animations with momentum/trails
+- Actions: Impactful effects with particles/flashes
+- Collisions: Visible feedback with particles/shake
+- State Changes: Clear transitions with effects
+```
+
+Please provide the code in the following format:
+
+1. JavaScript files (use this block format for EACH file):
+examples:
+```javascript:game.js
+// Core game loop and state management
+[Your game.js code here]
+```
+
+```javascript:render.js
+// Visual systems and effects
+[Your render.js code here]
+```
+
+2. HTML file (use this block format, remember to include all game javascript files you created):
+```html
+[Your HTML code here]
+```
+
+Remember:
+- Every action should have satisfying visual feedback
+- Use color and effects to guide player attention
+- Create a cohesive visual style throughout
+- Add "juice" to make the game feel alive
+- Layer effects for visual depth
 """
 
     def _extract_code_block(
