@@ -35,7 +35,6 @@ class GameGenerator:
             "designer": ConversationalDesigner,
             "code_generator": P5JSGenerator,
         },
-        # "character_driven": CharacterDrivenDesigner,
         "judge": {
             "designer": JudgeDesigner,
             "code_generator": P5JSGenerator,

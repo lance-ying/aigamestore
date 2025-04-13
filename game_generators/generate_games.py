@@ -9,6 +9,9 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from game_generators.game_generator import GameGenerator
+from game_generators.character_driven_game_generator import (
+    CharacterDrivenGameGenerator,
+)
 from game_generators.utils import GREEN, YELLOW, RED, BLUE, RESET
 
 
@@ -36,7 +39,12 @@ def generate_game(
     """
     try:
         # Initialize game generator
-        generator = GameGenerator(method_name=method, model_name=model)
+        if method == "character_driven":
+            generator = CharacterDrivenGameGenerator(
+                method_name=method, model_name=model
+            )
+        else:
+            generator = GameGenerator(method_name=method, model_name=model)
 
         # Generate the game
         html_code, js_files, title, description, _ = generator.generate_game(
@@ -79,7 +87,7 @@ def main():
             "simple_prompt",
             "complexity_guide",
         ],
-        default="template",
+        default="simple_prompt",
         help="Game generation method to use",
     )
 
@@ -109,7 +117,7 @@ def main():
     parser.add_argument(
         "--model",
         type=str,
-        default="anthropic:claude-3.5-sonnet",
+        default="openai:o3-mini",
         choices=[
             "openai:gpt-4",
             "openai:gpt-4o",

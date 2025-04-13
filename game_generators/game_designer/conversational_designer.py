@@ -10,38 +10,23 @@ class ConversationalDesigner:
     def __init__(self, model_api: ModelAPI, system_prompt: str = None):
         self.model_api = model_api
         self.system_prompt = system_prompt or GAME_DESIGN_SYSTEM_PROMPT
+
         self.max_discussion_rounds = 2
 
-        # Commenter system prompt focuses on improving game design
-        self.commenter_system_prompt = """You are an experienced game design critic focused on creating engaging and innovative p5.js games.
-Your role is to analyze game designs and suggest improvements in these areas:
-
-1. Player Experience:
-   - Engagement: Is the core gameplay loop compelling?
-   - Learning curve: Is it easy to understand but hard to master?
-   - Controls: Are they intuitive and responsive?
-
-2. Game Mechanics:
-   - Innovation: Suggest unique combinations of basic mechanics
-   - Balance: Ensure challenge scales well
-   - Feedback: Clear indicators of success/failure
-
-3. AI Behavior:
-   - Personality: Each AI agent should have distinct behavior
-   - Purpose: Every agent should serve a clear gameplay role
-   - Interaction: Create interesting player-AI dynamics
-
-4. Visual Design:
-   - Clarity: Important elements should be easily identifiable
-   - Style: Suggest cohesive visual themes
-   - Animation: Recommend smooth, meaningful movements
-
-5. Technical Feasibility:
-   - Keep suggestions within p5.js capabilities
-   - Focus on implementable features
-   - Consider performance implications
-
-Provide specific, actionable feedback that will make the game more engaging while staying technically feasible."""
+        # Use the commenter system prompt from conv_gamegen
+        self.commenter_system_prompt = """You are an experienced game design critic with a focus on innovation.
+Your role is to:
+1. Analyze proposed game designs and push for more creative solutions
+2. Suggest specific improvements for:
+   - Novelty: Look for opportunities to add unexpected twists
+   - Innovation: Identify ways to combine mechanics in unique ways
+   - Player engagement: Focus on surprising and delightful interactions
+   - Game mechanics: Challenge conventional approaches
+   - Visual appeal: Suggest unique visual elements
+   - User experience: Balance innovation with usability
+3. Keep suggestions practical within p5.js constraints
+4. Focus on constructive feedback that enhances uniqueness
+5. Question traditional genre conventions and suggest creative alternatives"""
 
     def design_game(
         self,
@@ -149,109 +134,77 @@ Design Evolution:
     def _create_initial_prompt(
         self, genre: str, num_ai_agents: int, narratives: Optional[str]
     ) -> str:
-        return f"""Create a complete p5.js game design for a {genre} game with {num_ai_agents} AI-controlled agents.
+        # Use format similar to conv_gamegen's initial prompt
+        return f"""Let's create an innovative single-player **{genre}** game with {num_ai_agents} AI-controlled agents.
 
-Narrative Context:
-{narratives if narratives else "Create an engaging storyline that fits the genre"}
-        
-Game Requirements:
-1. Single human player with {num_ai_agents} AI opponents/allies
-2. Controls:
-   - Arrow keys or WASD for movement
-   - Space bar for primary action
-   - Shift key for special ability
-3. Canvas size: 600x400 pixels
-4. No audio required
+Game Structure:
+- One player-controlled character using these controls:
+  - Arrow keys or WASD for movement
+  - Space bar for primary action
+  - Shift key for special ability
+- {num_ai_agents} computer-controlled agents that interact with the player
+- Each AI agent should have its own behavior and purpose
 
-Please provide a complete design including:
-1. Game Title: Catchy and descriptive
-2. Game Description: Core concept and unique features
-3. Player Instructions: Controls and objectives
-4. Game Mechanics:
-   - Player abilities and controls
-   - AI agent behaviors and purposes
-   - Interaction systems
-   - Scoring/progression
-5. Technical Specifications:
-   - Entity types and properties
-   - State management
-   - Collision handling
-   - Win/lose conditions
-6. Visual Design:
-   - Art style
-   - Animation concepts
-   - UI elements
+{narratives if narratives else ""}
 
-Format your response with clear sections using the headers above."""
+Please propose:
+1. A catchy game title
+2. Core game concept focusing on player interaction with AI agents
+3. Novel mechanics for the player character
+4. Creative objectives involving the AI agents
+5. Clear player instructions
+6. At least two unique gameplay elements
+7. Innovative ways to use the control scheme
+
+Think about:
+- How can the AI agents create interesting challenges?
+- What unique interactions can occur between player and AI agents?
+- How can we make the single player controls feel responsive and fun?"""
 
     def _create_commenter_prompt(self, proposal: str) -> str:
-        return f"""Review this game design proposal:
+        # Use format similar to conv_gamegen's commenter prompt
+        return f"""Review this game proposal:
 {proposal}
 
-Analyze each aspect and suggest specific improvements:
+How can we make this game more innovative and unique? Focus on:
+1. Unexpected gameplay mechanics
+2. Novel twists on familiar elements
+3. Surprising player interactions
+4. Creative combinations of mechanics
+5. Unique visual elements
+6. Innovative progression systems
 
-1. Core Gameplay:
-   - Is it engaging and unique?
-   - What mechanics could be added or combined?
-   - How could player-AI interactions be more interesting?
-
-2. Technical Implementation:
-   - Are the mechanics feasible in p5.js?
-   - Any potential performance concerns?
-   - Suggestions for efficient implementation?
-
-3. Player Experience:
-   - Is the learning curve appropriate?
-   - Are controls intuitive?
-   - Is feedback clear and meaningful?
-
-4. Visual Design:
-   - How could the visuals enhance gameplay?
-   - Are important elements easily identifiable?
-   - Suggestions for visual effects?
-
-Provide specific, actionable feedback for each area."""
+Consider:
+- What conventional elements could be replaced with more creative alternatives?
+- How can we surprise players while maintaining engaging gameplay?
+- What unique mechanics could make this game memorable?"""
 
     def _create_refinement_prompt(self, feedback: str) -> str:
-        return f"""Based on this feedback:
+        # Use format similar to conv_gamegen's refinement prompt
+        return f"""Consider this feedback on your game proposal:
 {feedback}
 
-Please provide an improved, complete game design. Your response MUST include all these sections in order:
-
-1. Game Title:
-[Your title]
-
-2. Game Description:
-[Core concept and unique features]
-
+Please provide an improved version that emphasizes innovation and includes:
+1. Game title (keep it catchy and relevant)
+2. Game description: A clear, concise summary of the game concept and unique features
 3. Game Guidance:
 ```guidance
-[Write an engaging start screen message that includes:
-- Exciting welcome message
-- Clear mission statement
-- Control scheme
-- Key gameplay tips
-Make it fun and informative!]
+[Write an engaging start screen message that:
+- Welcomes players
+- Explains basic controls
+- Shows main objectives
+- Gives essential tips]
 ```
+4. Novel mechanics and unique interactions
+5. Creative win/lose conditions
+6. Innovative progression system
+7. Unexpected visual elements
 
-4. Detailed Game Design:
-   - Complete gameplay mechanics
-   - AI agent behaviors
-   - Interaction systems
-   - Progression mechanics
-
-5. Technical Specifications:
-   - Entity definitions
-   - State management
-   - Physics/collision systems
-   - Win/lose conditions
-
-6. Visual Design:
-   - Art style
-   - Animation systems
-   - Effects and polish
-
-The guidance block will be shown directly on the game's start screen, so make it engaging and clear for players."""
+Format your response with clear sections:
+Title: [Game Title]
+Description: [2-3 sentences describing the game]
+Game Guidance: [Must be wrapped in ```guidance code block as shown above]
+[Rest of the game details]"""
 
     def _format_discussion(
         self, initial_prompt: str, final_proposal: str, history: list
