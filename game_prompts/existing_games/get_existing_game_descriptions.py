@@ -36,7 +36,7 @@ def ensure_dir(directory: str) -> None:
     """Ensure that the directory exists."""
     Path(directory).mkdir(parents=True, exist_ok=True)
 
-def generate_game_description(game_info: Dict[str, str], genre: str, model, max_retries: int = 3) -> Dict[str, Any]:
+def generate_game_description(game_info: Dict[str, str], genre: str, model, max_retries: int = 10) -> Dict[str, Any]:
     """
     Generate a game description using the Gemini model.
     
@@ -71,6 +71,7 @@ def generate_game_description(game_info: Dict[str, str], genre: str, model, max_
     
     prompt = f"""
     Generate a description for the "{game_name}" video game. Describe it as if you were describing it to a game developer who is responsible for implementing the game.
+    Do not include any instructions for the developer, just describe the game. No sound effects or graphical representations are needed in the description.
     In addition, describe the controls for the game based on keyboard keys along with the action for each key.
     Choose the controls to be from the following allowed keys: {', '.join(allowed_keys.keys())}.
     Format your response in this structure:
@@ -114,6 +115,7 @@ def generate_game_description(game_info: Dict[str, str], genre: str, model, max_
                 
         except Exception as e:
             error_msg = str(e).lower()
+            print(f"Error generating description for {game_name}: {error_msg}")
             retries += 1
             
             # Check if it's a rate limit error
@@ -149,7 +151,7 @@ def generate_game_description(game_info: Dict[str, str], genre: str, model, max_
         "controls": {"NO_OP": "No action"}
     }
 
-def main(model_name: str = "gemini-2.5-pro-exp-03-25", limit_per_genre: int = None):
+def main(model_name: str = "gemini-2.0-flash", limit_per_genre: int = None):
     """
     Main function to generate game descriptions for all games in the json file.
     
@@ -190,7 +192,7 @@ def main(model_name: str = "gemini-2.5-pro-exp-03-25", limit_per_genre: int = No
         
         for game_info in games_to_process:
             game_name = game_info["name"]
-            output_file = os.path.join(genre_dir, f"{game_name.replace(' ', '_').replace(':', '')}.json")
+            output_file = os.path.join(genre_dir, f"{game_name.replace(' ', '_').replace(':', '').lower()}.json")
             
             # Skip if file already exists
             if os.path.exists(output_file):
@@ -232,8 +234,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--model", 
         type=str, 
-        default="gemini-2.5-pro-exp-03-25", 
-        help="Gemini model to use (e.g., gemini-2.5-pro-exp-03-25)"
+        default="gemini-2.0-flash", 
+        help="Gemini model to use (e.g., gemini-2.0-flash)"
     )
     parser.add_argument(
         "--limit", 
