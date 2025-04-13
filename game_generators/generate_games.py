@@ -76,9 +76,9 @@ def main():
             "character_driven",
             "judge_conversation",
             "simple_prompt",
-            "guide_complexity",
+            "complexity_guide",
         ],
-        default="conversation",
+        default="complexity_guide",
         help="Game generation method to use",
     )
 
@@ -102,7 +102,7 @@ def main():
     )
 
     parser.add_argument(
-        "--players", type=int, default=2, help="Number of players (including AI agents)"
+        "--players", type=int, default=3, help="Number of players (including AI agents)"
     )
 
     parser.add_argument(

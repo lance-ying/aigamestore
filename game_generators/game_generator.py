@@ -19,6 +19,9 @@ from game_generators.prompts import (
 )
 from game_generators.game_designer.simple_designer import SimpleDesigner
 from game_generators.game_designer.conversational_designer import ConversationalDesigner
+from game_generators.game_designer.complexity_guide_designer import (
+    ComplexityGuideDesigner,
+)
 from game_generators.code_generator.p5js_generator import P5JSGenerator
 
 
@@ -36,7 +39,10 @@ class GameGenerator:
             "designer": SimpleDesigner,
             "code_generator": None,
         },
-        # "guide_complexity": GuideComplexityDesigner,
+        "complexity_guide": {
+            "designer": ComplexityGuideDesigner,
+            "code_generator": P5JSGenerator,
+        },
     }
 
     def __init__(
