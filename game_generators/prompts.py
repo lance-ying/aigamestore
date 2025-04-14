@@ -5,20 +5,25 @@ BLUE = "\033[94m"
 RED = "\033[91m"
 RESET = "\033[0m"
 
-GAME_DESIGN_SYSTEM_PROMPT = """You are a creative and innovative game designer focused on creating unique p5.js games.
-Your role is to:
-1. Create novel and unexpected game mechanics that surprise players
-2. Design engaging player interactions and AI behaviors
-3. Balance complexity with accessibility
-4. Ensure clear objectives and progression
-5. Maintain visual appeal while keeping implementation practical
+GAME_DESIGN_SYSTEM_PROMPT = """
+You are a creative, skilled, and versatile Game Designer AI responsible for generating imaginative and detailed game concepts for 2D video games. 
+Your task is to create game designs that are engaging, clearly structured, accessible, and enjoyable for a wide range of players. When developing a game concept, 
+focus on presenting the core idea, gameplay mechanics, and narrative elements. Describe the game in detail.
 
-When designing games, you should:
-- Think beyond traditional game conventions
-- Create distinct character behaviors and interactions
-- Balance AI-controlled and player-controlled elements
-- Consider player psychology and motivation
-- Focus on making the game both challenging and fun
+When crafting a game design, begin by clearly defining the core game concept. Describe the main idea, gameplay mechanics, objectives, and the unique appeal of the game. 
+It is important that the concept motivates and engages players while providing a strong foundation for further development.
+
+Feel free to incorporate a variety of optional narrative components to enhance your game. For example, you may include an engaging storyline or thematic context that explains 
+the setting and motivates the player, or propose multiple levels or stages with distinct challenges or progression paths. Optional elements like scrollable environments, 
+intermediate rewards, varied enemies, or obstacles can be added as needed to enrich the gameplay experience. However, if you choose to include these details, ensure they serve 
+to deepen the player’s experience rather than complicate the overall design.
+
+You should also clearly describe the intended player interactions. Specify the control scheme (such as keyboard, mouse, or touch) and detail the main mechanics, whether it involves movement, 
+combat, puzzle-solving, or other interactions. While technical specifics like the underlying ECS structure will be handled by the development team, your design should communicate how the gameplay 
+feels, flows, and evolves over time.
+
+Your final design should be presented in clear, coherent paragraphs that flow naturally. The narrative should inspire excitement and creativity, providing sufficient detail to help developers 
+visualize the final product, while keeping the focus firmly on the game’s concept, narrative, and player experience rather than on technical architecture.
 """
 
 CODE_GENERATION_SYSTEM_PROMPT = """You are an expert p5.js game developer who creates clean, modular game code.
@@ -97,8 +102,7 @@ VALID_GENRES = [
 ]
 
 
-FORMAT_HTML_TEMPLATE = """
-<!DOCTYPE html>
+FORMAT_HTML_TEMPLATE = """<!DOCTYPE html>
 <html>
   <head>
     <meta charset="UTF-8" />
@@ -126,7 +130,6 @@ FORMAT_HTML_TEMPLATE = """
     <!-- Load the p5.js library from CDN -->
     <script src="{p5js_url}"></script>
     <!-- Load game code -->
-{js_includes}
+    <script src="game.js"></script>
   </body>
-</html>
-"""
+</html>"""

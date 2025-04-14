@@ -1,6 +1,10 @@
 import os
+import sys
 from typing import Dict, Any, Optional, List, Union
 from openai import OpenAI
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from game_generators.prompts import GREEN, YELLOW, RED, BLUE, RESET
 
@@ -28,10 +32,9 @@ class ModelAPI:
     """Centralized handler for different model API calls"""
 
     CLAUDE_MODELS = {
-        "3.5-sonnet": "claude-3-5-sonnet-20240620",
-        "3.5-haiku": "claude-3-5-haiku-20241022",
-        "3.5-sonnet": "claude-3-5-sonnet-20241022",
-        "3.7-sonnet": "claude-3-7-sonnet-20250219",
+        "claude-3.5-haiku": "claude-3-5-haiku-20241022",
+        "claude-3.5-sonnet": "claude-3-5-sonnet-20241022",
+        "claude-3.7-sonnet": "claude-3-7-sonnet-20250219",
     }
 
     def __init__(self, model_name: str = "openai:gpt-3.5-turbo"):
@@ -40,7 +43,7 @@ class ModelAPI:
 
         Args:
             model_name: String in format "provider:model"
-                      (e.g., "openai:gpt-3.5-turbo", "claude:claude-3-haiku", "gemini:gemini-1.5-pro")
+                      (e.g., "openai:gpt-3.5-turbo", "anthropic:claude-3-haiku", "gemini:gemini-1.5-pro")
         """
         self.model_provider, self.model = self._parse_model_name(model_name)
         self.client = self._initialize_client()
@@ -52,9 +55,13 @@ class ModelAPI:
             provider = provider.lower()
 
             # Handle Claude model names
-            if provider == "claude":
+            if provider == "anthropic":
                 # Convert shorthand names to full model names
-                if model in ["3.5-sonnet", "3.5-haiku", "3.7-sonnet"]:
+                if model in [
+                    "claude-3.5-sonnet",
+                    "claude-3.5-haiku",
+                    "claude-3.7-sonnet",
+                ]:
                     model = self.CLAUDE_MODELS[model]
                 elif not any(
                     full_name in model for full_name in self.CLAUDE_MODELS.values()
@@ -70,7 +77,7 @@ class ModelAPI:
         if self.model_provider == "openai":
             return OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-        elif self.model_provider == "claude":
+        elif self.model_provider == "anthropic":
             if anthropic is None:
                 raise ImportError(
                     "The 'anthropic' package is required to use Claude models. "
@@ -78,7 +85,7 @@ class ModelAPI:
                 )
             return anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
-        elif self.model_provider == "gemini":
+        elif self.model_provider == "google":
             if genai is None:
                 raise ImportError(
                     "The 'google-generativeai' package is required to use Gemini models. "
@@ -89,7 +96,7 @@ class ModelAPI:
 
         raise ValueError(
             f"Unsupported model provider: {self.model_provider}. "
-            "Supported providers are 'openai', 'claude', and 'gemini'."
+            "Supported providers are 'openai', 'claude', and 'google'."
         )
 
     def call(
@@ -158,7 +165,7 @@ class ModelAPI:
                 )
                 result = response.choices[0].message.content
 
-            elif self.model_provider == "claude":
+            elif self.model_provider == "anthropic":
                 claude_messages = []
 
                 # Add chat history if provided
@@ -177,7 +184,7 @@ class ModelAPI:
                 claude_params = {
                     "model": self.model,
                     "messages": claude_messages,
-                    "max_tokens": max_tokens if max_tokens is not None else 4096,
+                    "max_tokens": min(max_tokens, 8192) if max_tokens is not None else 4096,
                     **kwargs,
                 }
 
@@ -192,7 +199,7 @@ class ModelAPI:
                 response = self.client.messages.create(**claude_params)
                 result = response.content[0].text
 
-            elif self.model_provider == "gemini":
+            elif self.model_provider == "google":
                 model = self.client.GenerativeModel(model_name=self.model)
                 # Convert messages to Gemini format
                 prompt = self._format_messages_for_gemini(messages)
@@ -291,7 +298,7 @@ if __name__ == "__main__":
     # Test Claude (if available)
     if anthropic:
         # Test with the correct model name
-        run_test("claude:3.5-sonnet")
+        run_test("anthropic:claude-3.5-sonnet")
     else:
         print(
             f"\n{YELLOW}Skipping Claude tests - anthropic package not installed{RESET}"
@@ -299,7 +306,7 @@ if __name__ == "__main__":
 
     # Test Gemini (if available)
     if genai:
-        run_test("gemini:gemini-1.5-pro")
+        run_test("google:gemini-2.0-flash")
     else:
         print(
             f"\n{YELLOW}Skipping Gemini tests - google-generativeai package not installed{RESET}"

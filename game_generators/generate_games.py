@@ -9,6 +9,9 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from game_generators.game_generator import GameGenerator
+from game_generators.character_driven_game_generator import (
+    CharacterDrivenGameGenerator,
+)
 from game_generators.utils import GREEN, YELLOW, RED, BLUE, RESET
 
 
@@ -36,11 +39,16 @@ def generate_game(
     """
     try:
         # Initialize game generator
-        generator = GameGenerator(method_name=method, model_name=model)
+        if method == "character_driven":
+            generator = CharacterDrivenGameGenerator(
+                method_name=method, model_name=model, debug=debug
+            )
+        else:
+            generator = GameGenerator(method_name=method, model_name=model, debug=debug)
 
         # Generate the game
         html_code, js_files, title, description, _ = generator.generate_game(
-            genre=genre, num_players=num_players, narratives=narratives, debug=debug
+            genre=genre, num_players=num_players, narratives=narratives
         )
 
         if debug:
@@ -74,11 +82,12 @@ def main():
         choices=[
             "conversation",
             "character_driven",
-            "judge_conversation",
+            "template",
+            "judge",
             "simple_prompt",
-            "guide_complexity",
+            "complexity_guide",
         ],
-        default="simple_prompt",
+        default="character_driven",
         help="Game generation method to use",
     )
 
@@ -102,23 +111,25 @@ def main():
     )
 
     parser.add_argument(
-        "--players", type=int, default=2, help="Number of players (including AI agents)"
+        "--players", type=int, default=3, help="Number of players (including AI agents)"
     )
 
     parser.add_argument(
         "--model",
         type=str,
-        default="openai:gpt-4o",
+        default="openai:o3-mini",
         choices=[
             "openai:gpt-4",
             "openai:gpt-4o",
             "openai:o3-mini",
-            "claude:3.5-sonnet",
-            "claude:3.5-haiku",
-            "claude:3.7-sonnet",
-            "gemini:1.5-pro",
-            "gemini:1.5-flash",
+            "anthropic:claude-3.5-sonnet",
+            "anthropic:claude-3.5-haiku",
+            "anthropic:claude-3.7-sonnet",
+            "google:gemini-1.5-pro",
+            "google:gemini-1.5-flash",
+            "google:gemini-2.0-flash",
         ],
+        help="LLM to use",
     )
 
     parser.add_argument(

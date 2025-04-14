@@ -7,8 +7,23 @@ import json
 from game_generators.utils import (
     ModelAPI,
 )
-from game_generators.prompts import VALID_GENRES, GREEN, YELLOW, RED, BLUE, RESET
+from game_generators.prompts import (
+    VALID_GENRES,
+    GREEN,
+    YELLOW,
+    RED,
+    BLUE,
+    RESET,
+    GAME_DESIGN_SYSTEM_PROMPT,
+    CODE_GENERATION_SYSTEM_PROMPT,
+)
 from game_generators.game_designer.simple_designer import SimpleDesigner
+from game_generators.game_designer.conversational_designer import ConversationalDesigner
+from game_generators.game_designer.complexity_guide_designer import (
+    ComplexityGuideDesigner,
+)
+from game_generators.game_designer.template_designer import TemplateDesigner
+from game_generators.game_designer.judge_designer import JudgeDesigner
 from game_generators.code_generator.p5js_generator import P5JSGenerator
 
 
@@ -16,17 +31,33 @@ class GameGenerator:
     """Controller class for game generation process"""
 
     VALID_METHODS = {
-        # "conversation": ConversationalDesigner,
-        # "character_driven": CharacterDrivenDesigner,
-        # "judge_conversation": JudgeDesigner,
-        "simple_prompt": SimpleDesigner,
-        # "guide_complexity": GuideComplexityDesigner,
+        "conversation": {
+            "designer": ConversationalDesigner,
+            "code_generator": P5JSGenerator,
+        },
+        "judge": {
+            "designer": JudgeDesigner,
+            "code_generator": P5JSGenerator,
+        },
+        "simple_prompt": {
+            "designer": SimpleDesigner,
+            "code_generator": None,
+        },
+        "complexity_guide": {
+            "designer": ComplexityGuideDesigner,
+            "code_generator": P5JSGenerator,
+        },
+        "template": {
+            "designer": TemplateDesigner,
+            "code_generator": P5JSGenerator,
+        },
     }
 
     def __init__(
         self,
         method_name: str,
         model_name: str = "openai:gpt-3.5-turbo",
+        debug: bool = False,
     ):
         """
         Initialize the game generator
@@ -34,7 +65,7 @@ class GameGenerator:
         Args:
             method_name: Name of the game generation method to use
             model_name: Name of the AI model to use
-            config_path: Path to configuration file
+            debug: Whether to print debug information
         """
         if method_name not in self.VALID_METHODS:
             raise ValueError(
@@ -43,23 +74,41 @@ class GameGenerator:
 
         self.method_name = method_name
         self.model_name = model_name
-
+        self.debug = debug
         # Initialize model API
         self.model_api = ModelAPI(model_name)
 
         # Initialize appropriate designer
-        designer_class = self.VALID_METHODS[method_name]
-        self.designer = designer_class(self.model_api)
+        if method_name == "simple_prompt":
+            self.designer = self.VALID_METHODS[method_name]["designer"](
+                model_api=self.model_api,
+                system_prompt=GAME_DESIGN_SYSTEM_PROMPT
+                + "\n\n"
+                + CODE_GENERATION_SYSTEM_PROMPT,
+                debug=self.debug,
+            )
+        else:
+            self.designer = self.VALID_METHODS[method_name]["designer"](
+                model_api=self.model_api,
+                system_prompt=GAME_DESIGN_SYSTEM_PROMPT,
+                debug=self.debug,
+            )
 
         # Initialize code generator
-        self.code_generator = P5JSGenerator(self.model_api)
+        if self.VALID_METHODS[method_name]["code_generator"] is not None:
+            self.code_generator = self.VALID_METHODS[method_name]["code_generator"](
+                model_api=self.model_api,
+                system_prompt=CODE_GENERATION_SYSTEM_PROMPT,
+                debug=self.debug,
+            )
+        else:
+            self.code_generator = None
 
     def generate_game(
         self,
         genre: str,
         num_players: int,
         narratives: Optional[str] = None,
-        debug: bool = False,
     ) -> Tuple[str, List[Tuple[str, str]], str, str, str]:
         """
         Generate a complete game
@@ -68,7 +117,6 @@ class GameGenerator:
             genre: Game genre
             num_players: Number of players
             narratives: Optional narrative constraints or story elements
-            debug: Whether to print debug information
 
         Returns:
             Tuple of (html_code, js_files, game_title, description, full_response)
@@ -76,14 +124,12 @@ class GameGenerator:
         if genre not in VALID_GENRES:
             raise ValueError(f"Invalid genre. Choose from: {VALID_GENRES}")
 
-        if debug:
+        if self.debug:
             print(f"\n{BLUE}Starting game generation process...{RESET}")
 
         try:
             # Step 1: Design the game using the selected method
-            design = self.designer.design_game(
-                genre, num_players, narratives, debug=debug
-            )
+            design = self.designer.design_game(genre, num_players, narratives)
 
             # Ensure design has required fields
             if not isinstance(design, dict):
@@ -92,7 +138,7 @@ class GameGenerator:
             # Extract or generate game title
             title = design.get("title")
             if not title:
-                if debug:
+                if self.debug:
                     print(
                         f"{YELLOW}No title in design, generating from response{RESET}"
                     )
@@ -100,14 +146,19 @@ class GameGenerator:
 
             # Ensure we have game_design_text
             if "game_design_text" not in design:
-                if debug:
+                if self.debug:
                     print(
                         f"{YELLOW}Converting full response to game_design_text{RESET}"
                     )
                 design["game_design_text"] = design.get("full_response", "")
 
             # Step 2: Generate code based on the design
-            html_code, js_files = self.code_generator.generate_code(design, debug=debug)
+            if self.code_generator is not None:
+                html_code, js_files = self.code_generator.generate_code(design)
+            else:
+                html_code, js_files = design.get("html_code", ""), design.get(
+                    "js_files", []
+                )
 
             # Step 3: Save the generated game
             game_path = self._save_game(
@@ -118,9 +169,11 @@ class GameGenerator:
                 description=design.get("description", "No description available"),
                 full_response=design.get("full_response", "No response available"),
                 num_players=num_players,
+                narratives=narratives,
+                guidance=design.get("game_guidance", ""),
             )
 
-            if debug:
+            if self.debug:
                 print(f"{GREEN}Game generated successfully at: {game_path}{RESET}")
 
             return (
@@ -132,7 +185,7 @@ class GameGenerator:
             )
 
         except Exception as e:
-            if debug:
+            if self.debug:
                 print(f"\n{RED}Error in game generation:{RESET}")
                 print(f"Error type: {type(e).__name__}")
                 print(f"Error message: {str(e)}")
@@ -150,6 +203,8 @@ class GameGenerator:
         description: str,
         full_response: str,
         num_players: int,
+        narratives: Optional[str] = None,
+        guidance: str = "",
     ) -> Path:
         """Save generated game files"""
         # Create safe title for directory name
@@ -159,13 +214,14 @@ class GameGenerator:
             .lower()
         )
 
-        # Create game directory
+        # Create game directory with timestamp
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         game_dir = (
             Path("games")
             / self.method_name
             / self.model_name.split(":")[1]
             / genre
-            / safe_title
+            / f"{safe_title}"
         )
         game_dir.mkdir(parents=True, exist_ok=True)
 
@@ -174,27 +230,56 @@ class GameGenerator:
             f.write(html_code)
 
         # Save JavaScript files
+        js_filenames = []
         for filename, content in js_files:
             with open(game_dir / filename, "w", encoding="utf-8") as f:
                 f.write(content)
+                js_filenames.append(filename)
 
-        # Save description
-        with open(game_dir / "description.txt", "w", encoding="utf-8") as f:
-            f.write(f"Title: {title}\n\n{description}")
+        # Save generation log with structured format
+        log_content = f"""=== Game Generation Log ===
+Timestamp: {timestamp}
+Method: {self.method_name}
+Model: {self.model_name}
 
-        # Save generation log
+=== Game Details ===
+Title: {title}
+Genre: {genre}
+Players: {num_players}
+Narrative Constraints: {narratives if narratives else "None"}
+
+=== Game Description ===
+{description}
+
+=== Player Guidance ===
+{guidance}
+
+=== Generation Process ===
+{full_response}
+"""
         with open(game_dir / "generation_log.txt", "w", encoding="utf-8") as f:
-            f.write(full_response)
+            f.write(log_content)
 
-        # Save metadata
+        # Save metadata with comprehensive information
         metadata = {
-            "game_name": title,
-            "game_description": description,
-            "genre": genre,
-            "num_players": num_players,
-            "generation_method": self.method_name,
-            "model": self.model_name,
-            "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "game_info": {
+                "title": title,
+                "description": description,
+                "guidance": guidance,
+                "genre": genre,
+                "num_players": num_players,
+                "narratives": narratives if narratives else "None",
+            },
+            "generation_info": {
+                "method": self.method_name,
+                "model": self.model_name,
+                "timestamp": timestamp,
+            },
+            "files": {
+                "html": "index.html",
+                "javascript": js_filenames,
+                "log": "generation_log.txt",
+            },
         }
 
         with open(game_dir / "metadata.json", "w", encoding="utf-8") as f:

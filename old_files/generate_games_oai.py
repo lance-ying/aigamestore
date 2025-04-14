@@ -551,6 +551,7 @@ def main():
         "Tower Defense",
         "Turn-Based",
         "Card Game",
+        
     ]
     print("Select a game genre from the following list:")
     for valid_genre in valid_genres:
