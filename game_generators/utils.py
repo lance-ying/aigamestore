@@ -32,7 +32,6 @@ class ModelAPI:
     """Centralized handler for different model API calls"""
 
     CLAUDE_MODELS = {
-        "claude-3.5-sonnet": "claude-3-5-sonnet-20240620",
         "claude-3.5-haiku": "claude-3-5-haiku-20241022",
         "claude-3.5-sonnet": "claude-3-5-sonnet-20241022",
         "claude-3.7-sonnet": "claude-3-7-sonnet-20250219",
