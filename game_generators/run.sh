@@ -3,11 +3,11 @@
 # Define arrays
 VALID_GENRES=(
     "action"
-    # "arcade"
-    # "platformer"
-    # "sports"
-    # "stealth"
-    # "strategy"
+    "arcade"
+    "platformer"
+    "sports"
+    "stealth"
+    "strategy"
     # "puzzle"
     # "shooting"
     # "racing"
@@ -20,7 +20,7 @@ VALID_METHODS=(
     "conversation"
     "judge"
     "template"
-    # "character_driven"
+    "character_driven"
 )
 
 NUM_PLAYERS=(

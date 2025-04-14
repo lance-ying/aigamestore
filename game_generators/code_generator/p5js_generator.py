@@ -371,5 +371,3 @@ Remember:
                 print("HTML code that caused error:")
                 print(code)
             raise
-
-    # ... rest of the methods remain the same ...
