@@ -1,102 +1,165 @@
-import os
+from typing import Optional, List, Dict, Any
 import argparse
 from pathlib import Path
-from game_generators.guide_complexity_gamegen import GuideComplexityGameGen
-from game_generators.simple_prompt_gamegen import SimplePromptGen
-from game_generators.judge_conv_gamegen import JudgeConvGameGen
-from game_generators.character_driven_gamegen import CharacterDrivenGameGenerator
-from game_generators.conv_gamegen import ConvGameGen
 
-VALID_GENRES = [
-    "action",
-    "arcade",
-    "platformer",
-    "sports",
-    "stealth",
-    "strategy",
-    "puzzle",
-    "shooting",
-    "racing",
-    "adventure",
-]
+import sys
+import os
 
-VALID_METHODS = {
-    "simple_prompt": SimplePromptGen,
-    "guide_complexity": GuideComplexityGameGen,
-    "conversation": ConvGameGen,
-    "judge_conversation": JudgeConvGameGen,
-    "character_driven": CharacterDrivenGameGenerator,
-}
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+from game_generators.game_generator import GameGenerator
+from game_generators.character_driven_game_generator import (
+    CharacterDrivenGameGenerator,
+)
+from game_generators.utils import GREEN, YELLOW, RED, BLUE, RESET
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Generate a game using AI")
+def get_narratives(narratives: Optional[str]) -> str:
+    raise NotImplementedError("Narratives are not supported yet")
+
+
+def generate_game(
+    method: str,
+    genre: str,
+    num_players: int,
+    model: str = "openai:gpt-4",
+    narratives: Optional[str] = None,
+    debug: bool = False,
+) -> Path:
+    """
+    Generate a game using the specified method and model
+
+    Args:
+        method: Game generation method to use
+        genre: Game genre
+        num_players: Number of players
+        model: AI model to use
+        narratives: Optional narrative constraints
+        debug: Whether to print debug information
+
+    Returns:
+        Path: Path to the generated game directory
+    """
+    try:
+        # Initialize game generator
+        if method == "character_driven":
+            generator = CharacterDrivenGameGenerator(
+                method_name=method, model_name=model, debug=debug
+            )
+        else:
+            generator = GameGenerator(method_name=method, model_name=model, debug=debug)
+
+        # Generate the game
+        html_code, js_files, title, description, _ = generator.generate_game(
+            genre=genre, num_players=num_players, narratives=narratives
+        )
+
+        if debug:
+            print(f"\n{GREEN}Successfully generated game:{RESET}")
+            print(f"{BLUE}Title:{RESET} {title}")
+            print(f"{BLUE}Description:{RESET} {description}")
+
+        # Return the game directory path
+        return (
+            Path("games")
+            / method
+            / model.split(":")[1]
+            / genre
+            / title.lower().replace(" ", "_")
+        )
+
+    except Exception as e:
+        print(f"{RED}Error generating game: {str(e)}{RESET}")
+        raise
+
+
+def main():
+    """Command line interface for game generation"""
+    parser = argparse.ArgumentParser(
+        description="Generate games using various methods and models"
+    )
+
     parser.add_argument(
         "--method",
         type=str,
-        default="guide_complexity",
-        choices=list(VALID_METHODS.keys()),
-        help="Generation method to use (simple, conversation, freeform, or character)",
+        choices=[
+            "conversation",
+            "character_driven",
+            "template",
+            "judge",
+            "simple_prompt",
+            "complexity_guide",
+        ],
+        default="character_driven",
+        help="Game generation method to use",
     )
+
+    parser.add_argument(
+        "--genre",
+        type=str,
+        choices=[
+            "action",
+            "arcade",
+            "platformer",
+            "sports",
+            "stealth",
+            "strategy",
+            "puzzle",
+            "shooting",
+            "racing",
+            "adventure",
+        ],
+        default="arcade",
+        help="Game genre",
+    )
+
+    parser.add_argument(
+        "--players", type=int, default=3, help="Number of players (including AI agents)"
+    )
+
     parser.add_argument(
         "--model",
         type=str,
         default="openai:o3-mini",
-        help="Model to use (format: provider:model, e.g. openai:gpt-4, claude:claude-3-haiku, gemini:gemini-1.5-flash)",
+        choices=[
+            "openai:gpt-4",
+            "openai:gpt-4o",
+            "openai:o3-mini",
+            "anthropic:claude-3.5-sonnet",
+            "anthropic:claude-3.5-haiku",
+            "anthropic:claude-3.7-sonnet",
+            "google:gemini-1.5-pro",
+            "google:gemini-1.5-flash",
+            "google:gemini-2.0-flash",
+        ],
+        help="LLM to use",
     )
-    parser.add_argument(
-        "--genre",
-        type=str,
-        default="arcade",
-        choices=VALID_GENRES,
-        help="Genre of the game",
-    )
-    parser.add_argument(
-        "--num_players", type=int, default=1, help="Number of players/agents"
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=str,
-        default="games",
-        help="Output directory for generated games",
-    )
-    parser.add_argument(
-        "--config-path",
-        type=str,
-        default="config/gamegen/base_prompt.yaml",
-        help="Path to configuration YAML file",
-    )
-    return parser.parse_args()
 
+    parser.add_argument(
+        "--narratives",
+        type=str,
+        help="Optional narrative constraints or story elements",
+    )
 
-def main():
-    args = parse_args()
+    parser.add_argument("--debug", action="store_true", help="Enable debug output")
 
-    # Create output directory if it doesn't exist
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    args = parser.parse_args()
 
     try:
-        # Get the generator class based on method
-        GeneratorClass = VALID_METHODS[args.method]
-
-        # Initialize the generator
-        generator = GeneratorClass(config_path=args.config_path, model_name=args.model)
-
-        print(f"\nGenerating {args.genre} game with {args.num_players} players...")
-        print(f"Using method: {args.method}")
-        print(f"Using model: {args.model}")
-        print("\nStarting generation process...")
-
-        # Generate the game
-        html_code, js_files, title, description, full_response = (
-            generator.generate_game(genre=args.genre, num_players=args.num_players)
+        narratives_text = get_narratives(args.narratives)
+        game_path = generate_game(
+            method=args.method,
+            genre=args.genre,
+            num_players=args.players,
+            model=args.model,
+            narratives=narratives_text,
+            debug=args.debug,
         )
-        print(f"\nGame generation complete!")
-        print(f"Title: {title}")
+        print(f"\n{GREEN}Game generated successfully at: {game_path}{RESET}")
 
     except Exception as e:
-        print(f"\nError during game generation: {str(e)}")
+        print(f"\n{RED}Failed to generate game: {str(e)}{RESET}")
         exit(1)
 
 
