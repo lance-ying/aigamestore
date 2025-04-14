@@ -184,7 +184,7 @@ class ModelAPI:
                 claude_params = {
                     "model": self.model,
                     "messages": claude_messages,
-                    "max_tokens": max_tokens if max_tokens is not None else 4096,
+                    "max_tokens": min(max_tokens, 8192) if max_tokens is not None else 4096,
                     **kwargs,
                 }
 

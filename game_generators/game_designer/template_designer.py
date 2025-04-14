@@ -7,9 +7,20 @@ from game_generators.prompts import GAME_DESIGN_SYSTEM_PROMPT
 class TemplateDesigner:
     """Designer that creates games through template-based, coarse-to-fine specification"""
 
-    def __init__(self, model_api: ModelAPI, system_prompt: str = None):
+    def __init__(
+        self, model_api: ModelAPI, system_prompt: str = None, debug: bool = False
+    ):
+        """
+        Initialize the template designer with model API and debug option
+
+        Args:
+            model_api: API wrapper for the AI model
+            system_prompt: Optional system prompt to override default
+            debug: Whether to print debug information
+        """
         self.model_api = model_api
         self.system_prompt = system_prompt or GAME_DESIGN_SYSTEM_PROMPT
+        self.debug = debug  # Store debug as instance variable
 
         # Template components to be specified
         self.design_components = {
@@ -35,11 +46,10 @@ class TemplateDesigner:
         genre: str,
         num_players: int,
         narratives: Optional[str] = None,
-        debug: bool = False,
     ) -> Dict[str, Any]:
         """Create game design through template-based specification"""
         try:
-            if debug:
+            if self.debug:
                 print(f"\n{BLUE}Starting template-based design process...{RESET}")
 
             num_ai = num_players - 1
@@ -74,7 +84,7 @@ And here's the fun part - how does everything interact?
 
 Just brainstorm freely - we can refine it later!"""
 
-            templates = self._call_model_api(template_prompt, debug=debug)
+            templates = self._call_model_api(template_prompt)
 
             # Step 2: Generate core design
             design_prompt = f"""Awesome ideas! Now let's turn this into a real game design.
@@ -101,7 +111,7 @@ The technical side:
 
 Remember, we want players to have those "That was amazing!" moments while keeping the game playable!"""
 
-            core_design = self._call_model_api(design_prompt, debug=debug)
+            core_design = self._call_model_api(design_prompt)
 
             # Step 3: Create final design with guidance
             final_prompt = f"""Great! Let's wrap this up with the final details.
@@ -154,13 +164,13 @@ Make each section exciting - especially the description and start screen!"""
 {core_design}
 
 === Final Specification ===
-{self._call_model_api(final_prompt, debug=debug)}"""
+{self._call_model_api(final_prompt)}"""
 
             # Generate fuzzy code and continue as before...
-            fuzzy_code = self._generate_fuzzy_code(final_design, debug)
+            fuzzy_code = self._generate_fuzzy_code(final_design)
             complete_design = self._format_complete_design(final_design, fuzzy_code)
 
-            if debug:
+            if self.debug:
                 print(f"\n{BLUE}Final Design Components:{RESET}")
                 print(f"Title: {self._extract_title(final_design)}")
                 print(f"Description: {self._extract_description(final_design)}")
@@ -176,7 +186,7 @@ Make each section exciting - especially the description and start screen!"""
             }
 
         except Exception as e:
-            if debug:
+            if self.debug:
                 print(f"\n{RED}Error in game design:{RESET}")
                 print(f"Error type: {type(e).__name__}")
                 print(f"Error message: {str(e)}")
@@ -186,7 +196,7 @@ Make each section exciting - especially the description and start screen!"""
             raise
 
     def _generate_high_level_design(
-        self, genre: str, num_players: int, narratives: Optional[str], debug: bool
+        self, genre: str, num_players: int, narratives: Optional[str]
     ) -> str:
         """Generate high-level game concept"""
         prompt = f"""Create an innovative {genre} game concept for {num_players} players (1 human + {num_players-1} AI).
@@ -213,9 +223,9 @@ Provide a high-level overview of:
 3. Key Features: [List 3-5 standout features]
 4. Evolution Path: [How the game grows in complexity]"""
 
-        return self._call_model_api(prompt, debug=debug)
+        return self._call_model_api(prompt)
 
-    def _specify_environment(self, high_level: str, debug: bool) -> str:
+    def _specify_environment(self, high_level: str) -> str:
         """Specify detailed environment design"""
         prompt = f"""Based on this high-level design:
 {high_level}
@@ -247,9 +257,9 @@ For each component, define:
 
 Make sure each component operates independently and creates interesting situations!"""
 
-        return self._call_model_api(prompt, debug=debug)
+        return self._call_model_api(prompt)
 
-    def _design_progression(self, environment: str, debug: bool) -> str:
+    def _design_progression(self, environment: str) -> str:
         """Design the progression system"""
         prompt = f"""Using this environment design:
 {environment}
@@ -283,9 +293,9 @@ Detail:
 
 Make each stage introduce something new or combine existing elements in surprising ways!"""
 
-        return self._call_model_api(prompt, debug=debug)
+        return self._call_model_api(prompt)
 
-    def _define_entities(self, progression: str, debug: bool) -> str:
+    def _define_entities(self, progression: str) -> str:
         """Define detailed entity behaviors"""
         prompt = f"""Based on this progression system:
 {progression}
@@ -319,9 +329,9 @@ Define:
 
 Ensure each entity adds depth to the gameplay and creates interesting situations!"""
 
-        return self._call_model_api(prompt, debug=debug)
+        return self._call_model_api(prompt)
 
-    def _create_final_design(self, components: Dict[str, str], debug: bool) -> str:
+    def _create_final_design(self, components: Dict[str, str]) -> str:
         """Create final detailed design"""
         prompt = f"""Based on all these components:
 
@@ -368,7 +378,7 @@ Create a complete, implementation-ready game design that includes:
 
 Remember: The game should constantly surprise players with new mechanics, combinations, and challenges!"""
 
-        return self._call_model_api(prompt, debug=debug)
+        return self._call_model_api(prompt)
 
     def _format_complete_design(self, final_design: str, fuzzy_code: str) -> str:
         """Format the complete design document with fuzzy code structure"""
@@ -406,7 +416,7 @@ Use this as a guide for implementation while maintaining the dynamic and surpris
             description = match.group(1).strip()
             if len(description) > 10:  # Basic validation
                 return description
-        if debug:
+        if self.debug:
             print(f"{YELLOW}Warning: No valid description found in text{RESET}")
         return "No description provided."
 
@@ -420,13 +430,15 @@ Use this as a guide for implementation while maintaining the dynamic and surpris
             )
         return match.group(1).strip()
 
-    def _call_model_api(self, prompt: str, debug: bool = False) -> str:
+    def _call_model_api(self, prompt: str) -> str:
         """Call the model API with proper prompts"""
         return self.model_api.call(
-            user_prompt=prompt, system_prompt=self.system_prompt, debug=debug
+            user_prompt=prompt,
+            system_prompt=self.system_prompt,
+            debug=self.debug,
         )
 
-    def _generate_fuzzy_code(self, final_design: str, debug: bool) -> str:
+    def _generate_fuzzy_code(self, final_design: str) -> str:
         """Generate a rough code structure using ECS pattern"""
         prompt = f"""Based on this final design:
 {final_design}
@@ -523,7 +535,7 @@ Create a structure that enables:
 
 Your response MUST be wrapped in a ```javascript code block and include detailed docstrings explaining behavior patterns."""
 
-        fuzzy_code = self._call_model_api(prompt, debug=debug)
+        fuzzy_code = self._call_model_api(prompt)
 
         # First try to extract code block
         pattern = r"```javascript\s*(.*?)```"
@@ -533,7 +545,7 @@ Your response MUST be wrapped in a ```javascript code block and include detailed
             return match.group(1).strip()
 
         # If no code block found, provide a character-driven structure
-        if debug:
+        if self.debug:
             print(
                 f"{YELLOW}No valid code block found, generating character-driven structure...{RESET}"
             )

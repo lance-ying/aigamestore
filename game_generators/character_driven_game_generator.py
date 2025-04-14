@@ -23,16 +23,23 @@ class CharacterDrivenGameGenerator(GameGenerator):
         },
     }
 
-    def __init__(self, method_name: str, model_name: str = "openai:gpt-4"):
-        """Initialize with the same parameters as base GameGenerator"""
-        super().__init__(method_name, model_name)
+    def __init__(
+        self,
+        method_name: str,
+        model_name: str = "openai:gpt-4",
+        max_debate_times: int = 1,
+        debug: bool = False,
+    ):
+        """Initialize with the same parameters as base GameGenerator plus max_debate_times"""
+        super().__init__(method_name, model_name, debug=debug)
+        self.max_debate_times = max_debate_times
+        self.debug = debug
 
     def generate_game(
         self,
         genre: str,
         num_players: int,
         narratives: Optional[str] = None,
-        debug: bool = False,
     ) -> Tuple[str, List[Tuple[str, str]], str, str, str]:
         """
         Generate a character-driven game with the same interface as base GameGenerator
@@ -41,45 +48,95 @@ class CharacterDrivenGameGenerator(GameGenerator):
             genre: Game genre
             num_players: Number of players
             narratives: Optional narrative constraints
-            debug: Whether to print debug information
 
         Returns:
             Tuple of (html_code, js_files, game_title, description, full_response)
         """
         try:
-            if debug:
+            if self.debug:
                 print(f"\n{BLUE}Starting character-driven game generation...{RESET}")
 
-            # Step 1: Get initial design from designer with character debate
-            design = self.designer.design_game(
-                genre, num_players, narratives, debug=debug
-            )
+            # Step 1: Get initial design from designer
+            design = self.designer.design_game(genre, num_players, narratives)
 
             # Step 2: Generate initial code
             design_with_code = {**design, "mode": "initial_generation"}
-            html_code, js_files = self.code_generator.generate_code(
-                design_with_code, debug=debug
+            html_code, js_files = self.code_generator.generate_code(design_with_code)
+
+            # Get the initial game.js code
+            game_js_code = None
+            for filename, content in js_files:
+                if filename == "game.js":
+                    game_js_code = content
+                    break
+
+            if not game_js_code and js_files:
+                # If no explicit game.js but we have some JS file
+                game_js_code = js_files[0][1]
+
+            if not game_js_code:
+                raise ValueError("No game.js code was generated")
+
+            # Step 3-4: Loop through character feedback and code improvement steps
+            character_definitions = design.get("character_definitions")
+            design_text = design.get("game_design_text")
+
+            debate_log = []
+            for round_num in range(1, self.max_debate_times + 1):
+                if self.debug:
+                    print(
+                        f"\n{BLUE}Character Feedback Round {round_num}/{self.max_debate_times}:{RESET}"
+                    )
+
+                # Get environment feedback using the designer
+                env_feedback = self.designer.get_environment_feedback(
+                    game_js_code, design_text, self.code_generator.js_files
+                )
+                debate_log.append(
+                    f"--- Round {round_num} ---\nEnvironment Feedback:\n{env_feedback}\n"
+                )
+
+                # Get character-specific feedback from each character using the designer
+                char_feedback = {}
+                for char_idx in range(1, num_players + 1):
+                    char_response = self.designer.get_character_feedback(
+                        char_idx,
+                        game_js_code,
+                        character_definitions,
+                        self.code_generator.js_files,
+                    )
+                    char_feedback[char_idx] = char_response
+                    debate_log.append(
+                        f"Character {char_idx} Feedback:\n{char_response}\n"
+                    )
+
+                # Apply the improvements to the code using the coder
+                improved_js_files = self.code_generator.apply_character_improvements(
+                    game_js_code, env_feedback, char_feedback, design_text
+                )
+
+                # Update game_js_code for the next iteration
+                for filename, content in improved_js_files:
+                    if filename == "game.js":
+                        game_js_code = content
+                        break
+
+            # Final JS files are now stored in the code generator
+            final_js_files = [
+                (filename, content)
+                for filename, content in self.code_generator.js_files.items()
+            ]
+
+            # Step 5: Generate final summary with game description and guidance
+            final_design = self.designer.generate_final_summary(
+                design_text, character_definitions, "\n".join(debate_log), game_js_code
             )
 
-            # Step 3: Simulate character feedback rounds
-            design_with_feedback = {
-                **design,
-                "mode": "character_feedback",
-                "current_code": js_files[0][1],  # Initial game.js code
-            }
-            _, improved_js_files = self.code_generator.generate_code(
-                design_with_feedback, debug=debug
-            )
+            # Update the design with the final summary
+            design["guidance"] = self._extract_guidance(final_design)
 
-            # Step 4: Generate final code with rendering
-            design_with_rendering = {
-                **design,
-                "mode": "rendering",
-                "improved_code": improved_js_files[0][1],
-            }
-            _, final_js_files = self.code_generator.generate_code(
-                design_with_rendering, debug=debug
-            )
+            # Get an updated HTML file if needed
+            html_code = self.code_generator.create_html_code(design["title"])
 
             # Save the game using parent class method
             game_path = self._save_game(
@@ -88,13 +145,15 @@ class CharacterDrivenGameGenerator(GameGenerator):
                 html_code=html_code,
                 js_files=final_js_files,
                 description=design.get("description", ""),
-                full_response=design.get("full_response", ""),
+                full_response=design.get("full_response", "")
+                + "\n\n"
+                + "\n".join(debate_log),
                 num_players=num_players,
                 narratives=narratives,
                 guidance=design.get("guidance", ""),
             )
 
-            if debug:
+            if self.debug:
                 print(f"{GREEN}Game generated successfully at: {game_path}{RESET}")
 
             return (
@@ -102,131 +161,20 @@ class CharacterDrivenGameGenerator(GameGenerator):
                 final_js_files,
                 design["title"],
                 design.get("description", ""),
-                design.get("full_response", ""),
+                design.get("full_response", "") + "\n\n" + "\n".join(debate_log),
             )
 
         except Exception as e:
-            if debug:
+            if self.debug:
                 print(f"\n{RED}Error in character-driven game generation:{RESET}")
                 print(f"Error type: {type(e).__name__}")
                 print(f"Error message: {str(e)}")
             raise
 
-    def _extract_character_definitions(self, design_text: str) -> str:
-        """Extract character definitions from design text"""
-        pattern = r"```characters\s*(.*?)```"
-        match = re.search(pattern, design_text, re.DOTALL)
+    def _extract_guidance(self, text: str) -> str:
+        """Extract guidance from design document"""
+        pattern = r"```guidance\s*(.*?)```"
+        match = re.search(pattern, text, re.DOTALL)
         if match:
             return match.group(1).strip()
-        return ""
-
-    def _simulate_character_code_review(
-        self,
-        current_js: str,
-        character_definitions: str,
-        game_design: str,
-        rounds: int = 3,
-    ) -> str:
-        """Simulate characters reviewing and improving their implementation"""
-        if self.debug:
-            print(f"\n{BLUE}Starting character code review...{RESET}")
-
-        for round in range(1, rounds + 1):
-            if self.debug:
-                print(f"\n{GREEN}Code Review Round {round}:{RESET}")
-
-            # Environment reviews world mechanics
-            env_feedback = self._get_environment_feedback(current_js, game_design)
-
-            # Characters review their implementations
-            char_feedback = self._get_character_feedback(
-                current_js, character_definitions
-            )
-
-            # Apply improvements
-            current_js = self._apply_code_improvements(
-                current_js, env_feedback, char_feedback, game_design
-            )
-
-        return current_js
-
-    def _get_environment_feedback(self, current_js: str, game_design: str) -> str:
-        """Get feedback on environment implementation"""
-        prompt = f"""As the Environment System, review the current implementation:
-
-{current_js}
-
-Based on the original design:
-{game_design}
-
-Provide specific feedback on:
-1. How well the environment components are implemented
-2. Whether they maintain independence from character states
-3. If the world feels appropriately dynamic
-4. Suggestions for improving environment mechanics
-
-Focus on concrete code improvements, not general suggestions."""
-
-        return self.model_api.call(prompt, debug=self.debug)
-
-    def _get_character_feedback(
-        self, current_js: str, character_definitions: str
-    ) -> str:
-        """Get feedback from characters on their implementation"""
-        prompt = f"""As the implemented characters, review your code:
-
-{current_js}
-
-Based on your original definitions:
-{character_definitions}
-
-Provide specific feedback on:
-1. How well your behaviors match your design
-2. Whether your actions feel appropriate
-3. If your interactions work as intended
-4. Concrete code improvements needed
-
-Focus on implementation details that would make you behave more naturally."""
-
-        return self.model_api.call(prompt, debug=self.debug)
-
-    def _apply_code_improvements(
-        self, current_js: str, env_feedback: str, char_feedback: str, game_design: str
-    ) -> str:
-        """Apply suggested improvements to the code"""
-        prompt = f"""Apply these improvement suggestions to the game code:
-
-Current Code:
-{current_js}
-
-Environment Feedback:
-{env_feedback}
-
-Character Feedback:
-{char_feedback}
-
-Original Design:
-{game_design}
-
-Update the code to:
-1. Implement suggested improvements
-2. Maintain code structure and readability
-3. Keep character behaviors distinct
-4. Preserve environment independence
-
-Return only the improved code in a ```javascript block."""
-
-        response = self.model_api.call(prompt, debug=self.debug)
-
-        # Extract code from response
-        pattern = r"```javascript\s*(.*?)```"
-        match = re.search(pattern, response, re.DOTALL)
-        if match:
-            return match.group(1).strip()
-        return current_js
-
-    def _generate_rendering_code(
-        self, game_description: str, character_definitions: str, dynamics_js: str
-    ) -> str:
-        """Generate rendering code for the game dynamics"""
-        # ... existing method ...
+        raise ValueError("No guidance found in design document")

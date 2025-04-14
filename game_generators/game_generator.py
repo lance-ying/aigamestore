@@ -57,6 +57,7 @@ class GameGenerator:
         self,
         method_name: str,
         model_name: str = "openai:gpt-3.5-turbo",
+        debug: bool = False,
     ):
         """
         Initialize the game generator
@@ -64,7 +65,7 @@ class GameGenerator:
         Args:
             method_name: Name of the game generation method to use
             model_name: Name of the AI model to use
-            config_path: Path to configuration file
+            debug: Whether to print debug information
         """
         if method_name not in self.VALID_METHODS:
             raise ValueError(
@@ -73,7 +74,7 @@ class GameGenerator:
 
         self.method_name = method_name
         self.model_name = model_name
-
+        self.debug = debug
         # Initialize model API
         self.model_api = ModelAPI(model_name)
 
@@ -84,16 +85,21 @@ class GameGenerator:
                 system_prompt=GAME_DESIGN_SYSTEM_PROMPT
                 + "\n\n"
                 + CODE_GENERATION_SYSTEM_PROMPT,
+                debug=self.debug,
             )
         else:
             self.designer = self.VALID_METHODS[method_name]["designer"](
-                model_api=self.model_api, system_prompt=GAME_DESIGN_SYSTEM_PROMPT
+                model_api=self.model_api,
+                system_prompt=GAME_DESIGN_SYSTEM_PROMPT,
+                debug=self.debug,
             )
 
         # Initialize code generator
         if self.VALID_METHODS[method_name]["code_generator"] is not None:
             self.code_generator = self.VALID_METHODS[method_name]["code_generator"](
-                model_api=self.model_api, system_prompt=CODE_GENERATION_SYSTEM_PROMPT
+                model_api=self.model_api,
+                system_prompt=CODE_GENERATION_SYSTEM_PROMPT,
+                debug=self.debug,
             )
         else:
             self.code_generator = None
@@ -103,7 +109,6 @@ class GameGenerator:
         genre: str,
         num_players: int,
         narratives: Optional[str] = None,
-        debug: bool = False,
     ) -> Tuple[str, List[Tuple[str, str]], str, str, str]:
         """
         Generate a complete game
@@ -112,7 +117,6 @@ class GameGenerator:
             genre: Game genre
             num_players: Number of players
             narratives: Optional narrative constraints or story elements
-            debug: Whether to print debug information
 
         Returns:
             Tuple of (html_code, js_files, game_title, description, full_response)
@@ -120,14 +124,12 @@ class GameGenerator:
         if genre not in VALID_GENRES:
             raise ValueError(f"Invalid genre. Choose from: {VALID_GENRES}")
 
-        if debug:
+        if self.debug:
             print(f"\n{BLUE}Starting game generation process...{RESET}")
 
         try:
             # Step 1: Design the game using the selected method
-            design = self.designer.design_game(
-                genre, num_players, narratives, debug=debug
-            )
+            design = self.designer.design_game(genre, num_players, narratives)
 
             # Ensure design has required fields
             if not isinstance(design, dict):
@@ -136,7 +138,7 @@ class GameGenerator:
             # Extract or generate game title
             title = design.get("title")
             if not title:
-                if debug:
+                if self.debug:
                     print(
                         f"{YELLOW}No title in design, generating from response{RESET}"
                     )
@@ -144,7 +146,7 @@ class GameGenerator:
 
             # Ensure we have game_design_text
             if "game_design_text" not in design:
-                if debug:
+                if self.debug:
                     print(
                         f"{YELLOW}Converting full response to game_design_text{RESET}"
                     )
@@ -152,9 +154,7 @@ class GameGenerator:
 
             # Step 2: Generate code based on the design
             if self.code_generator is not None:
-                html_code, js_files = self.code_generator.generate_code(
-                    design, debug=debug
-                )
+                html_code, js_files = self.code_generator.generate_code(design)
             else:
                 html_code, js_files = design.get("html_code", ""), design.get(
                     "js_files", []
@@ -173,7 +173,7 @@ class GameGenerator:
                 guidance=design.get("game_guidance", ""),
             )
 
-            if debug:
+            if self.debug:
                 print(f"{GREEN}Game generated successfully at: {game_path}{RESET}")
 
             return (
@@ -185,7 +185,7 @@ class GameGenerator:
             )
 
         except Exception as e:
-            if debug:
+            if self.debug:
                 print(f"\n{RED}Error in game generation:{RESET}")
                 print(f"Error type: {type(e).__name__}")
                 print(f"Error message: {str(e)}")

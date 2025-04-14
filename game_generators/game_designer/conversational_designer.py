@@ -7,9 +7,12 @@ from game_generators.prompts import GAME_DESIGN_SYSTEM_PROMPT
 class ConversationalDesigner:
     """Designer that creates game designs through multi-agent conversation"""
 
-    def __init__(self, model_api: ModelAPI, system_prompt: str = None):
+    def __init__(
+        self, model_api: ModelAPI, system_prompt: str = None, debug: bool = False
+    ):
         self.model_api = model_api
         self.system_prompt = system_prompt or GAME_DESIGN_SYSTEM_PROMPT
+        self.debug = debug
 
         self.max_discussion_rounds = 2
 
@@ -33,15 +36,14 @@ Your role is to:
         genre: str,
         num_players: int,
         narratives: Optional[str] = None,
-        debug: bool = False,
     ) -> Dict[str, Any]:
         """Create game design through conversation"""
         try:
-            if debug:
+            if self.debug:
                 print(f"\n{BLUE}Starting game design conversation...{RESET}")
 
             # Phase 1: Conversational Planning
-            plan = self._conversational_planning(genre, num_players, narratives, debug)
+            plan = self._conversational_planning(genre, num_players, narratives)
 
             # Extract final details
             title = self._extract_title(plan["final_proposal"])
@@ -65,7 +67,7 @@ Technical Details:
 Design Evolution:
 {plan['full_discussion']}"""
 
-            if debug:
+            if self.debug:
                 print(f"\n{BLUE}Final Design:{RESET}")
                 print(f"Title: {title}")
                 print(f"Description: {description}")
@@ -80,7 +82,7 @@ Design Evolution:
             }
 
         except Exception as e:
-            if debug:
+            if self.debug:
                 print(f"\n{RED}Error in game design:{RESET}")
                 print(f"Error type: {type(e).__name__}")
                 print(f"Error message: {str(e)}")
@@ -94,29 +96,26 @@ Design Evolution:
         genre: str,
         num_players: int,
         narratives: Optional[str],
-        debug: bool = False,
     ) -> Dict[str, Any]:
         """Run the conversation between generator and commenter"""
         num_ai_agents = max(0, num_players - 1)
 
         initial_prompt = self._create_initial_prompt(genre, num_ai_agents, narratives)
-        current_proposal = self._call_model_api(
-            initial_prompt, self.system_prompt, debug=debug
-        )
+        current_proposal = self._call_model_api(initial_prompt, self.system_prompt)
 
         discussion_history = []
         for round_num in range(self.max_discussion_rounds):
             # Get commenter feedback
             commenter_prompt = self._create_commenter_prompt(current_proposal)
             commenter_response = self._call_model_api(
-                commenter_prompt, self.commenter_system_prompt, debug=debug
+                commenter_prompt, self.commenter_system_prompt
             )
             discussion_history.append(("commenter", commenter_response))
 
             # Get generator refinement
             refinement_prompt = self._create_refinement_prompt(commenter_response)
             current_proposal = self._call_model_api(
-                refinement_prompt, self.system_prompt, debug=debug
+                refinement_prompt, self.system_prompt
             )
             discussion_history.append(("generator", current_proposal))
 
@@ -262,9 +261,7 @@ Game Guidance: [Must be wrapped in ```guidance code block as shown above]
             )
         return match.group(1).strip()
 
-    def _call_model_api(
-        self, prompt: str, system_prompt: str = None, debug: bool = False
-    ) -> str:
+    def _call_model_api(self, prompt: str, system_prompt: str = None) -> str:
         """Call the model API with proper prompts"""
         messages = []
         if system_prompt:
@@ -272,7 +269,9 @@ Game Guidance: [Must be wrapped in ```guidance code block as shown above]
         messages.append({"role": "user", "content": prompt})
 
         response = self.model_api.call(
-            user_prompt=prompt, system_prompt=system_prompt, debug=debug
+            user_prompt=prompt,
+            system_prompt=system_prompt,
+            debug=self.debug,
         )
 
         return response

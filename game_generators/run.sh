@@ -15,10 +15,10 @@ VALID_GENRES=(
 )
 
 VALID_METHODS=(
-    # "simple_prompt"
-    # "complexity_guide"
-    # "conversation"
-    # "judge"
+    "simple_prompt"
+    "complexity_guide"
+    "conversation"
+    "judge"
     "template"
     # "character_driven"
 )

@@ -10,53 +10,50 @@ class CharacterDrivenDesigner:
     collaborating on game design through discussion.
     """
 
-    def __init__(self, model_api: ModelAPI, system_prompt: str = None):
+    def __init__(
+        self,
+        model_api: ModelAPI,
+        system_prompt: str = None,
+        debug: bool = False,
+    ):
         self.model_api = model_api
         self.system_prompt = system_prompt or GAME_DESIGN_SYSTEM_PROMPT
-        self.debug = False
+        self.debug = debug
 
     def design_game(
         self,
         genre: str,
         num_players: int,
         narratives: Optional[str] = None,
-        debug: bool = False,
     ) -> Dict[str, Any]:
-        """Design a game through character-driven discussion"""
-        self.debug = debug
+        """Design a game through character-driven generation"""
         try:
-            if debug:
+            if self.debug:
                 print(f"\n{BLUE}Starting character-driven design process...{RESET}")
 
-            # Step 1: Generate initial character and environment definitions
+            # Generate character and environment definitions
             character_definitions = self._sample_character_info(
                 genre, num_players, narratives
             )
-            if debug:
+            if self.debug:
                 print(
                     f"\n{GREEN}Generated character definitions:{RESET}\n{character_definitions}"
                 )
 
-            # Step 2: Simulate design discussion between characters
-            final_design, design_log = self._simulate_design_debate(
-                genre, num_players, character_definitions
-            )
-
-            # Step 3: Create final design document with guidance
-            final_design = self._create_final_design(
-                final_design, character_definitions, design_log
-            )
+            # Create final design document with guidance
+            final_design = self._create_final_design(character_definitions)
 
             return {
                 "title": self._extract_title(final_design),
                 "description": self._extract_description(final_design),
                 "guidance": self._extract_guidance(final_design),
                 "game_design_text": final_design,
-                "full_response": design_log,
+                "character_definitions": character_definitions,
+                "full_response": character_definitions,
             }
 
         except Exception as e:
-            if debug:
+            if self.debug:
                 print(f"\n{RED}Error in game design:{RESET}")
                 print(f"Error type: {type(e).__name__}")
                 print(f"Error message: {str(e)}")
@@ -111,114 +108,17 @@ Character 1 (Human Player):
 
 IMPORTANT: Environment components must be truly independent, with their own behaviors and patterns that continue regardless of player actions."""
 
-        return self.model_api.call(prompt, debug=self.debug)
-
-    def _simulate_design_debate(
-        self, genre: str, num_players: int, character_definitions: str, rounds: int = 3
-    ) -> Tuple[str, str]:
-        """Simulate a design discussion between characters"""
-        current_design = character_definitions
-        debate_log = ""
-
-        for r in range(1, rounds + 1):
-            if self.debug:
-                print(f"\n{BLUE}Design Discussion Round {r}:{RESET}")
-
-            # Environment Agent suggests gameplay mechanics
-            env_suggestions = self._environment_agent_suggestions(current_design, r)
-            debate_log += f"\nRound {r} - Environment Agent:\n{env_suggestions}\n"
-
-            # Character Agents suggest improvements
-            for i in range(1, num_players + 1):
-                char_suggestions = self._character_agent_suggestions(i, current_design)
-                debate_log += f"\nRound {r} - Character {i}:\n{char_suggestions}\n"
-
-            # Synthesize suggestions into updated design
-            current_design = self._synthesize_suggestions(
-                current_design, env_suggestions, char_suggestions
-            )
-
-        return current_design, debate_log
-
-    def _environment_agent_suggestions(
-        self, current_design: str, round_number: int
-    ) -> str:
-        """Get environment agent's suggestions for gameplay mechanics"""
-        prompt = f"""As the Environment Designer, review the current game design:
-
-{current_design}
-
-Suggest improvements focusing on:
-1. How environment components interact
-2. Creating emergent gameplay through component behaviors
-3. Making the game world feel alive and dynamic
-4. Adding interesting environmental challenges
-
-Keep suggestions focused on design, not implementation. Think about player experience and fun factor."""
-
-        return self.model_api.call(prompt, debug=self.debug)
-
-    def _character_agent_suggestions(
-        self, agent_index: int, current_design: str
-    ) -> str:
-        """Get character agent's suggestions for their mechanics"""
-        # Extract this character's info
-        char_info = ""
-        match = re.search(
-            rf"Character {agent_index}:.*?(?=Character|\n\n|$)",
-            current_design,
-            re.DOTALL,
+        return self.model_api.call(
+            user_prompt=prompt,
+            system_prompt=self.system_prompt,
+            debug=self.debug,
         )
-        if match:
-            char_info = match.group(0)
 
-        prompt = f"""As Character {agent_index}, review your role in the game:
-
-{char_info}
-
-Suggest improvements focusing on:
-1. Making your character more interesting to play/interact with
-2. Creating fun interactions with other characters
-3. Adding depth to your character's mechanics
-4. Balancing challenge and satisfaction
-
-Think about what would make your character more engaging while staying true to their role."""
-
-        return self.model_api.call(prompt, debug=self.debug)
-
-    def _synthesize_suggestions(
-        self, current_design: str, env_suggestions: str, char_suggestions: str
-    ) -> str:
-        """Synthesize all suggestions into an updated design"""
-        prompt = f"""Synthesize these design suggestions into an improved game design:
-
-Current Design:
-{current_design}
-
-Environment Suggestions:
-{env_suggestions}
-
-Character Suggestions:
-{char_suggestions}
-
-Create an updated design that:
-1. Incorporates the best suggestions
-2. Maintains design consistency
-3. Ensures all parts work together
-4. Keeps focus on player engagement
-5. Preserves the original character roles while adding depth
-
-Format the response using the same structure as the current design."""
-
-        return self.model_api.call(prompt, debug=self.debug)
-
-    def _create_final_design(
-        self, design: str, character_definitions: str, design_log: str
-    ) -> str:
+    def _create_final_design(self, character_definitions: str) -> str:
         """Create the final design document with all required sections"""
-        prompt = f"""Based on this design discussion:
+        prompt = f"""Based on these character definitions:
 
-{design}
+{character_definitions}
 
 Create a final game design document with these sections:
 
@@ -255,9 +155,13 @@ Pro Tip: [Share an interesting strategy]
 [Game flow]
 ```
 
-Make it exciting and engaging while keeping all the depth from the design discussion!"""
+Make it exciting and engaging while keeping all the depth from the design!"""
 
-        return self.model_api.call(prompt, debug=self.debug)
+        return self.model_api.call(
+            user_prompt=prompt,
+            system_prompt=self.system_prompt,
+            debug=self.debug,
+        )
 
     def _extract_title(self, text: str) -> str:
         """Extract title from design document"""
@@ -282,3 +186,173 @@ Make it exciting and engaging while keeping all the depth from the design discus
         if match:
             return match.group(1).strip()
         raise ValueError("No guidance found in design document")
+
+    def get_environment_feedback(
+        self, current_js: str, game_design: str, all_js_files: Dict[str, str] = None
+    ) -> str:
+        """Get feedback on environment implementation from environment's perspective"""
+        # Prepare all code files for review
+        code_to_review = ""
+        if all_js_files:
+            # Include all files in the review
+            for filename, content in all_js_files.items():
+                code_to_review += f"\n// File: {filename}\n{content}\n"
+        else:
+            # Fallback to just the main file
+            code_to_review = current_js
+
+        prompt = f"""As the Environment System, review the current implementation:
+
+{code_to_review}
+
+Based on the original design:
+{game_design}
+
+Provide specific feedback on:
+1. How well the environment components are implemented
+2. Whether they maintain independence from character states
+3. If the world feels appropriately dynamic
+4. Suggestions for improving environment mechanics
+
+Focus on concrete suggestions in natural language, not code. Imagine you are the environment speaking about how you'd like to be improved."""
+
+        return self.model_api.call(
+            user_prompt=prompt,
+            system_prompt=self.system_prompt,
+            debug=self.debug,
+        )
+
+    def get_character_feedback(
+        self,
+        char_idx: int,
+        current_js: str,
+        character_definitions: str,
+        all_js_files: Dict[str, str] = None,
+    ) -> str:
+        """Get feedback from a specific character on their implementation"""
+        # Extract this character's info using a more robust approach
+        char_info = self._extract_character_info(char_idx, character_definitions)
+
+        # Prepare all code files for review
+        code_to_review = ""
+        if all_js_files:
+            # Include all files in the review
+            for filename, content in all_js_files.items():
+                code_to_review += f"\n// File: {filename}\n{content}\n"
+        else:
+            # Fallback to just the main file
+            code_to_review = current_js
+
+        prompt = f"""As Character {char_idx}, review your role in the game:
+
+{char_info}
+
+Review the current implementation:
+{code_to_review}
+
+Provide specific feedback on:
+1. How well your character is implemented
+2. What features would make your character more interesting to play or interact with
+3. What interactions with other characters or environment elements would enhance gameplay
+4. Any bugs or issues in your character's implementation
+
+Express your feedback in natural language as if you were the character. Focus on what would make the game more engaging from your perspective.
+"""
+
+        return self.model_api.call(
+            user_prompt=prompt,
+            system_prompt=self.system_prompt,
+            debug=self.debug,
+        )
+
+    def _extract_character_info(self, char_idx: int, character_definitions: str) -> str:
+        """Extract character information more robustly from character definitions"""
+        # First try the ```characters section
+        characters_pattern = r"```characters\s*(.*?)```"
+        characters_match = re.search(
+            characters_pattern, character_definitions, re.DOTALL
+        )
+
+        if characters_match:
+            characters_section = characters_match.group(1)
+            # Now find the specific character within this section
+            char_pattern = (
+                rf"Character\s+{char_idx}(?:\s*\(.*?\))?:(.*?)(?=Character\s+\d|$)"
+            )
+            char_match = re.search(
+                char_pattern, characters_section, re.DOTALL | re.IGNORECASE
+            )
+
+            if char_match:
+                return f"Character {char_idx}:{char_match.group(1).strip()}"
+
+        # If not found in the ```characters section, try the entire text
+        char_pattern = (
+            rf"Character\s+{char_idx}(?:\s*\(.*?\))?:(.*?)(?=Character\s+\d|$)"
+        )
+        char_match = re.search(
+            char_pattern, character_definitions, re.DOTALL | re.IGNORECASE
+        )
+
+        if char_match:
+            return f"Character {char_idx}:{char_match.group(1).strip()}"
+
+        # If we still can't find it, return a generic placeholder
+        return f"Character {char_idx}: (No specific information found in character definitions)"
+
+    def generate_final_summary(
+        self,
+        design_text: str,
+        character_definitions: str,
+        debate_log: str,
+        final_code: str,
+    ) -> str:
+        """Generate a final summary with game description and guidance"""
+        prompt = f"""Based on this game development process:
+
+Original Design:
+{design_text}
+
+Character Definitions:
+{character_definitions}
+
+Development Discussion:
+{debate_log}
+
+Final Code:
+{final_code}
+
+Create a final game summary with these sections:
+
+1. Title:
+```title
+[Catchy, thematic game title]
+```
+
+2. Description:
+```description
+[2-3 sentences explaining what makes the game exciting]
+```
+
+3. Start Screen Guidance:
+```guidance
+Welcome to [Game Name]!
+
+[Engaging welcome message]
+
+Controls:
+[List key controls and their effects]
+
+Meet the Characters:
+[Introduce each character's role]
+
+Pro Tip: [Share an interesting strategy]
+```
+
+Make it exciting and engaging while keeping all the depth from the design discussion and character feedback!"""
+
+        return self.model_api.call(
+            user_prompt=prompt,
+            system_prompt=self.system_prompt,
+            debug=self.debug,
+        )

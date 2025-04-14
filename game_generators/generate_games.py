@@ -41,14 +41,14 @@ def generate_game(
         # Initialize game generator
         if method == "character_driven":
             generator = CharacterDrivenGameGenerator(
-                method_name=method, model_name=model
+                method_name=method, model_name=model, debug=debug
             )
         else:
-            generator = GameGenerator(method_name=method, model_name=model)
+            generator = GameGenerator(method_name=method, model_name=model, debug=debug)
 
         # Generate the game
         html_code, js_files, title, description, _ = generator.generate_game(
-            genre=genre, num_players=num_players, narratives=narratives, debug=debug
+            genre=genre, num_players=num_players, narratives=narratives
         )
 
         if debug:
@@ -87,7 +87,7 @@ def main():
             "simple_prompt",
             "complexity_guide",
         ],
-        default="simple_prompt",
+        default="character_driven",
         help="Game generation method to use",
     )
 

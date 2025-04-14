@@ -13,12 +13,15 @@ class P5JSGenerator:
     """Generate p5.js code for a game"""
 
     def __init__(
-        self, model_api: ModelAPI, system_prompt: str = CODE_GENERATION_SYSTEM_PROMPT
+        self,
+        model_api: ModelAPI,
+        system_prompt: str = CODE_GENERATION_SYSTEM_PROMPT,
+        debug: bool = False,
     ):
         self.model_api = model_api
         self.system_prompt = system_prompt
         self.p5js_url = "https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"
-        self.debug = False
+        self.debug = debug
 
     def _create_user_prompt(self, game_concept: str) -> str:
         """Create the user prompt for code generation"""
@@ -132,12 +135,11 @@ Remember:
             return match.group(1).strip() if match else ""
 
     def generate_code(
-        self, design: Dict[str, Any], debug: bool = False
+        self, design: Dict[str, Any]
     ) -> Tuple[str, List[Tuple[str, str]]]:
         """Generate complete game code from design"""
-        self.debug = debug
         try:
-            if debug:
+            if self.debug:
                 print(f"\n{BLUE}Starting code generation...{RESET}")
 
             # Extract game concept from design
@@ -148,7 +150,9 @@ Remember:
             # Generate game code
             user_prompt = self._create_user_prompt(game_concept)
             response = self.model_api.call(
-                user_prompt=user_prompt, system_prompt=self.system_prompt, debug=debug
+                user_prompt=user_prompt,
+                system_prompt=self.system_prompt,
+                debug=self.debug,
             )
 
             # Extract code blocks
@@ -171,7 +175,7 @@ Remember:
                     js_includes=js_includes,
                 )
 
-            if debug:
+            if self.debug:
                 print(f"\n{BLUE}Extracted JavaScript code:{RESET}")
                 if isinstance(js_code, dict):
                     for filename, code in js_code.items():
@@ -189,7 +193,7 @@ Remember:
             return html_code, js_files
 
         except Exception as e:
-            if debug:
+            if self.debug:
                 print(f"\n{RED}Error in code generation:{RESET}")
                 print(f"Error type: {type(e).__name__}")
                 print(f"Error message: {str(e)}")
@@ -235,7 +239,11 @@ Remember:
         try:
             # Ask the model to generate a title
             prompt = f"Generate a short, catchy title (3-4 words max) for this game concept:\n{game_concept}"
-            response = self.model_api.call(prompt, debug=self.debug)
+            response = self.model_api.call(
+                user_prompt=prompt,
+                system_prompt=self.system_prompt,
+                debug=self.debug,
+            )
 
             # Clean up the response
             title = response.strip().strip('"').strip("'")

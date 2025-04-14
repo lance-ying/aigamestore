@@ -7,33 +7,35 @@ from game_generators.prompts import GAME_DESIGN_SYSTEM_PROMPT
 class ComplexityGuideDesigner:
     """Designer that creates game designs through guided complexity discussions"""
 
-    def __init__(self, model_api: ModelAPI, system_prompt: str = None):
+    def __init__(
+        self, model_api: ModelAPI, system_prompt: str = None, debug: bool = False
+    ):
         self.model_api = model_api
         self.system_prompt = system_prompt or GAME_DESIGN_SYSTEM_PROMPT
+        self.debug = debug
 
     def design_game(
         self,
         genre: str,
         num_players: int,
         narratives: Optional[str] = None,
-        debug: bool = False,
     ) -> Dict[str, Any]:
         """Create game design through guided discussion"""
         try:
-            if debug:
+            if self.debug:
                 print(f"\n{BLUE}Starting guided design process...{RESET}")
 
             # Phase 1: Initial Brainstorming
             mechanics_response = self._brainstorm_mechanics(
-                genre, num_players, narratives, debug
+                genre, num_players, narratives
             )
 
             # Phase 2: Complexity Discussion
-            complexity_response = self._discuss_complexity(mechanics_response, debug)
+            complexity_response = self._discuss_complexity(mechanics_response)
 
             # Phase 3: Final Design
             final_design = self._create_final_design(
-                mechanics_response, complexity_response, debug
+                mechanics_response, complexity_response
             )
 
             # Extract components
@@ -50,7 +52,7 @@ class ComplexityGuideDesigner:
                 final_design,
             )
 
-            if debug:
+            if self.debug:
                 print(f"\n{BLUE}Final Design Components:{RESET}")
                 print(f"Title: {title}")
                 print(f"Description: {description}")
@@ -64,7 +66,7 @@ class ComplexityGuideDesigner:
             }
 
         except Exception as e:
-            if debug:
+            if self.debug:
                 print(f"\n{RED}Error in game design:{RESET}")
                 print(f"Error type: {type(e).__name__}")
                 print(f"Error message: {str(e)}")
@@ -74,7 +76,7 @@ class ComplexityGuideDesigner:
             raise
 
     def _brainstorm_mechanics(
-        self, genre: str, num_players: int, narratives: Optional[str], debug: bool
+        self, genre: str, num_players: int, narratives: Optional[str]
     ) -> str:
         """Initial casual brainstorming phase"""
         prompt = f"""Hey there! Let's kick off a fun brainstorming session for creating an awesome {genre} game.
@@ -95,13 +97,13 @@ Just throwing ideas around:
 Don't worry about technical stuff yet - let's just dream up some fun ideas!
 What kind of surprising mechanics could make players go "Whoa, that's cool!"?"""
 
-        if debug:
+        if self.debug:
             print(f"\n{BLUE}[Brainstorm] Getting Creative{RESET}")
             print(f"Prompt: {prompt}")
 
         return self._call_model_api(prompt, self.system_prompt)
 
-    def _discuss_complexity(self, mechanics_response: str, debug: bool) -> str:
+    def _discuss_complexity(self, mechanics_response: str) -> str:
         """Casual discussion about making the game engaging"""
         prompt = f"""Cool ideas so far! Let's chat about making these fun:
 
@@ -116,14 +118,14 @@ I'm curious:
 Think about those "just one more try" moments - what makes games hard to put down?
 How could we surprise players while keeping things fair and fun?"""
 
-        if debug:
+        if self.debug:
             print(f"\n{BLUE}[Chat] Making It Fun{RESET}")
             print(f"Prompt: {prompt}")
 
         return self._call_model_api(prompt, self.system_prompt)
 
     def _create_final_design(
-        self, mechanics_response: str, complexity_response: str, debug: bool
+        self, mechanics_response: str, complexity_response: str
     ) -> str:
         """Wrap up the design with complete but natural specification"""
         prompt = f"""Alright, we've got some really fun ideas going:
@@ -165,7 +167,7 @@ Make it sound fun!]
 
 Keep that creative spark we discussed, but make sure it's something we can actually build!"""
 
-        if debug:
+        if self.debug:
             print(f"\n{BLUE}[Wrapping Up] The Final Plan{RESET}")
             print(f"Prompt: {prompt}")
 
@@ -234,5 +236,7 @@ What We're Making:
     def _call_model_api(self, prompt: str, system_prompt: str = None) -> str:
         """Call the model API with proper prompts"""
         return self.model_api.call(
-            user_prompt=prompt, system_prompt=system_prompt, debug=True
+            user_prompt=prompt,
+            system_prompt=system_prompt,
+            debug=self.debug,
         )

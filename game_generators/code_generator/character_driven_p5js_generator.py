@@ -13,25 +13,55 @@ class CharacterDrivenP5JSGenerator:
     """Generate p5.js code for a game"""
 
     def __init__(
-        self, model_api: ModelAPI, system_prompt: str = CODE_GENERATION_SYSTEM_PROMPT
+        self,
+        model_api: ModelAPI,
+        system_prompt: str = CODE_GENERATION_SYSTEM_PROMPT,
+        debug: bool = False,
     ):
         self.model_api = model_api
         self.system_prompt = system_prompt
         self.p5js_url = "https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"
-        self.debug = False
+        self.debug = debug
+        # Add tracking for JS files
+        self.js_files = {}  # Dictionary to store all JS files: {filename: content}
 
     def _create_user_prompt(self, game_concept: str) -> str:
         """Create the user prompt for code generation"""
-        html_example = FORMAT_HTML_TEMPLATE.format(
-            title="{title}", p5js_url=self.p5js_url
-        )
-
         return f"""Create a complete p5.js game based on this concept:
 {game_concept}
 -------------------------------------
-Here are the implementation instructions:
+The game must use the Entity Component System (ECS) pattern conceptually in a SINGLE game.js file:
 
-1. Visual Style and Effects:
+1. Architecture Requirements:
+```architecture
+- Follow Entity Component System (ECS) pattern principles
+- Entities: Game objects (Player, Enemy, Obstacle, etc.) using xxxEntity naming
+- Components: Data containers for entities using xxxComponent naming
+- Systems: Logic that operates on components using xxxSystem naming
+- DO NOT use or reference external ECS frameworks or create an ECS class
+```
+
+2. Code Structure and Organization:
+```structure
+- Create a SINGLE game.js file containing all code (no separate files)
+- Organize the code in logical sections with clear comments:
+  * Components section (define all xxxComponent classes first)
+  * Entities section (define all xxxEntity classes that use components)
+  * Systems section (define all xxxSystem classes that operate on entities)
+  * Game initialization (setup function and global variables)
+  * Game loop (draw function and main update logic)
+```
+
+3. Implementation Approach:
+```implementation
+- Each entity should directly contain its components as properties
+- Systems should be standalone objects with update() methods
+- Systems should process entities by iterating through them directly
+- Store all entities in a single global array called 'entities'
+- Store all systems in a single global array called 'systems'
+```
+
+4. Visual Style and Effects:
 ```visuals
 - Theme: Create a cohesive visual style with a clear color palette
 - Particles: Add particle systems for impacts, movement trails, explosions
@@ -40,7 +70,7 @@ Here are the implementation instructions:
 - Atmosphere: Use gradients, patterns, or parallax backgrounds
 ```
 
-2. Canvas and Layers:
+5. Canvas and Layers:
 ```canvas
 - Size: {CANVAS_SIZE['width']}x{CANVAS_SIZE['height']} pixels
 - Background Layer: Dynamic, animated game world
@@ -49,47 +79,54 @@ Here are the implementation instructions:
 - UI Layer: Clean, responsive interface elements
 ```
 
-3. Core Systems with Visual Feedback:
+6. Core Systems:
 ```systems
-- RenderSystem: Handle layered drawing with depth
-- AnimationSystem: Manage sprites, tweens, transitions
-- ParticleSystem: Create and update effect particles
-- FeedbackSystem: Screen effects, flashes, camera shake
+- RenderSystem: Draw all entities with render properties
+- PhysicsSystem: Handle movement and collisions
+- InputSystem: Process user input
+- AISystem: Control non-player entities
+- ParticleSystem: Manage particle effects
+- GameStateSystem: Track game progression
 ```
 
-4. Player Experience:
-```feedback
-- Movement: Smooth animations with momentum/trails
-- Actions: Impactful effects with particles/flashes
-- Collisions: Visible feedback with particles/shake
-- State Changes: Clear transitions with effects
+7. Code Quality Requirements:
+```quality
+- Correctness: Code must be syntactically valid and error-free
+- Structure: Follow ECS pattern concepts without requiring an ECS framework
+- Naming: Use xxxEntity, xxxComponent, xxxSystem naming convention consistently
+- Completeness: Include all required p5.js functions (setup, draw)
+- Initialization: All entities and systems initialized in setup()
 ```
 
-Please provide the code in the following format:
+IMPORTANT: 
+- Create a SINGLE game.js file with all code (no separate files)
+- DO NOT reference ECS, Entity, Component, or System classes from external frameworks
+- Define all components, entities, and systems within the game.js file
+- Make sure setup() function initializes all game elements
+- Make sure draw() function calls system updates in the correct order
 
-1. JavaScript files (use this block format for EACH file):
-examples:
+Return ONLY the complete game.js file in this format:
+
 ```javascript:game.js
-// Core game loop and state management
-[Your game.js code here]
-```
+// Complete game implementation - Include ALL code in this single file
 
-```javascript:render.js
-// Visual systems and effects
-[Your render.js code here]
-```
+// === COMPONENTS ===
+// Define all component classes first
 
-2. HTML file (use this block format, remember to include all game javascript files you created):
-```html
-[Your HTML code here]
-```
+// === ENTITIES ===
+// Define all entity classes that use components
 
-Remember:
-- Every action should have satisfying visual feedback
-- Use color and effects to guide player attention
-- Create a cohesive visual style throughout
-- Add "juice" to make the game feel alive
-- Layer effects for visual depth
+// === SYSTEMS ===
+// Define all system classes that operate on entities
+
+// === INITIALIZATION ===
+// Global variables and setup function
+
+// === GAME LOOP ===
+// Draw function and main update logic
+
+[Your complete game code here]
+```
 """
 
     def _extract_code_block(
@@ -132,37 +169,36 @@ Remember:
             return match.group(1).strip() if match else ""
 
     def generate_code(
-        self, design: Dict[str, Any], debug: bool = False
+        self, design: Dict[str, Any]
     ) -> Tuple[str, List[Tuple[str, str]]]:
-        self.debug = debug
         try:
-            if debug:
+            if self.debug:
                 print(f"\n{BLUE}Starting code generation...{RESET}")
 
             mode = design.get("mode", "initial_generation")
             if mode == "character_feedback":
-                return self._generate_character_improved_code(design, debug)
+                return self._generate_character_improved_code(design)
             elif mode == "rendering":
-                return self._generate_rendering_code(design, debug)
+                return self._generate_rendering_code(design)
             else:
-                return self._generate_initial_code(design, debug)
+                return self._generate_initial_code(design)
 
         except Exception as e:
-            if debug:
+            if self.debug:
                 print(f"\n{RED}Error in code generation:{RESET}")
                 print(f"Error type: {type(e).__name__}")
                 print(f"Error message: {str(e)}")
             raise
 
     def _generate_character_improved_code(
-        self, design: Dict[str, Any], debug: bool
+        self, design: Dict[str, Any]
     ) -> Tuple[str, List[Tuple[str, str]]]:
         """Generate improved code through character feedback rounds"""
         current_js = design["current_code"]
         game_design = design["game_design_text"]
 
         for round in range(1, 4):  # 3 rounds of improvements
-            if debug:
+            if self.debug:
                 print(f"\n{GREEN}Character Review Round {round}:{RESET}")
 
             # Get environment feedback
@@ -193,7 +229,12 @@ Provide specific feedback on:
 
 Focus on concrete code improvements."""
 
-        return self.model_api.call(prompt, debug=self.debug)
+        return self.model_api.call(
+            user_prompt=prompt,
+            system_prompt=self.system_prompt,
+            max_tokens=10000,
+            debug=self.debug,
+        )
 
     def _get_character_feedback(self, current_js: str, game_design: str) -> str:
         prompt = f"""As the implemented characters, review your code:
@@ -208,38 +249,253 @@ Provide specific feedback on:
 3. If your interactions work as intended
 4. Concrete code improvements needed"""
 
-        return self.model_api.call(prompt, debug=self.debug)
+        return self.model_api.call(
+            user_prompt=prompt,
+            system_prompt=self.system_prompt,
+            max_tokens=10000,
+            debug=self.debug,
+        )
 
-    def _apply_character_improvements(
-        self, current_js: str, env_feedback: str, char_feedback: str, game_design: str
+    def _get_character_specific_feedback(
+        self, character_index: int, current_js: str, character_definitions: str
     ) -> str:
-        prompt = f"""Apply these improvement suggestions to the game code:
+        """Get feedback from a specific character on their implementation"""
+        # Extract this character's info
+        char_info = ""
+        match = re.search(
+            rf"Character {character_index}:.*?(?=Character|\n\n|$)",
+            character_definitions,
+            re.DOTALL,
+        )
+        if match:
+            char_info = match.group(0)
 
-Current Code:
+        prompt = f"""As Character {character_index}, review your role in the game:
+
+{char_info}
+
+Review the current implementation:
 {current_js}
+
+Provide specific feedback on:
+1. How well your character is implemented
+2. What features would make your character more interesting to play or interact with
+3. What interactions with other characters or environment elements would enhance gameplay
+4. Any bugs or issues in your character's implementation
+
+Express your feedback in natural language as if you were the character. Focus on what would make the game more engaging from your perspective.
+"""
+
+        return self.model_api.call(
+            user_prompt=prompt,
+            system_prompt=self.system_prompt,
+            max_tokens=10000,
+            debug=self.debug,
+        )
+
+    def apply_character_improvements(
+        self,
+        current_js: str,
+        env_feedback: str,
+        char_feedback: Dict[int, str],
+        game_design: str,
+    ) -> List[Tuple[str, str]]:
+        """
+        Apply character-specific improvements to the code.
+
+        Args:
+            current_js: The current game.js code
+            env_feedback: Environment feedback
+            char_feedback: Character feedback by index
+            game_design: Original game design
+
+        Returns:
+            List containing a single tuple with improved game.js
+        """
+        char_feedback_text = "\n\n".join(
+            [
+                f"Character {idx} Feedback:\n{feedback}"
+                for idx, feedback in char_feedback.items()
+            ]
+        )
+
+        # Update our tracking dictionary with the current game.js
+        self.js_files["game.js"] = current_js
+
+        prompt = f"""Apply these improvement suggestions to the game.js code:
+
+```javascript:game.js
+{current_js}
+```
 
 Environment Feedback:
 {env_feedback}
 
 Character Feedback:
-{char_feedback}
+{char_feedback_text}
 
 Original Design:
 {game_design}
 
 Update the code to:
-1. Implement suggested improvements
-2. Maintain code structure and readability
-3. Keep character behaviors distinct
-4. Preserve environment independence
+1. Implement suggested improvements from all characters and the environment
+2. Maintain the ECS pattern with xxxEntity, xxxComponent, and xxxSystem naming
+3. Keep all code in a single game.js file with clear section organization
+4. Keep character behaviors distinct and environment elements independent
+5. Make sure all required p5.js functions (setup, draw) are present
 
-Return only the improved code in a ```javascript block."""
+CRITICAL: Ensure the code is syntactically correct and will run without errors.
+- Check all variable declarations and references
+- Verify all functions are properly defined and called
+- Ensure the code is complete and self-contained in a single file
+- Maintain clear sections for Components, Entities, Systems, and game logic
 
-        response = self.model_api.call(prompt, debug=self.debug)
-        return self._extract_code_block(response, "javascript")
+Return ONLY the improved game.js file in a ```javascript:game.js block.
+"""
+
+        response = self.model_api.call(
+            user_prompt=prompt,
+            system_prompt=self.system_prompt,
+            max_tokens=16000,
+            debug=self.debug,
+        )
+
+        # Extract code from response
+        js_code = self._extract_code_block(response, "javascript")
+
+        # Update our tracking dictionary
+        if isinstance(js_code, dict) and "game.js" in js_code:
+            self.js_files["game.js"] = js_code["game.js"]
+        elif isinstance(js_code, str):
+            self.js_files["game.js"] = js_code
+
+        # Add a code validation step
+        self._validate_code_integrity()
+
+        # Return the game.js file
+        return [("game.js", self.js_files["game.js"])]
+
+    def _validate_code_integrity(self):
+        """
+        Perform a final validation check using the LLM to ensure the JavaScript code is correct.
+        """
+        if self.debug:
+            print(f"\n{BLUE}Performing final code validation through LLM...{RESET}")
+
+        if "game.js" not in self.js_files or not self.js_files["game.js"].strip():
+            if self.debug:
+                print(f"{RED}Critical: game.js is missing or empty{RESET}")
+
+            # Create a minimal functioning game.js
+            self.js_files[
+                "game.js"
+            ] = """// Minimal p5.js game scaffold
+function setup() {
+  createCanvas(600, 400);
+}
+
+function draw() {
+  background(220);
+  text('Game is loading...', width/2, height/2);
+}
+"""
+
+        # Get the game.js content
+        game_js = self.js_files["game.js"]
+
+        # Create a prompt that asks the LLM to validate and fix the code
+        prompt = f"""Please validate this game.js file for a p5.js game. The code should follow Entity-Component-System principles.
+
+```javascript:game.js
+{game_js}
+```
+
+Check for the following issues:
+1. Missing p5.js required functions (setup and draw)
+2. References to undefined variables or functions
+3. Syntax errors or bugs that would prevent the code from running
+4. Incomplete event handling or initialization
+5. Any other issues that would cause runtime errors
+
+If you find any problems, fix them and return the corrected game.js file.
+If the code is already correct, just say "Code is valid".
+
+For any fixes, return the complete file in a ```javascript:game.js block.
+"""
+
+        response = self.model_api.call(
+            user_prompt=prompt,
+            system_prompt=self.system_prompt,
+            max_tokens=16000,
+            debug=self.debug,
+        )
+
+        # Check if the response indicates the code is already valid
+        if "code is valid" in response.lower():
+            if self.debug:
+                print(f"{GREEN}LLM validated code as correct{RESET}")
+            return
+
+        # Otherwise, extract the fixed code
+        fixed_code = self._extract_code_block(response, "javascript")
+
+        if isinstance(fixed_code, dict) and "game.js" in fixed_code:
+            if self.debug:
+                print(f"{GREEN}LLM provided code fixes for game.js{RESET}")
+            self.js_files["game.js"] = fixed_code["game.js"]
+        elif isinstance(fixed_code, str):
+            if self.debug:
+                print(f"{GREEN}LLM provided code fixes for game.js{RESET}")
+            self.js_files["game.js"] = fixed_code
+
+        # One final check to ensure setup() and draw() are present
+        game_js = self.js_files["game.js"]
+        if "function setup" not in game_js or "function draw" not in game_js:
+            if self.debug:
+                print(
+                    f"{RED}Critical: game.js still missing setup/draw functions after validation{RESET}"
+                )
+
+            fix_prompt = f"""The game.js file is STILL missing the essential p5.js functions (setup and/or draw).
+            
+Here is the current game.js code:
+```javascript
+{game_js}
+```
+
+Please add proper setup() and draw() functions that will work with the existing code.
+Return the COMPLETE fixed game.js file."""
+
+            fixed_game = self.model_api.call(
+                user_prompt=fix_prompt,
+                system_prompt=self.system_prompt,
+                max_tokens=10000,
+                debug=self.debug,
+            )
+            fixed_js = self._extract_code_block(fixed_game, "javascript")
+
+            if (
+                isinstance(fixed_js, str)
+                and "function setup" in fixed_js
+                and "function draw" in fixed_js
+            ):
+                self.js_files["game.js"] = fixed_js
+                if self.debug:
+                    print(
+                        f"{GREEN}Successfully added missing setup/draw functions{RESET}"
+                    )
+            elif isinstance(fixed_js, dict) and "game.js" in fixed_js:
+                self.js_files["game.js"] = fixed_js["game.js"]
+                if self.debug:
+                    print(
+                        f"{GREEN}Successfully added missing setup/draw functions{RESET}"
+                    )
+
+        if self.debug:
+            print(f"{GREEN}Code validation complete{RESET}")
 
     def _generate_rendering_code(
-        self, design: Dict[str, Any], debug: bool
+        self, design: Dict[str, Any]
     ) -> Tuple[str, List[Tuple[str, str]]]:
         """Generate final code with rendering"""
         prompt = f"""Add rendering code to this game implementation:
@@ -258,12 +514,17 @@ Add rendering code that:
 
 Return the complete code in a ```javascript block."""
 
-        response = self.model_api.call(prompt, debug=debug)
+        response = self.model_api.call(
+            user_prompt=prompt,
+            system_prompt=self.system_prompt,
+            max_tokens=10000,
+            debug=self.debug,
+        )
         js_code = self._extract_code_block(response, "javascript")
         return self._create_html_code(), [("game.js", js_code)]
 
     def _generate_initial_code(
-        self, design: Dict[str, Any], debug: bool
+        self, design: Dict[str, Any]
     ) -> Tuple[str, List[Tuple[str, str]]]:
         """Generate initial game code from design"""
         # Extract game concept from design
@@ -274,44 +535,156 @@ Return the complete code in a ```javascript block."""
         # Generate game code
         user_prompt = self._create_user_prompt(game_concept)
         response = self.model_api.call(
-            user_prompt=user_prompt, system_prompt=self.system_prompt, debug=debug
+            user_prompt=user_prompt,
+            system_prompt=self.system_prompt,
+            debug=self.debug,
         )
 
         # Extract code blocks
         js_code = self._extract_code_block(response, "javascript")
-        html_code = self._extract_code_block(response, "html") or ""
 
-        # If HTML is empty or doesn't contain proper script tags, create it
-        if not html_code or "<script src=" not in html_code:
-            if isinstance(js_code, dict):
-                js_includes = "\n    ".join(
-                    f'<script src="{filename}"></script>' for filename in js_code.keys()
-                )
-            else:
-                js_includes = '<script src="game.js"></script>'
-
-            html_code = FORMAT_HTML_TEMPLATE.format(
-                title=design.get("title", "Game"),
-                p5js_url=self.p5js_url,
-                js_includes=js_includes,
-            )
-
-        if debug:
-            print(f"\n{BLUE}Extracted JavaScript code:{RESET}")
-            if isinstance(js_code, dict):
-                for filename, code in js_code.items():
-                    print(f"\n{YELLOW}{filename}:{RESET}\n{code}")
-            else:
-                print(f"\n{YELLOW}game.js:{RESET}\n{js_code}")
-            print(f"\n{BLUE}Extracted HTML code:{RESET}\n{html_code}")
-
-        # Convert js_code to proper format
+        # Handle different response formats and ensure we have a single game.js
         if isinstance(js_code, dict):
-            js_files = [(filename, code) for filename, code in js_code.items()]
-        else:
-            js_files = [("game.js", js_code or "")]
+            if "game.js" in js_code:
+                # If we got a game.js file, use it
+                game_js_content = js_code["game.js"]
+            else:
+                # Consolidate multiple files into a single game.js
+                if self.debug:
+                    print(
+                        f"{YELLOW}Consolidating multiple JS files into a single game.js{RESET}"
+                    )
 
-        return html_code, js_files
+                game_js_content = "// Consolidated game.js file\n\n"
+
+                # Organize files in a logical order
+                sections = [
+                    ("components", "// === COMPONENTS ===\n"),
+                    ("entities", "// === ENTITIES ===\n"),
+                    ("systems", "// === SYSTEMS ===\n"),
+                    ("game", "// === GAME INITIALIZATION AND LOOP ===\n"),
+                ]
+
+                for section_key, section_header in sections:
+                    game_js_content += "\n" + section_header + "\n"
+                    # Add content from any files that match this section
+                    for filename, content in js_code.items():
+                        if section_key in filename.lower():
+                            game_js_content += f"// From {filename}\n{content}\n\n"
+
+                # Add any remaining files that weren't categorized
+                for filename, content in js_code.items():
+                    if not any(
+                        section_key in filename.lower() for section_key, _ in sections
+                    ):
+                        game_js_content += f"// From {filename}\n{content}\n\n"
+
+                # Ensure setup and draw functions are present
+                if "function setup" not in game_js_content:
+                    game_js_content += "\n// === MAIN FUNCTIONS ===\n"
+                    game_js_content += """
+function setup() {
+  createCanvas(600, 400);
+  // Initialize game elements
+  entities = [];
+  systems = [];
+  
+  // Add your initialization code here
+}
+
+function draw() {
+  background(20);
+  
+  // Update all systems
+  for (let system of systems) {
+    system.update();
+  }
+}
+"""
+        elif isinstance(js_code, str):
+            # If we got a single JS block, use it as game.js
+            game_js_content = js_code
+        else:
+            # Create a minimal game.js
+            game_js_content = """// Basic p5.js game with ECS pattern
+
+// === COMPONENTS ===
+class PositionComponent {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+  }
+}
+
+class RenderComponent {
+  constructor(color, size) {
+    this.color = color;
+    this.size = size;
+  }
+}
+
+// === ENTITIES ===
+class PlayerEntity {
+  constructor(x, y) {
+    this.position = new PositionComponent(x, y);
+    this.render = new RenderComponent('blue', 20);
+  }
+}
+
+// === SYSTEMS ===
+class RenderSystem {
+  update() {
+    for (let entity of entities) {
+      if (entity.position && entity.render) {
+        fill(entity.render.color);
+        ellipse(entity.position.x, entity.position.y, entity.render.size);
+      }
+    }
+  }
+}
+
+// === INITIALIZATION ===
+let entities = [];
+let systems = [];
+
+function setup() {
+  createCanvas(600, 400);
+  
+  // Create player entity
+  entities.push(new PlayerEntity(width/2, height/2));
+  
+  // Add systems
+  systems.push(new RenderSystem());
+}
+
+// === GAME LOOP ===
+function draw() {
+  background(220);
+  
+  // Update all systems
+  for (let system of systems) {
+    system.update();
+  }
+}
+"""
+
+        # Store the game.js content and clear any other files
+        self.js_files = {"game.js": game_js_content}
+
+        # Create HTML code
+        html_code = FORMAT_HTML_TEMPLATE.format(
+            title=design.get("title", "Game"),
+            p5js_url=self.p5js_url,
+            js_includes='<script src="game.js"></script>',
+        )
+
+        if self.debug:
+            print(f"\n{BLUE}Generated JavaScript code:{RESET}")
+            print(f"\n{YELLOW}game.js:{RESET}\n{self.js_files['game.js']}")
+            print(f"\n{BLUE}Generated HTML code:{RESET}\n{html_code}")
+
+        # Return HTML and the game.js file
+        return html_code, [("game.js", game_js_content)]
 
     def _extract_title(self, text: str) -> str:
         """
@@ -350,7 +723,12 @@ Return the complete code in a ```javascript block."""
         try:
             # Ask the model to generate a title
             prompt = f"Generate a short, catchy title (3-4 words max) for this game concept:\n{game_concept}"
-            response = self.model_api.call(prompt, debug=self.debug)
+            response = self.model_api.call(
+                user_prompt=prompt,
+                system_prompt=self.system_prompt,
+                max_tokens=10000,
+                debug=self.debug,
+            )
 
             # Clean up the response
             title = response.strip().strip('"').strip("'")
@@ -479,4 +857,14 @@ Return the complete code in a ```javascript block."""
                 print(code)
             raise
 
-    # ... rest of the methods remain the same ...
+    def _create_html_code(self, title: str = "Game") -> str:
+        """Create HTML code from template with only game.js"""
+        return FORMAT_HTML_TEMPLATE.format(
+            title=title,
+            p5js_url=self.p5js_url,
+            js_includes='<script src="game.js"></script>',
+        )
+
+    def create_html_code(self, title: str = "Game") -> str:
+        """Public method to create HTML code from template"""
+        return self._create_html_code(title)

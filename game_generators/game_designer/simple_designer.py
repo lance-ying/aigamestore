@@ -16,18 +16,19 @@ from game_generators.prompts import (
 class SimpleDesigner:
     """Simple designer that creates game design and code"""
 
-    def __init__(self, model_api: ModelAPI = None, system_prompt: str = None):
+    def __init__(
+        self, model_api: ModelAPI = None, system_prompt: str = None, debug: bool = False
+    ):
         self.model_api = model_api
         self.system_prompt = system_prompt
         self.p5js_url = "https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"
-        self.debug = False
+        self.debug = debug
 
     def design_game(
         self,
         genre: str,
         num_players: int,
         narratives: Optional[str] = None,
-        debug: bool = False,
     ) -> Dict[str, Any]:
         """
         Create game design and implementation
@@ -36,38 +37,37 @@ class SimpleDesigner:
             genre: Game genre
             num_players: Number of players
             narratives: Optional narrative constraints
-            debug: Whether to print debug information
 
         Returns:
             Dict containing game design and code
         """
-        self.debug = debug
         try:
-
             # Create the prompt
             prompt = self._create_prompt(genre, num_players, narratives)
 
-            if debug:
+            if self.debug:
                 print(f"\n{GREEN}Generated prompt:{RESET}\n{prompt}")
 
             # Get response from model
             response = self.model_api.call(
-                user_prompt=prompt, system_prompt=self.system_prompt, debug=debug
+                user_prompt=prompt,
+                system_prompt=self.system_prompt,
+                debug=self.debug,
             )
 
             # Extract title
             title = self._extract_title(response)
-            if debug:
+            if self.debug:
                 print(f"\n{BLUE}Extracted title:{RESET} {title}")
 
             # Extract description
             description = self._extract_description(response)
-            if debug:
+            if self.debug:
                 print(f"\n{BLUE}Extracted description:{RESET}\n{description}")
 
             # Extract guidance
             guidance = self._extract_guidance(response)
-            if debug:
+            if self.debug:
                 print(f"\n{BLUE}Extracted guidance:{RESET}\n{guidance}")
 
             # Extract code blocks
@@ -88,7 +88,7 @@ class SimpleDesigner:
                     title=title, p5js_url=self.p5js_url, js_includes=js_includes
                 )
 
-            if debug:
+            if self.debug:
                 print(f"\n{BLUE}Extracted JavaScript code:{RESET}")
                 if isinstance(js_code, dict):
                     for filename, code in js_code.items():
@@ -114,7 +114,7 @@ class SimpleDesigner:
             }
 
         except Exception as e:
-            if debug:
+            if self.debug:
                 print(f"\n{RED}Error in game design:{RESET}")
                 print(f"Error type: {type(e).__name__}")
                 print(f"Error message: {str(e)}")

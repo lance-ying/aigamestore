@@ -7,9 +7,12 @@ from game_generators.prompts import GAME_DESIGN_SYSTEM_PROMPT
 class JudgeDesigner:
     """Designer that creates game designs through critical evaluation and iterative improvement"""
 
-    def __init__(self, model_api: ModelAPI, system_prompt: str = None):
+    def __init__(
+        self, model_api: ModelAPI, system_prompt: str = None, debug: bool = False
+    ):
         self.model_api = model_api
         self.system_prompt = system_prompt or GAME_DESIGN_SYSTEM_PROMPT
+        self.debug = debug
 
         # Enhanced evaluation criteria focusing on dynamics
         self.evaluation_criteria = {
@@ -27,11 +30,10 @@ class JudgeDesigner:
         genre: str,
         num_players: int,
         narratives: Optional[str] = None,
-        debug: bool = False,
     ) -> Dict[str, Any]:
         """Create game design through critical evaluation"""
         try:
-            if debug:
+            if self.debug:
                 print(f"\n{BLUE}Starting judged design process...{RESET}")
 
             context = {
@@ -44,7 +46,6 @@ class JudgeDesigner:
                 "improvement_count": 0,
                 "stagnant_rounds": 0,
                 "total_rounds": 0,
-                "debug": debug,
             }
 
             # Initial creative proposal
@@ -67,7 +68,7 @@ class JudgeDesigner:
             # Create final design with guidance
             final_design = self._create_final_design(context)
 
-            if debug:
+            if self.debug:
                 print(f"\n{BLUE}Final Design Components:{RESET}")
                 print(f"Title: {self._extract_title(final_design)}")
                 print(f"Description: {self._extract_description(final_design)}")
@@ -81,7 +82,7 @@ class JudgeDesigner:
             }
 
         except Exception as e:
-            if debug:
+            if self.debug:
                 print(f"\n{RED}Error in game design:{RESET}")
                 print(f"Error type: {type(e).__name__}")
                 print(f"Error message: {str(e)}")
@@ -141,9 +142,7 @@ Please provide:
 5. Detailed Mechanics:
 [Full gameplay systems with focus on evolution and interaction]"""
 
-        return self._call_model_api(
-            prompt, self.system_prompt, debug=context.get("debug", False)
-        )
+        return self._call_model_api(prompt, self.system_prompt)
 
     def _evaluate_design(self, context: dict) -> str:
         """Critically evaluate the current design with focus on dynamics"""
@@ -186,9 +185,7 @@ STRENGTHS: [What creates genuine surprise and engagement]
 WEAKNESSES: [What feels static or predictable]
 FOCUS: [How to add more dynamic elements]"""
 
-        return self._call_model_api(
-            prompt, self.system_prompt, debug=context.get("debug", False)
-        )
+        return self._call_model_api(prompt, self.system_prompt)
 
     def _get_improvements(self, evaluation: str, context: dict) -> str:
         """Get improvements based on evaluation, focusing on dynamic elements"""
@@ -219,9 +216,7 @@ Provide the improved design with all sections:
 4. Progression Design (with clear evolution)
 5. Detailed Mechanics (including surprises)"""
 
-        return self._call_model_api(
-            prompt, self.system_prompt, debug=context.get("debug", False)
-        )
+        return self._call_model_api(prompt, self.system_prompt)
 
     def _is_design_ready(self, context: dict) -> bool:
         """Check if the design meets quality criteria"""
@@ -296,9 +291,7 @@ Create a complete design that includes:
 
 Remember: Every level should introduce something new or combine existing elements in surprising ways!"""
 
-        return self._call_model_api(
-            prompt, self.system_prompt, debug=context.get("debug", False)
-        )
+        return self._call_model_api(prompt, self.system_prompt)
 
     def _parse_ratings(self, evaluation: str) -> dict:
         """Parse numerical ratings from evaluation"""
@@ -365,11 +358,11 @@ Narrative Context: {context['narratives'] if context['narratives'] else 'No spec
             )
         return match.group(1).strip()
 
-    def _call_model_api(
-        self, prompt: str, system_prompt: str = None, debug: bool = False
-    ) -> str:
+    def _call_model_api(self, prompt: str, system_prompt: str = None) -> str:
         """Call the model API with proper prompts"""
         response = self.model_api.call(
-            user_prompt=prompt, system_prompt=system_prompt, debug=debug
+            user_prompt=prompt,
+            system_prompt=system_prompt,
+            debug=self.debug,
         )
         return response
