@@ -5,6 +5,12 @@ import os
 import glob
 import json
 import datetime
+from datasets import load_dataset
+import uuid
+
+# Hugging Face configuration
+HF_TOKEN = os.environ.get("HF_TOKEN")
+GAMES_DATASET = "generative-games/gen-games-v2"
 
 # folder structure in game dir: {method} / {model} / {genre} / {name} / index.html
 GAME_DIR = Path(__file__).parent / "games"
@@ -16,37 +22,27 @@ RESULTS_DIR.mkdir(exist_ok=True)
 
 app = Flask(__name__)
 
+def load_games_dataset():
+    """Load the games dataset from Hugging Face"""
+    try:
+        dataset = load_dataset(GAMES_DATASET, split="train", token=HF_TOKEN)
+        print(f"Loaded dataset with {len(dataset)} games")
+        return dataset
+    except Exception as e:
+        print(f"Error loading dataset: {e}")
+        return None
+
+# Load dataset at startup
+GAMES_DATASET = load_games_dataset()
+
+
 def get_random_games(num_games=2):
-    """Get random games from the game directory"""
-    all_games = []
+    """Get random games from the dataset"""
+    if GAMES_DATASET is None:
+        return []
     
-    # Walk through the game directory structure
-    for method_dir in GAME_DIR.iterdir():
-        if not method_dir.is_dir():
-            continue
-            
-        for model_dir in method_dir.iterdir():
-            if not model_dir.is_dir():
-                continue
-                
-            for genre_dir in model_dir.iterdir():
-                if not genre_dir.is_dir():
-                    continue
-                    
-                for game_dir in genre_dir.iterdir():
-                    if not game_dir.is_dir():
-                        continue
-                    
-                    game_html = game_dir / "index.html"
-                    if game_html.exists():
-                        # Store game info
-                        all_games.append({
-                            "path": str(game_html.relative_to(GAME_DIR)),
-                            "name": game_dir.name,
-                            "genre": genre_dir.name,
-                            "model": model_dir.name,
-                            "method": method_dir.name
-                        })
+    # Get all games
+    all_games = list(GAMES_DATASET)
     
     if len(all_games) < num_games:
         return all_games
@@ -317,8 +313,7 @@ HTML_TEMPLATE = '''
             
             <div class="rating-sliders">
                 <div class="rating-item">
-                    <label>Fun</label>
-                    <div class="rating-description">How enjoyable was the game to play?</div>
+                    <label>Fun: How enjoyable was the game to play?</label>
                     <div class="slider-container">
                         <input type="range" min="1" max="10" value="5" class="slider" id="fun-{{ loop.index }}">
                         <span class="slider-value" id="fun-value-{{ loop.index }}">5</span>
@@ -330,8 +325,7 @@ HTML_TEMPLATE = '''
                 </div>
                 
                 <div class="rating-item">
-                    <label>Difficulty</label>
-                    <div class="rating-description">How challenging was the game to play?</div>
+                    <label>Difficulty: How challenging was the game to play?</label>
                     <div class="slider-container">
                         <input type="range" min="1" max="10" value="5" class="slider" id="difficulty-{{ loop.index }}">
                         <span class="slider-value" id="difficulty-value-{{ loop.index }}">5</span>
@@ -343,8 +337,7 @@ HTML_TEMPLATE = '''
                 </div>
                 
                 <div class="rating-item">
-                    <label>Controls</label>
-                    <div class="rating-description">How intuitive and responsive were the controls?</div>
+                    <label>Controls: How intuitive and responsive were the controls?</label>
                     <div class="slider-container">
                         <input type="range" min="1" max="10" value="5" class="slider" id="controls-{{ loop.index }}">
                         <span class="slider-value" id="controls-value-{{ loop.index }}">5</span>
@@ -532,106 +525,80 @@ HTML_TEMPLATE = '''
 def index():
     """Main page that displays random games and rating interface"""
     games = get_random_games(2)
-    return render_template_string(HTML_TEMPLATE, games=games)
+    
+    # Format games for template
+    formatted_games = []
+    for game in games:
+        formatted_games.append({
+            "path": f"{game['id']}/index.html",  # Use game ID in path
+            "name": game["game_name"],
+            "genre": game["genre"],
+            "model": game["model"],
+            "method": game["method"]
+        })
+    
+    return render_template_string(HTML_TEMPLATE, games=formatted_games)
 
 @app.route('/game/<path:game_path>')
 def serve_game(game_path):
     """Serve game HTML files and other assets"""
-    game_file = GAME_DIR / game_path
-    if not game_file.exists():
+    # Extract game ID from path
+    game_id = game_path.split('/')[0]
+    
+    # Find game in dataset
+    game = None
+    for item in GAMES_DATASET:
+        if item["id"] == game_id:
+            game = item
+            break
+    
+    if game is None:
         return "Game not found", 404
     
-    # JavaScript files
+    # Handle different file types
     if game_path.endswith('.js'):
-        try:
-            with open(game_file, 'r') as f:
-                content = f.read()
-            return content, 200, {'Content-Type': 'application/javascript'}
-        except Exception as e:
-            return f"Error serving JavaScript file: {str(e)}", 500
+        # Return JavaScript file
+        js_file = game_path.split('/')[-1]
+        if js_file in game["js_files"]:
+            return game["js_files"][js_file], 200, {'Content-Type': 'application/javascript'}
+        return "JavaScript file not found", 404
     
-    # CSS files
-    elif game_path.endswith('.css'):
-        try:
-            with open(game_file, 'r') as f:
-                content = f.read()
-            return content, 200, {'Content-Type': 'text/css'}
-        except Exception as e:
-            return f"Error serving CSS file: {str(e)}", 500
-    
-    # HTML files
     elif game_path.endswith('.html'):
-        try:
-            with open(game_file, 'r') as f:
-                content = f.read()
-            
-            # Anti-scrolling JavaScript
-            prevent_scroll_js = """
-            <script>
-            // Prevent scrolling with keyboard
-            window.addEventListener("keydown", function(e) {
-                // Prevent default for navigation keys (space, arrow keys)
-                if([32, 37, 38, 39, 40].indexOf(e.keyCode) > -1) {
-                    e.preventDefault();
-                }
-            }, false);
-            
-            // Prevent scrolling with wheel
-            document.addEventListener('wheel', function(e) {
-                if (e.target.closest('canvas')) {
-                    e.preventDefault();
-                }
-            }, { passive: false });
-            </script>
-            """
-            
-            # Insert the script before the closing </body> tag
-            if "</body>" in content:
-                content = content.replace("</body>", prevent_scroll_js + "</body>")
-            else:
-                # If no body tag, append to the end
-                content += prevent_scroll_js
-            
-            return content, 200, {'Content-Type': 'text/html'}
-        except Exception as e:
-            return f"Error serving HTML file: {str(e)}", 500
+        # Return HTML file
+        html = game["html"]
+        
+        # Anti-scrolling JavaScript
+        prevent_scroll_js = """
+        <script>
+        // Prevent scrolling with keyboard
+        window.addEventListener("keydown", function(e) {
+            // Prevent default for navigation keys (space, arrow keys)
+            if([32, 37, 38, 39, 40].indexOf(e.keyCode) > -1) {
+                e.preventDefault();
+            }
+        }, false);
+        
+        // Prevent scrolling with wheel
+        document.addEventListener('wheel', function(e) {
+            if (e.target.closest('canvas')) {
+                e.preventDefault();
+            }
+        }, { passive: false });
+        </script>
+        """
+        
+        # Insert the script before the closing </body> tag
+        if "</body>" in html:
+            html = html.replace("</body>", prevent_scroll_js + "</body>")
+        else:
+            # If no body tag, append to the end
+            html += prevent_scroll_js
+        
+        return html, 200, {'Content-Type': 'text/html'}
     
-    # For image files and other binary assets
     else:
-        try:
-            with open(game_file, 'rb') as f:
-                content = f.read()
-            
-            # Set appropriate MIME type for common file formats
-            if game_path.endswith('.png'):
-                mime_type = 'image/png'
-            elif game_path.endswith('.jpg') or game_path.endswith('.jpeg'):
-                mime_type = 'image/jpeg'
-            elif game_path.endswith('.gif'):
-                mime_type = 'image/gif'
-            elif game_path.endswith('.svg'):
-                mime_type = 'image/svg+xml'
-            elif game_path.endswith('.json'):
-                mime_type = 'application/json'
-            elif game_path.endswith('.mp3'):
-                mime_type = 'audio/mpeg'
-            elif game_path.endswith('.wav'):
-                mime_type = 'audio/wav'
-            elif game_path.endswith('.ogg'):
-                mime_type = 'audio/ogg'
-            elif game_path.endswith('.ttf'):
-                mime_type = 'font/ttf'
-            elif game_path.endswith('.woff'):
-                mime_type = 'font/woff'
-            elif game_path.endswith('.woff2'):
-                mime_type = 'font/woff2'
-            else:
-                # Default to octet-stream for unknown binary types
-                mime_type = 'application/octet-stream'
-            
-            return content, 200, {'Content-Type': mime_type}
-        except Exception as e:
-            return f"Error serving file: {str(e)}", 500
+        # For other file types, return 404
+        return "File type not supported", 404
 
 @app.route('/submit-ratings', methods=['POST'])
 def submit_ratings():
