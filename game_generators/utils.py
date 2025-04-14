@@ -86,7 +86,7 @@ class ModelAPI:
                 )
             return anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
-        elif self.model_provider == "gemini":
+        elif self.model_provider == "google":
             if genai is None:
                 raise ImportError(
                     "The 'google-generativeai' package is required to use Gemini models. "
@@ -97,7 +97,7 @@ class ModelAPI:
 
         raise ValueError(
             f"Unsupported model provider: {self.model_provider}. "
-            "Supported providers are 'openai', 'claude', and 'gemini'."
+            "Supported providers are 'openai', 'claude', and 'google'."
         )
 
     def call(
@@ -200,7 +200,7 @@ class ModelAPI:
                 response = self.client.messages.create(**claude_params)
                 result = response.content[0].text
 
-            elif self.model_provider == "gemini":
+            elif self.model_provider == "google":
                 model = self.client.GenerativeModel(model_name=self.model)
                 # Convert messages to Gemini format
                 prompt = self._format_messages_for_gemini(messages)
@@ -307,7 +307,7 @@ if __name__ == "__main__":
 
     # Test Gemini (if available)
     if genai:
-        run_test("gemini:gemini-1.5-pro")
+        run_test("google:gemini-2.0-flash")
     else:
         print(
             f"\n{YELLOW}Skipping Gemini tests - google-generativeai package not installed{RESET}"
