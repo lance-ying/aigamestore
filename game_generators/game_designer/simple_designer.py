@@ -92,7 +92,8 @@ class SimpleDesigner:
 * Make sure the player's controls and parameters are coherent with the gameplay and physics.
 * Make sure the game has a clear goal and win state.
 * Implement professional-looking and polished graphics. Careful with flickering.
-* Start the game with clear instructions on how to play (the player has to press Enter to start the game).
+* Start the game with clear instructions on how to play (the player has to press Enter to start the game)
+* MOST IMPORTANT: The game must be fully FUNCTIONAL and error-free with the simplest code possible  !
 """
 
         description = f"""
