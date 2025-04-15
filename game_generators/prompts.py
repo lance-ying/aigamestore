@@ -42,6 +42,7 @@ CODE_GENERATION_SYSTEM_PROMPT = """You are an expert p5.js game developer who cr
 3. Package and Environment Requirements:
    - Canvas size constraints (600x400)
    - No external dependencies beyond p5.js
+   - No audio
 
 
 Available Control Actions (You should only use the following actions):
