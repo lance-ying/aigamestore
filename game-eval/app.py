@@ -15,6 +15,8 @@ HF_TOKEN = os.environ.get("HF_TOKEN")
 GAMES_DATASET = "generative-games/gen-games-v2"
 PREFERENCES_DATASET = "generative-games/gen-games-v2-preferences"  # Dataset to save ratings
 
+PUSH_EVERY_N_RATINGS = 10
+
 # folder structure in game dir: {method} / {model} / {genre} / {name} / index.html
 GAME_DIR = Path(__file__).parent / "games"
 RESULTS_DIR = Path(__file__).parent / "results"
@@ -33,9 +35,13 @@ game_events = {}
 preferences_scheduler = ParquetScheduler(
     repo_id=PREFERENCES_DATASET,
     private=True,
-    every=15,  # Upload every 15 minutes
+    every=15,  # TODO: doesn't seem to work when app is deployed (use PUSH_EVERY_N_RATINGS instead)
     token=HF_TOKEN
 )
+print("Scheduler initialized")
+
+# Counter for ratings
+ratings_counter = 0
 
 def load_games_dataset():
     """Load the games dataset from Hugging Face"""
@@ -53,6 +59,7 @@ GAMES_DATASET = load_games_dataset()
 
 def get_random_games(num_games=2):
     """Get random games from the dataset"""
+    print("Getting random games")
     if GAMES_DATASET is None:
         return []
     
@@ -123,9 +130,9 @@ HTML_TEMPLATE = '''
             box-shadow: 0 2px 8px rgba(0,0,0,0.1);
         }
         .rating-sliders {
-            margin-top: 25px;
+            margin-top: 15px;
             background: white;
-            padding: 8px;
+            padding: 16px;
             border-radius: 6px;
             box-shadow: 0 1px 3px rgba(0,0,0,0.08);
         }
@@ -205,31 +212,94 @@ HTML_TEMPLATE = '''
             font-style: italic;
         }
         /* Make sliders more compact and minimal */
-        input[type="range"] {
-            height: 6px;
-            -webkit-appearance: none;
+        .range__field {
+            border: 0;
+            margin: 0;
+            padding: 0;
             width: 100%;
-            background: #e0e0e0;
-            border-radius: 3px;
-            outline: none;
         }
-        input[type="range"]::-webkit-slider-thumb {
+        input.range {
             -webkit-appearance: none;
-            width: 18px;
-            height: 18px;
-            background: #3498db;
-            border-radius: 50%;
-            cursor: pointer;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            bottom: -5px;
+            position: relative;
+            width: 100%;
+            margin: 0;
+            padding: 0;
+            border: 0;
+            background: transparent;
         }
-        input[type="range"]::-moz-range-thumb {
-            width: 18px;
-            height: 18px;
-            background: #3498db;
-            border: none;
+        input.range:focus {
+            outline: 0;
+        }
+        input.range::-moz-focus-outer {
+            border: 0;
+        }
+        input.range::-webkit-slider-thumb {
+            box-shadow: 1px 1px 1px black, 0px 0px 1px black;
+            border: 0;
+            height: 16px;
+            width: 16px;
             border-radius: 50%;
+            background: white;
             cursor: pointer;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            -webkit-appearance: none;
+            margin-top: -5.5px;
+        }
+        input.range::-moz-range-thumb {
+            box-shadow: 1px 1px 1px black, 0px 0px 1px black;
+            border: 0;
+            height: 16px;
+            width: 16px;
+            border-radius: 50%;
+            background: white;
+            cursor: pointer;
+        }
+        input.range::-ms-thumb {
+            box-shadow: 1px 1px 1px black, 0px 0px 1px black;
+            border: 0;
+            height: 16px;
+            width: 16px;
+            border-radius: 50%;
+            background: white;
+            cursor: pointer;
+            height: 5px;
+        }
+        input.range::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 4px;
+            cursor: pointer;
+            box-shadow: 1px 1px 1px rgba(0, 0, 0, 0), 0px 0px 1px rgba(13, 13, 13, 0);
+            background: #3498db;
+            border-radius: 20px;
+            border: 0;
+        }
+        input.range::-moz-range-track {
+            width: 100%;
+            height: 4px;
+            cursor: pointer;
+            box-shadow: 1px 1px 1px rgba(0, 0, 0, 0), 0px 0px 1px rgba(13, 13, 13, 0);
+            background: #3498db;
+            border-radius: 20px;
+            border: 0;
+        }
+        input.range::-ms-track {
+            width: 100%;
+            height: 4px;
+            cursor: pointer;
+            background: transparent;
+            border-color: transparent;
+            color: transparent;
+        }
+        input.range::-ms-fill-lower,
+        input.range::-ms-fill-upper {
+            background: #3498db;
+            border: 0;
+            border-radius: 40px;
+            box-shadow: 1px 1px 1px rgba(0, 0, 0, 0), 0px 0px 1px rgba(13, 13, 13, 0);
+        }
+        .range__point {
+            font-size: 11px;
+            fill: #666;
         }
         
         /* Modal styles */
@@ -242,20 +312,48 @@ HTML_TEMPLATE = '''
             width: 100%;
             height: 100%;
             background-color: rgba(0,0,0,0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
         }
         .modal-content {
             background-color: #fff;
-            margin: 15% auto;
-            padding: 20px;
+            padding: 30px;
             border: none;
-            border-radius: 5px;
-            width: 60%;
-            max-width: 500px;
+            border-radius: 8px;
+            width: 80%;
+            max-width: 800px;
             box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            position: relative;
+        }
+        .modal-content h2 {
+            margin-top: 0;
+            margin-bottom: 10px;
+        }
+        .modal-content h3 {
+            margin-top: 15px;
+            margin-bottom: 5px;
+        }
+        .modal-content h4 {
+            margin-top: 10px;
+            margin-bottom: 3px;
+        }
+        .modal-content p {
+            margin-top: 0;
+            margin-bottom: 10px;
+        }
+        .modal-content ul {
+            margin-top: 5px;
+            margin-bottom: 10px;
+        }
+        .modal-content li {
+            margin-bottom: 3px;
         }
         .close {
             color: #bbb;
-            float: right;
+            position: absolute;
+            right: 20px;
+            top: 15px;
             font-size: 28px;
             font-weight: bold;
             cursor: pointer;
@@ -268,9 +366,11 @@ HTML_TEMPLATE = '''
             color: white;
             border: none;
             border-radius: 4px;
-            padding: 8px 16px;
+            padding: 12px 24px;
             cursor: pointer;
             transition: background-color 0.2s;
+            font-size: 16px;
+            margin-top: 20px;
         }
         #startButton:hover {
             background-color: #2980b9;
@@ -335,17 +435,54 @@ HTML_TEMPLATE = '''
     <div id="instructionsModal" class="modal">
         <div class="modal-content">
             <span class="close">&times;</span>
-            <h2>Game Evaluation</h2>
-            <p>Play and rate these two randomly selected games.</p>
-            <p>For each game, you'll rate:</p>
-            <ul>
-                <li><strong>Fun Factor</strong> - How enjoyable was the game?</li>
-                <li><strong>Difficulty</strong> - How challenging was the game?</li>
-                <li><strong>Controls</strong> - How intuitive were the controls?</li>
+            <h2>Game Evaluation Study</h2>
+            <p>Thank you for participating in our game evaluation study! Your feedback will help us understand what makes games engaging and fun.</p>
+            
+            <h3>How to Evaluate the Games</h3>
+            <p >You'll be shown two games side by side. For each game, please:</p>
+            
+            <div>
+                <h4>1. Play for about 1 minute to get a good feel for it</h4>
+                <h4>2. Rate the game on three aspects:</h4>
+                
+                <div style="margin-left: 15px; ">
+                    <h4>Controls (0-10)</h4>
+                    <p style="margin-left: 10px; ">
+                        - 0: Controls are completely confusing and unresponsive (like controls that don't work)<br>
+                        - 5: Controls are somewhat intuitive but could be improved (like basic mobile controls)<br>
+                        - 10: Controls are perfectly intuitive and responsive (like controls that feel natural)
+                    </p>
+                    
+                    <h4>Difficulty (0-10)</h4>
+                    <p style="margin-left: 10px; ">
+                        - 0: Game is too easy, no challenge at all (like a game with no challenge)<br>
+                        - 5: Game has a good balance of challenge (like a typical mobile game)<br>
+                        - 10: Game is extremely difficult, possibly frustrating (like a game that feels unfair)
+                    </p>
+                    
+                    <h4>Fun Factor (0-10)</h4>
+                    <p style="margin-left: 10px; ">
+                        - 0: Game is not enjoyable at all (like a broken or frustrating game)<br>
+                        - 5: Game is somewhat enjoyable (like a basic mobile game you'd play once)<br>
+                        - 10: Game is extremely fun and engaging (like your favorite casual game)
+                    </p>
+                </div>
+                
+                <h4>3. Finally, choose which game you think is better overall</h4>
+            </div>
+            
+            <h3>Important Notes</h3>
+            <ul style="padding-left: 25px;">
+                <li>We record your interactions with the games to understand how people play them</li>
+                <li>Please take this seriously - we use this data for research</li>
+                <li>There are no right or wrong answers - we want your honest opinion</li>
+                <li>If you're not serious about the evaluation, we won't be able to compensate you</li>
+                <li>Each evaluation should take about 2-3 minutes total</li>
             </ul>
-            <p>Finally, you'll be asked to choose which game you think is <strong>better overall</strong>.</p>
-            <p>Click "Submit Ratings" when you're done to save your ratings and load new games.</p>
-            <button id="startButton" style="margin-top: 10px;">Start Playing</button>
+            
+            <p>Ready to start? Click the button below to begin!</p>
+            
+            <button id="startButton">Start Playing</button>
         </div>
     </div>
         
@@ -359,10 +496,22 @@ HTML_TEMPLATE = '''
             <div class="rating-sliders">
                 <div class="rating-item">
                     <label>Controls: How intuitive and responsive were the controls?</label>
-                    <div class="slider-container">
-                        <input type="range" min="1" max="10" value="5" class="slider" id="controls-{{ loop.index }}">
-                        <span class="slider-value" id="controls-value-{{ loop.index }}">5</span>
-                    </div>
+                    <fieldset class="range__field">
+                        <input class="range" type="range" min="0" max="10" value="5" id="controls-{{ loop.index }}">
+                        <svg role="presentation" width="100%" height="14" xmlns="http://www.w3.org/2000/svg">
+                            <text class="range__point" x="0%" y="14" text-anchor="start">0</text>
+                            <text class="range__point" x="10%" y="14" text-anchor="middle">1</text>
+                            <text class="range__point" x="20%" y="14" text-anchor="middle">2</text>
+                            <text class="range__point" x="30%" y="14" text-anchor="middle">3</text>
+                            <text class="range__point" x="40%" y="14" text-anchor="middle">4</text>
+                            <text class="range__point" x="50%" y="14" text-anchor="middle">5</text>
+                            <text class="range__point" x="60%" y="14" text-anchor="middle">6</text>
+                            <text class="range__point" x="70%" y="14" text-anchor="middle">7</text>
+                            <text class="range__point" x="80%" y="14" text-anchor="middle">8</text>
+                            <text class="range__point" x="90%" y="14" text-anchor="middle">9</text>
+                            <text class="range__point" x="100%" y="14" text-anchor="end">10</text>
+                        </svg>
+                    </fieldset>
                     <div class="scale-labels">
                         <span>Confusing</span>
                         <span>Intuitive</span>
@@ -371,10 +520,22 @@ HTML_TEMPLATE = '''
                 
                 <div class="rating-item">
                     <label>Difficulty: How challenging was the game to play?</label>
-                    <div class="slider-container">
-                        <input type="range" min="1" max="10" value="5" class="slider" id="difficulty-{{ loop.index }}">
-                        <span class="slider-value" id="difficulty-value-{{ loop.index }}">5</span>
-                    </div>
+                    <fieldset class="range__field">
+                        <input class="range" type="range" min="0" max="10" value="5" id="difficulty-{{ loop.index }}">
+                        <svg role="presentation" width="100%" height="14" xmlns="http://www.w3.org/2000/svg">
+                            <text class="range__point" x="0%" y="14" text-anchor="start">0</text>
+                            <text class="range__point" x="10%" y="14" text-anchor="middle">1</text>
+                            <text class="range__point" x="20%" y="14" text-anchor="middle">2</text>
+                            <text class="range__point" x="30%" y="14" text-anchor="middle">3</text>
+                            <text class="range__point" x="40%" y="14" text-anchor="middle">4</text>
+                            <text class="range__point" x="50%" y="14" text-anchor="middle">5</text>
+                            <text class="range__point" x="60%" y="14" text-anchor="middle">6</text>
+                            <text class="range__point" x="70%" y="14" text-anchor="middle">7</text>
+                            <text class="range__point" x="80%" y="14" text-anchor="middle">8</text>
+                            <text class="range__point" x="90%" y="14" text-anchor="middle">9</text>
+                            <text class="range__point" x="100%" y="14" text-anchor="end">10</text>
+                        </svg>
+                    </fieldset>
                     <div class="scale-labels">
                         <span>Too easy</span>
                         <span>Very challenging</span>
@@ -383,10 +544,22 @@ HTML_TEMPLATE = '''
                 
                 <div class="rating-item">
                     <label>Fun: How enjoyable was the game to play?</label>
-                    <div class="slider-container">
-                        <input type="range" min="1" max="10" value="5" class="slider" id="fun-{{ loop.index }}">
-                        <span class="slider-value" id="fun-value-{{ loop.index }}">5</span>
-                    </div>
+                    <fieldset class="range__field">
+                        <input class="range" type="range" min="0" max="10" value="5" id="fun-{{ loop.index }}">
+                        <svg role="presentation" width="100%" height="14" xmlns="http://www.w3.org/2000/svg">
+                            <text class="range__point" x="0%" y="14" text-anchor="start">0</text>
+                            <text class="range__point" x="10%" y="14" text-anchor="middle">1</text>
+                            <text class="range__point" x="20%" y="14" text-anchor="middle">2</text>
+                            <text class="range__point" x="30%" y="14" text-anchor="middle">3</text>
+                            <text class="range__point" x="40%" y="14" text-anchor="middle">4</text>
+                            <text class="range__point" x="50%" y="14" text-anchor="middle">5</text>
+                            <text class="range__point" x="60%" y="14" text-anchor="middle">6</text>
+                            <text class="range__point" x="70%" y="14" text-anchor="middle">7</text>
+                            <text class="range__point" x="80%" y="14" text-anchor="middle">8</text>
+                            <text class="range__point" x="90%" y="14" text-anchor="middle">9</text>
+                            <text class="range__point" x="100%" y="14" text-anchor="end">10</text>
+                        </svg>
+                    </fieldset>
                     <div class="scale-labels">
                         <span>Not fun</span>
                         <span>Very fun</span>
@@ -769,6 +942,7 @@ def serve_game(game_path):
 @app.route('/record-events', methods=['POST'])
 def record_events():
     """Handle events from games"""
+    print("Received events")
     event_data = request.json
     game_id = event_data.get('gameId')
     
@@ -778,9 +952,11 @@ def record_events():
     game_events[game_id].extend(event_data.get('events', []))
     return jsonify({"status": "success"})
 
+
 @app.route('/submit-ratings', methods=['POST'])
 def submit_ratings():
     """Handle game ratings submission"""
+    global ratings_counter
     ratings = request.json
     
     # Print ratings to console for debugging
@@ -848,6 +1024,15 @@ def submit_ratings():
         # Add to scheduler
         preferences_scheduler.append(preference)
         print(f"Added preference to HF dataset queue: {preference['id']}")
+        
+        # Increment counter and check if we should push
+        ratings_counter += 1
+        print(f"Ratings counter: {ratings_counter}")
+        if ratings_counter >= PUSH_EVERY_N_RATINGS:
+            print(f"Reached {PUSH_EVERY_N_RATINGS} ratings, pushing to HuggingFace...")
+            preferences_scheduler.push_to_hub()
+            ratings_counter = 0  # Reset counter
+            
     except Exception as e:
         print(f"Error saving to HF dataset: {e}")
     
