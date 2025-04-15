@@ -116,6 +116,7 @@ def main():
             "template",
             "judge",
             "simple_prompt",
+            "instruction_simple_prompt",
             "complexity_guide",
         ],
         default="simple_prompt",

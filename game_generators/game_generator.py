@@ -17,6 +17,9 @@ from game_generators.prompts import (
     CODE_GENERATION_SYSTEM_PROMPT,
 )
 from game_generators.game_designer.simple_designer import SimpleDesigner
+from game_generators.game_designer.instruction_simple_designer import (
+    InstructionSimpleDesigner,
+)
 from game_generators.game_designer.conversational_designer import ConversationalDesigner
 from game_generators.game_designer.complexity_guide_designer import (
     ComplexityGuideDesigner,
@@ -40,6 +43,10 @@ class GameGenerator:
         },
         "simple_prompt": {
             "designer": SimpleDesigner,
+            "code_generator": None,
+        },
+        "instruction_simple_prompt": {
+            "designer": InstructionSimpleDesigner,
             "code_generator": None,
         },
         "complexity_guide": {
@@ -78,7 +85,7 @@ class GameGenerator:
         self.model_api = ModelAPI(model_name)
 
         # Initialize appropriate designer
-        if method_name == "simple_prompt":
+        if method_name in ["instruction_simple_prompt", "simple_prompt"]:
             self.designer = self.VALID_METHODS[method_name]["designer"](
                 model_api=self.model_api,
                 system_prompt=CODE_GENERATION_SYSTEM_PROMPT,
