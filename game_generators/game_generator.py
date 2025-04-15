@@ -107,6 +107,7 @@ class GameGenerator:
     def generate_game(
         self,
         narratives: Optional[str] = None,
+        narratives_path: Optional[str] = None,
     ) -> Tuple[str, List[Tuple[str, str]], str, str, str]:
         """
         Generate a complete game
@@ -165,6 +166,7 @@ class GameGenerator:
                 description=design.get("description", "No description available"),
                 full_response=design.get("full_response", "No response available"),
                 narratives=narratives,
+                narratives_path=narratives_path,
                 guidance=design.get("game_guidance", ""),
             )
 
@@ -197,6 +199,7 @@ class GameGenerator:
         description: str,
         full_response: str,
         narratives: Optional[str] = None,
+        narratives_path: Optional[str] = None,
         guidance: str = "",
     ) -> Path:
         """Save generated game files"""
@@ -209,12 +212,23 @@ class GameGenerator:
 
         # Create game directory with timestamp
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        game_dir = (
-            Path("games")
-            / self.method_name
-            / self.model_name.split(":")[1]
-            / f"{safe_title}"
-        )
+
+        if narratives_path:
+            game_dir = (
+                Path("games")
+                / self.method_name
+                / self.model_name.split(":")[1]
+                / narratives_path.split("/")[-1].replace(".json", "")
+                / f"{safe_title}"
+            )
+        else:
+            game_dir = (
+                Path("games")
+                / self.method_name
+                / self.model_name.split(":")[1]
+                / f"{safe_title}"
+            )
+
         game_dir.mkdir(parents=True, exist_ok=True)
 
         # Save HTML
@@ -256,6 +270,7 @@ Title: {title}
                 "description": description,
                 "guidance": guidance,
                 "narratives": narratives if narratives else "None",
+                "narrative_path": narratives_path if narratives_path else "None",
             },
             "generation_info": {
                 "method": self.method_name,

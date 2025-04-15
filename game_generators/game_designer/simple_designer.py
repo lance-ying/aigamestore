@@ -134,7 +134,7 @@ class SimpleDesigner:
         * Ensure smooth performance and polished graphics."""
 
         description = f"""Game Specifications:
-        Narrative: {narratives if narratives else 'Not specified, you should create an engaging storyline first'}"""
+        {narratives if narratives else 'Not specified, you should create an engaging storyline first'}"""
 
         prompt = f"""TASK: Implement a game in p5.js based on the following description:
     <description>
