@@ -164,7 +164,7 @@ def generate_new_game_concept(api: ModelAPI, game_archive: List[Dict[str, Any]] 
                 - **Narrative and Story:** Propose compelling storylines or narrative hooks.
                 - **Game Mechanics:** Innovate with unconventional gameplay rules or challenges.
                 - **World-Building:** Create intriguing settings or dynamic environments.
-            - Adopt an enthusiastic, simple vocabulary, and original tone and go beyond the language of the examples.
+            - Adopt an enthusiastic, simple vocabulary, and original tone.
 
             Your response must be a valid JSON array containing 10 objects, each with exactly two keys: "concept" and "genre". 
             Do not include any extra text, markdown formatting, or commentary outside of the JSON.
