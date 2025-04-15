@@ -9,7 +9,7 @@ METHODS=(
 
 for i in $(seq -f "%04g" 0 $(($NUM_NARRATIVES - 1)))
 do
-    narrative_path="generative_games/new_games/gemini_gemini-2.0-flash/game_${i}.json"
+    narrative_path="generative_games/new_games/google_gemini-2.0-flash/game_${i}.json"
     for method in "${METHODS[@]}"
     do
         for j in $(seq 1 $NUM_GAMES)

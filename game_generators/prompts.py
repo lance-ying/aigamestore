@@ -68,20 +68,22 @@ FORMAT_HTML_TEMPLATE = """
     <meta charset="UTF-8" />
     <title>{title}</title>
     <style>
-      body {{
+      html, body {{
         margin: 0;
-        padding: 20px 0;
-        min-height: 100vh;
+        padding: 0;
+        height: 100%;
+        overflow: hidden;
         background: #222;
+      }}
+      body {{
         display: flex;
-        flex-direction: column;
+        justify-content: center;
         align-items: center;
       }}
       canvas {{
         border: 1px solid #333;
         width: 600px !important;
         height: 400px !important;
-        margin: 0 auto;
       }}
     </style>
   </head>
