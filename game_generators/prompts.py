@@ -36,7 +36,6 @@ CODE_GENERATION_SYSTEM_PROMPT = """You are an expert p5.js game developer who cr
 
 2. Technical Architecture:
    - ES6 module structure with clean imports/exports
-   - Entity-Component-System (ECS) architecture implementation
    - Optimized performance (maintain 60 FPS)
    - Use deltaTime for physics calculations
 
@@ -45,7 +44,7 @@ CODE_GENERATION_SYSTEM_PROMPT = """You are an expert p5.js game developer who cr
    - No external dependencies beyond p5.js
 
 
-Available Control Actions:
+Available Control Actions (You should only use the following actions):
 1. Directional Movement:
    - Arrow Keys: LEFT_ARROW (key: 37), RIGHT_ARROW (key: 39), UP_ARROW (key: 38), DOWN_ARROW (key: 40)
    - Alternative WASD: 'w' (up), 'a' (left), 's' (down), 'd' (right)
@@ -55,20 +54,7 @@ Available Control Actions:
 Note: Both arrow keys and WASD provide the same directional control functionality - choose one control scheme for consistency.
 
 ULTIMATE GOAL: Generate game code that prioritizes functionality and technical correctness while maintaining good visual appeal.
-
 """
-
-
-ACTION_SPACE_INSTRUCTION = """Available Control Actions:
-1. Directional Movement:
-   - Arrow Keys: LEFT_ARROW (key: 37), RIGHT_ARROW (key: 39), UP_ARROW (key: 38), DOWN_ARROW (key: 40)
-   - Alternative WASD: 'w' (up), 'a' (left), 's' (down), 'd' (right)
-
-2. Special Actions:
-   - SHIFT key (key: 16)
-   - SPACE key (key: 32)
-
-Note: Both arrow keys and WASD provide the same directional control functionality - choose one control scheme for consistency."""
 
 
 CANVAS_SIZE = {"width": 600, "height": 400}

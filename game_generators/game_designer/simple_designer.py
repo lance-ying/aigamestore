@@ -82,23 +82,20 @@ class SimpleDesigner:
     def _create_prompt(self, narratives: Optional[str] = None) -> str:
         """Create the complete prompt for game design and code generation"""
 
-        p5js_guidelines = """
-* Don't use any external assets.
+        p5js_guidelines = """* Don't use any external assets.
 * Include a index.html to run the game (don't include anything in the index.html file except for the game).
 * Use ES6 modules (import/export) for all JavaScript files - do not use Node.js require() statements.
 * Use p5.js in instance mode. When using ES6 modules, access p5 from the global scope with `const p5 = window.p5;` rather than trying to import it directly.
-* Follow strict Entity-Component-System (ECS) architecture, with naming conventions as [xxx]Entity, [xxx]Component, [xxx]System.
 * Use a finite state machine for the player character.
 * Make sure the player's controls and parameters are coherent with the gameplay and physics.
 * Make sure the game has a clear goal and win state.
 * Implement professional-looking and polished graphics. Careful with flickering.
 * Start the game with clear instructions on how to play (the player has to press Enter to start the game)
-* MOST IMPORTANT: The game must be fully FUNCTIONAL and error-free with the simplest code!
+* [IMPORTANT] The game must be fully functional and error-free!
 """
 
-        description = f"""
-Game Specifications:
-{narratives if narratives else 'Not specified, you should create an engaging storyline first'}
+        description = f"""Game Specifications:
+{narratives if narratives else 'Not specified, you should create an engaging storyline first.'}
 """
 
         prompt = f"""
@@ -115,7 +112,7 @@ TASK: Implement a game in p5.js based on the following description:
 
 
 Here is a template for the HTML code:
-"{FORMAT_HTML_TEMPLATE.format(title='Game Title', p5js_url=self.p5js_url)}"
+{FORMAT_HTML_TEMPLATE.format(title='YOUR_GAME_TITLE', p5js_url=self.p5js_url)}
 
 
 ---------------------------------------------------------
