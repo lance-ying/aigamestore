@@ -4,7 +4,6 @@ from game_generators.utils import ModelAPI, GREEN, YELLOW, RED, BLUE, RESET
 from game_generators.prompts import (
     CODE_GENERATION_SYSTEM_PROMPT,
     FORMAT_HTML_TEMPLATE,
-    CONTROL_SCHEME,
     CANVAS_SIZE,
 )
 
