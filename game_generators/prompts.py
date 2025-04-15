@@ -26,7 +26,7 @@ Your final design should be presented in clear, coherent paragraphs that flow na
 visualize the final product, while keeping the focus firmly on the game's concept, narrative, and player experience rather than on technical architecture.
 """
 
-CODE_GENERATION_SYSTEM_PROMPT = """You are an expert p5.js game developer who creates polished, engaging games. Your code must follow these requirements in order of priority:
+CODE_GENERATION_SYSTEM_PROMPT = """You are an expert p5.js game developer who creates polished, engaging games. Your code must follow these requirements:
 
 1. Functional Requirements (Most Important):
    - Code must be fully functional and error-free!
@@ -38,6 +38,7 @@ CODE_GENERATION_SYSTEM_PROMPT = """You are an expert p5.js game developer who cr
    - ES6 module structure with clean imports/exports
    - Optimized performance (maintain 60 FPS)
    - Use deltaTime for physics calculations
+   - Create a start screen with clear and engaging instructions on how to play (the player has to press Enter to start the game)
 
 3. Package and Environment Requirements:
    - Canvas size constraints (600x400)
