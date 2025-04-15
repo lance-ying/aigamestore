@@ -24,114 +24,89 @@ class P5JSGenerator:
 
     def _create_user_prompt(self, game_concept: str) -> str:
         """Create the user prompt for code generation"""
-        html_example = FORMAT_HTML_TEMPLATE.format(
-            title="{title}", p5js_url=self.p5js_url
-        )
-
-        return f"""Create a complete p5.js game based on this concept:
+        return f"""
+---------------------------------------------------------
+TASK: Implement a game in p5.js based on the following description:
+<description>
 {game_concept}
--------------------------------------
-Here are the implementation instructions:
+</description>
 
-1. Visual Style and Effects:
-```visuals
-- Theme: Create a cohesive visual style with a clear color palette
-- Particles: Add particle systems for impacts, movement trails, explosions
-- Animations: Smooth transitions, scaling, rotation effects
-- Polish: Add screen shake, flash effects, and visual juice
-- Atmosphere: Use gradients, patterns, or parallax backgrounds
-```
+<p5js_guidelines>
+* Don't use any external assets.
+* Include a index.html to run the game (don't include anything in the index.html file except for the game).
+* Use ES6 modules (import/export) for all JavaScript files - do not use Node.js require() statements.
+* Use p5.js in instance mode. When using ES6 modules, access p5 from the global scope with `const p5 = window.p5;` rather than trying to import it directly.
+* Use a finite state machine for the player character.
+* Make sure the player's controls and parameters are coherent with the gameplay and physics.
+* Make sure the game has a clear goal and win state.
+* Implement professional-looking and polished graphics. Careful with flickering.
+* Start screen: Start the game with clear instructions on how to play (the player has to press Enter to start the game)
+* [IMPORTANT] The game must be fully functional and error-free!
+</p5js_guidelines>
 
-2. Canvas and Layers:
-```canvas
-- Size: {CANVAS_SIZE['width']}x{CANVAS_SIZE['height']} pixels
-- Background Layer: Dynamic, animated game world
-- Entity Layer: Characters, objects, interactions
-- Particle Layer: Effects and feedback
-- UI Layer: Clean, responsive interface elements
-```
+Here is a template for the HTML code:
+{FORMAT_HTML_TEMPLATE.format(title='YOUR_GAME_TITLE', p5js_url=self.p5js_url)}
 
-3. Core Systems with Visual Feedback:
-```systems
-- RenderSystem: Handle layered drawing with depth
-- AnimationSystem: Manage sprites, tweens, transitions
-- ParticleSystem: Create and update effect particles
-- FeedbackSystem: Screen effects, flashes, camera shake
-```
+---------------------------------------------------------
+REQUIREMENT: You should output things in the following format:
+<game_title>
+... (game title)
+</game_title>
 
-4. Player Experience:
-```feedback
-- Movement: Smooth animations with momentum/trails
-- Actions: Impactful effects with particles/flashes
-- Collisions: Visible feedback with particles/shake
-- State Changes: Clear transitions with effects
-```
+<game_description>
+... (game description)
+</game_description>
 
-Please provide the code in the following format:
+<game_guidance>
+... (game guidance to display on the start screen, keep it short, fun and engaging)
+</game_guidance>
 
-1. JavaScript files (use this block format for EACH file):
-examples:
-```javascript:game.js
-// Core game loop and state management
-[Your game.js code here]
-```
+For each file, you should output the following:
+<code filename="{{name}}.{{extension}}">
+... (code)
+</code>
 
-```javascript:render.js
-// Visual systems and effects
-[Your render.js code here]
-```
-
-2. HTML file (use this block format, remember to include all game javascript files you created):
-```html
-[Your HTML code here]
-```
-
-Remember:
-- Every action should have satisfying visual feedback
-- Use color and effects to guide player attention
-- Create a cohesive visual style throughout
-- Add "juice" to make the game feel alive
-- Layer effects for visual depth
+Output HTML as the last file:
+<code filename="index.html">
+... (html code)
+</code>
 """
 
     def _extract_code_block(
         self, text: str, language: str
     ) -> Union[str, Dict[str, str]]:
         """Extract code blocks from text"""
+        # Extract all code blocks first
+        code_blocks = re.findall(
+            r"<code filename=\"(.*?)\">(.*?)</code>", text, re.DOTALL
+        )
+
         if language == "javascript":
-            # First try to find named JavaScript files
             js_files = {}
-            pattern = rf"```javascript:([\w.]+)\s*(.*?)```"
-            matches = re.finditer(pattern, text, re.DOTALL)
+            for filename, code in code_blocks:
+                if filename.endswith(".js"):
+                    # Clean up code block markers
+                    code = re.sub("```(python|javascript|html|xml)?", "", code)
+                    # Normalize path separators to use forward slashes
+                    normalized_filename = filename.replace("\\", "/")
+                    js_files[normalized_filename] = code.strip()
 
-            for match in matches:
-                filename = match.group(1)
-                code = match.group(2).strip()
-                # Remove filename if it appears at the start of the code
-                if code.startswith(f":{filename}"):
-                    code = code[len(filename) + 1 :].strip()
-                js_files[filename] = code
+            # If no JS files found, create a default game.js
+            if not js_files:
+                if self.debug:
+                    print(
+                        f"{YELLOW}Warning: No JS files found, creating default game.js{RESET}"
+                    )
+                js_files["game.js"] = "// Default game.js - Generated empty file\n"
 
-            if js_files:
-                return js_files
-
-            # If no named files found, look for generic javascript block
-            pattern = rf"```javascript\s*(.*?)```"
-            match = re.search(pattern, text, re.DOTALL)
-            if match:
-                code = match.group(1).strip()
-                # If code starts with ":game.js" or similar, remove it
-                if code.startswith(":"):
-                    code = code.split("\n", 1)[1].strip()
-                return code
-
-            return ""
-
+            return js_files
         else:
-            # For HTML, just extract the content
-            pattern = rf"```{language}\s*(.*?)```"
-            match = re.search(pattern, text, re.DOTALL)
-            return match.group(1).strip() if match else ""
+            # For HTML, find the first HTML file
+            for filename, code in code_blocks:
+                if filename.endswith(".html"):
+                    code = re.sub("```(python|javascript|html|xml)?", "", code)
+                    return code.strip()
+            return ""
 
     def generate_code(
         self, design: Dict[str, Any]
@@ -158,30 +133,18 @@ Remember:
             js_code = self._extract_code_block(response, "javascript")
             html_code = self._extract_code_block(response, "html") or ""
 
-            # If HTML is empty or doesn't contain proper script tags, create it
+            # Format HTML if needed
             if not html_code or "<script src=" not in html_code:
                 if isinstance(js_code, dict):
-                    js_includes = "\n    ".join(
-                        f'<script src="{filename}"></script>'
-                        for filename in js_code.keys()
-                    )
+                    js_includes = '<script type="module" src="game.js"></script>'
                 else:
-                    js_includes = '<script src="game.js"></script>'
+                    js_includes = '<script type="module" src="game.js"></script>'
 
                 html_code = FORMAT_HTML_TEMPLATE.format(
                     title=design.get("title", "Game"),
                     p5js_url=self.p5js_url,
                     js_includes=js_includes,
                 )
-
-            if self.debug:
-                print(f"\n{BLUE}Extracted JavaScript code:{RESET}")
-                if isinstance(js_code, dict):
-                    for filename, code in js_code.items():
-                        print(f"\n{YELLOW}{filename}:{RESET}\n{code}")
-                else:
-                    print(f"\n{YELLOW}game.js:{RESET}\n{js_code}")
-                print(f"\n{BLUE}Extracted HTML code:{RESET}\n{html_code}")
 
             # Convert js_code to proper format
             if isinstance(js_code, dict):

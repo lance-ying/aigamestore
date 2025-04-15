@@ -5,7 +5,7 @@ from game_generators.prompts import GAME_DESIGN_SYSTEM_PROMPT
 
 
 class ComplexityGuideDesigner:
-    """Designer that creates game designs through guided complexity discussions"""
+    """Designer that creates complex and imaginative game designs"""
 
     def __init__(
         self, model_api: ModelAPI, system_prompt: str = None, debug: bool = False
@@ -16,53 +16,36 @@ class ComplexityGuideDesigner:
 
     def design_game(
         self,
-        genre: str,
-        num_players: int,
         narratives: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Create game design through guided discussion"""
+        """Create complex game design with wild imagination"""
         try:
             if self.debug:
-                print(f"\n{BLUE}Starting guided design process...{RESET}")
+                print(f"\n{BLUE}Starting imaginative design process...{RESET}")
 
-            # Phase 1: Initial Brainstorming
-            mechanics_response = self._brainstorm_mechanics(
-                genre, num_players, narratives
-            )
-
-            # Phase 2: Complexity Discussion
-            complexity_response = self._discuss_complexity(mechanics_response)
-
-            # Phase 3: Final Design
-            final_design = self._create_final_design(
-                mechanics_response, complexity_response
-            )
+            prompt = self._create_prompt(narratives)
+            final_design = self._call_model_api(prompt, self.system_prompt)
 
             # Extract components
             title = self._extract_title(final_design)
             description = self._extract_description(final_design)
+            guidance = self._extract_guidance(final_design)
 
-            # Combine everything into game_design_text
-            game_design_text = self._format_complete_design(
-                genre,
-                num_players,
-                narratives,
-                mechanics_response,
-                complexity_response,
-                final_design,
-            )
+            # Extract the full design plan (excluding meta discussion)
+            game_design_text = self._extract_design_plan(final_design)
 
             if self.debug:
                 print(f"\n{BLUE}Final Design Components:{RESET}")
                 print(f"Title: {title}")
                 print(f"Description: {description}")
+                print(f"Guidance: {guidance}")
 
             return {
                 "title": title,
                 "description": description,
                 "game_design_text": game_design_text,
-                "game_guidance": self._extract_guidance(final_design),
-                "full_response": game_design_text,
+                "game_guidance": guidance,
+                "full_response": final_design,
             }
 
         except Exception as e:
@@ -75,163 +58,99 @@ class ComplexityGuideDesigner:
                 traceback.print_exc()
             raise
 
-    def _brainstorm_mechanics(
-        self, genre: str, num_players: int, narratives: Optional[str]
-    ) -> str:
-        """Initial casual brainstorming phase"""
-        prompt = f"""Hey there! Let's kick off a fun brainstorming session for creating an awesome {genre} game.
+    def _create_prompt(self, narratives: Optional[str]) -> str:
+        """Create the imaginative design prompt"""
+        return f"""Let's create an extraordinarily imaginative and complex game that pushes creative boundaries while remaining engaging and playable.
 
-I'm thinking we could make something really unique with:
-- 1 player character
-- {num_players-1} AI buddies/opponents
-- A fresh take on {genre} gameplay
+NARRATIVE CONTEXT:
+{narratives if narratives else "Create a wildly imaginative storyline that defies conventional gaming tropes!"}
 
-Story Vibe:
-{narratives if narratives else "We can create any cool story that fits!"}
+Design a game that incorporates:
 
-Just throwing ideas around:
-- What if we added an unexpected twist to how {genre} games usually work?
-- Maybe the AI characters could do something surprising?
-- Any cool ways we could use simple controls (arrow keys, space, shift) to do unexpected things?
+1. INNOVATIVE MECHANICS
+- Invent mechanics that haven't been seen before
+- Create unexpected combinations of familiar elements
+- Design systems that evolve and surprise players
+- Think beyond traditional control schemes
+- Layer multiple interacting systems
 
-Don't worry about technical stuff yet - let's just dream up some fun ideas!
-What kind of surprising mechanics could make players go "Whoa, that's cool!"?"""
+2. DYNAMIC COMPLEXITY
+- Progressive complexity that unfolds naturally
+- Emergent gameplay from system interactions
+- Meaningful choices with cascading effects
+- Hidden depth beneath simple controls
+- Rewarding mastery and experimentation
 
-        if self.debug:
-            print(f"\n{BLUE}[Brainstorm] Getting Creative{RESET}")
-            print(f"Prompt: {prompt}")
+3. ENGAGING PROGRESSION
+- Non-linear skill development
+- Discoverable advanced techniques
+- Multiple valid approaches to challenges
+- Secrets that change gameplay fundamentally
+- Meta-progression that adds new dimensions
 
-        return self._call_model_api(prompt, self.system_prompt)
+4. WILD IMAGINATION
+- Break conventional genre boundaries
+- Subvert player expectations cleverly
+- Create memorable "wow" moments
+- Include mind-bending plot twists
+- Design reality-warping mechanics
 
-    def _discuss_complexity(self, mechanics_response: str) -> str:
-        """Casual discussion about making the game engaging"""
-        prompt = f"""Cool ideas so far! Let's chat about making these fun:
+Please provide the design in this format:
 
-{mechanics_response}
+<game_title>
+[An intriguing, memorable title]
+</game_title>
 
-I'm curious:
-- How could we make these mechanics feel natural to pick up?
-- What if the challenges grew in unexpected ways?
-- Maybe the AI could learn or change as you play?
-- What little details could make everything feel satisfying?
+<game_description>
+[A compelling description that captures the game's unique elements and wild imagination]
+</game_description>
 
-Think about those "just one more try" moments - what makes games hard to put down?
-How could we surprise players while keeping things fair and fun?"""
+<game_guidance>
+[Engaging, concise instructions that hint at hidden depth]
+</game_guidance>
 
-        if self.debug:
-            print(f"\n{BLUE}[Chat] Making It Fun{RESET}")
-            print(f"Prompt: {prompt}")
+<design_plan>
+[Detailed design document covering:
+- Core Mechanics & Systems
+- Progression & Complexity
+- Player Experience
+- Visual Style
+- Technical Requirements]
+</design_plan>
 
-        return self._call_model_api(prompt, self.system_prompt)
-
-    def _create_final_design(
-        self, mechanics_response: str, complexity_response: str
-    ) -> str:
-        """Wrap up the design with complete but natural specification"""
-        prompt = f"""Alright, we've got some really fun ideas going:
-
-The Cool Stuff:
-{mechanics_response}
-
-Making It Work:
-{complexity_response}
-
-Let's pull it all together! Could you write up a complete design that includes:
-
-1. Game Title:
-[Something catchy that captures the fun!]
-
-2. Game Description:
-[What makes this game special? What's the "wow" factor?]
-
-3. Game Guidance:
-```guidance
-[Write this like you're telling a friend how to play:
-- A welcoming "Hey, ready to play?" kind of intro
-- What makes this game exciting
-- Quick rundown of controls
-- A few "pro tips" that make players feel clever
-Make it sound fun!]
-```
-
-4. The Details:
-- Gameplay Feel: [How does it flow? What makes it satisfying?]
-- AI Personality: [What makes each AI character interesting?]
-- Getting Better: [How do players improve? What secrets might they discover?]
-- Victory & Defeat: [What makes winning feel great? How to bounce back from losing?]
-
-5. The Look:
-- Style: [What's the vibe? How does it catch the eye?]
-- Screen Layout: [What do players need to see? How do we keep it clear?]
-- Special Effects: [What makes awesome moments feel awesome?]
-
-Keep that creative spark we discussed, but make sure it's something we can actually build!"""
-
-        if self.debug:
-            print(f"\n{BLUE}[Wrapping Up] The Final Plan{RESET}")
-            print(f"Prompt: {prompt}")
-
-        return self._call_model_api(prompt, self.system_prompt)
-
-    def _format_complete_design(
-        self,
-        genre: str,
-        num_players: int,
-        narratives: str,
-        mechanics: str,
-        complexity: str,
-        final_design: str,
-    ) -> str:
-        """Format the complete design document in a natural way"""
-        return f"""=== The Game Plan ===
-
-What We're Making:
-- A fresh take on {genre} games
-- {num_players} total characters ({num_players-1} AI + you!)
-- Story Elements: {narratives if narratives else 'Created during design'}
-
-=== How We Got Here ===
-
-[Round 1] The Big Ideas:
-{mechanics}
-
-[Round 2] Making It Awesome:
-{complexity}
-
-[Round 3] Putting It All Together:
-{final_design}"""
+Make it WILD but IMPLEMENTABLE - push creative boundaries while keeping it feasible in p5.js!"""
 
     def _extract_title(self, text: str) -> str:
         """Extract game title from text"""
-        patterns = [
-            r"Game Title:\s*(.*?)(?:\n|$)",
-            r"Title:\s*(.*?)(?:\n|$)",
-            r"<title>(.*?)</title>",
-        ]
-
-        for pattern in patterns:
-            match = re.search(pattern, text, re.IGNORECASE)
-            if match:
-                return match.group(1).strip()
+        pattern = r"<game_title>\s*(.*?)\s*</game_title>"
+        match = re.search(pattern, text, re.DOTALL)
+        if match:
+            return match.group(1).strip()
         return "Untitled Game"
 
     def _extract_description(self, text: str) -> str:
         """Extract game description from text"""
-        pattern = r"Game Description:\s*(.*?)(?:\n\n|\n(?=[A-Za-z]+:))"
-        match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
+        pattern = r"<game_description>\s*(.*?)\s*</game_description>"
+        match = re.search(pattern, text, re.DOTALL)
         if match:
             return match.group(1).strip()
         return "No description provided."
 
     def _extract_guidance(self, text: str) -> str:
         """Extract game guidance from text"""
-        pattern = r"```guidance\s*(.*?)```"
+        pattern = r"<game_guidance>\s*(.*?)\s*</game_guidance>"
         match = re.search(pattern, text, re.DOTALL)
-        if not match:
-            raise ValueError(
-                "No guidance block found in the final design. This is required for the start screen."
-            )
-        return match.group(1).strip()
+        if match:
+            return match.group(1).strip()
+        return "No guidance provided."
+
+    def _extract_design_plan(self, text: str) -> str:
+        """Extract the full design plan"""
+        pattern = r"<design_plan>\s*(.*?)\s*</design_plan>"
+        match = re.search(pattern, text, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+        return "No design plan provided."
 
     def _call_model_api(self, prompt: str, system_prompt: str = None) -> str:
         """Call the model API with proper prompts"""

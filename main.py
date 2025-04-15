@@ -140,7 +140,7 @@ def main():
     parser.add_argument(
         "--narratives",
         type=str,
-        default="generative_games/new_games/gemini_gemini-2.0-flash/game_0000.json",
+        default="generative_games/new_games/google_gemini-2.0-flash/game_0000.json",
         help="Optional narrative constraints or story elements",
     )
 
