@@ -221,16 +221,16 @@ class GameGenerator:
         if narratives_path:
             game_dir = (
                 Path("games")
-                / self.method_name
                 / self.model_name.split(":")[1]
+                / self.method_name
                 / narratives_path.split("/")[-1].replace(".json", "")
                 / f"{safe_title}"
             )
         else:
             game_dir = (
                 Path("games")
-                / self.method_name
                 / self.model_name.split(":")[1]
+                / self.method_name
                 / f"{safe_title}"
             )
 
