@@ -8,7 +8,6 @@ from game_generators.utils import (
     ModelAPI,
 )
 from game_generators.prompts import (
-    VALID_GENRES,
     GREEN,
     YELLOW,
     RED,
@@ -82,9 +81,7 @@ class GameGenerator:
         if method_name == "simple_prompt":
             self.designer = self.VALID_METHODS[method_name]["designer"](
                 model_api=self.model_api,
-                system_prompt=GAME_DESIGN_SYSTEM_PROMPT
-                + "\n\n"
-                + CODE_GENERATION_SYSTEM_PROMPT,
+                system_prompt=CODE_GENERATION_SYSTEM_PROMPT,
                 debug=self.debug,
             )
         else:
@@ -114,6 +111,7 @@ class GameGenerator:
 
         Args:
             narratives: Optional narrative constraints or story elements
+            narratives_path: Optional path to the narratives file, for saving purposes
 
         Returns:
             Tuple of (html_code, js_files, game_title, description, full_response)
@@ -238,7 +236,12 @@ class GameGenerator:
         # Save JavaScript files
         js_filenames = []
         for filename, content in js_files:
-            with open(game_dir / filename, "w", encoding="utf-8") as f:
+            # Create the full path including any nested directories
+            file_path = game_dir / filename
+            # Ensure the parent directory exists
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+
+            with open(file_path, "w", encoding="utf-8") as f:
                 f.write(content)
                 js_filenames.append(filename)
 
@@ -288,27 +291,3 @@ Title: {title}
             json.dump(metadata, f, indent=2)
 
         return game_dir
-
-
-def main():
-    """Test the game generator"""
-    generator = GameGenerator(
-        method_name="conversation",
-        model_name="openai:gpt-4",
-        config_path="config/gamegen/base_prompt.yaml",
-    )
-
-    try:
-        html_code, js_files, title, description, _ = generator.generate_game(
-            narratives="A space-themed game where players compete to collect resources",
-            debug=True,
-        )
-        print(f"\n{GREEN}Successfully generated game: {title}{RESET}")
-        print(f"{BLUE}Description:{RESET}\n{description}")
-
-    except Exception as e:
-        print(f"{RED}Error generating game: {str(e)}{RESET}")
-
-
-if __name__ == "__main__":
-    main()

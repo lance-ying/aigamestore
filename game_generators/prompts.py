@@ -26,88 +26,62 @@ Your final design should be presented in clear, coherent paragraphs that flow na
 visualize the final product, while keeping the focus firmly on the game's concept, narrative, and player experience rather than on technical architecture.
 """
 
-CODE_GENERATION_SYSTEM_PROMPT = """You are an expert p5.js game developer who creates polished, engaging games with smooth gameplay and beautiful aesthetics.
-Your code must follow these core requirements:
+CODE_GENERATION_SYSTEM_PROMPT = """You are an expert p5.js game developer who creates polished, engaging games. Your code must follow these requirements in order of priority:
 
-1. Game Feel and Physics:
-   - Implement smooth, responsive controls
-   - Use proper physics calculations with deltaTime
-   - Add visual feedback for all player actions
-   - Include screen shake, particles, or other juice effects
+1. Functional Requirements (Most Important):
+   - Code must be fully functional and error-free!
+   - Working player controls and game mechanics
+   - Proper state management (game states, win/lose conditions)
+   - Error handling for edge cases
 
-2. Visual Polish:
-   - Smooth animations and transitions
-   - Consistent color palette and visual theme
-   - Particle effects for impacts and achievements
-   - Screen shake for important events
-   - Clear visual hierarchy
+2. Technical Architecture:
+   - ES6 module structure with clean imports/exports
+   - Entity-Component-System (ECS) architecture implementation
+   - Optimized performance (maintain 60 FPS)
+   - Use deltaTime for physics calculations
 
-3. ES6 Module Structure and ECS Architecture:
-   - Use ES6 modules for all game files
-   - Implement an Entity-Component-System (ECS) architecture
-   - Create separate files for components, entities, and systems, keep file organization clean and easy to understand. Common structure: components.js, entities.js, systems.js, game.js.
-   - Name components as xxxComponent
-   - Name entities as xxxEntity
-   - Name systems as xxxSystem
-   - Ensure proper encapsulation and modularity
+3. Package and Environment Requirements:
+   - Canvas size constraints (600x400)
+   - No external dependencies beyond p5.js
 
-4. Game Feel Requirements:
-   - Responsive controls (no input lag)
-   - Proper collision response with rebound
-   - Smooth acceleration and deceleration
-   - Visual and audio feedback for all actions
-   - Progressive difficulty curve
-   - Satisfying win/lose conditions
-   - Polished UI with smooth transitions
 
-5. Technical Excellence:
-   - Maintain 60 FPS consistently
-   - No frame drops or stuttering
-   - Clean, modular code structure
-   - Proper error handling
-   - Memory management (cleanup unused entities)
-   - Optimized collision detection
+Available Control Actions:
+1. Directional Movement:
+   - Arrow Keys: LEFT_ARROW (key: 37), RIGHT_ARROW (key: 39), UP_ARROW (key: 38), DOWN_ARROW (key: 40)
+   - Alternative WASD: 'w' (up), 'a' (left), 's' (down), 'd' (right)
+2. Special Actions:
+   - SHIFT key (key: 16)
+   - SPACE key (key: 32)
+Note: Both arrow keys and WASD provide the same directional control functionality - choose one control scheme for consistency.
 
-6. Visual Requirements:
-   - Professional-looking graphics
-   - Consistent art style
-   - Smooth animations
-   - Particle effects and visual feedback
-   - Clean, readable UI
-   - Color-blind friendly design
-   - Clear visual hierarchy
+ULTIMATE GOAL: Generate game code that prioritizes functionality and technical correctness while maintaining good visual appeal.
 
-Generate the game code that creates a polished, engaging game experience with excellent playability and visual appeal."""
+"""
 
-CONTROL_SCHEME = {
-    "arrow_keys": ["LEFT_ARROW", "RIGHT_ARROW", "UP_ARROW", "DOWN_ARROW"],
-    "wasd_keys": ["w", "a", "s", "d"],
-    "special_keys": ["SHIFT", "SPACE"],
-}
+
+ACTION_SPACE_INSTRUCTION = """Available Control Actions:
+1. Directional Movement:
+   - Arrow Keys: LEFT_ARROW (key: 37), RIGHT_ARROW (key: 39), UP_ARROW (key: 38), DOWN_ARROW (key: 40)
+   - Alternative WASD: 'w' (up), 'a' (left), 's' (down), 'd' (right)
+
+2. Special Actions:
+   - SHIFT key (key: 16)
+   - SPACE key (key: 32)
+
+Note: Both arrow keys and WASD provide the same directional control functionality - choose one control scheme for consistency."""
+
 
 CANVAS_SIZE = {"width": 600, "height": 400}
 
-VALID_GENRES = [
-    "action",
-    "arcade",
-    "platformer",
-    "sports",
-    "stealth",
-    "strategy",
-    "puzzle",
-    "shooting",
-    "racing",
-    "adventure",
-]
 
-
-FORMAT_HTML_TEMPLATE = """<!DOCTYPE html>
+FORMAT_HTML_TEMPLATE = """
+<!DOCTYPE html>
 <html>
   <head>
     <meta charset="UTF-8" />
     <title>{title}</title>
     <style>
-      body {
+      body {{
         margin: 0;
         padding: 20px 0;
         min-height: 100vh;
@@ -115,18 +89,18 @@ FORMAT_HTML_TEMPLATE = """<!DOCTYPE html>
         display: flex;
         flex-direction: column;
         align-items: center;
-      }
-      canvas {
+      }}
+      canvas {{
         border: 1px solid #333;
         width: 600px !important;
         height: 400px !important;
         margin: 0 auto;
-      }
+      }}
     </style>
   </head>
   <body>
     <script src="{p5js_url}"></script>
     <!-- Load game modules -->
-    {javascript_files}
+    <script type="module" src="YOUR_GAME_FILES.js"></script>
   </body>
 </html>"""
