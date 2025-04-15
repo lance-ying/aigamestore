@@ -32,7 +32,6 @@ class ModelAPI:
     """Centralized handler for different model API calls"""
 
     CLAUDE_MODELS = {
-        "claude-3.5-haiku": "claude-3-5-haiku-20241022",
         "claude-3.5-sonnet": "claude-3-5-sonnet-20241022",
         "claude-3.7-sonnet": "claude-3-7-sonnet-20250219",
     }
@@ -43,7 +42,7 @@ class ModelAPI:
 
         Args:
             model_name: String in format "provider:model"
-                      (e.g., "openai:gpt-3.5-turbo", "anthropic:claude-3-haiku", "gemini:gemini-1.5-pro")
+                      (e.g., "openai:gpt-3.5-turbo", "anthropic:claude-3-haiku", "google:gemini-1.5-pro")
         """
         self.model_provider, self.model = self._parse_model_name(model_name)
         self.client = self._initialize_client()
@@ -104,7 +103,7 @@ class ModelAPI:
         user_prompt: str,
         system_prompt: Optional[str] = None,
         chat_history: Optional[List[Dict[str, str]]] = None,
-        max_tokens: Optional[int] = None,
+        max_tokens: Optional[int] = 40000,
         temperature: Optional[float] = None,
         debug: bool = False,
         **kwargs,
@@ -156,16 +155,7 @@ class ModelAPI:
             print(f"{GREEN}User Prompt:{RESET}\n{user_prompt}")
 
         try:
-            if self.model_provider == "openai":
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    max_completion_tokens=max_tokens,
-                    **kwargs,
-                )
-                result = response.choices[0].message.content
-
-            elif self.model_provider == "anthropic":
+            if self.model_provider == "anthropic":
                 claude_messages = []
 
                 # Add chat history if provided
@@ -173,7 +163,7 @@ class ModelAPI:
                     for msg in chat_history:
                         role = msg["role"]
                         if role not in ["user", "assistant"]:
-                            continue  # Skip other roles
+                            continue
                         claude_messages.append(
                             {"role": role, "content": msg["content"]}
                         )
@@ -184,7 +174,7 @@ class ModelAPI:
                 claude_params = {
                     "model": self.model,
                     "messages": claude_messages,
-                    "max_tokens": min(max_tokens, 8192) if max_tokens is not None else 4096,
+                    "max_tokens": max_tokens,
                     **kwargs,
                 }
 
@@ -196,8 +186,45 @@ class ModelAPI:
                 if system_prompt:
                     claude_params["system"] = system_prompt
 
-                response = self.client.messages.create(**claude_params)
-                result = response.content[0].text
+                if debug:
+                    print(f"{BLUE}Using streaming for Anthropic API call{RESET}")
+
+                # Use streaming without passing stream parameter
+                result = ""
+                try:
+                    with self.client.messages.stream(**claude_params) as stream:
+                        for message in stream:
+                            if message.type == "content_block_delta":
+                                text = message.delta.text
+                                result += text
+                                if debug:
+                                    print(text, end="", flush=True)
+                            elif message.type == "message_delta":
+                                continue
+                            elif message.type == "error":
+                                raise RuntimeError(f"Stream error: {message.error}")
+                except Exception as e:
+                    if debug:
+                        print(
+                            f"\n{RED}Streaming failed, falling back to non-streaming API call{RESET}"
+                        )
+                    # Fallback to non-streaming API call
+                    response = self.client.messages.create(**claude_params)
+                    result = response.content[0].text
+
+                if debug:
+                    print(f"\n{BLUE}API call complete{RESET}")
+
+                return result
+
+            elif self.model_provider == "openai":
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    max_completion_tokens=max_tokens,
+                    **kwargs,
+                )
+                result = response.choices[0].message.content
 
             elif self.model_provider == "google":
                 model = self.client.GenerativeModel(model_name=self.model)
@@ -222,6 +249,9 @@ class ModelAPI:
             error_msg = f"Error calling {self.model_provider} API: {str(e)}"
             if debug:
                 print(f"{RED}{error_msg}{RESET}")
+                import traceback
+
+                traceback.print_exc()
             raise RuntimeError(error_msg)
 
     def _format_messages_for_gemini(self, messages: List[Dict[str, str]]) -> str:

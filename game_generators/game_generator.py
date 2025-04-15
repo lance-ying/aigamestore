@@ -106,30 +106,28 @@ class GameGenerator:
 
     def generate_game(
         self,
-        genre: str,
-        num_players: int,
         narratives: Optional[str] = None,
+        narratives_path: Optional[str] = None,
     ) -> Tuple[str, List[Tuple[str, str]], str, str, str]:
         """
         Generate a complete game
 
         Args:
-            genre: Game genre
-            num_players: Number of players
             narratives: Optional narrative constraints or story elements
 
         Returns:
             Tuple of (html_code, js_files, game_title, description, full_response)
         """
-        if genre not in VALID_GENRES:
-            raise ValueError(f"Invalid genre. Choose from: {VALID_GENRES}")
-
         if self.debug:
             print(f"\n{BLUE}Starting game generation process...{RESET}")
 
         try:
             # Step 1: Design the game using the selected method
-            design = self.designer.design_game(genre, num_players, narratives)
+            design = self.designer.design_game(narratives)
+
+            # Add default number of players if needed by any component
+            if isinstance(design, dict):
+                design["num_players"] = 1  # Default to single player
 
             # Ensure design has required fields
             if not isinstance(design, dict):
@@ -162,14 +160,13 @@ class GameGenerator:
 
             # Step 3: Save the generated game
             game_path = self._save_game(
-                genre=genre,
                 title=title,
                 html_code=html_code,
                 js_files=js_files,
                 description=design.get("description", "No description available"),
                 full_response=design.get("full_response", "No response available"),
-                num_players=num_players,
                 narratives=narratives,
+                narratives_path=narratives_path,
                 guidance=design.get("game_guidance", ""),
             )
 
@@ -196,14 +193,13 @@ class GameGenerator:
 
     def _save_game(
         self,
-        genre: str,
         title: str,
         html_code: str,
         js_files: List[Tuple[str, str]],
         description: str,
         full_response: str,
-        num_players: int,
         narratives: Optional[str] = None,
+        narratives_path: Optional[str] = None,
         guidance: str = "",
     ) -> Path:
         """Save generated game files"""
@@ -216,13 +212,23 @@ class GameGenerator:
 
         # Create game directory with timestamp
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        game_dir = (
-            Path("games")
-            / self.method_name
-            / self.model_name.split(":")[1]
-            / genre
-            / f"{safe_title}"
-        )
+
+        if narratives_path:
+            game_dir = (
+                Path("games")
+                / self.method_name
+                / self.model_name.split(":")[1]
+                / narratives_path.split("/")[-1].replace(".json", "")
+                / f"{safe_title}"
+            )
+        else:
+            game_dir = (
+                Path("games")
+                / self.method_name
+                / self.model_name.split(":")[1]
+                / f"{safe_title}"
+            )
+
         game_dir.mkdir(parents=True, exist_ok=True)
 
         # Save HTML
@@ -244,9 +250,6 @@ Model: {self.model_name}
 
 === Game Details ===
 Title: {title}
-Genre: {genre}
-Players: {num_players}
-Narrative Constraints: {narratives if narratives else "None"}
 
 === Game Description ===
 {description}
@@ -266,9 +269,8 @@ Narrative Constraints: {narratives if narratives else "None"}
                 "title": title,
                 "description": description,
                 "guidance": guidance,
-                "genre": genre,
-                "num_players": num_players,
                 "narratives": narratives if narratives else "None",
+                "narrative_path": narratives_path if narratives_path else "None",
             },
             "generation_info": {
                 "method": self.method_name,
@@ -298,8 +300,6 @@ def main():
 
     try:
         html_code, js_files, title, description, _ = generator.generate_game(
-            genre="arcade",
-            num_players=2,
             narratives="A space-themed game where players compete to collect resources",
             debug=True,
         )

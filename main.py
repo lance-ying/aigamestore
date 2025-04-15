@@ -6,19 +6,44 @@ from game_generators.game_generator import GameGenerator
 from game_generators.character_driven_game_generator import (
     CharacterDrivenGameGenerator,
 )
+import json
 from game_generators.utils import GREEN, YELLOW, RED, BLUE, RESET
+import random
+
+ROOT_DIR = Path(__file__).parent
 
 
-def get_narratives(narratives: Optional[str]) -> str:
-    raise NotImplementedError("Narratives are not supported yet")
+def get_narrative(narrative_path: Path) -> str:
+    """
+    Get narrative content from either existing_games or generative_games directories
+
+    Args:
+        narrative_path: Path to the narrative file. If just a filename is provided,
+                       will check both existing_games and generative_games directories.
+
+    Returns:
+        str: Content of the narrative file
+    """
+    # If full path is provided and exists, use it directly
+    if narrative_path.exists():
+        if "existing_games" in str(narrative_path):
+            with open(narrative_path, "r") as f:
+                json_data = json.load(f)
+                return json_data["description"]
+        elif "generative_games" in str(narrative_path):
+            with open(narrative_path, "r") as f:
+                json_data = json.load(f)
+                return json_data["concept"]
+
+    # If path contains directory info but file doesn't exist
+    raise FileNotFoundError(f"Narrative file not found at {narrative_path}")
 
 
 def generate_game(
     method: str,
-    genre: str,
-    num_players: int,
-    model: str = "openai:gpt-4",
+    model: str = "openai:gpt-4o",
     narratives: Optional[str] = None,
+    narratives_path: Optional[str] = None,
     debug: bool = False,
 ) -> Path:
     """
@@ -46,7 +71,7 @@ def generate_game(
 
         # Generate the game
         html_code, js_files, title, description, _ = generator.generate_game(
-            genre=genre, num_players=num_players, narratives=narratives
+            narratives=narratives, narratives_path=narratives_path
         )
 
         if debug:
@@ -55,13 +80,21 @@ def generate_game(
             print(f"{BLUE}Description:{RESET} {description}")
 
         # Return the game directory path
-        return (
-            Path("games")
-            / method
-            / model.split(":")[1]
-            / genre
-            / title.lower().replace(" ", "_")
-        )
+        if narratives_path:
+            return (
+                Path("games")
+                / method
+                / model.split(":")[1]
+                / narratives_path.split("/")[-1].replace(".json", "")
+                / f"{title.lower().replace(' ', '_')}"
+            )
+        else:
+            return (
+                Path("games")
+                / method
+                / model.split(":")[1]
+                / f"{title.lower().replace(' ', '_')}"
+            )
 
     except Exception as e:
         print(f"{RED}Error generating game: {str(e)}{RESET}")
@@ -85,46 +118,19 @@ def main():
             "simple_prompt",
             "complexity_guide",
         ],
-        default="character_driven",
+        default="simple_prompt",
         help="Game generation method to use",
-    )
-
-    parser.add_argument(
-        "--genre",
-        type=str,
-        choices=[
-            "action",
-            "arcade",
-            "platformer",
-            "sports",
-            "stealth",
-            "strategy",
-            "puzzle",
-            "shooting",
-            "racing",
-            "adventure",
-        ],
-        default="arcade",
-        help="Game genre",
-    )
-
-    parser.add_argument(
-        "--players", type=int, default=3, help="Number of players (including AI agents)"
     )
 
     parser.add_argument(
         "--model",
         type=str,
-        default="openai:o3-mini",
+        default="anthropic:claude-3.7-sonnet",
         choices=[
-            "openai:gpt-4",
             "openai:gpt-4o",
             "openai:o3-mini",
             "anthropic:claude-3.5-sonnet",
-            "anthropic:claude-3.5-haiku",
             "anthropic:claude-3.7-sonnet",
-            "google:gemini-1.5-pro",
-            "google:gemini-1.5-flash",
             "google:gemini-2.0-flash",
         ],
         help="LLM to use",
@@ -133,6 +139,7 @@ def main():
     parser.add_argument(
         "--narratives",
         type=str,
+        default="generative_games/new_games/gemini_gemini-2.0-flash/game_0000.json",
         help="Optional narrative constraints or story elements",
     )
 
@@ -141,13 +148,15 @@ def main():
     args = parser.parse_args()
 
     try:
-        narratives_text = get_narratives(args.narratives)
+        narratives_text = get_narrative(
+            Path(ROOT_DIR / "game_prompts" / args.narratives)
+        )
+
         game_path = generate_game(
             method=args.method,
-            genre=args.genre,
-            num_players=args.players,
             model=args.model,
             narratives=narratives_text,
+            narratives_path=args.narratives,
             debug=args.debug,
         )
         print(f"\n{GREEN}Game generated successfully at: {game_path}{RESET}")

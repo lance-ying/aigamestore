@@ -17,8 +17,6 @@ from game_generators.utils import GREEN, YELLOW, RED, BLUE, RESET
 
 def generate_game(
     method: str,
-    genre: str,
-    num_players: int,
     model: str = "openai:gpt-4",
     narratives: Optional[str] = None,
     debug: bool = False,
@@ -28,8 +26,6 @@ def generate_game(
 
     Args:
         method: Game generation method to use
-        genre: Game genre
-        num_players: Number of players
         model: AI model to use
         narratives: Optional narrative constraints
         debug: Whether to print debug information
@@ -48,7 +44,7 @@ def generate_game(
 
         # Generate the game
         html_code, js_files, title, description, _ = generator.generate_game(
-            genre=genre, num_players=num_players, narratives=narratives
+            narratives=narratives
         )
 
         if debug:
@@ -61,7 +57,6 @@ def generate_game(
             Path("games")
             / method
             / model.split(":")[1]
-            / genre
             / title.lower().replace(" ", "_")
         )
 
@@ -87,46 +82,19 @@ def main():
             "simple_prompt",
             "complexity_guide",
         ],
-        default="character_driven",
+        default="simple_prompt",
         help="Game generation method to use",
-    )
-
-    parser.add_argument(
-        "--genre",
-        type=str,
-        choices=[
-            "action",
-            "arcade",
-            "platformer",
-            "sports",
-            "stealth",
-            "strategy",
-            "puzzle",
-            "shooting",
-            "racing",
-            "adventure",
-        ],
-        default="arcade",
-        help="Game genre",
-    )
-
-    parser.add_argument(
-        "--players", type=int, default=3, help="Number of players (including AI agents)"
     )
 
     parser.add_argument(
         "--model",
         type=str,
-        default="openai:o3-mini",
+        default="anthropic:claude-3.7-sonnet",
         choices=[
-            "openai:gpt-4",
             "openai:gpt-4o",
             "openai:o3-mini",
             "anthropic:claude-3.5-sonnet",
-            "anthropic:claude-3.5-haiku",
             "anthropic:claude-3.7-sonnet",
-            "google:gemini-1.5-pro",
-            "google:gemini-1.5-flash",
             "google:gemini-2.0-flash",
         ],
         help="LLM to use",
@@ -145,8 +113,6 @@ def main():
     try:
         game_path = generate_game(
             method=args.method,
-            genre=args.genre,
-            num_players=args.players,
             model=args.model,
             narratives=args.narratives,
             debug=args.debug,
