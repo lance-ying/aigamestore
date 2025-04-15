@@ -110,8 +110,8 @@ class GameGenerator:
 
     def generate_game(
         self,
-        narratives: Optional[str] = None,
-        narratives_path: Optional[str] = None,
+        narrative: Optional[str] = None,
+        narrative_path: Optional[str] = None,
     ) -> Tuple[str, List[Tuple[str, str]], str, str, str]:
         """
         Generate a complete game
@@ -128,15 +128,11 @@ class GameGenerator:
 
         try:
             # Step 1: Design the game using the selected method
-            design = self.designer.design_game(narratives)
+            design = self.designer.design_game(narrative=narrative)
 
             # Add default number of players if needed by any component
             if isinstance(design, dict):
                 design["num_players"] = 1  # Default to single player
-
-            # Ensure design has required fields
-            if not isinstance(design, dict):
-                design = {"full_response": str(design)}
 
             # Extract or generate game title
             title = design.get("title")
@@ -146,14 +142,6 @@ class GameGenerator:
                         f"{YELLOW}No title in design, generating from response{RESET}"
                     )
                 title = "Untitled Game"  # Let code generator handle title extraction
-
-            # Ensure we have game_design_text
-            if "game_design_text" not in design:
-                if self.debug:
-                    print(
-                        f"{YELLOW}Converting full response to game_design_text{RESET}"
-                    )
-                design["game_design_text"] = design.get("full_response", "")
 
             # Step 2: Generate code based on the design
             if self.code_generator is not None:
@@ -168,23 +156,14 @@ class GameGenerator:
                 title=title,
                 html_code=html_code,
                 js_files=js_files,
-                description=design.get("description", "No description available"),
-                full_response=design.get("full_response", "No response available"),
-                narratives=narratives,
-                narratives_path=narratives_path,
-                guidance=design.get("game_guidance", ""),
+                narrative=narrative,
+                narrative_path=narrative_path,
             )
 
             if self.debug:
                 print(f"{GREEN}Game generated successfully at: {game_path}{RESET}")
 
-            return (
-                html_code,
-                js_files,
-                title,
-                design.get("description", ""),
-                design.get("full_response", ""),
-            )
+            return title
 
         except Exception as e:
             if self.debug:
@@ -201,11 +180,8 @@ class GameGenerator:
         title: str,
         html_code: str,
         js_files: List[Tuple[str, str]],
-        description: str,
-        full_response: str,
-        narratives: Optional[str] = None,
-        narratives_path: Optional[str] = None,
-        guidance: str = "",
+        narrative: Optional[str] = None,
+        narrative_path: Optional[str] = None,
     ) -> Path:
         """Save generated game files"""
         # Create safe title for directory name
@@ -218,12 +194,12 @@ class GameGenerator:
         # Create game directory with timestamp
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
-        if narratives_path:
+        if narrative_path:
             game_dir = (
                 Path("games")
                 / self.model_name.split(":")[1]
                 / self.method_name
-                / narratives_path.split("/")[-1].replace(".json", "")
+                / narrative_path.split("/")[-1].replace(".json", "")
                 / f"{safe_title}"
             )
         else:
@@ -252,49 +228,29 @@ class GameGenerator:
                 f.write(content)
                 js_filenames.append(filename)
 
-        # Save generation log with structured format
-        log_content = f"""=== Game Generation Log ===
-Timestamp: {timestamp}
-Method: {self.method_name}
-Model: {self.model_name}
-
-=== Game Details ===
-Title: {title}
-
-=== Game Description ===
-{description}
-
-=== Player Guidance ===
-{guidance}
-
-=== Generation Process ===
-{full_response}
-"""
-        with open(game_dir / "generation_log.txt", "w", encoding="utf-8") as f:
-            f.write(log_content)
-
         # Save metadata with comprehensive information
         metadata = {
             "game_info": {
                 "title": title,
-                "description": description,
-                "guidance": guidance,
-                "narratives": narratives if narratives else "None",
-                "narrative_path": narratives_path if narratives_path else "None",
+                "narrative": narrative if narrative else "None",
+                "narrative_path": narrative_path if narrative_path else "None",
             },
             "generation_info": {
                 "method": self.method_name,
                 "model": self.model_name,
                 "timestamp": timestamp,
             },
-            "files": {
+            "game_files": {
                 "html": "index.html",
                 "javascript": js_filenames,
-                "log": "generation_log.txt",
+                "log": "generation_log.json",
             },
         }
 
         with open(game_dir / "metadata.json", "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=2)
+
+        with open(game_dir / "generation_log.json", "w", encoding="utf-8") as f:
+            json.dump(self.model_api.get_call_history(), f, indent=2)
 
         return game_dir

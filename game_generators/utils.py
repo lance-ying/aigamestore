@@ -2,6 +2,8 @@ import os
 import sys
 from typing import Dict, Any, Optional, List, Union
 from openai import OpenAI
+import json
+import datetime
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -46,6 +48,8 @@ class ModelAPI:
         """
         self.model_provider, self.model = self._parse_model_name(model_name)
         self.client = self._initialize_client()
+        # Add call history list
+        self.call_history = []
 
     def _parse_model_name(self, model_name: str) -> tuple[str, str]:
         """Parse the model name string to extract provider and model name"""
@@ -215,6 +219,16 @@ class ModelAPI:
                 if debug:
                     print(f"\n{BLUE}API call complete{RESET}")
 
+                # Record the call with cleaner formatting
+                call_record = {
+                    "system_prompt": system_prompt.strip() if system_prompt else None,
+                    "user_prompt": user_prompt.strip(),
+                    "response": result.strip(),
+                    "model": f"{self.model_provider}:{self.model}",
+                    "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                }
+                self.call_history.append(call_record)
+
                 return result
 
             elif self.model_provider == "openai":
@@ -240,8 +254,21 @@ class ModelAPI:
                 )
                 result = response.text
 
+            # Record the call with cleaner formatting
+            call_record = {
+                "system_prompt": system_prompt.strip() if system_prompt else None,
+                "user_prompt": user_prompt.strip(),
+                "response": result.strip(),
+                "model": f"{self.model_provider}:{self.model}",
+                "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            }
+            self.call_history.append(call_record)
+
             if debug:
                 print(f"{YELLOW}Model Response:\n{result}{RESET}")
+                print(
+                    f"{BLUE}Call recorded (Total calls: {len(self.call_history)}){RESET}"
+                )
 
             return result
 
@@ -265,6 +292,10 @@ class ModelAPI:
             else:
                 formatted.append(f"{role}: {content}")
         return "\n".join(formatted)
+
+    def get_call_history(self) -> List[Dict[str, Any]]:
+        """Return the list of all API calls made"""
+        return self.call_history
 
 
 if __name__ == "__main__":

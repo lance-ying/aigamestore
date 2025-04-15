@@ -42,8 +42,8 @@ def get_narrative(narrative_path: Path) -> str:
 def generate_game(
     method: str,
     model: str = "openai:gpt-4o",
-    narratives: Optional[str] = None,
-    narratives_path: Optional[str] = None,
+    narrative: Optional[str] = None,
+    narrative_path: Optional[str] = None,
     debug: bool = False,
 ) -> Path:
     """
@@ -70,22 +70,21 @@ def generate_game(
             generator = GameGenerator(method_name=method, model_name=model, debug=debug)
 
         # Generate the game
-        html_code, js_files, title, description, _ = generator.generate_game(
-            narratives=narratives, narratives_path=narratives_path
+        title = generator.generate_game(
+            narrative=narrative, narrative_path=narrative_path
         )
 
         if debug:
             print(f"\n{GREEN}Successfully generated game:{RESET}")
             print(f"{BLUE}Title:{RESET} {title}")
-            print(f"{BLUE}Description:{RESET} {description}")
 
         # Return the game directory path
-        if narratives_path:
+        if narrative_path:
             return (
                 Path("games")
                 / method
                 / model.split(":")[1]
-                / narratives_path.split("/")[-1].replace(".json", "")
+                / narrative_path.split("/")[-1].replace(".json", "")
                 / f"{title.lower().replace(' ', '_')}"
             )
         else:
@@ -156,8 +155,8 @@ def main():
         game_path = generate_game(
             method=args.method,
             model=args.model,
-            narratives=narratives_text,
-            narratives_path=args.narratives,
+            narrative=narratives_text,
+            narrative_path=args.narratives,
             debug=args.debug,
         )
         print(f"\n{GREEN}Game generated successfully at: {game_path}{RESET}")

@@ -46,7 +46,12 @@ CODE_GENERATION_SYSTEM_PROMPT = """You are an expert p5.js game developer who cr
    - No external dependencies beyond p5.js
    - No audio
 
+ULTIMATE GOAL: Generate game code that prioritizes functionality and technical correctness while maintaining good visual appeal.
+"""
 
+CANVAS_SIZE = {"width": 600, "height": 400}
+
+AVAILABLE_CONTROL_PROMPT = """
 Available Control Actions (You should only use the following actions):
 1. Directional Movement:
    - Arrow Keys: LEFT_ARROW (key: 37), RIGHT_ARROW (key: 39), UP_ARROW (key: 38), DOWN_ARROW (key: 40)
@@ -55,13 +60,7 @@ Available Control Actions (You should only use the following actions):
    - SHIFT key (key: 16)
    - SPACE key (key: 32)
 Note: Both arrow keys and WASD provide the same directional control functionality - choose one control scheme for consistency.
-
-ULTIMATE GOAL: Generate game code that prioritizes functionality and technical correctness while maintaining good visual appeal.
 """
-
-
-CANVAS_SIZE = {"width": 600, "height": 400}
-
 
 FORMAT_HTML_TEMPLATE = """
 <!DOCTYPE html>
