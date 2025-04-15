@@ -37,16 +37,12 @@ class CharacterDrivenGameGenerator(GameGenerator):
 
     def generate_game(
         self,
-        genre: str,
-        num_players: int,
         narratives: Optional[str] = None,
     ) -> Tuple[str, List[Tuple[str, str]], str, str, str]:
         """
         Generate a character-driven game with the same interface as base GameGenerator
 
         Args:
-            genre: Game genre
-            num_players: Number of players
             narratives: Optional narrative constraints
 
         Returns:
@@ -57,7 +53,7 @@ class CharacterDrivenGameGenerator(GameGenerator):
                 print(f"\n{BLUE}Starting character-driven game generation...{RESET}")
 
             # Step 1: Get initial design from designer
-            design = self.designer.design_game(genre, num_players, narratives)
+            design = self.designer.design_game(narratives)
 
             # Step 2: Generate initial code
             design_with_code = {**design, "mode": "initial_generation"}
@@ -98,7 +94,11 @@ class CharacterDrivenGameGenerator(GameGenerator):
 
                 # Get character-specific feedback from each character using the designer
                 char_feedback = {}
-                for char_idx in range(1, num_players + 1):
+                # Get number of characters from character_definitions
+                num_characters = (
+                    len(character_definitions) if character_definitions else 1
+                )
+                for char_idx in range(1, num_characters + 1):
                     char_response = self.designer.get_character_feedback(
                         char_idx,
                         game_js_code,
@@ -140,7 +140,6 @@ class CharacterDrivenGameGenerator(GameGenerator):
 
             # Save the game using parent class method
             game_path = self._save_game(
-                genre=genre,
                 title=design["title"],
                 html_code=html_code,
                 js_files=final_js_files,
@@ -148,7 +147,6 @@ class CharacterDrivenGameGenerator(GameGenerator):
                 full_response=design.get("full_response", "")
                 + "\n\n"
                 + "\n".join(debate_log),
-                num_players=num_players,
                 narratives=narratives,
                 guidance=design.get("guidance", ""),
             )

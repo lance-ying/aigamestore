@@ -10,7 +10,9 @@ from game_generators.prompts import (
     CANVAS_SIZE,
     CONTROL_SCHEME,
     FORMAT_HTML_TEMPLATE,
+    CODE_GENERATION_SYSTEM_PROMPT,
 )
+import os
 
 
 class SimpleDesigner:
@@ -20,86 +22,81 @@ class SimpleDesigner:
         self, model_api: ModelAPI = None, system_prompt: str = None, debug: bool = False
     ):
         self.model_api = model_api
-        self.system_prompt = system_prompt
+        self.system_prompt = system_prompt or CODE_GENERATION_SYSTEM_PROMPT
         self.p5js_url = "https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"
         self.debug = debug
 
     def design_game(
         self,
-        genre: str,
-        num_players: int,
         narratives: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        Create game design and implementation
-
-        Args:
-            genre: Game genre
-            num_players: Number of players
-            narratives: Optional narrative constraints
-
-        Returns:
-            Dict containing game design and code
+        Create game design and implementation with debugging steps
         """
         try:
-            # Create the prompt
-            prompt = self._create_prompt(genre, num_players, narratives)
-
+            # Generate initial game design
+            prompt = self._create_prompt(narratives)
             if self.debug:
                 print(f"\n{GREEN}Generated prompt:{RESET}\n{prompt}")
 
-            # Get response from model
             response = self.model_api.call(
                 user_prompt=prompt,
                 system_prompt=self.system_prompt,
                 debug=self.debug,
             )
 
-            # Extract title
+            # Extract initial components
             title = self._extract_title(response)
-            if self.debug:
-                print(f"\n{BLUE}Extracted title:{RESET} {title}")
-
-            # Extract description
             description = self._extract_description(response)
-            if self.debug:
-                print(f"\n{BLUE}Extracted description:{RESET}\n{description}")
-
-            # Extract guidance
             guidance = self._extract_guidance(response)
-            if self.debug:
-                print(f"\n{BLUE}Extracted guidance:{RESET}\n{guidance}")
-
-            # Extract code blocks
             js_code = self._extract_code_block(response, "javascript")
             html_code = self._extract_code_block(response, "html") or ""
 
-            # If HTML is empty or doesn't contain proper script tags, create it
+            # Format HTML if needed
             if not html_code or "<script src=" not in html_code:
                 if isinstance(js_code, dict):
-                    js_includes = "\n    ".join(
-                        f'<script src="{filename}"></script>'
-                        for filename in js_code.keys()
-                    )
+                    # Group files by directory for better organization in HTML
+                    js_files_by_dir = {}
+                    for filename in js_code.keys():
+                        dir_path = os.path.dirname(filename)
+                        if dir_path not in js_files_by_dir:
+                            js_files_by_dir[dir_path] = []
+                        js_files_by_dir[dir_path].append(filename)
+
+                    # Create script tags grouped by directory
+                    js_includes_parts = []
+                    for dir_path, files in sorted(js_files_by_dir.items()):
+                        if dir_path:
+                            js_includes_parts.append(f"\n    <!-- {dir_path}/ -->")
+                        for filename in sorted(files):
+                            js_includes_parts.append(
+                                f'    <script type="module" src="{filename}"></script>'
+                            )
+                    js_includes = "\n".join(js_includes_parts)
                 else:
-                    js_includes = '<script src="game.js"></script>'
+                    js_includes = '<script type="module" src="game.js"></script>'
 
                 html_code = FORMAT_HTML_TEMPLATE.format(
                     title=title, p5js_url=self.p5js_url, js_includes=js_includes
                 )
 
-            if self.debug:
-                print(f"\n{BLUE}Extracted JavaScript code:{RESET}")
-                if isinstance(js_code, dict):
-                    for filename, code in js_code.items():
-                        print(f"\n{YELLOW}{filename}:{RESET}\n{code}")
-                else:
-                    print(f"\n{YELLOW}game.js:{RESET}\n{js_code}")
-                print(f"\n{BLUE}Extracted HTML code:{RESET}\n{html_code}")
-
-            # Convert js_code to proper format
+            # Convert js_code to proper format and ensure directories exist
             if isinstance(js_code, dict):
-                js_files = [(filename, code) for filename, code in js_code.items()]
+                js_files = []
+                for filename, code in js_code.items():
+                    # Create directory if it doesn't exist
+                    dir_path = os.path.dirname(filename)
+                    if dir_path:
+                        try:
+                            os.makedirs(dir_path, exist_ok=True)
+                            if self.debug:
+                                print(f"{GREEN}Created directory: {dir_path}{RESET}")
+                        except Exception as e:
+                            if self.debug:
+                                print(
+                                    f"{YELLOW}Warning: Could not create directory {dir_path}: {e}{RESET}"
+                                )
+                    js_files.append((filename, code))
             else:
                 js_files = [("game.js", js_code or "")]
 
@@ -123,63 +120,78 @@ class SimpleDesigner:
                 traceback.print_exc()
             raise
 
-    def _create_prompt(
-        self, genre: str, num_players: int, narratives: Optional[str] = None
-    ) -> str:
+    def _create_prompt(self, narratives: Optional[str] = None) -> str:
         """Create the complete prompt for game design and code generation"""
-        # Create HTML example with proper script tags
-        html_example = FORMAT_HTML_TEMPLATE.format(
-            title="{title}", p5js_url=self.p5js_url  # Keep as template placeholder
-        )
 
-        prompt = f"""Create a complete p5.js game based on these requirements:
+        p5js_guidelines = """* Don't use any external assets.
+        * Include a index.html to run the game.
+        * Use p5.js in instance mode.
+        * Follow strict Entity-Component-System (ECS) architecture.
+        * Implement all required entities, components and systems.
+        * Make sure the game has clear goals and win conditions.
+        * Start with instructions screen (press Enter to start).
+        * Design for single-player gameplay.
+        * Ensure smooth performance and polished graphics."""
 
-Game Specifications:
-1. Genre: {genre}
-2. Players: {num_players} total ({num_players-1} AI agents + 1 human player)
-3. Narrative: {narratives if narratives else 'Create an engaging storyline'}
+        description = f"""Game Specifications:
+        Narrative: {narratives if narratives else 'Not specified, you should create an engaging storyline first'}"""
 
-Technical Specifications:
-1. Canvas Size: {CANVAS_SIZE['width']}x{CANVAS_SIZE['height']} pixels
-2. Controls: Arrow keys or WASD for movement, SPACE for actions
-3. Required Elements:
-- Start screen with instructions
-- Main gameplay
-- Game over condition
-- Basic score or progress tracking
+        prompt = f"""TASK: Implement a game in p5.js based on the following description:
+    <description>
+    {description}
+    </description>
 
-Please provide your response in the following format:
-1. First, provide a GAME TITLE: <your title>
+    <p5js_guidelines>
+    {p5js_guidelines}
+    </p5js_guidelines>
 
-2. Then, provide a ```description block with the game concept and mechanics
+    Here is a template for the HTML code:
+    <template_html_code>
+    "{FORMAT_HTML_TEMPLATE}"
+    </template_html_code>
 
-3. Then, provide a ```guidance block with game instructions that will show on the start screen.
-   Make it engaging and fun but informative! Include:
-   - A catchy welcome message
-   - The mission/objective of the game
-   - Clear control instructions (keys and what they do)
-   Format it in a way that's easy to read on the start screen!
+    REQUIREMENT:
+    You should output things in the following format:
+    <game_title>
+    ... (game title)
+    </game_title>
 
-4. Finally, provide the implementation in two code blocks:
-   - ```html block for index.html
-   - ```javascript block for game.js, you should use Entity-Component-System (ECS) pattern for the code and follow the naming convention for xxxEntity, xxxComponent, xxxSystem.
+    <game_description>
+    ... (game description)
+    </game_description>
 
-HTML structure and some pre-defined code:
-```html
-{html_example}
-```
-"""
+    <game_guidance>
+    ... (game guidance to display on the start screen, keep it short, fun and engaging)
+    </game_guidance>
+
+    For each file, you should output the following:
+    <code filename="{{name}}.{{extension}}">
+    ... (code)
+    </code>
+
+    Output HTML as the last file:
+    <code filename="index.html">
+    ... (html code)
+    </code>
+
+    """
         return prompt
 
     def _extract_title(self, text: str) -> str:
         """Extract game title from text"""
-        patterns = [
+        pattern = r"<game_title>\s*(.*?)\s*</game_title>"
+        match = re.search(pattern, text, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+
+        # Fallback patterns if new format not found
+        fallback_patterns = [
             r"GAME TITLE:\s*(.*?)(?:\n|$)",
             r"title:\s*(.*?)(?:\n|$)",
             r"<title>(.*?)</title>",
         ]
 
-        for pattern in patterns:
+        for pattern in fallback_patterns:
             match = re.search(pattern, text, re.IGNORECASE)
             if match:
                 return match.group(1).strip()
@@ -188,55 +200,66 @@ HTML structure and some pre-defined code:
 
     def _extract_description(self, text: str) -> str:
         """Extract game description from text"""
-        pattern = r"```description\s*(.*?)```"
+        pattern = r"<game_description>\s*(.*?)\s*</game_description>"
         match = re.search(pattern, text, re.DOTALL)
         if match:
             return match.group(1).strip()
-        return text  # Return full text if no description block found
+
+        # Fallback to old format if new format not found
+        fallback_pattern = r"```description\s*(.*?)```"
+        match = re.search(fallback_pattern, text, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+
+        return "No description provided."
 
     def _extract_guidance(self, text: str) -> str:
         """Extract game guidance/instructions from text"""
-        pattern = r"```guidance\s*(.*?)```"
+        pattern = r"<game_guidance>\s*(.*?)\s*</game_guidance>"
         match = re.search(pattern, text, re.DOTALL)
         if match:
             return match.group(1).strip()
-        return "No guidance provided."  # Default if not found
+
+        # Fallback to old format if new format not found
+        fallback_pattern = r"```guidance\s*(.*?)```"
+        match = re.search(fallback_pattern, text, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+
+        return "No guidance provided."
 
     def _extract_code_block(
         self, text: str, language: str
     ) -> Union[str, Dict[str, str]]:
-        """Extract code blocks from text"""
+        """Extract code blocks from text, supporting folder structures in filenames"""
+        # Extract code blocks and save in respective files
+        code_blocks = re.findall(
+            r"<code filename=\"(.*?)\">(.*?)</code>", text, re.DOTALL
+        )
+
         if language == "javascript":
-            # First try to find named JavaScript files
             js_files = {}
-            pattern = rf"```javascript:([\w.]+)\s*(.*?)```"
-            matches = re.finditer(pattern, text, re.DOTALL)
+            for filename, code in code_blocks:
+                if filename.endswith(".js"):
+                    # Clean up code block markers
+                    code = re.sub("```(python|javascript|html|xml)?", "", code)
+                    # Normalize path separators to use forward slashes
+                    normalized_filename = filename.replace("\\", "/")
+                    js_files[normalized_filename] = code.strip()
 
-            for match in matches:
-                filename = match.group(1)
-                code = match.group(2).strip()
-                # Remove filename if it appears at the start of the code
-                if code.startswith(f":{filename}"):
-                    code = code[len(filename) + 1 :].strip()
-                js_files[filename] = code
+            # If no JS files found, create a default game.js
+            if not js_files:
+                if self.debug:
+                    print(
+                        f"{YELLOW}Warning: No JS files found, creating default game.js{RESET}"
+                    )
+                js_files["game.js"] = "// Default game.js - Generated empty file\n"
 
-            if js_files:
-                return js_files
-
-            # If no named files found, look for generic javascript block
-            pattern = rf"```javascript\s*(.*?)```"
-            match = re.search(pattern, text, re.DOTALL)
-            if match:
-                code = match.group(1).strip()
-                # If code starts with ":game.js" or similar, remove it
-                if code.startswith(":"):
-                    code = code.split("\n", 1)[1].strip()
-                return code
-
-            return ""
-
+            return js_files
         else:
-            # For HTML, just extract the content
-            pattern = rf"```{language}\s*(.*?)```"
-            match = re.search(pattern, text, re.DOTALL)
-            return match.group(1).strip() if match else ""
+            # For HTML, find the first HTML file
+            for filename, code in code_blocks:
+                if filename.endswith(".html"):
+                    code = re.sub("```(python|javascript|html|xml)?", "", code)
+                    return code.strip()
+            return ""
