@@ -2,12 +2,6 @@ from typing import Optional, List, Dict, Any
 import argparse
 from pathlib import Path
 
-import sys
-import os
-
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-
 from game_generators.game_generator import GameGenerator
 from game_generators.character_driven_game_generator import (
     CharacterDrivenGameGenerator,
