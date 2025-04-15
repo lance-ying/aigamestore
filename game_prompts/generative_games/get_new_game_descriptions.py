@@ -77,9 +77,9 @@ def load_existing_games(games_dir: str, max_games: int = 50) -> List[Dict[str, A
     
     return game_archive
 
-def generate_new_game_concept(api: ModelAPI, game_archive: List[Dict[str, Any]] = None, max_retries: int = 10, temperature: float = 0.7) -> Dict[str, Any]:
+def generate_new_game_concept(api: ModelAPI, game_archive: List[Dict[str, Any]] = None, max_retries: int = 10, temperature: float = 0.7) -> List[Dict[str, Any]]:
     """
-    Generate a new game concept using the specified model.
+    Generate new game concepts using the specified model.
     
     Args:
         api: ModelAPI instance
@@ -88,74 +88,102 @@ def generate_new_game_concept(api: ModelAPI, game_archive: List[Dict[str, Any]] 
         temperature: Controls randomness in generation (0.0-1.0, higher = more creative)
         
     Returns:
-        Dict: The generated game description as a dictionary
+        List[Dict]: A list of generated game descriptions as dictionaries
     """
     genre_list_str = ', '.join(GENRES)
 
     prompt = f"""
-                Describe a completely original, interesting, and imaginative concept for a single-player video game.
+                Describe 10 completely original, interesting, and imaginative concepts for single-player video games.
 
-                Pick one or more genres from this list: {genre_list_str}.
+                For each game, pick one or more genres from this list: {genre_list_str}.
 
                 Format your response like this:
                 ```json
-                {{
-                "concept": "What if there was a game where time only moves when you stand still?",
-                "genre": "Puzzle, Platformer"  // Choose one or more from: {genre_list_str}
-                }}
+                [
+                    {{
+                        "concept": "What if there was a game where time only moves when you stand still?",
+                        "genre": "Puzzle, Platformer"
+                    }},
+                    {{
+                        "concept": "A game about a lost robot trying to find its way home by solving circuit puzzles",
+                        "genre": "Puzzle, Adventure"
+                    }},
+                    ... and so on for all 10 games
+                ]
                 ```
                 """
         
 
     EXAMPLES = [
-        "What if there was a game where ...", 
-        "What if there was a game where platforms are made of jelly and you have to navigate them without falling off?",
-        "Make me a game where your inventory affects gravity. Choose what to carry with you and travel light.",
-        "Make me a game where ...",
-        "Imagine a game where the enemies only be seen when you are moving. Multiple levels of the game have different visibility ranges.",
-        "Imagine a game where ...",
-        "I want a game where you explore a museum that reorganizes itself based on your choices.",
-        "I want a game where ...",
-        "Can you make a puzzle game where you solve multiple puzzles in different parts of a grid world in the correct order?",
-        "How about a game where ...",
-        "A game where time flows differently depending on ...",
-        "A game where ...",
-        "Could there be a game where you move evade enemies by changing your color and enemies can only see particular colors? Interesting part is that you can't know which color they see. You need to keep refilling the color supply to keep changing colors.",
-        "Could there be a simulation game where we can change the location of the towers in the city to prevent the enemy from attacking?",
-        "Think of a game where you are a glitch in a simulation, trying to avoid being deleted. You can go back and forth in time to fix your mistakes.",
-        "Think of a game where ...",
-        "Give me a game idea about a place that forgets you every time you leave a room. The room changes ",
-        "Give me a game idea about ...",
-        "What’s a game where the goal is to achieve the second highest score amoung 3 other AI players?",
-        "What’s a game where ...",
-    ]
+    "Can you create a game where every platform is made of wobbly jelly?",
+    "Could you design a game where every a frog jumps on lily pads and wooden logs.",
+    "How about developing a game where hidden dangers awaken only when motion occurs? The slightest movement should summon bats and spiders.",
+    "Make a game which is two rooms connected by a portal. The rooms are identical but have different colors. The player can switch between the rooms by passing through the portal.",
+    "Can you build an adventure on a massive grid where each sector hides its own enigma? Let every clue become a fragment of a hidden map, combining subtle riddles with clever puzzles.",
+    "Think of a game where the character can switch between two different worlds. The worlds have different challenges but character plays both worlds. The player can switch between the worlds.",
+    "Could you invent a game where color serves as a secret weapon? Switching hues should baffle relentless foes, turning combat into a vivid and strategic spectacle.",
+    "Would you develop a futuristic city defense game where rearranging skyscrapers is key? Every building move should transform the urban battleground into a dynamic tactical fortress.",
+    "Could you design a game where the power to rewrite physics is at the player's fingertips? Bend gravity, twist inertia, or warp time to overcome obstacles that defy conventional logic.",
+    "How about constructing a game that lets players leap between parallel universes to mend a fractured world? Each alternate dimension should offer its own unique set of puzzles and perils for an epic saga.",
+    "How about a game where you balance on a unicycle and have to avoid obstacles?",
+    "Make me a game where the environment is a maze but the player can transform the maze by changing the color of the walls.",
+    "Can you generate a game related to a dog that needs to find its way home but lots of troubles and traps await?",
+    "What if there was a game where the player switches between two characters that have different abilities?",
+    "Would you create a game with rules that evolve unpredictably at every level? Introduce surprise twists on gameplay mechanics to continuously keep players on their toes.",
+    "Navigate through a multi-layered environment avoiding the light towers trying to catch you.",
+    "How about designing a multi-room game where each room has a different challenge.",
+    "Could you make a game where the termites are eating your house?",
+    "Would you create a game where you control a space ship across space to search for a new home planet?",
+    "Can you build a game where the player has to get out of a dynamically changing maze?",
+    "A castle is under attack by a dragon spitting fire. The player has to save the castle by shooting the dragon.",
+    "I want to control a robot through a town on fire to rescue people and put out the fire.",
+    "A race between turtles where there is both land and water terrain.",
+    "Can you create a game with a plane that picks up packages and has to deliver them to the right place?",
+    "How about setting a game in a jungle with a river.",
+    "Could you develop the game in a world in which the player moves in side a bubble which they can shrink and expand?",
+]
 
-    example_sample = random.sample(EXAMPLES, 10)
-    example_block = "\n".join(f"- \"{e}\"" for e in example_sample)
+    # Sample a few examples to include in the prompt
+    example_sample = random.sample(EXAMPLES, 20)
+    example_block = "\n".join(f"- \"{e.strip()}\"" for e in example_sample)
 
-    system_prompt = f"""You are a creative video game enthusiast who loves imagining original and fun single-player games.
+    # Build the system prompt with additional guidance on what game elements can be altered.
+    system_prompt = f"""
+            You are a creative video game enthusiast with the ability to invent original and imaginative game concepts.
+            Your goal is to pitch 10 cool single-player game ideas, each capturing a unique twist, narrative hook, or innovative gameplay challenge.
 
-    Your job is to come up with a cool **game concept** you’d love to see made — something you’d pitch to a game designer to bring to life. 
-    These ideas should be **original**, **fun to imagine**, and can be **short and punchy or a little more detailed** — whatever fits the idea.
+            Below are a few sample ideas to inspire you:
+            {example_block}
 
-    Here are some different ways you might describe your idea:
-    {example_block}
+            ### Instructions:
+            - Create 10 completely different game concepts.
+            - Focus on the core narrative, twists, or gameplay mechanic that makes each concept unique.
+            - Avoid delving into specific implementation details like graphics, sound design, or technical specifics.
+            - You can come up with game concepts that can define game elements such as:
+                - **Characters:** Define unique protagonists, antagonists, or supporting roles.
+                - **Narrative and Story:** Propose compelling storylines or narrative hooks.
+                - **Game Mechanics:** Innovate with unconventional gameplay rules or challenges.
+                - **World-Building:** Create intriguing settings or dynamic environments.
+            - Adopt an enthusiastic, simple vocabulary, and original tone and go beyond the language of the examples.
 
-    Use your own tone and words — you can describe the idea in a sentence, a phrase, or a short paragraph. Be as brief or as rich as the idea needs.
+            Your response must be a valid JSON array containing 10 objects, each with exactly two keys: "concept" and "genre". 
+            Do not include any extra text, markdown formatting, or commentary outside of the JSON.
 
-    ### Instructions:
-    - Focus on the core fantasy or idea: a twist, a challenge, or a narrative hook.
-    - Avoid specific implementation details like graphics, sounds, control mappings, or exact character names.
-    - Be bold: invent new narrative structures, remix unexpected ideas, or turn familiar game genres on their head.
-
-    ### Format your response like this:
-    ```json
-    {{
-    "concept": "What if there was a game where time only moves when you stand still?",
-    "genre": "Puzzle, Platformer"  // Choose one or more from: {genre_list_str}
-        }}
-    """
-
+            Example format:
+            ```json
+            [
+                {{
+                    "concept": "What if there was a game where time only moves when you stand still? Imagine a protagonist navigating a frozen world while everything else remains motionless.",
+                    "genre": "Puzzle, Platformer"
+                }},
+                {{
+                    "concept": "A game where you play as a shadow that must stay connected to its owner while solving environmental puzzles.",
+                    "genre": "Puzzle, Adventure"
+                }}
+            ]
+            ```
+        """
+    
     # Add recent games to system prompt if available
     if game_archive and len(game_archive) > 0:
         # Get random sample of recent games
@@ -188,20 +216,24 @@ def generate_new_game_concept(api: ModelAPI, game_archive: List[Dict[str, Any]] 
                 
             if match:
                 json_str = match.group(1).strip()
-                description_data = json.loads(json_str)
-                genre = description_data.get("genre", "Genre of the game")
-                return description_data
+                game_descriptions = json.loads(json_str)
                 
-            else:
-                print(f"Failed to extract JSON from model response, using default structure")
-                return {
-                    "concept": "Error: Could not extract game concept from model response",
-                    "genre": "Genre of the game",
-                }
+                # Return the list of games or wrap a single game in a list
+                if isinstance(game_descriptions, list) and len(game_descriptions) > 0:
+                    return game_descriptions
+                elif isinstance(game_descriptions, dict):
+                    # If the model returned a single game instead of a list
+                    return [game_descriptions]
+                else:
+                    print(f"Unexpected response format from model")
+                    return [{
+                        "concept": "Error: Unexpected response format from model",
+                        "genre": "Genre of the game",
+                    }]
                 
         except Exception as e:
             error_msg = str(e).lower()
-            print(f"Error generating new game concept: {error_msg}")
+            print(f"Error generating new game concepts: {error_msg}")
             retries += 1
             
             # Check if it's a rate limit error
@@ -220,16 +252,16 @@ def generate_new_game_concept(api: ModelAPI, game_archive: List[Dict[str, Any]] 
                 time.sleep(MIN_WAIT_TIME)
             else:
                 print(f"Failed after {max_retries} retries: {error_msg}")
-                return {
+                return [{
                     "concept": f"Error generating game concept after {max_retries} retries: {error_msg}",
                     "genre": "Genre of the game",
-                }
+                }]
     
     # If we've exhausted retries
-    return {
+    return [{
         "concept": f"Error: Maximum retries reached",
         "genre": "Genre of the game",
-    }
+    }]
 
 def main(model_string: str, num_games: int = 5, temperature: float = 0.7):
     """
@@ -238,7 +270,7 @@ def main(model_string: str, num_games: int = 5, temperature: float = 0.7):
     
     Args:
         model_string: Model specification in format "provider:model_name"
-        num_games: Number of games to generate
+        num_games: Number of games to generate (will be generated in batches of 10)
         temperature: Controls randomness in generation (0.0-1.0, higher = more creative)
     """
     # Initialize model API
@@ -281,53 +313,60 @@ def main(model_string: str, num_games: int = 5, temperature: float = 0.7):
     total_failed = 0
     
     # Process each game
-    for i in range(num_games):
-        print(f"Generating game #{i}...")
+    generated_count = 0
+    batch_count = 0
+    
+    while generated_count < num_games:
+        batch_count += 1
+        print(f"Generating batch #{batch_count} of game concepts...")
 
-        # Generate description
-        description_data = generate_new_game_concept(api, game_archive, temperature=temperature)
+        # Generate descriptions - now returns a list of games
+        games_to_process = generate_new_game_concept(api, game_archive, temperature=temperature)
         
-        # Check if generation was successful
-        if "Error" in description_data.get("concept", ""):
-            total_failed += 1
-            print(f"  ❌ Failed to generate game #{i+1}")
-        else:
-            total_success += 1
-            print(f"  ✅ Generated game: {description_data['concept']}")
-            
-            # Find the smallest unused game number and format with leading zeros
-            existing_files = os.listdir(output_dir)
-            existing_numbers = set()
-            for filename in existing_files:
-                if filename.startswith("game_") and filename.endswith(".json"):
-                    try:
-                        num = int(filename[5:-5])  # Extract number between "game_" and ".json"
-                        existing_numbers.add(num)
-                    except ValueError:
-                        continue
-            
-            game_num = 0
-            while game_num in existing_numbers:
-                game_num += 1
+        for game_data in games_to_process:
+            # Check if generation was successful and if we still need more games
+            if "Error" not in game_data.get("concept", "") and generated_count < num_games:
+                total_success += 1
+                generated_count += 1
+                print(f"  ✅ Generated game {generated_count}/{num_games}: {game_data['concept']}")
                 
-            output_file = os.path.join(output_dir, f"game_{game_num:04d}.json")
+                # Find the smallest unused game number and format with leading zeros
+                existing_files = os.listdir(output_dir)
+                existing_numbers = set()
+                for filename in existing_files:
+                    if filename.startswith("game_") and filename.endswith(".json"):
+                        try:
+                            num = int(filename[5:-5])  # Extract number between "game_" and ".json"
+                            existing_numbers.add(num)
+                        except ValueError:
+                            continue
                 
-            with open(output_file, "w") as f:
-                json.dump(description_data, f, indent=2)
-            
-            print(f"  Saved game concept to {model_name}/{os.path.basename(output_file)}")
-            
-            # Add to archive for context in future generations
-            game_archive.append(description_data)
-            if len(game_archive) > 50:
-                game_archive = game_archive[1:]  # Keep only the most recent 50 games
-            
-            # Add random wait time between requests to avoid rate limiting
+                game_num = 0
+                while game_num in existing_numbers:
+                    game_num += 1
+                    
+                output_file = os.path.join(output_dir, f"game_{game_num:04d}.json")
+                    
+                with open(output_file, "w") as f:
+                    json.dump(game_data, f, indent=2)
+                
+                print(f"  Saved game concept to {model_name}/{os.path.basename(output_file)}")
+                
+                # Add to archive for context in future generations
+                game_archive.append(game_data)
+                if len(game_archive) > 50:
+                    game_archive = game_archive[1:]  # Keep only the most recent 50 games
+            elif "Error" in game_data.get("concept", ""):
+                total_failed += 1
+                print(f"  ❌ Failed to generate game")
+        
+        # Add random wait time between requests to avoid rate limiting
+        if generated_count < num_games:
             wait_time = random.uniform(MIN_WAIT_TIME, MAX_WAIT_TIME)
             print(f"  Waiting {wait_time:.2f} seconds before next request...")
             time.sleep(wait_time)
         
-        print(f"Progress: {i+1}/{num_games} - {total_success} successful, {total_failed} failed")
+        print(f"Progress: {generated_count}/{num_games} - {total_success} successful, {total_failed} failed")
     
     print(f"\nAll done! Total: {total_success} successful, {total_failed} failed")
 
@@ -343,7 +382,7 @@ if __name__ == "__main__":
         "--num_games", 
         type=int, 
         default=5, 
-        help="Number of games to generate"
+        help="Number of games to generate (will be generated in batches of 10)"
     )
     parser.add_argument(
         "--min_wait", 
