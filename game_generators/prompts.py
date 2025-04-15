@@ -62,8 +62,7 @@ Available Control Actions (You should only use the following actions):
 Note: Both arrow keys and WASD provide the same directional control functionality - choose one control scheme for consistency.
 """
 
-FORMAT_HTML_TEMPLATE = """
-<!DOCTYPE html>
+FORMAT_HTML_TEMPLATE = """<!DOCTYPE html>
 <html>
   <head>
     <meta charset="UTF-8" />

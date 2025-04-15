@@ -110,6 +110,7 @@ class ModelAPI:
         max_tokens: Optional[int] = 40000,
         temperature: Optional[float] = None,
         debug: bool = False,
+        max_retries: int = 3,
         **kwargs,
     ) -> str:
         """
@@ -191,30 +192,41 @@ class ModelAPI:
                     claude_params["system"] = system_prompt
 
                 if debug:
-                    print(f"{BLUE}Using streaming for Anthropic API call{RESET}")
+                    print(f"\n{BLUE}---> Using streaming for Anthropic API call{RESET}")
 
-                # Use streaming without passing stream parameter
+                # Use streaming with retries
                 result = ""
-                try:
-                    with self.client.messages.stream(**claude_params) as stream:
-                        for message in stream:
-                            if message.type == "content_block_delta":
-                                text = message.delta.text
-                                result += text
-                                if debug:
-                                    print(text, end="", flush=True)
-                            elif message.type == "message_delta":
-                                continue
-                            elif message.type == "error":
-                                raise RuntimeError(f"Stream error: {message.error}")
-                except Exception as e:
-                    if debug:
-                        print(
-                            f"\n{RED}Streaming failed, falling back to non-streaming API call{RESET}"
-                        )
-                    # Fallback to non-streaming API call
-                    response = self.client.messages.create(**claude_params)
-                    result = response.content[0].text
+                retry_count = 0
+
+                while retry_count < max_retries:
+                    try:
+                        with self.client.messages.stream(**claude_params) as stream:
+                            for message in stream:
+                                if message.type == "content_block_delta":
+                                    text = message.delta.text
+                                    result += text
+                                    if debug:
+                                        print(text, end="", flush=True)
+                                elif message.type == "message_delta":
+                                    continue
+                                elif message.type == "error":
+                                    raise RuntimeError(f"Stream error: {message.error}")
+                        # If we get here, the streaming was successful
+                        break
+                    except Exception as e:
+                        retry_count += 1
+                        if debug:
+                            print(
+                                f"\n{RED}Streaming attempt {retry_count} failed: {str(e)}{RESET}"
+                            )
+                        if retry_count >= max_retries:
+                            if debug:
+                                print(
+                                    f"\n{RED}All streaming attempts failed, falling back to non-streaming API call{RESET}"
+                                )
+                            # Fallback to non-streaming API call
+                            response = self.client.messages.create(**claude_params)
+                            result = response.content[0].text
 
                 if debug:
                     print(f"\n{BLUE}API call complete{RESET}")

@@ -5,7 +5,7 @@ from game_generators.prompts import GAME_DESIGN_SYSTEM_PROMPT
 
 
 class ComplexityGuideDesigner:
-    """Designer that creates complex and imaginative game designs"""
+    """Designer that creates complex and imaginative game designs through guided discussion"""
 
     def __init__(
         self, model_api: ModelAPI, system_prompt: str = None, debug: bool = False
@@ -16,37 +16,38 @@ class ComplexityGuideDesigner:
 
     def design_game(
         self,
-        narratives: Optional[str] = None,
+        narrative: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Create complex game design with wild imagination"""
+        """Create complex game design through guided discussion"""
         try:
             if self.debug:
                 print(f"\n{BLUE}Starting imaginative design process...{RESET}")
 
-            prompt = self._create_prompt(narratives)
-            final_design = self._call_model_api(prompt, self.system_prompt)
+            # Phase 1: Initial Brainstorming
+            initial_ideas = self._brainstorm_initial_ideas(narrative)
+            if self.debug:
+                print(f"\n{GREEN}Initial Ideas:{RESET}\n{initial_ideas}")
+
+            # Phase 2: Complexity Discussion
+            complex_ideas = self._explore_complexity(initial_ideas)
+            if self.debug:
+                print(f"\n{GREEN}Complexity Layer:{RESET}\n{complex_ideas}")
+
+            # Phase 3: Final Design Plan
+            final_design = self._create_final_design(initial_ideas, complex_ideas)
+            if self.debug:
+                print(f"\n{GREEN}Final Design:{RESET}\n{final_design}")
 
             # Extract components
             title = self._extract_title(final_design)
-            description = self._extract_description(final_design)
-            guidance = self._extract_guidance(final_design)
-
-            # Extract the full design plan (excluding meta discussion)
             game_design_text = self._extract_design_plan(final_design)
 
             if self.debug:
                 print(f"\n{BLUE}Final Design Components:{RESET}")
                 print(f"Title: {title}")
-                print(f"Description: {description}")
-                print(f"Guidance: {guidance}")
+                print(f"Design: {game_design_text}")
 
-            return {
-                "title": title,
-                "description": description,
-                "game_design_text": game_design_text,
-                "game_guidance": guidance,
-                "full_response": final_design,
-            }
+            return {"title": title, "game_design_text": game_design_text}
 
         except Exception as e:
             if self.debug:
@@ -58,67 +59,99 @@ class ComplexityGuideDesigner:
                 traceback.print_exc()
             raise
 
-    def _create_prompt(self, narratives: Optional[str]) -> str:
-        """Create the imaginative design prompt"""
-        return f"""Let's create an extraordinarily imaginative and complex game that pushes creative boundaries while remaining engaging and playable.
+    def _brainstorm_initial_ideas(self, narratives: Optional[str]) -> str:
+        """Initial brainstorming phase for core concepts"""
+        prompt = f"""Let's start with some wild, creative brainstorming for a game based on this narrative:
+{narratives if narratives else "Create something wildly imaginative!"}
 
-NARRATIVE CONTEXT:
-{narratives if narratives else "Create a wildly imaginative storyline that defies conventional gaming tropes!"}
+Think about:
+1. What unique core mechanics could make this game special?
+2. What unexpected twists on familiar gameplay elements could we add?
+3. What would make players go "wow, I've never seen that before"?
+4. How could the game surprise and delight players?
 
-Design a game that incorporates:
+Don't worry about implementation yet - let's dream big and be creative!"""
 
-1. INNOVATIVE MECHANICS
-- Invent mechanics that haven't been seen before
-- Create unexpected combinations of familiar elements
-- Design systems that evolve and surprise players
-- Think beyond traditional control schemes
-- Layer multiple interacting systems
+        return self._call_model_api(
+            user_prompt=prompt, system_prompt=self.system_prompt
+        )
 
-2. DYNAMIC COMPLEXITY
-- Progressive complexity that unfolds naturally
-- Emergent gameplay from system interactions
-- Meaningful choices with cascading effects
-- Hidden depth beneath simple controls
-- Rewarding mastery and experimentation
+    def _explore_complexity(self, initial_ideas: str) -> str:
+        """Explore ways to add depth and complexity"""
+        prompt = f"""Awesome initial ideas! Now let's add layers of depth and complexity:
 
-3. ENGAGING PROGRESSION
-- Non-linear skill development
-- Discoverable advanced techniques
-- Multiple valid approaches to challenges
-- Secrets that change gameplay fundamentally
-- Meta-progression that adds new dimensions
+Building on these ideas:
+<initial_concepts>
+{initial_ideas}
+</initial_concepts>
 
-4. WILD IMAGINATION
-- Break conventional genre boundaries
-- Subvert player expectations cleverly
-- Create memorable "wow" moments
-- Include mind-bending plot twists
-- Design reality-warping mechanics
+Let's explore:
+1. How could these mechanics interact in unexpected ways?
+2. What emergent gameplay might arise from these systems?
+3. How could we add hidden depth that players discover gradually?
+4. What secrets or advanced techniques could we layer in?
+5. How could the game evolve and surprise players over time?
 
-Please provide the design in this format:
+Think about making it deep but accessible - complexity that emerges naturally!"""
+
+        return self._call_model_api(
+            user_prompt=prompt, system_prompt=self.system_prompt
+        )
+
+    def _create_final_design(self, initial_ideas: str, complex_ideas: str) -> str:
+        """Create final design plan incorporating all elements"""
+        prompt = f"""Let's pull everything together into a cohesive design:
+
+Initial Concepts:
+<initial_concepts>
+{initial_ideas}
+</initial_concepts>
+
+Complexity Layers:
+<complexity_layers>
+{complex_ideas}
+</complexity_layers>
+
+Please provide a complete design in this format:
 
 <game_title>
-[An intriguing, memorable title]
+[An intriguing, memorable title that captures the game's essence]
 </game_title>
-
-<game_description>
-[A compelling description that captures the game's unique elements and wild imagination]
-</game_description>
-
-<game_guidance>
-[Engaging, concise instructions that hint at hidden depth]
-</game_guidance>
 
 <design_plan>
 [Detailed design document covering:
-- Core Mechanics & Systems
-- Progression & Complexity
-- Player Experience
-- Visual Style
-- Technical Requirements]
+
+1. Core Mechanics
+- Primary gameplay systems
+- Key interactions
+- Control scheme
+
+2. Progression & Complexity
+- How mechanics layer and combine
+- How complexity unfolds
+- Hidden depth and discoveries
+
+3. Player Experience
+- Learning curve
+- "Wow" moments
+- Secrets and mastery
+
+4. Visual Style
+- Art direction
+- Feedback systems
+- Visual effects
+
+5. Technical Requirements
+- Key systems needed
+- Important considerations
+- Implementation approach]
 </design_plan>
 
 Make it WILD but IMPLEMENTABLE - push creative boundaries while keeping it feasible in p5.js!"""
+
+        return self._call_model_api(
+            user_prompt=prompt, system_prompt=self.system_prompt
+        )
 
     def _extract_title(self, text: str) -> str:
         """Extract game title from text"""
@@ -128,22 +161,6 @@ Make it WILD but IMPLEMENTABLE - push creative boundaries while keeping it feasi
             return match.group(1).strip()
         return "Untitled Game"
 
-    def _extract_description(self, text: str) -> str:
-        """Extract game description from text"""
-        pattern = r"<game_description>\s*(.*?)\s*</game_description>"
-        match = re.search(pattern, text, re.DOTALL)
-        if match:
-            return match.group(1).strip()
-        return "No description provided."
-
-    def _extract_guidance(self, text: str) -> str:
-        """Extract game guidance from text"""
-        pattern = r"<game_guidance>\s*(.*?)\s*</game_guidance>"
-        match = re.search(pattern, text, re.DOTALL)
-        if match:
-            return match.group(1).strip()
-        return "No guidance provided."
-
     def _extract_design_plan(self, text: str) -> str:
         """Extract the full design plan"""
         pattern = r"<design_plan>\s*(.*?)\s*</design_plan>"
@@ -152,10 +169,10 @@ Make it WILD but IMPLEMENTABLE - push creative boundaries while keeping it feasi
             return match.group(1).strip()
         return "No design plan provided."
 
-    def _call_model_api(self, prompt: str, system_prompt: str = None) -> str:
+    def _call_model_api(self, user_prompt: str, system_prompt: str = None) -> str:
         """Call the model API with proper prompts"""
         return self.model_api.call(
-            user_prompt=prompt,
-            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            system_prompt=system_prompt or self.system_prompt,
             debug=self.debug,
         )

@@ -27,14 +27,14 @@ class InstructionSimpleDesigner:
 
     def design_game(
         self,
-        narratives: Optional[str] = None,
+        narrative: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Create game design and implementation with debugging steps
         """
         try:
             # Generate initial game design
-            prompt = self._create_prompt(narratives)
+            prompt = self._create_prompt(narrative)
             if self.debug:
                 print(f"\n{GREEN}Generated prompt:{RESET}\n{prompt}")
 
@@ -46,8 +46,6 @@ class InstructionSimpleDesigner:
 
             # Extract initial components
             title = self._extract_title(response)
-            description = self._extract_description(response)
-            guidance = self._extract_guidance(response)
             js_code = self._extract_code_block(response, "javascript")
             html_code = self._extract_code_block(response, "html") or ""
 
@@ -59,15 +57,7 @@ class InstructionSimpleDesigner:
             else:
                 js_files = [("game.js", js_code or "")]
 
-            return {
-                "title": title,
-                "description": description,
-                "game_design_text": description,
-                "game_guidance": guidance,
-                "html_code": html_code,
-                "js_files": js_files,
-                "full_response": response,
-            }
+            return {"title": title, "html_code": html_code, "js_files": js_files}
 
         except Exception as e:
             if self.debug:
@@ -95,39 +85,25 @@ class InstructionSimpleDesigner:
 """
 
         description = f"""Game Specifications:
-{narratives if narratives else 'Not specified, you should create an engaging storyline first.'}
-"""
+{narratives if narratives else 'Not specified, you should create an engaging storyline first.'}"""
 
-        prompt = f"""
----------------------------------------------------------
-TASK: Implement a game in p5.js based on the following description:
+        prompt = f"""TASK: Implement a game in p5.js based on the following description:
 <description>
 {description}
 </description>
-
 
 <p5js_guidelines>
 {p5js_guidelines}
 </p5js_guidelines>
 
-
 Here is a template for the HTML code:
 {FORMAT_HTML_TEMPLATE.format(title='YOUR_GAME_TITLE', p5js_url=self.p5js_url)}
-
 
 ---------------------------------------------------------
 REQUIREMENT: You should output things in the following format:
 <game_title>
 ... (game title)
 </game_title>
-
-<game_description>
-... (game description)
-</game_description>
-
-<game_guidance>
-... (game guidance to display on the start screen, keep it short, fun and engaging)
-</game_guidance>
 
 For each file, you should output the following:
 <code filename="{{name}}.{{extension}}">
@@ -161,36 +137,6 @@ Output HTML as the last file:
                 return match.group(1).strip()
 
         return "Untitled Game"
-
-    def _extract_description(self, text: str) -> str:
-        """Extract game description from text"""
-        pattern = r"<game_description>\s*(.*?)\s*</game_description>"
-        match = re.search(pattern, text, re.DOTALL)
-        if match:
-            return match.group(1).strip()
-
-        # Fallback to old format if new format not found
-        fallback_pattern = r"```description\s*(.*?)```"
-        match = re.search(fallback_pattern, text, re.DOTALL)
-        if match:
-            return match.group(1).strip()
-
-        return "No description provided."
-
-    def _extract_guidance(self, text: str) -> str:
-        """Extract game guidance/instructions from text"""
-        pattern = r"<game_guidance>\s*(.*?)\s*</game_guidance>"
-        match = re.search(pattern, text, re.DOTALL)
-        if match:
-            return match.group(1).strip()
-
-        # Fallback to old format if new format not found
-        fallback_pattern = r"```guidance\s*(.*?)```"
-        match = re.search(fallback_pattern, text, re.DOTALL)
-        if match:
-            return match.group(1).strip()
-
-        return "No guidance provided."
 
     def _extract_code_block(
         self, text: str, language: str
