@@ -1,10 +1,11 @@
 #! /bin/bash
 NUM_GAMES=3
-NUM_NARRATIVES=10
+NUM_NARRATIVES=5
 
 METHODS=(
     "simple_prompt" 
     "instruction_simple_prompt"
+    "complexity_guide"
 )
 
 for i in $(seq -f "%04g" 0 $(($NUM_NARRATIVES - 1)))
