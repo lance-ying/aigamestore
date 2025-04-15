@@ -85,8 +85,17 @@ HTML_TEMPLATE = '''
             padding: 10px;
             display: flex;
             flex-direction: column;
-            min-height: 100%;
+            height: 100vh;
             background-color: #f8f8f8;
+            box-sizing: border-box;
+            justify-content: center;
+        }
+        .main-content {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            justify-content: center;
+            max-height: 100vh;
         }
         .game-container {
             display: flex;
@@ -104,7 +113,8 @@ HTML_TEMPLATE = '''
             height: auto;
         }
         .game-frame {
-            width: 600px;
+            width: 100%;
+            max-width: 600px;
             height: 380px;
             border: none;
             background: #222;
@@ -113,7 +123,7 @@ HTML_TEMPLATE = '''
             box-shadow: 0 2px 8px rgba(0,0,0,0.1);
         }
         .rating-sliders {
-            margin-top: 8px;
+            margin-top: 25px;
             background: white;
             padding: 8px;
             border-radius: 6px;
@@ -135,7 +145,7 @@ HTML_TEMPLATE = '''
         .actions {
             text-align: center;
             padding: 0;
-            margin-top: 0;
+            margin-top: 10px;
         }
         button {
             padding: 8px 16px;
@@ -299,6 +309,25 @@ HTML_TEMPLATE = '''
             width: 18px;
             height: 18px;
         }
+        
+        /* Responsive adjustments */
+        @media (max-height: 820px) {
+            .game-frame {
+                height: 320px;
+            }
+            .rating-item {
+                margin-bottom: 5px;
+            }
+            label {
+                font-size: 13px;
+            }
+        }
+        
+        @media (max-height: 740px) {
+            .game-frame {
+                height: 280px;
+            }
+        }
         </style>
     </head>
     <body>
@@ -320,6 +349,7 @@ HTML_TEMPLATE = '''
         </div>
     </div>
         
+    <div class="main-content">
         <div class="game-container">
         {% for game in games %}
         <div class="game-box">
@@ -328,14 +358,14 @@ HTML_TEMPLATE = '''
             
             <div class="rating-sliders">
                 <div class="rating-item">
-                    <label>Fun: How enjoyable was the game to play?</label>
+                    <label>Controls: How intuitive and responsive were the controls?</label>
                     <div class="slider-container">
-                        <input type="range" min="1" max="10" value="5" class="slider" id="fun-{{ loop.index }}">
-                        <span class="slider-value" id="fun-value-{{ loop.index }}">5</span>
+                        <input type="range" min="1" max="10" value="5" class="slider" id="controls-{{ loop.index }}">
+                        <span class="slider-value" id="controls-value-{{ loop.index }}">5</span>
                     </div>
                     <div class="scale-labels">
-                        <span>Not fun</span>
-                        <span>Very fun</span>
+                        <span>Confusing</span>
+                        <span>Intuitive</span>
                     </div>
                 </div>
                 
@@ -352,14 +382,14 @@ HTML_TEMPLATE = '''
                 </div>
                 
                 <div class="rating-item">
-                    <label>Controls: How intuitive and responsive were the controls?</label>
+                    <label>Fun: How enjoyable was the game to play?</label>
                     <div class="slider-container">
-                        <input type="range" min="1" max="10" value="5" class="slider" id="controls-{{ loop.index }}">
-                        <span class="slider-value" id="controls-value-{{ loop.index }}">5</span>
+                        <input type="range" min="1" max="10" value="5" class="slider" id="fun-{{ loop.index }}">
+                        <span class="slider-value" id="fun-value-{{ loop.index }}">5</span>
                     </div>
                     <div class="scale-labels">
-                        <span>Confusing</span>
-                        <span>Intuitive</span>
+                        <span>Not fun</span>
+                        <span>Very fun</span>
                     </div>
                 </div>
             </div>
@@ -382,6 +412,7 @@ HTML_TEMPLATE = '''
     <div class="actions">
         <button id="submit-ratings">Submit Ratings</button>
         <button id="show-instructions">Instructions</button>
+    </div>
     </div>
 
     <script>
@@ -589,6 +620,9 @@ def serve_game(game_path):
         const eventBuffer = [];
         let isFocused = true;
         let lastFocusTime = Date.now();
+        let lastX = null;
+        let lastY = null;
+        let lastMoveTime = 0;
 
         // Record action to buffer
         function recordAction(eventType, data) {
@@ -596,6 +630,7 @@ def serve_game(game_path):
                 eventBuffer.push({
                     type: eventType,
                     timestamp: Date.now(),
+                    framecount: typeof frameCount !== 'undefined' ? frameCount : -1,
                     ...data
                 });
             }
@@ -642,8 +677,57 @@ def serve_game(game_path):
             });
         });
 
+        // Mouse movement tracking
+        document.addEventListener('mousemove', (e) => {
+            const now = Date.now();
+            // Only record if position changed AND at 60 FPS
+            if ((lastX !== e.clientX || lastY !== e.clientY) && now - lastMoveTime > 16.66) {
+                recordAction('mousemove', {
+                    x: e.clientX,
+                    y: e.clientY
+                });
+                lastX = e.clientX;
+                lastY = e.clientY;
+                lastMoveTime = now;
+            }
+        });
+        
+        // Mouse clicks
         document.addEventListener('click', (e) => {
             recordAction('click', {
+                x: e.clientX,
+                y: e.clientY,
+                button: e.button
+            });
+        });
+        
+        // Mouse down/up
+        document.addEventListener('mousedown', (e) => {
+            recordAction('mousedown', {
+                x: e.clientX,
+                y: e.clientY,
+                button: e.button
+            });
+        });
+        
+        document.addEventListener('mouseup', (e) => {
+            recordAction('mouseup', {
+                x: e.clientX,
+                y: e.clientY,
+                button: e.button
+            });
+        });
+        
+        // Track when mouse enters/leaves the game area
+        document.addEventListener('mouseenter', (e) => {
+            recordAction('mouseenter', {
+                x: e.clientX,
+                y: e.clientY
+            });
+        });
+        
+        document.addEventListener('mouseleave', (e) => {
+            recordAction('mouseleave', {
                 x: e.clientX,
                 y: e.clientY
             });
