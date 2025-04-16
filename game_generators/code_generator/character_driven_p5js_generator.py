@@ -15,12 +15,12 @@ class CharacterDrivenP5JSGenerator:
         self,
         model_api: ModelAPI,
         system_prompt: str = CODE_GENERATION_SYSTEM_PROMPT,
-        debug: bool = False,
+        verbose: bool = False,
     ):
         self.model_api = model_api
         self.system_prompt = system_prompt
         self.p5js_url = "https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"
-        self.debug = debug
+        self.verbose = verbose
         # Add tracking for JS files
         self.js_files = {}  # Dictionary to store all JS files: {filename: content}
 
@@ -171,7 +171,7 @@ Return ONLY the complete game.js file in this format:
         self, design: Dict[str, Any]
     ) -> Tuple[str, List[Tuple[str, str]]]:
         try:
-            if self.debug:
+            if self.verbose:
                 print(f"\n{BLUE}Starting code generation...{RESET}")
 
             mode = design.get("mode", "initial_generation")
@@ -183,7 +183,7 @@ Return ONLY the complete game.js file in this format:
                 return self._generate_initial_code(design)
 
         except Exception as e:
-            if self.debug:
+            if self.verbose:
                 print(f"\n{RED}Error in code generation:{RESET}")
                 print(f"Error type: {type(e).__name__}")
                 print(f"Error message: {str(e)}")
@@ -197,7 +197,7 @@ Return ONLY the complete game.js file in this format:
         game_design = design["game_design_text"]
 
         for round in range(1, 4):  # 3 rounds of improvements
-            if self.debug:
+            if self.verbose:
                 print(f"\n{GREEN}Character Review Round {round}:{RESET}")
 
             # Get environment feedback
@@ -232,7 +232,7 @@ Focus on concrete code improvements."""
             user_prompt=prompt,
             system_prompt=self.system_prompt,
             max_tokens=10000,
-            debug=self.debug,
+            verbose=self.verbose,
         )
 
     def _get_character_feedback(self, current_js: str, game_design: str) -> str:
@@ -252,7 +252,7 @@ Provide specific feedback on:
             user_prompt=prompt,
             system_prompt=self.system_prompt,
             max_tokens=10000,
-            debug=self.debug,
+            verbose=self.verbose,
         )
 
     def _get_character_specific_feedback(
@@ -289,7 +289,7 @@ Express your feedback in natural language as if you were the character. Focus on
             user_prompt=prompt,
             system_prompt=self.system_prompt,
             max_tokens=10000,
-            debug=self.debug,
+            verbose=self.verbose,
         )
 
     def apply_character_improvements(
@@ -356,7 +356,7 @@ Return ONLY the improved game.js file in a ```javascript:game.js block.
             user_prompt=prompt,
             system_prompt=self.system_prompt,
             max_tokens=16000,
-            debug=self.debug,
+            verbose=self.verbose,
         )
 
         # Extract code from response
@@ -378,11 +378,11 @@ Return ONLY the improved game.js file in a ```javascript:game.js block.
         """
         Perform a final validation check using the LLM to ensure the JavaScript code is correct.
         """
-        if self.debug:
+        if self.verbose:
             print(f"\n{BLUE}Performing final code validation through LLM...{RESET}")
 
         if "game.js" not in self.js_files or not self.js_files["game.js"].strip():
-            if self.debug:
+            if self.verbose:
                 print(f"{RED}Critical: game.js is missing or empty{RESET}")
 
             # Create a minimal functioning game.js
@@ -426,12 +426,12 @@ For any fixes, return the complete file in a ```javascript:game.js block.
             user_prompt=prompt,
             system_prompt=self.system_prompt,
             max_tokens=16000,
-            debug=self.debug,
+            verbose=self.verbose,
         )
 
         # Check if the response indicates the code is already valid
         if "code is valid" in response.lower():
-            if self.debug:
+            if self.verbose:
                 print(f"{GREEN}LLM validated code as correct{RESET}")
             return
 
@@ -439,18 +439,18 @@ For any fixes, return the complete file in a ```javascript:game.js block.
         fixed_code = self._extract_code_block(response, "javascript")
 
         if isinstance(fixed_code, dict) and "game.js" in fixed_code:
-            if self.debug:
+            if self.verbose:
                 print(f"{GREEN}LLM provided code fixes for game.js{RESET}")
             self.js_files["game.js"] = fixed_code["game.js"]
         elif isinstance(fixed_code, str):
-            if self.debug:
+            if self.verbose:
                 print(f"{GREEN}LLM provided code fixes for game.js{RESET}")
             self.js_files["game.js"] = fixed_code
 
         # One final check to ensure setup() and draw() are present
         game_js = self.js_files["game.js"]
         if "function setup" not in game_js or "function draw" not in game_js:
-            if self.debug:
+            if self.verbose:
                 print(
                     f"{RED}Critical: game.js still missing setup/draw functions after validation{RESET}"
                 )
@@ -469,7 +469,7 @@ Return the COMPLETE fixed game.js file."""
                 user_prompt=fix_prompt,
                 system_prompt=self.system_prompt,
                 max_tokens=10000,
-                debug=self.debug,
+                verbose=self.verbose,
             )
             fixed_js = self._extract_code_block(fixed_game, "javascript")
 
@@ -479,18 +479,18 @@ Return the COMPLETE fixed game.js file."""
                 and "function draw" in fixed_js
             ):
                 self.js_files["game.js"] = fixed_js
-                if self.debug:
+                if self.verbose:
                     print(
                         f"{GREEN}Successfully added missing setup/draw functions{RESET}"
                     )
             elif isinstance(fixed_js, dict) and "game.js" in fixed_js:
                 self.js_files["game.js"] = fixed_js["game.js"]
-                if self.debug:
+                if self.verbose:
                     print(
                         f"{GREEN}Successfully added missing setup/draw functions{RESET}"
                     )
 
-        if self.debug:
+        if self.verbose:
             print(f"{GREEN}Code validation complete{RESET}")
 
     def _generate_rendering_code(
@@ -517,7 +517,7 @@ Return the complete code in a ```javascript block."""
             user_prompt=prompt,
             system_prompt=self.system_prompt,
             max_tokens=10000,
-            debug=self.debug,
+            verbose=self.verbose,
         )
         js_code = self._extract_code_block(response, "javascript")
         return self._create_html_code(), [("game.js", js_code)]
@@ -536,7 +536,7 @@ Return the complete code in a ```javascript block."""
         response = self.model_api.call(
             user_prompt=user_prompt,
             system_prompt=self.system_prompt,
-            debug=self.debug,
+            verbose=self.verbose,
         )
 
         # Extract code blocks
@@ -549,7 +549,7 @@ Return the complete code in a ```javascript block."""
                 game_js_content = js_code["game.js"]
             else:
                 # Consolidate multiple files into a single game.js
-                if self.debug:
+                if self.verbose:
                     print(
                         f"{YELLOW}Consolidating multiple JS files into a single game.js{RESET}"
                     )
@@ -677,7 +677,7 @@ function draw() {
             js_includes='<script src="game.js"></script>',
         )
 
-        if self.debug:
+        if self.verbose:
             print(f"\n{BLUE}Generated JavaScript code:{RESET}")
             print(f"\n{YELLOW}game.js:{RESET}\n{self.js_files['game.js']}")
             print(f"\n{BLUE}Generated HTML code:{RESET}\n{html_code}")
@@ -695,7 +695,7 @@ function draw() {
         Returns:
             str: Extracted title or 'Game' if not found
         """
-        if self.debug:
+        if self.verbose:
             print(f"\n{BLUE}Extracting title{RESET}")
 
         patterns = [
@@ -709,11 +709,11 @@ function draw() {
             match = re.search(pattern, text, re.IGNORECASE)
             if match:
                 title = match.group(1).strip()
-                if self.debug:
+                if self.verbose:
                     print(f"{GREEN}Found title: {title}{RESET}")
                 return title
 
-        if self.debug:
+        if self.verbose:
             print(f"{YELLOW}No title found, using default{RESET}")
         return "Game"
 
@@ -726,7 +726,7 @@ function draw() {
                 user_prompt=prompt,
                 system_prompt=self.system_prompt,
                 max_tokens=10000,
-                debug=self.debug,
+                verbose=self.verbose,
             )
 
             # Clean up the response
@@ -735,30 +735,30 @@ function draw() {
             # Limit length and remove newlines
             title = " ".join(title.split()[:4])
 
-            if self.debug:
+            if self.verbose:
                 print(f"{GREEN}Generated title: {title}{RESET}")
 
             return title
         except Exception as e:
-            if self.debug:
+            if self.verbose:
                 print(f"{YELLOW}Error generating title, using default{RESET}")
             return "My P5.js Game"
 
     def _validate_js_code(self, js_files: Dict[str, str]) -> Dict[str, str]:
         """Validate JavaScript code files"""
-        if self.debug:
+        if self.verbose:
             print(f"\n{BLUE}Validating JavaScript code...{RESET}")
 
         try:
             validated_files = {}
 
             for filename, code in js_files.items():
-                if self.debug:
+                if self.verbose:
                     print(f"\n{BLUE}Validating {filename}:{RESET}")
 
                 # Basic validation - ensure code is not empty
                 if not code.strip():
-                    if self.debug:
+                    if self.verbose:
                         print(f"{YELLOW}Empty code in {filename}, skipping{RESET}")
                     continue
 
@@ -771,33 +771,33 @@ function draw() {
                         if f"function {func}" not in code
                     ]
 
-                    if missing and self.debug:
+                    if missing and self.verbose:
                         print(
                             f"{YELLOW}Warning: Missing required functions in game.js: {', '.join(missing)}{RESET}"
                         )
 
                 validated_files[filename] = code
 
-            if self.debug:
+            if self.verbose:
                 print(f"{GREEN}JavaScript validation complete{RESET}")
 
             return validated_files
 
         except Exception as e:
-            if self.debug:
+            if self.verbose:
                 print(f"{RED}Error in JavaScript validation: {str(e)}{RESET}")
             raise
 
     def _validate_html_code(self, code: str, title: str) -> str:
         """Validate and clean up HTML code"""
-        if self.debug:
+        if self.verbose:
             print(f"\n{BLUE}HTML validation:{RESET}")
             print(f"Input code length: {len(code)}")
 
         try:
             # If code doesn't match our template structure, use template
             if not ("<html" in code and "<canvas" in code):
-                if self.debug:
+                if self.verbose:
                     print(f"{YELLOW}Invalid HTML structure, using template{RESET}")
 
                 # Create script tags for all JS files
@@ -844,13 +844,13 @@ function draw() {
                         + code[insert_point:]
                     )
 
-            if self.debug:
+            if self.verbose:
                 print(f"{GREEN}HTML validation complete{RESET}")
 
             return code
 
         except Exception as e:
-            if self.debug:
+            if self.verbose:
                 print(f"{RED}Error in HTML validation: {str(e)}{RESET}")
                 print("HTML code that caused error:")
                 print(code)

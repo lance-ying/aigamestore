@@ -15,12 +15,12 @@ class P5JSGenerator:
         self,
         model_api: ModelAPI,
         system_prompt: str = CODE_GENERATION_SYSTEM_PROMPT,
-        debug: bool = False,
+        verbose: bool = False,
     ):
         self.model_api = model_api
         self.system_prompt = system_prompt
         self.p5js_url = "https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"
-        self.debug = debug
+        self.verbose = verbose
 
     def _create_user_prompt(self, title: str, game_concept: str) -> str:
         """Create the user prompt for code generation"""
@@ -90,7 +90,7 @@ Output HTML as the last file:
 
             # If no JS files found, create a default game.js
             if not js_files:
-                if self.debug:
+                if self.verbose:
                     print(
                         f"{YELLOW}Warning: No JS files found, creating default game.js{RESET}"
                     )
@@ -110,7 +110,7 @@ Output HTML as the last file:
     ) -> Tuple[str, List[Tuple[str, str]]]:
         """Generate complete game code from design"""
         try:
-            if self.debug:
+            if self.verbose:
                 print(f"\n{BLUE}Starting code generation...{RESET}")
 
             title = design.get("title", "NOT SPECIFIED!")
@@ -124,7 +124,7 @@ Output HTML as the last file:
             response = self.model_api.call(
                 user_prompt=user_prompt,
                 system_prompt=self.system_prompt,
-                debug=self.debug,
+                verbose=self.verbose,
             )
 
             # Extract code blocks
@@ -156,7 +156,7 @@ Output HTML as the last file:
             return html_code, js_files, title
 
         except Exception as e:
-            if self.debug:
+            if self.verbose:
                 print(f"\n{RED}Error in code generation:{RESET}")
                 print(f"Error type: {type(e).__name__}")
                 print(f"Error message: {str(e)}")
@@ -175,19 +175,19 @@ Output HTML as the last file:
 
     def _validate_js_code(self, js_files: Dict[str, str]) -> Dict[str, str]:
         """Validate JavaScript code files"""
-        if self.debug:
+        if self.verbose:
             print(f"\n{BLUE}Validating JavaScript code...{RESET}")
 
         try:
             validated_files = {}
 
             for filename, code in js_files.items():
-                if self.debug:
+                if self.verbose:
                     print(f"\n{BLUE}Validating {filename}:{RESET}")
 
                 # Basic validation - ensure code is not empty
                 if not code.strip():
-                    if self.debug:
+                    if self.verbose:
                         print(f"{YELLOW}Empty code in {filename}, skipping{RESET}")
                     continue
 
@@ -200,33 +200,33 @@ Output HTML as the last file:
                         if f"function {func}" not in code
                     ]
 
-                    if missing and self.debug:
+                    if missing and self.verbose:
                         print(
                             f"{YELLOW}Warning: Missing required functions in game.js: {', '.join(missing)}{RESET}"
                         )
 
                 validated_files[filename] = code
 
-            if self.debug:
+            if self.verbose:
                 print(f"{GREEN}JavaScript validation complete{RESET}")
 
             return validated_files
 
         except Exception as e:
-            if self.debug:
+            if self.verbose:
                 print(f"{RED}Error in JavaScript validation: {str(e)}{RESET}")
             raise
 
     def _validate_html_code(self, code: str, title: str) -> str:
         """Validate and clean up HTML code"""
-        if self.debug:
+        if self.verbose:
             print(f"\n{BLUE}HTML validation:{RESET}")
             print(f"Input code length: {len(code)}")
 
         try:
             # If code doesn't match our template structure, use template
             if not ("<html" in code and "<canvas" in code):
-                if self.debug:
+                if self.verbose:
                     print(f"{YELLOW}Invalid HTML structure, using template{RESET}")
 
                 # Create script tags for all JS files
@@ -273,13 +273,13 @@ Output HTML as the last file:
                         + code[insert_point:]
                     )
 
-            if self.debug:
+            if self.verbose:
                 print(f"{GREEN}HTML validation complete{RESET}")
 
             return code
 
         except Exception as e:
-            if self.debug:
+            if self.verbose:
                 print(f"{RED}Error in HTML validation: {str(e)}{RESET}")
                 print("HTML code that caused error:")
                 print(code)
