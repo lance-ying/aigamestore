@@ -32,7 +32,9 @@ CODE_GENERATION_SYSTEM_PROMPT = """You are an expert p5.js game developer who cr
    - Working player controls and game mechanics
    - Proper state management (game states, win/lose conditions)
    - Error handling for edge cases
-   - [IMPORTANT] ADD A SEED TO THE GAME CODE TO MAKE IT REPRODUCIBLE!
+   - Ensure the game properly initializes and handles user input, with proper management for input responses.
+   - Use `Esc` key to return to start screen and reset the game
+   - [IMPORTANT] ADD SEED 42 TO THE GAME CODE TO MAKE IT REPRODUCIBLE!
 
 2. Technical Architecture:
    - ES6 module structure with clean imports/exports
