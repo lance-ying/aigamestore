@@ -58,6 +58,10 @@ REQUIREMENT:
 ... (Create a title if it hasn't been specified)
 </game_title>
 
+<game_instructions>
+... (Create interesting and clear instructions for the game: how to play, what to do, etc.)
+</game_instructions>
+
 For each file, you should output the following:
 <code filename="{{name}}.{{extension}}">
 ... (code)
@@ -105,6 +109,14 @@ Output HTML as the last file:
                     return code.strip()
             return ""
 
+    def _extract_game_instructions(self, text: str) -> str:
+        """Extract the game instructions from the text"""
+        pattern = r"<game_instructions>\s*(.*?)\s*</game_instructions>"
+        match = re.search(pattern, text, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+        return ""
+
     def generate_code(
         self, design: Dict[str, Any]
     ) -> Tuple[str, List[Tuple[str, str]]]:
@@ -130,6 +142,7 @@ Output HTML as the last file:
             # Extract code blocks
             js_code = self._extract_code_block(response, "javascript")
             html_code = self._extract_code_block(response, "html") or ""
+            game_instructions = self._extract_game_instructions(response)
 
             # Format HTML if needed
             if not html_code or "<script src=" not in html_code:
@@ -153,7 +166,7 @@ Output HTML as the last file:
             if title == "NOT SPECIFIED!":
                 title = self._extract_title(response)
 
-            return html_code, js_files, title
+            return html_code, js_files, title, game_instructions
 
         except Exception as e:
             if self.verbose:

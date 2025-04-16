@@ -133,15 +133,19 @@ class GameGenerator:
             # Add default number of players if needed by any component
             if isinstance(design, dict):
                 design["num_players"] = 1  # Default to single player
-            
+
             title = design.get("title", None)
 
             # Step 2: Generate code based on the design
             if self.code_generator is not None:
-                html_code, js_files, title = self.code_generator.generate_code(design)
+                html_code, js_files, title, game_instructions = (
+                    self.code_generator.generate_code(design)
+                )
             else:
-                html_code, js_files = design.get("html_code", ""), design.get(
-                    "js_files", []
+                html_code, js_files, game_instructions = (
+                    design.get("html_code", ""),
+                    design.get("js_files", []),
+                    design.get("game_instructions", ""),
                 )
 
             # Step 3: Save the generated game
@@ -149,6 +153,7 @@ class GameGenerator:
                 title=title,
                 html_code=html_code,
                 js_files=js_files,
+                game_instructions=game_instructions,
                 narrative=narrative,
                 narrative_path=narrative_path,
             )
@@ -173,6 +178,7 @@ class GameGenerator:
         title: str,
         html_code: str,
         js_files: List[Tuple[str, str]],
+        game_instructions: str,
         narrative: Optional[str] = None,
         narrative_path: Optional[str] = None,
     ) -> Path:
@@ -227,6 +233,7 @@ class GameGenerator:
                 "title": title,
                 "narrative": narrative if narrative else "None",
                 "narrative_path": narrative_path if narrative_path else "None",
+                "game_instructions": game_instructions,
             },
             "generation_info": {
                 "method": self.method_name,

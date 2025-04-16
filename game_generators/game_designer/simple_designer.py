@@ -18,7 +18,10 @@ class SimpleDesigner:
     """Simple designer that creates game design and code"""
 
     def __init__(
-        self, model_api: ModelAPI = None, system_prompt: str = None, verbose: bool = False
+        self,
+        model_api: ModelAPI = None,
+        system_prompt: str = None,
+        verbose: bool = False,
     ):
         self.model_api = model_api
         self.system_prompt = system_prompt or CODE_GENERATION_SYSTEM_PROMPT
@@ -46,6 +49,7 @@ class SimpleDesigner:
             title = self._extract_title(response)
             js_code = self._extract_code_block(response, "javascript")
             html_code = self._extract_code_block(response, "html") or ""
+            game_instructions = self._extract_game_instructions(response)
 
             # Convert js_code to proper format and ensure directories exist
             if isinstance(js_code, dict):
@@ -59,6 +63,7 @@ class SimpleDesigner:
                 "title": title,
                 "html_code": html_code,
                 "js_files": js_files,
+                "game_instructions": game_instructions,
             }
 
         except Exception as e:
@@ -93,6 +98,10 @@ REQUIREMENT: You should output things in the following format:
 ... (game title)
 </game_title>
 
+<game_instructions>
+... (interesting and clear instructions for the game: how to play, what to do, etc.)
+</game_instructions>
+
 For each file, you should output the following:
 <code filename="{{name}}.{{extension}}">
 ... (code)
@@ -125,6 +134,14 @@ Output HTML as the last file:
                 return match.group(1).strip()
 
         return "Untitled Game"
+
+    def _extract_game_instructions(self, text: str) -> str:
+        """Extract the game instructions from the text"""
+        pattern = r"<game_instructions>\s*(.*?)\s*</game_instructions>"
+        match = re.search(pattern, text, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+        return ""
 
     def _extract_code_block(
         self, text: str, language: str
