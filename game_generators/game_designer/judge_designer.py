@@ -80,62 +80,58 @@ class JudgeDesigner:
 
     def _create_initial_design(self, narrative: Optional[str]) -> tuple[str, str]:
         """Create initial game design proposal focusing on complex interactions"""
-        prompt = f"""Create a game design with deep, interacting systems that constantly surprise players!
+        prompt = f"""Create a game design with deep, interacting systems that constantly surprise players and make them want to play more!
 
 Narrative Context:
 {narrative if narrative else "Create a game where players constantly discover new interactions and possibilities!"}
 
 Think about:
-1. System Interactions
-- What unexpected combinations can emerge?
-- How do different mechanics affect each other?
-- What surprising chain reactions are possible?
+1. Delightful Surprises & "Aha!" Moments
+- What will make players gasp with excitement when they discover it?
+- Which mechanics have satisfying "domino effect" reactions?
+- How can players stumble upon magical combinations?
 
-2. Hidden Depths
-- What advanced techniques aren't obvious?
-- What secrets do the systems hide?
-- How do players discover new possibilities?
+2. Player-Driven Stories
+- What memorable moments will players want to share?
+- Which mechanics let players feel clever and creative?
+- How can players create their own "impossible" solutions?
 
-3. Evolution & Change
-- How do systems evolve over time?
-- What triggers unexpected changes?
-- How does complexity unfold?
+3. Dynamic World Evolution
+- What dramatic changes keep the game fresh?
+- How do player actions reshape the game world?
+- Which mechanics create "I can't believe that happened!" moments?
 
-4. Emergent Strategy
-- What creative solutions might players find?
-- How can mechanics be "broken" in fun ways?
-- What advanced techniques emerge naturally?
+4. Emergent Mastery
+- What advanced techniques feel like discovering superpowers?
+- Which mechanics can be cleverly "exploited" in satisfying ways?
+- How do small discoveries lead to game-changing strategies?
 
-Please provide the design in this format:
+5. Hidden Wonders
+- What secret interactions feel like finding treasure?
+- Which mechanics have delightful nested layers to uncover?
+- How can players become legends by sharing their discoveries?
+
+Please provide the design in this format with two blocks for the title and the design plan respectively:
+
 <game_title>
 [An intriguing title that hints at complexity]
 </game_title>
 
 <design_plan>
-1. Core Systems
+[1. Core Concepts
+- Interesting core concepts that players will be excited to discover
 - Primary mechanics and their interactions
-- Basic-to-advanced progression
 - Hidden properties and behaviors
-
-2. Interaction Web
-- How systems affect each other
-- Unexpected combinations
-- Emergent possibilities
 
 3. Evolution Path
 - How systems change
-- Triggered transformations
 - Surprising developments
-
-4. Discovery Layer
-- Hidden mechanics
-- Advanced techniques
 - Secret interactions
 
-5. Technical Architecture
-- Key systems implementation
-- Interaction handling
-- State management
+4. Technical Architecture
+- Key systems implementation: How the game is implemented
+- Interaction handling: How the game handles user input
+- State management: How the game manages its state]
 </design_plan>"""
 
         response = self._call_model_api(prompt, self.system_prompt)

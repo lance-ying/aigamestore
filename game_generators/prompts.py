@@ -40,7 +40,9 @@ CODE_GENERATION_SYSTEM_PROMPT = """You are an expert p5.js game developer who cr
    - ES6 module structure with clean imports/exports
    - Optimized performance (maintain 60 FPS)
    - Use deltaTime for physics calculations
-   - Create a start screen with clear and engaging instructions on how to play (the player has to press Enter to start the game)
+   - Create a start screen with clear and engaging instructions on how to play 
+     1. the player has to press `Enter` to start the game, and
+     2. the player could press `Esc` to return to the start screen and reset the game (this information should be displayed on the start screen as well)
 
 3. Package and Environment Requirements:
    - Canvas size constraints (600x400)
