@@ -12,13 +12,11 @@ from scheduler import ParquetScheduler
 
 # Hugging Face configuration
 HF_TOKEN = os.environ.get("HF_TOKEN")
-GAMES_DATASET = "generative-games/gen-games-v2"
-PREFERENCES_DATASET = "generative-games/gen-games-v2-preferences"  # Dataset to save ratings
+GAMES_DATASET = "generative-games/gen-games-v3"
+PREFERENCES_DATASET = "generative-games/gen-games-v3-preferences-test"  # Dataset to save ratings
 
 PUSH_EVERY_N_RATINGS = 10
 
-# folder structure in game dir: {method} / {model} / {genre} / {name} / index.html
-GAME_DIR = Path(__file__).parent / "games"
 RESULTS_DIR = Path(__file__).parent / "results"
 RATINGS_FILE = RESULTS_DIR / "all_ratings.json"
 
@@ -59,17 +57,35 @@ GAMES_DATASET = load_games_dataset()
 
 def get_random_games(num_games=2):
     """Get random games from the dataset"""
-    print("Getting random games")
-    if GAMES_DATASET is None:
-        return []
+    # print("Getting random games")
+    # if GAMES_DATASET is None:
+    #     return []
     
-    # Get all games
-    all_games = list(GAMES_DATASET)
+    # # Get all games
+    # all_games = list(GAMES_DATASET)
     
-    if len(all_games) < num_games:
-        return all_games
+    # if len(all_games) < num_games:
+    #     return all_games
     
-    return random.sample(all_games, num_games)
+    # return random.sample(all_games, num_games)
+
+    # 1) sample a narrative
+    # 2) sample two different methods
+    # 3) sample a game for each method
+    narrative_ids = GAMES_DATASET.unique("game_narrative_id")
+    narrative_id = random.choice(narrative_ids)
+    games = GAMES_DATASET.filter(lambda x: x["game_narrative_id"] == narrative_id)
+    methods = games.unique("method")
+    method_a = random.choice(methods)
+    method_b = random.choice(methods)
+    while method_b == method_a:
+        method_b = random.choice(methods)
+    games_a = games.filter(lambda x: x["method"] == method_a)
+    games_b = games.filter(lambda x: x["method"] == method_b)
+    game_a = random.choice(games_a)
+    game_b = random.choice(games_b)
+    return [game_a, game_b]
+
 
 # HTML template for the main page
 HTML_TEMPLATE = '''
@@ -304,7 +320,7 @@ HTML_TEMPLATE = '''
         
         /* Modal styles */
         .modal {
-            display: none;
+            display: none; /* Hidden by default */
             position: fixed;
             z-index: 1000;
             left: 0;
@@ -312,7 +328,6 @@ HTML_TEMPLATE = '''
             width: 100%;
             height: 100%;
             background-color: rgba(0,0,0,0.5);
-            display: flex;
             justify-content: center;
             align-items: center;
         }
@@ -442,33 +457,33 @@ HTML_TEMPLATE = '''
             <p >You'll be shown two games side by side. For each game, please:</p>
             
             <div>
-                <h4>1. Play for about 1 minute to get a good feel for it</h4>
+                <h4>1. Play for about 1 minute to get a good feel for it. You can stop earlier if the game is broken and is impossible to play.</h4>
                 <h4>2. Rate the game on three aspects:</h4>
                 
                 <div style="margin-left: 15px; ">
                     <h4>Controls (0-10)</h4>
                     <p style="margin-left: 10px; ">
-                        - 0: Controls are completely confusing and unresponsive (like controls that don't work)<br>
-                        - 5: Controls are somewhat intuitive but could be improved (like basic mobile controls)<br>
-                        - 10: Controls are perfectly intuitive and responsive (like controls that feel natural)
+                        - 0: Controls are completely confusing and unresponsive<br>
+                        - 5: Controls are somewhat intuitive but could be improved<br>
+                        - 10: Controls are perfectly intuitive and responsive
                     </p>
                     
                     <h4>Difficulty (0-10)</h4>
                     <p style="margin-left: 10px; ">
-                        - 0: Game is too easy, no challenge at all (like a game with no challenge)<br>
-                        - 5: Game has a good balance of challenge (like a typical mobile game)<br>
-                        - 10: Game is extremely difficult, possibly frustrating (like a game that feels unfair)
+                        - 0: Game is too easy and has no challenge at all<br>
+                        - 5: Game has a good balance of challenge<br>
+                        - 10: Game is extremely difficult
                     </p>
                     
                     <h4>Fun Factor (0-10)</h4>
                     <p style="margin-left: 10px; ">
-                        - 0: Game is not enjoyable at all (like a broken or frustrating game)<br>
+                        - 0: Game is not enjoyable at all<br>
                         - 5: Game is somewhat enjoyable (like a basic mobile game you'd play once)<br>
-                        - 10: Game is extremely fun and engaging (like your favorite casual game)
+                        - 10: Game is extremely fun and engaging
                     </p>
                 </div>
                 
-                <h4>3. Finally, choose which game you think is better overall</h4>
+                <h4>3. Finally, choose which game you think an average person would choose to play</h4>
             </div>
             
             <h3>Important Notes</h3>
@@ -477,7 +492,6 @@ HTML_TEMPLATE = '''
                 <li>Please take this seriously - we use this data for research</li>
                 <li>There are no right or wrong answers - we want your honest opinion</li>
                 <li>If you're not serious about the evaluation, we won't be able to compensate you</li>
-                <li>Each evaluation should take about 2-3 minutes total</li>
             </ul>
             
             <p>Ready to start? Click the button below to begin!</p>
@@ -598,17 +612,17 @@ HTML_TEMPLATE = '''
         // Check if this is the first visit
         if (!localStorage.getItem("gameArenaVisited")) {
             // First visit, show modal
-            modal.style.display = "block";
+            modal.style.display = "flex";
             localStorage.setItem("gameArenaVisited", "true");
+        } else {
+            // Not first visit, hide modal
+            modal.style.display = "none";
         }
         
         // Function to reset all sliders to default value
         function resetAllSliders() {
             document.querySelectorAll('input[type="range"]').forEach(slider => {
                 slider.value = 5;
-                const valueId = slider.id.replace(slider.id.split('-')[0], slider.id.split('-')[0] + '-value');
-                document.getElementById(valueId).textContent = '5';
-                document.getElementById(valueId).style.color = '#3498db'; // Reset to blue (average)
             });
             
             // Also reset the final comparison radio buttons
@@ -629,7 +643,7 @@ HTML_TEMPLATE = '''
         
         // Show instructions when clicking Instructions button
         showInstructionsBtn.onclick = function() {
-            modal.style.display = "block";
+            modal.style.display = "flex";
         }
         
         // Close modal when clicking outside of it
@@ -659,29 +673,12 @@ HTML_TEMPLATE = '''
         });
         
         // Update the displayed values as sliders change
-        document.querySelectorAll('.slider').forEach(slider => {
+        document.querySelectorAll('.range').forEach(slider => {
             slider.addEventListener('input', function() {
-                const valueId = this.id.replace(this.id.split('-')[0], this.id.split('-')[0] + '-value');
+                // Just keep track of the value, without updating display elements
                 const value = this.value;
-                document.getElementById(valueId).textContent = value;
-                
-                // Update qualitative description based on value
-                const valueSpan = document.getElementById(valueId);
-                if (value >= 9) {
-                    valueSpan.style.color = '#27ae60'; // Green for excellent
-                } else if (value >= 7) {
-                    valueSpan.style.color = '#2ecc71'; // Light green for good
-                } else if (value >= 5) {
-                    valueSpan.style.color = '#3498db'; // Blue for average
-                } else if (value >= 3) {
-                    valueSpan.style.color = '#e67e22'; // Orange for below average
-                } else {
-                    valueSpan.style.color = '#e74c3c'; // Red for poor
-                }
+                // No need to update non-existent elements
             });
-            
-            // Trigger once to set initial colors
-            slider.dispatchEvent(new Event('input'));
         });
         
         // Make sure the comparison radio buttons are unchecked when the page loads
@@ -728,6 +725,10 @@ HTML_TEMPLATE = '''
             .then(response => response.json())
             .then(data => {
                 resetAllSliders(); // Reset sliders before reloading
+                
+                // Store that instructions have been seen to prevent showing again after reload
+                localStorage.setItem("gameArenaVisited", "true");
+                
                 window.location.reload(); // Reload page to get new games
             })
             .catch((error) => {
@@ -750,11 +751,13 @@ def index():
     for game in games:
         formatted_games.append({
             "path": f"{game['id']}/index.html",  # Use game ID in path
-            "name": game["game_name"],
-            "genre": game["genre"],
+            "name": game["game_title"],
+            "narrative": game["game_narrative"],
             "model": game["model"],
             "method": game["method"]
         })
+
+        print(formatted_games)
     
     return render_template_string(HTML_TEMPLATE, games=formatted_games)
 
@@ -765,11 +768,12 @@ def serve_game(game_path):
     game_id = game_path.split('/')[0]
     
     # Find game in dataset
-    game = None
-    for item in GAMES_DATASET:
-        if item["id"] == game_id:
-            game = item
-            break
+    # game = None
+    # for item in GAMES_DATASET:
+    #     if item["id"] == game_id:
+    #         game = item
+    #         break
+    game = GAMES_DATASET.filter(lambda x: x["id"] == game_id)[0]
     
     if game is None:
         return "Game not found", 404
@@ -777,14 +781,16 @@ def serve_game(game_path):
     # Handle different file types
     if game_path.endswith('.js'):
         # Return JavaScript file
-        js_file = game_path.split('/')[-1]
-        if js_file in game["js_files"]:
-            return game["js_files"][js_file], 200, {'Content-Type': 'application/javascript'}
+        # remove game id from path
+        js_file = '/'.join(game_path.split('/')[1:])
+        if js_file in game["game_file_paths"]:
+            js_file_content = game["game_file_contents"][game["game_file_paths"].index(js_file)]
+            return js_file_content, 200, {'Content-Type': 'application/javascript'}
         return "JavaScript file not found", 404
     
-    elif game_path.endswith('.html'):
+    elif game_path.endswith('index.html'):
         # Return HTML file
-        html = game["html"]
+        html = game["game_file_contents"][game["game_file_paths"].index("index.html")]
         
         # Anti-scrolling and event tracking JavaScript
         tracking_js = """
@@ -803,7 +809,7 @@ def serve_game(game_path):
                 eventBuffer.push({
                     type: eventType,
                     timestamp: Date.now(),
-                    framecount: typeof frameCount !== 'undefined' ? frameCount : -1,
+                    framecount: typeof window.gameInstance !== 'undefined' ? window.gameInstance.frameCount : null,
                     ...data
                 });
             }
@@ -1004,6 +1010,7 @@ def submit_ratings():
         winner = ratings['comparison']['better_game']
         
         # Format rating data for HF
+        # TODO: more general game_a_ratings dict field
         preference = {
             "id": str(uuid.uuid4()),
             "game_a_id": game_a['url'].split('/')[0],
@@ -1011,12 +1018,16 @@ def submit_ratings():
             "winner": winner,
             "judge": request.remote_addr,  # Use IP as anonymous identifier
             "timestamp": timestamp,
-            "game_a_fun": game_a['fun'],
-            "game_a_difficulty": game_a['difficulty'],
-            "game_a_controls": game_a['controls'],
-            "game_b_fun": game_b['fun'],
-            "game_b_difficulty": game_b['difficulty'],
-            "game_b_controls": game_b['controls'],
+            "game_a_rating": {
+                "fun": game_a['fun'],
+                "difficulty": game_a['difficulty'],
+                "controls": game_a['controls']
+            },
+            "game_b_rating": {
+                "fun": game_b['fun'],
+                "difficulty": game_b['difficulty'],
+                "controls": game_b['controls']
+            },
             "actions_a": json.dumps(game_a.get('events', [])),
             "actions_b": json.dumps(game_b.get('events', []))
         }

@@ -15,48 +15,51 @@ save_dir.mkdir(parents=True, exist_ok=True)
 
 
 
-def replay_game(game_html: str, actions: List[Dict[str, Any]], save_dir: Path = None, debug: bool = False, js_files: Dict[str, str] = None):
+def replay_game(game_files: Dict[str, Any], actions: List[Dict[str, Any]], save_dir: Path = None, debug: bool = False):
     """Replay a game with recorded actions.
     
     Args:
-        game_html: HTML code containing the p5js game
+        game_files: Dictionary with file paths as keys and file contents as values
         actions: List of action dictionaries to replay
         save_dir: Optional directory to save screenshots/videos
         debug: If True, show the browser window and add delays
-        js_files: Optional dictionary of JavaScript files needed by the game, with keys as filenames
-                 and values as file contents
     """
     if save_dir is not None:
         save_dir.mkdir(parents=True, exist_ok=True)
 
-    # Filter out any actions with invalid framecount
-    valid_actions = []
-    for action in actions:
-        # Handle actions with -1 framecount (recorded before p5.js initialization)
-        if action.get("framecount", -1) < 0:
-            # Skip or assign to frame 0
-            # For simplicity, we'll assign them to frame 0
-            action["framecount"] = 0
-        valid_actions.append(action)
-    
-    # Sort actions by framecount
-    valid_actions = sorted(valid_actions, key=lambda x: x["framecount"])
-    
     # Create a temporary directory to hold the game files
     temp_dir = tempfile.mkdtemp()
     temp_path = None
     
     try:
-        # Write HTML file
-        temp_path = os.path.join(temp_dir, "index.html")
-        with open(temp_path, 'w') as f:
-            f.write(game_html)
+        # Find the HTML file - usually index.html
+        html_file_path = None
+        html_content = None
         
-        # Write JS files if provided
-        if js_files:
-            for filename, content in js_files.items():
-                js_path = os.path.join(temp_dir, filename)
-                with open(js_path, 'w') as f:
+        for file_path, content in game_files.items():
+            if file_path.endswith('.html'):
+                html_file_path = file_path
+                html_content = content
+                break
+        
+        if not html_file_path or not html_content:
+            raise ValueError("No HTML file found in game files")
+            
+        # Write HTML file
+        temp_path = os.path.join(temp_dir, os.path.basename(html_file_path))
+        with open(temp_path, 'w') as f:
+            f.write(html_content)
+        
+        # Write all other files (JS, CSS, etc.)
+        for file_path, content in game_files.items():
+            if file_path != html_file_path:  # Skip the HTML file we already wrote
+                # Create subdirectories if needed
+                file_dir = os.path.dirname(file_path)
+                if file_dir:
+                    os.makedirs(os.path.join(temp_dir, file_dir), exist_ok=True)
+                
+                file_full_path = os.path.join(temp_dir, file_path)
+                with open(file_full_path, 'w') as f:
                     f.write(content)
         
         with sync_playwright() as p:
@@ -124,22 +127,18 @@ def replay_game(game_html: str, actions: List[Dict[str, Any]], save_dir: Path = 
 
             # Set up action replay
             current_action_idx = 0
-            if len(valid_actions) > 0:
-                max_frame = max([action["framecount"] for action in valid_actions]) + 100  # Run a bit longer after last action
-            else:
-                max_frame = 100
-            
+
             # Track the last action type to handle special sequences
             last_action_type = None
             
             # Keep tracking frames and executing actions at the right time
-            while current_action_idx < len(valid_actions):
+            while current_action_idx < len(actions):
                 # Get current frame count
-                frame_count = page.evaluate("frameCount")
+                frame_count = page.evaluate("window.gameInstance.frameCount")
                 
                 # Check if we have an action to execute at this frame
-                if current_action_idx < len(valid_actions) and frame_count >= valid_actions[current_action_idx]["framecount"]:
-                    action = valid_actions[current_action_idx]
+                if frame_count >= actions[current_action_idx]["framecount"]:
+                    action = actions[current_action_idx]
                     print(action)
                     
                     # Special case: When the game is not focused and the user moves the mouse to the "start" button and click it to start the game,
@@ -215,15 +214,12 @@ def replay_game(game_html: str, actions: List[Dict[str, Any]], save_dir: Path = 
                     current_action_idx += 1
                 
                 # Small delay to prevent hammering the browser
-                time.sleep(0.001)
+                # time.sleep(0.001)
                 
-                # Safety exit if we've gone beyond a reasonable frame count
-                if frame_count > max_frame:
-                    break
             
-            if debug:
-                print("All actions executed. Press Enter to continue...")
-                input()
+            # if debug:
+            #     print("All actions executed. Press Enter to continue...")
+            #     input()
             
             browser.close()
             
@@ -235,8 +231,8 @@ def replay_game(game_html: str, actions: List[Dict[str, Any]], save_dir: Path = 
 if __name__ == "__main__":
     debug = True
 
-    games_dataset_id = "generative-games/gen-games-v2"
-    preferences_dataset_id = "generative-games/gen-games-v2-preferences"
+    games_dataset_id = "generative-games/gen-games-v3"
+    preferences_dataset_id = "generative-games/gen-games-v3-preferences-test"
 
     # Load datasets
     games_dataset = datasets.load_dataset(games_dataset_id, split="train")
@@ -248,17 +244,23 @@ if __name__ == "__main__":
         actions_b = json.loads(preference["actions_b"])
 
         # Get corresponding games from the game dataset
-        game_a = games_dataset.filter(lambda x: x["id"] == preference["game_a_id"])[0]
-        game_b = games_dataset.filter(lambda x: x["id"] == preference["game_b_id"])[0]
-        
-        game_a_js_files = game_a["js_files"]
-        game_b_js_files = game_b["js_files"]
-        game_a_html = game_a["html"]
-        game_b_html = game_b["html"]
+        game_a = games_dataset.filter(lambda x: x["id"] == preference["game_a_id"])
+        game_b = games_dataset.filter(lambda x: x["id"] == preference["game_b_id"])
 
-        print(f"Replaying game A with {len(actions_a)} actions")
-        replay_game(game_a_html, actions_a, save_dir, debug=debug, js_files=game_a_js_files)
-        print(f"Replaying game B with {len(actions_b)} actions")
-        replay_game(game_b_html, actions_b, save_dir, debug=debug, js_files=game_b_js_files)
+        if len(game_a) == 0 or len(game_b) == 0:
+            print(f"Game not found: {preference['game_a_id']} or {preference['game_b_id']}")
+            continue
+        
+        game_a = game_a[0]
+        game_b = game_b[0]
+        
+        # Create dictionaries mapping file paths to file contents
+        game_a_files = {path: content for path, content in zip(game_a["game_file_paths"], game_a["game_file_contents"])}
+        game_b_files = {path: content for path, content in zip(game_b["game_file_paths"], game_b["game_file_contents"])}
+
+        print(f"Replaying game A with {len(actions_a)} actions, method: {game_a['method']}, narrative_id: {game_a['game_narrative_id']}, sample_id: {game_a['game_title']}")
+        replay_game(game_a_files, actions_a, save_dir, debug=debug)
+        print(f"Replaying game B with {len(actions_b)} actions, method: {game_b['method']}, narrative_id: {game_b['game_narrative_id']}, sample_id: {game_b['game_title']}")
+        replay_game(game_b_files, actions_b, save_dir, debug=debug)
 
 
