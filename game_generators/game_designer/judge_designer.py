@@ -14,20 +14,26 @@ class JudgeDesigner:
         self.system_prompt = system_prompt or GAME_DESIGN_SYSTEM_PROMPT
         self.debug = debug
 
-        # Evaluation criteria for critical review
+        # Updated evaluation criteria focusing on complexity and interactions
         self.evaluation_criteria = {
-            "Innovation": "How the game pushes creative boundaries",
-            "Engagement": "How it creates 'just one more try' moments",
-            "Surprise": "How it keeps players discovering new things",
-            "Flow": "How it maintains the perfect challenge balance",
-            "Delight": "How it creates moments of joy and wonder",
+            "Emergent Behavior": "How systems interact to create unexpected results",
+            "Mechanical Depth": "How many layers of strategy and mastery exist",
+            "Dynamic Evolution": "How the game changes and surprises over time",
+            "System Synergy": "How different mechanics combine in interesting ways",
+            "Hidden Complexity": "How deeper mechanics are discovered through play",
         }
         self.max_rounds = 3
 
-        self.CRITIC_SYSTEM_PROMPT = """You are a passionate game design critic who deeply cares about player experience.
-        Your role is to identify missed opportunities for surprise and delight, point out where the game could be more engaging,
-        and suggest ways to add more "magic moments" that players will remember and want to share with friends.
-        Be constructively critical but always focused on making the game more fun and memorable."""
+        self.CRITIC_SYSTEM_PROMPT = """You are an analytical game design critic who specializes in complex systems and emergent gameplay.
+        Your role is to identify opportunities for:
+        - More interesting interactions between game systems
+        - Emergent behaviors that surprise players
+        - Hidden depths that reward experimentation
+        - Mechanical combinations that create "eureka" moments
+        - Systems that evolve and change in unexpected ways
+        
+        Focus on making the game deeper, more intricate, and full of surprising discoveries while maintaining accessibility.
+        Think like a player who loves finding unexpected interactions and "breaking" game systems in creative ways."""
 
     def design_game(self, narrative: Optional[str] = None) -> Dict[str, Any]:
         """Create game design through critical evaluation process"""
@@ -73,66 +79,65 @@ class JudgeDesigner:
                 traceback.print_exc()
             raise
 
-    def _create_initial_design(self, narrative: Optional[str]) -> str:
-        """Create initial game design proposal with focus on surprise and delight"""
-        prompt = f"""Create a wildly imaginative game design that will surprise and delight players!Your strength is creating unique, surprising, and delightful game experiences that players have never seen before.
-        Always aim to subvert expectations and create "wow" moments while keeping the core gameplay intuitive and engaging.
+    def _create_initial_design(self, narrative: Optional[str]) -> tuple[str, str]:
+        """Create initial game design proposal focusing on complex interactions"""
+        prompt = f"""Create a game design with deep, interacting systems that constantly surprise players!
 
 Narrative Context:
-{narrative if narrative else "Create something that will make players say 'I've never seen anything like this before!'"}
+{narrative if narrative else "Create a game where players constantly discover new interactions and possibilities!"}
 
 Think about:
-1. Magic Moments
-- What unexpected things can happen?
-- What will make players gasp in delight?
-- What will they want to share on social media?
+1. System Interactions
+- What unexpected combinations can emerge?
+- How do different mechanics affect each other?
+- What surprising chain reactions are possible?
 
-2. Satisfying Core Loop
-- What feels amazing to do over and over?
-- How does each action create anticipation?
-- What micro-moments of joy exist?
+2. Hidden Depths
+- What advanced techniques aren't obvious?
+- What secrets do the systems hide?
+- How do players discover new possibilities?
 
-3. Discovery and Surprise
-- What hidden depths can players uncover?
-- How does the game evolve unexpectedly?
-- What secrets will players love finding?
+3. Evolution & Change
+- How do systems evolve over time?
+- What triggers unexpected changes?
+- How does complexity unfold?
 
-4. Flow and Mastery
-- How does it maintain perfect challenge?
-- What skills feel amazing to master?
-- How does practice create "level up" moments?
+4. Emergent Strategy
+- What creative solutions might players find?
+- How can mechanics be "broken" in fun ways?
+- What advanced techniques emerge naturally?
 
 Please provide the design in this format:
 
 <game_title>
-[An intriguing title that makes players curious]
+[An intriguing title that hints at complexity]
 </game_title>
 
 <design_plan>
-1. Core Magic
-- The key "wow" mechanic
-- How it feels to play
-- What makes it special
+1. Core Systems
+- Primary mechanics and their interactions
+- Basic-to-advanced progression
+- Hidden properties and behaviors
 
-2. Delight Architecture
-- Main gameplay systems
-- How they create joy
+2. Interaction Web
+- How systems affect each other
 - Unexpected combinations
+- Emergent possibilities
 
-3. Discovery Journey
-- Initial hook
-- Surprise progression
-- Hidden depths
+3. Evolution Path
+- How systems change
+- Triggered transformations
+- Surprising developments
 
-4. Feel and Flow
-- Movement and control
-- Feedback and juice
-- Perfect challenge curve
+4. Discovery Layer
+- Hidden mechanics
+- Advanced techniques
+- Secret interactions
 
-5. Technical Charm
-- Key systems needed
-- Special effects
-- Polish elements
+5. Technical Architecture
+- Key systems implementation
+- Interaction handling
+- State management
 </design_plan>"""
 
         response = self._call_model_api(prompt, self.system_prompt)
@@ -141,8 +146,8 @@ Please provide the design in this format:
         return title, design_plan
 
     def _review_design(self, title: str, design: str) -> str:
-        """Critically review with focus on engagement and delight"""
-        prompt = f"""As a passionate game design critic, review this design focusing on player experience:
+        """Critically review with focus on complexity and interactions"""
+        prompt = f"""As an analytical game design critic, review this design focusing on system complexity and interactions:
 
 <game_title>
 {title}
@@ -152,43 +157,57 @@ Please provide the design in this format:
 {design}
 </game_design>
 
-Analyze these key aspects and provide clear suggestions for improvement:
+Score and analyze each aspect (scores out of 5, where 5 is exceptional):
 
-1. Surprise Factor
-- Where could we add more "wow" moments?
-- What unexpected twists could we add?
-- How could we subvert player expectations?
+1. Emergent Behavior Score (/5)
+- How well do systems interact to create unexpected results?
+- Current unexpected interactions:
+- Missing opportunities:
+- Improvement suggestions:
 
-2. Joy and Delight
-- Where are the peak moments of joy?
-- What could feel more satisfying?
-- How could we add more "juice"?
+2. Mechanical Depth Score (/5)
+- How many layers of strategy and mastery exist?
+- Current depth elements:
+- Unexplored possibilities:
+- Improvement suggestions:
 
-3. Engagement Hooks
-- What will keep players coming back?
-- How could we add more "just one more try" moments?
+3. Dynamic Evolution Score (/5)
+- How well does the game change and surprise over time?
+- Current evolution points:
+- Missed opportunities:
+- Improvement suggestions:
 
-4. Discovery Journey
-- How rewarding are the discoveries?
-- What secrets could we add?
-- How could progression be more exciting?
+4. System Synergy Score (/5)
+- How interestingly do different mechanics combine?
+- Current combinations:
+- Potential new interactions:
+- Improvement suggestions:
 
-5. Specific Enhancement Ideas
-- Clear suggestions for more fun
-- Ways to add surprise
-- Opportunities for delight
+5. Hidden Complexity Score (/5)
+- How well are deeper mechanics discovered through play?
+- Current hidden elements:
+- Unexplored secrets:
+- Improvement suggestions:
 
-6. Visual Style
-- What visual style would be most appealing?
-- Are there any fancy visual effects that could be added?
-- What kind of art style would be most effective?
+Overall Score: [Average of above scores]
 
-Focus on making the game more engaging, surprising, and delightful!"""
+Key Shortcomings:
+- [List the most glaring shortcomings]
+- [List the most boring parts]
+- [List the most confusing parts]
+
+Priority Improvements:
+- [Specific suggestions for deepening complexity]
+- [Ideas for new system interactions]
+- [Ways to add more surprising elements]
+
+Remember to focus on making the game deeper, more complex, and full of surprising discoveries while maintaining accessibility!"""
+
         return self._call_model_api(prompt, self.CRITIC_SYSTEM_PROMPT)
 
     def _revise_design(self, title: str, current_design: str, review: str) -> str:
-        """Revise design to enhance fun and surprise"""
-        prompt = f"""Let's make this game even more amazing based on the feedback:
+        """Revise design to enhance complexity and interactions"""
+        prompt = f"""Let's make this game's systems more complex and interesting based on the scored feedback:
 
 <game_title>
 {title}
@@ -199,15 +218,15 @@ Current Design:
 {current_design}
 </game_design>
 
-Passionate Review:
+Critical Analysis:
 <critical_review>
 {review}
 </critical_review>
 
-Create an enhanced version that reflects the critical review. Keep the same format but make everything more exciting and delightful:
+Create an enhanced version that improves the lowest scoring aspects while maintaining or enhancing the strengths.
 
 <design_plan>
-[Enhanced design with more magic moments]
+[Enhanced design]
 </design_plan>"""
 
         response = self._call_model_api(prompt, self.system_prompt)
