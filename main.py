@@ -110,9 +110,9 @@ def main():
         "--method",
         type=str,
         choices=[
-            "conversation",
-            "character_driven",
-            "template",
+            # "conversation",
+            # "character_driven",
+            # "template",
             "judge",
             "simple_prompt",
             "instruction_simple_prompt",
