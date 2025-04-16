@@ -145,7 +145,7 @@ class GameGenerator:
 
             # Step 2: Generate code based on the design
             if self.code_generator is not None:
-                html_code, js_files = self.code_generator.generate_code(design)
+                html_code, js_files, title = self.code_generator.generate_code(design)
             else:
                 html_code, js_files = design.get("html_code", ""), design.get(
                     "js_files", []
