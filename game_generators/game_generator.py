@@ -133,15 +133,8 @@ class GameGenerator:
             # Add default number of players if needed by any component
             if isinstance(design, dict):
                 design["num_players"] = 1  # Default to single player
-
-            # Extract or generate game title
-            title = design.get("title")
-            if not title:
-                if self.verbose:
-                    print(
-                        f"{YELLOW}No title in design, generating from response{RESET}"
-                    )
-                title = "Untitled Game"  # Let code generator handle title extraction
+            
+            title = design.get("title", None)
 
             # Step 2: Generate code based on the design
             if self.code_generator is not None:

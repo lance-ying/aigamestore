@@ -1,5 +1,5 @@
 #! /bin/bash
-NUM_GAMES=3
+NUM_GAMES=2
 NUM_NARRATIVES=5
 
 METHODS=(
