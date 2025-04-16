@@ -16,7 +16,7 @@ do
     do
         for j in $(seq 1 $NUM_GAMES)
         do
-            python main.py --method "$method" --debug --narrative "$narrative_path"
+            python main.py --method "$method" --verbose --narrative "$narrative_path"
         done
     done
 done
