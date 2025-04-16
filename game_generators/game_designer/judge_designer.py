@@ -152,7 +152,7 @@ Please provide the design in this format:
 {design}
 </game_design>
 
-Analyze these key aspects:
+Analyze these key aspects and provide clear suggestions for improvement:
 
 1. Surprise Factor
 - Where could we add more "wow" moments?
@@ -166,7 +166,6 @@ Analyze these key aspects:
 
 3. Engagement Hooks
 - What will keep players coming back?
-- Where might interest drop?
 - How could we add more "just one more try" moments?
 
 4. Discovery Journey
@@ -178,6 +177,11 @@ Analyze these key aspects:
 - Clear suggestions for more fun
 - Ways to add surprise
 - Opportunities for delight
+
+6. Visual Style
+- What visual style would be most appealing?
+- Are there any fancy visual effects that could be added?
+- What kind of art style would be most effective?
 
 Focus on making the game more engaging, surprising, and delightful!"""
         return self._call_model_api(prompt, self.CRITIC_SYSTEM_PROMPT)
@@ -200,14 +204,7 @@ Passionate Review:
 {review}
 </critical_review>
 
-Create an enhanced version that:
-- Adds more surprising moments
-- Increases player delight
-- Deepens engagement
-- Creates more "wow" factors
-- Maintains perfect flow
-
-Keep the same format but make everything more exciting and delightful:
+Create an enhanced version that reflects the critical review. Keep the same format but make everything more exciting and delightful:
 
 <design_plan>
 [Enhanced design with more magic moments]
