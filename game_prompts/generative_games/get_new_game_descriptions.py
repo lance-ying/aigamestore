@@ -141,7 +141,7 @@ def generate_new_game_concept(api: ModelAPI, game_archive: List[Dict[str, Any]] 
     "I want to control a robot through a town on fire to rescue people and put out the fire.",
     "A race between turtles where there is both land and water terrain.",
     "Can you create a game with a plane that picks up packages and has to deliver them to the right place?",
-    "How about setting a game in a jungle with a river.",
+    "How about setting a game in a jungle with a river?",
     "Could you develop the game in a world in which the player moves in side a bubble which they can shrink and expand?",
 ]
 
@@ -152,14 +152,14 @@ def generate_new_game_concept(api: ModelAPI, game_archive: List[Dict[str, Any]] 
     # Build the system prompt with additional guidance on what game elements can be altered.
     system_prompt = f"""
             You are a creative video game enthusiast with the ability to invent original and imaginative game concepts.
-            Your goal is to pitch cool single-player game concepts.
+            Your goal is to pitch cool single-player game concepts for 2D video games.
 
             ### Instructions:
             - Create truly innovative game concepts that challenge conventional design patterns, and introduce fresh mechanics or narrative approaches.
             - Focus on the core narrative, characters, twists, or gameplay mechanic that makes each concept unique.
             - Balance creativity with playability - concepts should be fun and technically feasible without being too derivative.
             - Avoid common gaming tropes, clichés, and mechanics that dominate the current market.
-            - Do not delve into specific implementation details like graphics, sound design, or technical specifics.
+            - Do not specify implementation details like graphics, sound design, or technical specifics. 
             - Some of the things among many others that can be thought about when defining game elements are:
                 - **Characters:** Define unique player characters, adversaries, or supporting roles with interesting abilities or backgrounds.
                 - **Narrative and Story:** Propose compelling storylines with challenging goals and objectives.
