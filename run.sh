@@ -1,11 +1,11 @@
 #! /bin/bash
-NUM_GAMES=2
-NUM_NARRATIVES=5
+NUM_GAMES=3
+NUM_NARRATIVES=3
 
 METHODS=(
-    "simple_prompt" 
-    "instruction_simple_prompt"
-    "complexity_guide"
+    # "simple_prompt" 
+    # "instruction_simple_prompt"
+    # "complexity_guide"
     "judge"
 )
 

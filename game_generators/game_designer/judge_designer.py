@@ -107,7 +107,6 @@ Think about:
 - What advanced techniques emerge naturally?
 
 Please provide the design in this format:
-
 <game_title>
 [An intriguing title that hints at complexity]
 </game_title>
@@ -213,9 +212,9 @@ Remember to focus on making the game deeper, more complex, and full of surprisin
 </game_title>
 
 Current Design:
-<game_design>
+<current_design>
 {current_design}
-</game_design>
+</current_design>
 
 Critical Analysis:
 <critical_review>
@@ -224,8 +223,9 @@ Critical Analysis:
 
 Create an enhanced version that improves the lowest scoring aspects while maintaining or enhancing the strengths.
 
+Please provide the enhanced design in this format:
 <design_plan>
-[Enhanced design]
+[Your enhanced design here]
 </design_plan>"""
 
         response = self._call_model_api(prompt, self.system_prompt)
@@ -240,9 +240,9 @@ Create an enhanced version that improves the lowest scoring aspects while mainta
 {title}
 </game_title>
 
-<game_design>
+<current_design>
 {current_design}
-</game_design>
+</current_design>
 
 Create a refined version that:
 1. Keeps all the interesting concepts and thrilling ideas
@@ -250,10 +250,10 @@ Create a refined version that:
 3. Clarifies the implementation approach in some pseudo code
 4. Maintains the same clear format
 
-This is the final submission:
-<game_design>
+This is the final submission, please provide the final design in this format:
+<design_plan>
 [Your final design here]
-</game_design>"""
+</design_plan>"""
 
         response = self._call_model_api(prompt, self.system_prompt)
         return self._extract_design_plan(response)
@@ -263,14 +263,14 @@ This is the final submission:
         match = re.search(pattern, text, re.DOTALL)
         if match:
             return match.group(1).strip()
-        return "Untitled Game"
+        raise ValueError("No title provided.")
 
     def _extract_design_plan(self, text: str) -> str:
         pattern = r"<design_plan>\s*(.*?)\s*</design_plan>"
         match = re.search(pattern, text, re.DOTALL)
         if match:
             return match.group(1).strip()
-        return "No design plan provided."
+        raise ValueError("No design plan provided.")
 
     def _call_model_api(self, prompt: str, system_prompt: str) -> str:
         """Call API with appropriate system prompt based on role"""
