@@ -1,15 +1,16 @@
 #! /bin/bash
-NUM_GAMES=3
-NUM_NARRATIVES=3
+START_NUM=0
+NUM_GAMES=2
+NUM_NARRATIVES=2
 
 METHODS=(
-    # "simple_prompt" 
-    # "instruction_simple_prompt"
-    # "complexity_guide"
+    "simple_prompt" 
+    "instruction_simple_prompt"
+    "complexity_guide"
     "judge"
 )
 
-for i in $(seq -f "%04g" 0 $(($NUM_NARRATIVES - 1)))
+for i in $(seq -f "%04g" $START_NUM $(($START_NUM + $NUM_NARRATIVES - 1)))
 do
     narrative_path="generative_games/new_games/google_gemini-2.0-flash/game_${i}.json"
     for method in "${METHODS[@]}"

@@ -42,10 +42,19 @@ CODE_GENERATION_SYSTEM_PROMPT = """You are an expert p5.js game developer who cr
    - Create a start screen with clear and engaging instructions on how to play (the player has to press `Enter` to start the game)
 
 3. Package and Environment Requirements:
+   - No audio
    - Canvas size constraints (600x400)
    - No external dependencies beyond p5.js
-   - Use p5.js in instance mode. When using ES6 modules, access p5 from the global scope with `const p5 = window.p5;` rather than trying to import it directly.
-   - No audio
+   - Use p5.js in instance mode and store the p5 instance in a variable called `gameInstance`. Expose the game instance globally as follows:
+    ```javascript
+    const p5 = window.p5
+    let gameInstance = new p5(p => {
+        ...
+    });
+    // Expose the game instance globally
+    window.gameInstance = gameInstance;
+    ```
+   - [IMPORTANT] Make sure to properly pass the object `p` in the game code to access p5js functions, otherwise you will have a "ReferenceError: p is not defined".
 
 ULTIMATE GOAL: Generate game code that prioritizes functionality and technical correctness while maintaining good visual appeal.
 """

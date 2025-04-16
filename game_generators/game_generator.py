@@ -183,12 +183,6 @@ class GameGenerator:
         narrative_path: Optional[str] = None,
     ) -> Path:
         """Save generated game files"""
-        # Create safe title for directory name
-        safe_title = (
-            "".join(c for c in title if c.isalnum() or c in (" ", "_"))
-            .replace(" ", "_")
-            .lower()
-        )
 
         # Create game directory with timestamp
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -198,17 +192,24 @@ class GameGenerator:
                 Path("games")
                 / self.model_name.split(":")[1]
                 / self.method_name
-                / narrative_path.split("/")[-1].replace(".json", "")
-                / f"{safe_title}"
+                / narrative_path.split("/")[-1]
+                .replace(".json", "")
+                .replace("game", "concept")
             )
         else:
-            game_dir = (
-                Path("games")
-                / self.model_name.split(":")[1]
-                / self.method_name
-                / f"{safe_title}"
-            )
+            game_dir = Path("games") / self.model_name.split(":")[1] / self.method_name
 
+        game_dir.mkdir(parents=True, exist_ok=True)
+
+        existing_samples = [
+            int(d.name.split("_")[1])
+            for d in game_dir.iterdir()
+            if d.is_dir() and d.name.startswith("sample_")
+        ]
+        next_sample = max(existing_samples, default=-1) + 1
+
+        # Create new sample directory with the next sequential number
+        game_dir = game_dir / f"sample_{next_sample}"
         game_dir.mkdir(parents=True, exist_ok=True)
 
         # Save HTML

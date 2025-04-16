@@ -40,7 +40,16 @@ TASK: Implement a game in p5.js based on the following description:
 * Don't use any external assets.
 * Include a index.html to run the game (don't include anything in the index.html file except for the game).
 * Use ES6 modules (import/export) for all JavaScript files - do not use Node.js require() statements.
-* Use p5.js in instance mode. When using ES6 modules, access p5 from the global scope with `const p5 = window.p5;` rather than trying to import it directly.
+* Use p5.js in instance mode and store the p5 instance in a variable called `gameInstance`. Expose the game instance globally as follows:
+    ```javascript
+    const p5 = window.p5
+    let gameInstance = new p5(p => {
+        ...
+    });
+    // Expose the game instance globally
+    window.gameInstance = gameInstance;
+    ```
+  Make sure to properly pass the object `p` in the game code to access p5js functions.
 * Use a finite state machine for the player character.
 * Make sure the player's controls and parameters are coherent with the gameplay and physics.
 * Make sure the game has a clear goal and win state.
