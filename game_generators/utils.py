@@ -2,6 +2,8 @@ import os
 import sys
 from typing import Dict, Any, Optional, List, Union
 from openai import OpenAI
+import json
+import datetime
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -46,6 +48,8 @@ class ModelAPI:
         """
         self.model_provider, self.model = self._parse_model_name(model_name)
         self.client = self._initialize_client()
+        # Add call history list
+        self.call_history = []
 
     def _parse_model_name(self, model_name: str) -> tuple[str, str]:
         """Parse the model name string to extract provider and model name"""
@@ -105,7 +109,8 @@ class ModelAPI:
         chat_history: Optional[List[Dict[str, str]]] = None,
         max_tokens: Optional[int] = 40000,
         temperature: Optional[float] = None,
-        debug: bool = False,
+        verbose: bool = False,
+        max_retries: int = 3,
         **kwargs,
     ) -> str:
         """
@@ -117,7 +122,7 @@ class ModelAPI:
             chat_history: Optional list of previous messages in the conversation
             max_tokens: Optional maximum number of tokens in response
             temperature: Optional temperature parameter for response randomness
-            debug: Whether to print debug information
+            verbose: Whether to print verbose information
             **kwargs: Additional model-specific parameters
 
         Returns:
@@ -137,8 +142,8 @@ class ModelAPI:
         # Add the current user prompt
         messages.append({"role": "user", "content": user_prompt})
 
-        if debug:
-            print(f"\n{BLUE}Debug: API Call{RESET}")
+        if verbose:
+            print(f"\n{BLUE}verbose: API Call{RESET}")
             if system_prompt:
                 print(f"{BLUE}System Prompt:{RESET}\n{system_prompt}")
             if chat_history:
@@ -186,34 +191,55 @@ class ModelAPI:
                 if system_prompt:
                     claude_params["system"] = system_prompt
 
-                if debug:
-                    print(f"{BLUE}Using streaming for Anthropic API call{RESET}")
+                if verbose:
+                    print(f"\n{BLUE}---> Using streaming for Anthropic API call{RESET}")
 
-                # Use streaming without passing stream parameter
+                # Use streaming with retries
                 result = ""
-                try:
-                    with self.client.messages.stream(**claude_params) as stream:
-                        for message in stream:
-                            if message.type == "content_block_delta":
-                                text = message.delta.text
-                                result += text
-                                if debug:
-                                    print(text, end="", flush=True)
-                            elif message.type == "message_delta":
-                                continue
-                            elif message.type == "error":
-                                raise RuntimeError(f"Stream error: {message.error}")
-                except Exception as e:
-                    if debug:
-                        print(
-                            f"\n{RED}Streaming failed, falling back to non-streaming API call{RESET}"
-                        )
-                    # Fallback to non-streaming API call
-                    response = self.client.messages.create(**claude_params)
-                    result = response.content[0].text
+                retry_count = 0
 
-                if debug:
+                while retry_count < max_retries:
+                    try:
+                        with self.client.messages.stream(**claude_params) as stream:
+                            for message in stream:
+                                if message.type == "content_block_delta":
+                                    text = message.delta.text
+                                    result += text
+                                    if verbose:
+                                        print(text, end="", flush=True)
+                                elif message.type == "message_delta":
+                                    continue
+                                elif message.type == "error":
+                                    raise RuntimeError(f"Stream error: {message.error}")
+                        # If we get here, the streaming was successful
+                        break
+                    except Exception as e:
+                        retry_count += 1
+                        if verbose:
+                            print(
+                                f"\n{RED}Streaming attempt {retry_count} failed: {str(e)}{RESET}"
+                            )
+                        if retry_count >= max_retries:
+                            if verbose:
+                                print(
+                                    f"\n{RED}All streaming attempts failed, falling back to non-streaming API call{RESET}"
+                                )
+                            # Fallback to non-streaming API call
+                            response = self.client.messages.create(**claude_params)
+                            result = response.content[0].text
+
+                if verbose:
                     print(f"\n{BLUE}API call complete{RESET}")
+
+                # Record the call with cleaner formatting
+                call_record = {
+                    "system_prompt": system_prompt.strip() if system_prompt else None,
+                    "user_prompt": user_prompt.strip(),
+                    "response": result.strip(),
+                    "model": f"{self.model_provider}:{self.model}",
+                    "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                }
+                self.call_history.append(call_record)
 
                 return result
 
@@ -240,14 +266,27 @@ class ModelAPI:
                 )
                 result = response.text
 
-            if debug:
+            # Record the call with cleaner formatting
+            call_record = {
+                "system_prompt": system_prompt.strip() if system_prompt else None,
+                "user_prompt": user_prompt.strip(),
+                "response": result.strip(),
+                "model": f"{self.model_provider}:{self.model}",
+                "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            }
+            self.call_history.append(call_record)
+
+            if verbose:
                 print(f"{YELLOW}Model Response:\n{result}{RESET}")
+                print(
+                    f"{BLUE}Call recorded (Total calls: {len(self.call_history)}){RESET}"
+                )
 
             return result
 
         except Exception as e:
             error_msg = f"Error calling {self.model_provider} API: {str(e)}"
-            if debug:
+            if verbose:
                 print(f"{RED}{error_msg}{RESET}")
                 import traceback
 
@@ -265,6 +304,10 @@ class ModelAPI:
             else:
                 formatted.append(f"{role}: {content}")
         return "\n".join(formatted)
+
+    def get_call_history(self) -> List[Dict[str, Any]]:
+        """Return the list of all API calls made"""
+        return self.call_history
 
 
 if __name__ == "__main__":
@@ -285,7 +328,7 @@ if __name__ == "__main__":
                 temperature=(
                     0.7 if "claude" in model_name else None
                 ),  # Claude needs explicit temperature
-                debug=True,
+                verbose=True,
             )
             print(f"Test 1 Result: {response}")
 
@@ -295,7 +338,7 @@ if __name__ == "__main__":
                 user_prompt="What is your role?",
                 system_prompt="You are a friendly math tutor who loves numbers.",
                 temperature=0.7 if "claude" in model_name else None,
-                debug=True,
+                verbose=True,
             )
             print(f"Test 2 Result: {response}")
 
@@ -313,7 +356,7 @@ if __name__ == "__main__":
                     {"role": "user", "content": "Python seems cool."},
                 ],
                 temperature=0.7 if "claude" in model_name else None,
-                debug=True,
+                verbose=True,
             )
             print(f"Test 3 Result: {response}")
 

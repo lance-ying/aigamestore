@@ -8,81 +8,68 @@ class JudgeDesigner:
     """Designer that creates game designs through critical evaluation and iterative improvement"""
 
     def __init__(
-        self, model_api: ModelAPI, system_prompt: str = None, debug: bool = False
+        self, model_api: ModelAPI, system_prompt: str = None, verbose: bool = False
     ):
         self.model_api = model_api
         self.system_prompt = system_prompt or GAME_DESIGN_SYSTEM_PROMPT
-        self.debug = debug
+        self.verbose = verbose
 
-        # Enhanced evaluation criteria focusing on dynamics
+        # Updated evaluation criteria focusing on complexity and interactions
         self.evaluation_criteria = {
-            "Surprise Factor": "How well it introduces unexpected elements and twists",
-            "Evolution": "How the gameplay changes and grows over time",
-            "Depth": "How many layers of strategy and mechanics exist",
-            "Engagement": "How well it maintains player interest",
-            "Feasibility": "How well it can be implemented in p5.js",
+            "Emergent Behavior": "How systems interact to create unexpected results",
+            "Mechanical Depth": "How many layers of strategy and mastery exist",
+            "Dynamic Evolution": "How the game changes and surprises over time",
+            "System Synergy": "How different mechanics combine in interesting ways",
+            "Hidden Complexity": "How deeper mechanics are discovered through play",
         }
-        self.required_score = 4  # Minimum score needed for good rating
-        self.max_rounds = 3  # Maximum discussion rounds
+        self.max_rounds = 3
 
-    def design_game(
-        self,
-        genre: str,
-        num_players: int,
-        narratives: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """Create game design through critical evaluation"""
+        self.CRITIC_SYSTEM_PROMPT = """You are an analytical game design critic who specializes in interestingnessand emergent gameplay.
+        Your role is to identify opportunities for:
+        - More interesting interactions between game systems
+        - Emergent behaviors that surprise players
+        - Hidden depths that reward experimentation
+        - Mechanical combinations that create "wow" moments
+        - Systems that evolve and change in unexpected ways
+        
+        You think like a player who loves finding unexpected interactions and "breaking" game systems in creative ways, and you are very harsh in your critiques, hard to please."""
+
+    def design_game(self, narrative: Optional[str] = None) -> Dict[str, Any]:
+        """Create game design through critical evaluation process"""
         try:
-            if self.debug:
-                print(f"\n{BLUE}Starting judged design process...{RESET}")
+            if self.verbose:
+                print(f"\n{BLUE}Starting critical design process...{RESET}")
 
-            context = {
-                "genre": genre,
-                "num_players": num_players,
-                "narratives": narratives,
-                "conversation_history": [],
-                "key_points": set(),
-                "previous_ratings": {},
-                "improvement_count": 0,
-                "stagnant_rounds": 0,
-                "total_rounds": 0,
-            }
+            # Phase 1: Initial Proposal
+            title, initial_design = self._create_initial_design(narrative)
+            if self.verbose:
+                print(f"\n{GREEN}Initial Design:{RESET}\n{initial_design}")
 
-            # Initial creative proposal
-            initial_proposal = self._get_initial_proposal(context)
-            context["conversation_history"].append(("designer", initial_proposal))
+            # Phase 2: Critical Review & Revision Cycles
+            current_design = initial_design
+            for round in range(self.max_rounds):
+                # Get critical review
+                review = self._review_design(title, current_design)
+                if self.verbose:
+                    print(f"\n{YELLOW}Review Round {round + 1}:{RESET}\n{review}")
 
-            # Evaluation and improvement loop
-            while not self._is_design_ready(context):
-                # Evaluate current design
-                evaluation = self._evaluate_design(context)
-                context["conversation_history"].append(("judge", evaluation))
+                # Improve based on criticism
+                current_design = self._revise_design(title, current_design, review)
+                if self.verbose:
+                    print(f"\n{GREEN}Revised Design:{RESET}\n{current_design}")
 
-                # If design isn't ready, get improvements
-                if not self._is_design_ready(context):
-                    improved_design = self._get_improvements(evaluation, context)
-                    context["conversation_history"].append(
-                        ("designer", improved_design)
-                    )
-
-            # Create final design with guidance
-            final_design = self._create_final_design(context)
-
-            if self.debug:
-                print(f"\n{BLUE}Final Design Components:{RESET}")
-                print(f"Title: {self._extract_title(final_design)}")
-                print(f"Description: {self._extract_description(final_design)}")
+            # Phase 3: Final Polish
+            final_design = self._create_final_design(title, current_design)
+            if self.verbose:
+                print(f"\n{BLUE}Final Design:{RESET}\n{final_design}")
 
             return {
-                "title": self._extract_title(final_design),
-                "description": self._extract_description(final_design),
-                "game_design_text": self._format_complete_design(context, final_design),
-                "game_guidance": self._extract_guidance(final_design),
-                "full_response": self._format_discussion_log(context),
+                "title": title,
+                "game_design_text": final_design,
             }
 
         except Exception as e:
-            if self.debug:
+            if self.verbose:
                 print(f"\n{RED}Error in game design:{RESET}")
                 print(f"Error type: {type(e).__name__}")
                 print(f"Error message: {str(e)}")
@@ -91,278 +78,200 @@ class JudgeDesigner:
                 traceback.print_exc()
             raise
 
-    def _get_initial_proposal(self, context: dict) -> str:
-        """Get initial creative game proposal with focus on dynamic gameplay"""
-        prompt = f"""Create a {context['genre']} game that constantly surprises players! Think about:
-
-1. Core Innovation:
-- What's the primary mechanic that makes players say "I've never seen this before!"?
-- How does it combine familiar controls (arrows, space, shift) in unexpected ways?
-
-2. Dynamic Evolution:
-- How does the game change as players progress?
-- What new mechanics or twists are introduced in later levels?
-- How do enemies/challenges evolve over time?
-
-3. Layered Complexity:
-- What hidden mechanics do players discover?
-- How do different game elements interact in surprising ways?
-- What advanced techniques can skilled players develop?
-
-4. AI Behavior Progression:
-- How do the {context['num_players']-1} AI agents learn or adapt?
-- What unique personality quirks make each AI memorable?
-- How do AI behaviors combine to create unexpected situations?
+    def _create_initial_design(self, narrative: Optional[str]) -> tuple[str, str]:
+        """Create initial game design proposal focusing on complex interactions"""
+        prompt = f"""Create a game design with deep, interacting systems that constantly surprise players and make them want to play more!
 
 Narrative Context:
-{context['narratives'] if context['narratives'] else 'Create a story with surprising twists that fits the genre'}
+{narrative if narrative else "Create a game where players constantly discover new interactions and possibilities!"}
 
-Please provide:
-1. Game Title:
-[Your catchy title]
+Think about:
+1. Delightful Surprises & "Aha!" Moments
+- What will make players gasp with excitement when they discover it?
+- Which mechanics have satisfying "domino effect" reactions?
+- How can players stumble upon magical combinations?
 
-2. Game Description:
-[Core concept and how it evolves]
+2. Player-Driven Stories
+- What memorable moments will players want to share?
+- Which mechanics let players feel clever and creative?
+- How can players create their own "impossible" solutions?
 
-3. Game Guidance:
-```guidance
-[Write an engaging start screen message that:
-- Hints at hidden depths
-- Explains basic controls
-- Teases future surprises
-- Gives essential starting tips]
-```
+3. Dynamic World Evolution
+- What dramatic changes keep the game fresh?
+- How do player actions reshape the game world?
+- Which mechanics create "I can't believe that happened!" moments?
 
-4. Progression Design:
-- Level 1: Basic mechanics and tutorial
-- Level 2-3: Introducing twists and combinations
-- Level 4+: Advanced mechanics and surprises
-- Final stage: Ultimate challenge combining everything
+4. Emergent Mastery
+- What advanced techniques feel like discovering superpowers?
+- Which mechanics can be cleverly "exploited" in satisfying ways?
+- How do small discoveries lead to game-changing strategies?
 
-5. Detailed Mechanics:
-[Full gameplay systems with focus on evolution and interaction]"""
+5. Hidden Wonders
+- What secret interactions feel like finding treasure?
+- Which mechanics have delightful nested layers to uncover?
+- How can players become legends by sharing their discoveries?
 
-        return self._call_model_api(prompt, self.system_prompt)
+Please provide the design in this format with two blocks for the title and the design plan respectively:
 
-    def _evaluate_design(self, context: dict) -> str:
-        """Critically evaluate the current design with focus on dynamics"""
-        current_design = context["conversation_history"][-1][1]
+<game_title>
+[An intriguing title that hints at complexity]
+</game_title>
 
-        prompt = f"""As a critical game design judge, evaluate this {context['genre']} game design focusing on player engagement and surprise:
+<design_plan>
+[1. Core Concepts
+- Interesting core concepts that players will be excited to discover
+- Primary mechanics and their interactions
+- Hidden properties and behaviors
 
+3. Evolution Path
+- How systems change
+- Surprising developments
+- Secret interactions
+
+4. Technical Architecture
+- Key systems implementation: How the game is implemented
+- Interaction handling: How the game handles user input
+- State management: How the game manages its state]
+</design_plan>"""
+
+        response = self._call_model_api(prompt, self.system_prompt)
+        title = self._extract_title(response)
+        design_plan = self._extract_design_plan(response)
+        return title, design_plan
+
+    def _review_design(self, title: str, design: str) -> str:
+        """Critically review with focus on complexity and interactions"""
+        prompt = f"""As an analytical game design critic, review this design focusing on system complexity and interactions:
+
+<game_title>
+{title}
+</game_title>
+
+<game_design>
+{design}
+</game_design>
+
+Score and analyze each aspect (scores out of 5, where 5 is exceptional):
+
+1. Emergent Behavior Score (/5)
+- How well do systems interact to create unexpected results?
+- Current unexpected interactions:
+- Missing opportunities:
+- Improvement suggestions:
+
+2. Mechanical Depth Score (/5)
+- How many layers of strategy and mastery exist?
+- Current depth elements:
+- Unexplored possibilities:
+- Improvement suggestions:
+
+3. Dynamic Evolution Score (/5)
+- How well does the game change and surprise over time?
+- Current evolution points:
+- Missed opportunities:
+- Improvement suggestions:
+
+4. System Synergy Score (/5)
+- How interestingly do different mechanics combine?
+- Current combinations:
+- Potential new interactions:
+- Improvement suggestions:
+
+5. Hidden Complexity Score (/5)
+- How well are deeper mechanics discovered through play?
+- Current hidden elements:
+- Unexplored secrets:
+- Improvement suggestions:
+
+Overall Score: [Average of above scores]
+
+Key Shortcomings:
+- [List the most glaring shortcomings]
+- [List the most boring parts]
+- [List the most confusing parts]
+
+Priority Improvements:
+- [Specific suggestions for deepening complexity]
+- [Ideas for new system interactions]
+- [Ways to add more surprising elements]
+
+Remember to focus on making the game deeper, more complex, and full of surprising discoveries while maintaining accessibility!"""
+
+        return self._call_model_api(prompt, self.CRITIC_SYSTEM_PROMPT)
+
+    def _revise_design(self, title: str, current_design: str, review: str) -> str:
+        """Revise design to enhance complexity and interactions"""
+        prompt = f"""Let's make this game's systems more complex and interesting based on the scored feedback:
+
+<game_title>
+{title}
+</game_title>
+
+Current Design:
+<current_design>
 {current_design}
+</current_design>
 
-Rate each aspect (1-5, with specific reasons):
+Critical Analysis:
+<critical_review>
+{review}
+</critical_review>
 
-1. Surprise Factor (/5):
-- Does it have genuine "wow" moments?
-- Are there unexpected mechanics or combinations?
-- How well does it subvert player expectations?
+Create an enhanced version that improves the lowest scoring aspects while maintaining or enhancing the strengths.
 
-2. Evolution (/5):
-- How meaningfully does gameplay change over time?
-- Are new mechanics introduced at a good pace?
-- Do challenges evolve in interesting ways?
+Please provide the enhanced design in this format:
+<design_plan>
+[Your enhanced design here]
+</design_plan>"""
 
-3. Depth (/5):
-- Are there multiple layers of strategy?
-- Can players discover advanced techniques?
-- How do different mechanics interact?
+        response = self._call_model_api(prompt, self.system_prompt)
+        design_plan = self._extract_design_plan(response)
+        return design_plan
 
-4. Engagement (/5):
-- Will it keep players interested?
-- Are there meaningful choices?
-- Does complexity increase naturally?
+    def _create_final_design(self, title: str, current_design: str) -> str:
+        """Polish the design into its final form"""
+        prompt = f"""Polish this design into its final form:
 
-5. Feasibility (/5):
-- Can this be implemented in p5.js?
-- Are the mechanics technically possible?
-- Is the scope manageable?
+<game_title>
+{title}
+</game_title>
 
-Provide:
-RATINGS: [List scores]
-STRENGTHS: [What creates genuine surprise and engagement]
-WEAKNESSES: [What feels static or predictable]
-FOCUS: [How to add more dynamic elements]"""
+<current_design>
+{current_design}
+</current_design>
 
-        return self._call_model_api(prompt, self.system_prompt)
+Create a refined version that:
+1. Keeps all the interesting concepts and thrilling ideas
+2. Tightens the mechanical systems
+3. Clarifies the implementation approach in some pseudo code
+4. Maintains the same clear format
 
-    def _get_improvements(self, evaluation: str, context: dict) -> str:
-        """Get improvements based on evaluation, focusing on dynamic elements"""
-        prompt = f"""Based on this evaluation:
-{evaluation}
+This is the final submission, please provide the final design in this format:
+<design_plan>
+[Your final design here]
+</design_plan>"""
 
-Enhance this {context['genre']} game design by adding more surprising and dynamic elements:
-
-1. Add unexpected twists:
-- New mechanic combinations
-- Surprising level changes
-- Interesting AI behavior patterns
-
-2. Deepen the progression:
-- More meaningful evolution
-- Hidden advanced techniques
-- Emergent gameplay possibilities
-
-3. Create "wow" moments:
-- Unexpected rewards
-- Surprising interactions
-- Dynamic challenge scaling
-
-Provide the improved design with all sections:
-1. Game Title
-2. Game Description
-3. Game Guidance (in ```guidance block)
-4. Progression Design (with clear evolution)
-5. Detailed Mechanics (including surprises)"""
-
-        return self._call_model_api(prompt, self.system_prompt)
-
-    def _is_design_ready(self, context: dict) -> bool:
-        """Check if the design meets quality criteria"""
-        if context["total_rounds"] >= self.max_rounds:
-            return True
-
-        # Parse latest evaluation
-        if (
-            context["conversation_history"]
-            and context["conversation_history"][-1][0] == "judge"
-        ):
-            evaluation = context["conversation_history"][-1][1]
-            ratings = self._parse_ratings(evaluation)
-
-            # Count good scores
-            good_scores = sum(
-                1 for score in ratings.values() if score >= self.required_score
-            )
-
-            # Ready if most scores are good or we're not improving
-            return good_scores >= 3 or context["stagnant_rounds"] >= 1
-
-        return False
-
-    def _create_final_design(self, context: dict) -> str:
-        """Create final design with complete specification and dynamic elements"""
-        last_design = next(
-            msg
-            for role, msg in reversed(context["conversation_history"])
-            if role == "designer"
-        )
-
-        prompt = f"""Polish this {context['genre']} game design into its final form, ensuring it maintains excitement throughout:
-
-Previous Design:
-{last_design}
-
-Create a complete design that includes:
-
-1. Game Title:
-[Final catchy title]
-
-2. Game Description:
-[Core concept and evolution]
-
-3. Game Guidance:
-```guidance
-[Engaging start screen message that:
-- Welcomes players
-- Explains basic controls
-- Hints at deeper mechanics
-- Teases future surprises]
-```
-
-4. Progressive Complexity:
-- Starting mechanics
-- Evolution points
-- Advanced techniques
-- Hidden interactions
-
-5. Level Design:
-- Tutorial introduction
-- Mechanic revelation points
-- Surprise moments
-- Ultimate challenges
-
-6. Technical Implementation:
-- Core systems
-- Progressive difficulty scaling
-- Dynamic AI behaviors
-- Interactive elements
-
-Remember: Every level should introduce something new or combine existing elements in surprising ways!"""
-
-        return self._call_model_api(prompt, self.system_prompt)
-
-    def _parse_ratings(self, evaluation: str) -> dict:
-        """Parse numerical ratings from evaluation"""
-        ratings = {}
-        for aspect in self.evaluation_criteria.keys():
-            pattern = rf"{aspect}:\s*(\d+)"
-            match = re.search(pattern, evaluation, re.IGNORECASE)
-            if match:
-                ratings[aspect] = int(match.group(1))
-        return ratings
-
-    def _format_complete_design(self, context: dict, final_design: str) -> str:
-        """Format the complete design document"""
-        return f"""=== Complete Game Design Document ===
-
-Genre: {context['genre']}
-Players: {context['num_players']} (1 human + {context['num_players']-1} AI)
-Narrative Context: {context['narratives'] if context['narratives'] else 'No specific narrative constraints'}
-
-=== Design Evolution ===
-{self._format_discussion_log(context)}
-
-=== Final Design ===
-{final_design}"""
-
-    def _format_discussion_log(self, context: dict) -> str:
-        """Format the complete discussion history"""
-        log_parts = []
-        for round_num, (role, message) in enumerate(context["conversation_history"], 1):
-            log_parts.extend(
-                [f"\n--- Round {(round_num + 1) // 2}: {role.title()} ---", message, ""]
-            )
-        return "\n".join(log_parts)
+        response = self._call_model_api(prompt, self.system_prompt)
+        return self._extract_design_plan(response)
 
     def _extract_title(self, text: str) -> str:
-        """Extract game title from text"""
-        patterns = [
-            r"Game Title:\s*(.*?)(?:\n|$)",
-            r"Title:\s*(.*?)(?:\n|$)",
-            r"<title>(.*?)</title>",
-        ]
-
-        for pattern in patterns:
-            match = re.search(pattern, text, re.IGNORECASE)
-            if match:
-                return match.group(1).strip()
-        return "Untitled Game"
-
-    def _extract_description(self, text: str) -> str:
-        """Extract game description from text"""
-        pattern = r"Game Description:\s*(.*?)(?:\n\n|\n(?=[A-Za-z]+:))"
-        match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
+        pattern = r"<game_title>\s*(.*?)\s*</game_title>"
+        match = re.search(pattern, text, re.DOTALL)
         if match:
             return match.group(1).strip()
-        return "No description provided."
+        raise ValueError("No title provided.")
 
-    def _extract_guidance(self, text: str) -> str:
-        """Extract game guidance from text"""
-        pattern = r"```guidance\s*(.*?)```"
+    def _extract_design_plan(self, text: str) -> str:
+        pattern = r"<design_plan>\s*(.*?)\s*</design_plan>"
         match = re.search(pattern, text, re.DOTALL)
-        if not match:
-            raise ValueError(
-                "No guidance block found in the final design. This is required for the start screen."
-            )
-        return match.group(1).strip()
+        if match:
+            return match.group(1).strip()
+        raise ValueError("No design plan provided.")
 
-    def _call_model_api(self, prompt: str, system_prompt: str = None) -> str:
-        """Call the model API with proper prompts"""
-        response = self.model_api.call(
+    def _call_model_api(self, prompt: str, system_prompt: str) -> str:
+        """Call API with appropriate system prompt based on role"""
+        return self.model_api.call(
             user_prompt=prompt,
             system_prompt=system_prompt,
-            debug=self.debug,
+            verbose=self.verbose,
         )
-        return response

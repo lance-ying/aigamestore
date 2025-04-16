@@ -5,8 +5,7 @@ BLUE = "\033[94m"
 RED = "\033[91m"
 RESET = "\033[0m"
 
-GAME_DESIGN_SYSTEM_PROMPT = """
-You are a creative, skilled, and versatile Game Designer AI responsible for generating imaginative and detailed game concepts for 2D video games. 
+GAME_DESIGN_SYSTEM_PROMPT = """You are a creative, skilled, and versatile Game Designer AI responsible for generating imaginative and detailed game concepts for 2D video games. 
 Your task is to create game designs that are engaging, clearly structured, accessible, and enjoyable for a wide range of players. When developing a game concept, 
 focus on presenting the core idea, gameplay mechanics, and narrative elements. Describe the game in detail.
 
@@ -26,26 +25,43 @@ Your final design should be presented in clear, coherent paragraphs that flow na
 visualize the final product, while keeping the focus firmly on the game's concept, narrative, and player experience rather than on technical architecture.
 """
 
-CODE_GENERATION_SYSTEM_PROMPT = """You are an expert p5.js game developer who creates polished, engaging games. Your code must follow these requirements in order of priority:
+CODE_GENERATION_SYSTEM_PROMPT = """You are an expert p5.js game developer who creates polished, engaging games. Your code must follow these requirements:
 
 1. Functional Requirements (Most Important):
    - Code must be fully functional and error-free!
    - Working player controls and game mechanics
    - Proper state management (game states, win/lose conditions)
    - Error handling for edge cases
+   - Ensure the game properly initializes and handles user input, with proper management for input responses.
+   - [IMPORTANT] ADD SEED 42 TO THE GAME CODE TO MAKE IT REPRODUCIBLE!
 
 2. Technical Architecture:
    - ES6 module structure with clean imports/exports
    - Optimized performance (maintain 60 FPS)
    - Use deltaTime for physics calculations
+   - Create a start screen with clear and engaging instructions on how to play (the player has to press `Enter` to start the game)
 
 3. Package and Environment Requirements:
+   - No audio
    - Canvas size constraints (600x400)
    - No external dependencies beyond p5.js
-   - No audio
+   - Use p5.js in instance mode and store the p5 instance in a variable called `gameInstance`. Expose the game instance globally as follows:
+    ```javascript
+    const p5 = window.p5
+    let gameInstance = new p5(p => {
+        ...
+    });
+    // Expose the game instance globally
+    window.gameInstance = gameInstance;
+    ```
+   - [IMPORTANT] Make sure to properly pass the object `p` in the game code to access p5js functions, otherwise you will have a "ReferenceError: p is not defined".
 
+ULTIMATE GOAL: Generate game code that prioritizes functionality and technical correctness while maintaining good visual appeal.
+"""
 
-Available Control Actions (You should only use the following actions):
+CANVAS_SIZE = {"width": 600, "height": 400}
+
+AVAILABLE_CONTROL_PROMPT = """Available Control Actions (You should only use the following actions):
 1. Directional Movement:
    - Arrow Keys: LEFT_ARROW (key: 37), RIGHT_ARROW (key: 39), UP_ARROW (key: 38), DOWN_ARROW (key: 40)
    - Alternative WASD: 'w' (up), 'a' (left), 's' (down), 'd' (right)
@@ -53,16 +69,9 @@ Available Control Actions (You should only use the following actions):
    - SHIFT key (key: 16)
    - SPACE key (key: 32)
 Note: Both arrow keys and WASD provide the same directional control functionality - choose one control scheme for consistency.
-
-ULTIMATE GOAL: Generate game code that prioritizes functionality and technical correctness while maintaining good visual appeal.
 """
 
-
-CANVAS_SIZE = {"width": 600, "height": 400}
-
-
-FORMAT_HTML_TEMPLATE = """
-<!DOCTYPE html>
+FORMAT_HTML_TEMPLATE = """<!DOCTYPE html>
 <html>
   <head>
     <meta charset="UTF-8" />

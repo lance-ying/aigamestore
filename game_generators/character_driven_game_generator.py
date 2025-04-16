@@ -28,12 +28,12 @@ class CharacterDrivenGameGenerator(GameGenerator):
         method_name: str,
         model_name: str = "openai:gpt-4",
         max_debate_times: int = 1,
-        debug: bool = False,
+        verbose: bool = False,
     ):
         """Initialize with the same parameters as base GameGenerator plus max_debate_times"""
-        super().__init__(method_name, model_name, debug=debug)
+        super().__init__(method_name, model_name, verbose=verbose)
         self.max_debate_times = max_debate_times
-        self.debug = debug
+        self.verbose = verbose
 
     def generate_game(
         self,
@@ -49,7 +49,7 @@ class CharacterDrivenGameGenerator(GameGenerator):
             Tuple of (html_code, js_files, game_title, description, full_response)
         """
         try:
-            if self.debug:
+            if self.verbose:
                 print(f"\n{BLUE}Starting character-driven game generation...{RESET}")
 
             # Step 1: Get initial design from designer
@@ -79,7 +79,7 @@ class CharacterDrivenGameGenerator(GameGenerator):
 
             debate_log = []
             for round_num in range(1, self.max_debate_times + 1):
-                if self.debug:
+                if self.verbose:
                     print(
                         f"\n{BLUE}Character Feedback Round {round_num}/{self.max_debate_times}:{RESET}"
                     )
@@ -151,7 +151,7 @@ class CharacterDrivenGameGenerator(GameGenerator):
                 guidance=design.get("guidance", ""),
             )
 
-            if self.debug:
+            if self.verbose:
                 print(f"{GREEN}Game generated successfully at: {game_path}{RESET}")
 
             return (
@@ -163,7 +163,7 @@ class CharacterDrivenGameGenerator(GameGenerator):
             )
 
         except Exception as e:
-            if self.debug:
+            if self.verbose:
                 print(f"\n{RED}Error in character-driven game generation:{RESET}")
                 print(f"Error type: {type(e).__name__}")
                 print(f"Error message: {str(e)}")

@@ -32,6 +32,8 @@ MIN_WAIT_TIME = 1  # Minimum wait time in seconds
 MAX_WAIT_TIME = 3  # Maximum wait time in seconds
 RATE_LIMIT_WAIT = 60  # Wait time in seconds when hitting rate limit
 
+NUM_CONCEPTS_PER_GAME = 100
+
 # Game genres to generate
 GENRES = [
     "Action",
@@ -93,7 +95,7 @@ def generate_new_game_concept(api: ModelAPI, game_archive: List[Dict[str, Any]] 
     genre_list_str = ', '.join(GENRES)
 
     prompt = f"""
-                Describe 10 completely original, interesting, and imaginative concepts for single-player video games.
+                Describe {NUM_CONCEPTS_PER_GAME} completely original, interesting, and imaginative concepts for single-player video games.
 
                 For each game, pick one or more genres from this list: {genre_list_str}.
 
@@ -108,7 +110,7 @@ def generate_new_game_concept(api: ModelAPI, game_archive: List[Dict[str, Any]] 
                         "concept": "A game about a lost robot trying to find its way home by solving circuit puzzles",
                         "genre": "Puzzle, Adventure"
                     }},
-                    ... and so on for all 10 games
+                    ... and so on for all {NUM_CONCEPTS_PER_GAME} games
                 ]
                 ```
                 """
@@ -144,29 +146,31 @@ def generate_new_game_concept(api: ModelAPI, game_archive: List[Dict[str, Any]] 
 ]
 
     # Sample a few examples to include in the prompt
-    example_sample = random.sample(EXAMPLES, 20)
-    example_block = "\n".join(f"- \"{e.strip()}\"" for e in example_sample)
+    # example_sample = random.sample(EXAMPLES, 20)
+    example_block = "\n".join(f"- \"{e.strip()}\"" for e in random.sample(EXAMPLES, len(EXAMPLES)))
 
     # Build the system prompt with additional guidance on what game elements can be altered.
     system_prompt = f"""
             You are a creative video game enthusiast with the ability to invent original and imaginative game concepts.
-            Your goal is to pitch 10 cool single-player game ideas, each capturing a unique twist, narrative hook, or innovative gameplay challenge.
+            Your goal is to pitch cool single-player game concepts.
+
+            ### Instructions:
+            - Create truly innovative game concepts that challenge conventional design patterns, and introduce fresh mechanics or narrative approaches.
+            - Focus on the core narrative, characters, twists, or gameplay mechanic that makes each concept unique.
+            - Balance creativity with playability - concepts should be fun and technically feasible without being too derivative.
+            - Avoid common gaming tropes, clichés, and mechanics that dominate the current market.
+            - Do not delve into specific implementation details like graphics, sound design, or technical specifics.
+            - Some of the things among many others that can be thought about when defining game elements are:
+                - **Characters:** Define unique player characters, adversaries, or supporting roles with interesting abilities or backgrounds.
+                - **Narrative and Story:** Propose compelling storylines with challenging goals and objectives.
+                - **Game Mechanics:** Innovate with gameplay rules, player agency models, or dynamic systems.
+                - **World elements:** Create interesting worlds with static and dynamic elements with interesting physics and rules.
+            - Adopt an enthusiastic and original tone using simple vocabulary to express your request.
 
             Below are a few sample ideas to inspire you:
             {example_block}
 
-            ### Instructions:
-            - Create 10 completely different game concepts.
-            - Focus on the core narrative, twists, or gameplay mechanic that makes each concept unique.
-            - Avoid delving into specific implementation details like graphics, sound design, or technical specifics.
-            - You can come up with game concepts that can define game elements such as:
-                - **Characters:** Define unique protagonists, antagonists, or supporting roles.
-                - **Narrative and Story:** Propose compelling storylines or narrative hooks.
-                - **Game Mechanics:** Innovate with unconventional gameplay rules or challenges.
-                - **World-Building:** Create intriguing settings or dynamic environments.
-            - Adopt an enthusiastic, simple vocabulary, and original tone and go beyond the language of the examples.
-
-            Your response must be a valid JSON array containing 10 objects, each with exactly two keys: "concept" and "genre". 
+            Your response must be a valid JSON array containing {NUM_CONCEPTS_PER_GAME} objects, each with exactly two keys: "concept" and "genre". 
             Do not include any extra text, markdown formatting, or commentary outside of the JSON.
 
             Example format:
@@ -187,7 +191,7 @@ def generate_new_game_concept(api: ModelAPI, game_archive: List[Dict[str, Any]] 
     # Add recent games to system prompt if available
     if game_archive and len(game_archive) > 0:
         # Get random sample of recent games
-        recent_games = random.sample(game_archive, k=min(len(game_archive), 10))
+        recent_games = random.sample(game_archive, k=min(len(game_archive), 100))
         prior_games_str = "\n".join(
             [f"- {g['concept'][:100]}..." for g in recent_games]
         )
@@ -195,7 +199,7 @@ def generate_new_game_concept(api: ModelAPI, game_archive: List[Dict[str, Any]] 
         system_prompt += f"""\nHere are some game concepts that were already generated:
                             {prior_games_str}
 
-                            Do NOT repeat game concepts similar to these descriptions. Think creatively and create something different which is interesting, fun, and engaging.
+                            Do NOT repeat game concepts similar to the previous descriptions. Think creatively and create something different from existing game concepts which is interesting, fun, and engaging and not yet generated.
                             Format your response exactly as requested.
                             """
     
@@ -375,8 +379,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--model", 
         type=str, 
-        default="gemini:gemini-1.5-pro", 
-        help="Model to use in format 'provider:model_name' (e.g., 'openai:gpt-4o', 'anthropic:claude-3.5-sonnet', 'gemini:gemini-1.5-pro')"
+        default="google:gemini-1.5-flash", 
+        help="Model to use in format 'provider:model_name' (e.g., 'openai:gpt-4o', 'anthropic:claude-3.5-sonnet', 'google:gemini-1.5-flash')"
     )
     parser.add_argument(
         "--num_games", 

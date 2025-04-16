@@ -18,36 +18,37 @@ class InstructionSimpleDesigner:
     """Simple designer that creates game design and code"""
 
     def __init__(
-        self, model_api: ModelAPI = None, system_prompt: str = None, debug: bool = False
+        self,
+        model_api: ModelAPI = None,
+        system_prompt: str = None,
+        verbose: bool = False,
     ):
         self.model_api = model_api
         self.system_prompt = system_prompt or CODE_GENERATION_SYSTEM_PROMPT
         self.p5js_url = "https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"
-        self.debug = debug
+        self.verbose = verbose
 
     def design_game(
         self,
-        narratives: Optional[str] = None,
+        narrative: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        Create game design and implementation with debugging steps
+        Create game design and implementation with verboseging steps
         """
         try:
             # Generate initial game design
-            prompt = self._create_prompt(narratives)
-            if self.debug:
+            prompt = self._create_prompt(narrative)
+            if self.verbose:
                 print(f"\n{GREEN}Generated prompt:{RESET}\n{prompt}")
 
             response = self.model_api.call(
                 user_prompt=prompt,
                 system_prompt=self.system_prompt,
-                debug=self.debug,
+                verbose=self.verbose,
             )
 
             # Extract initial components
             title = self._extract_title(response)
-            description = self._extract_description(response)
-            guidance = self._extract_guidance(response)
             js_code = self._extract_code_block(response, "javascript")
             html_code = self._extract_code_block(response, "html") or ""
 
@@ -59,18 +60,10 @@ class InstructionSimpleDesigner:
             else:
                 js_files = [("game.js", js_code or "")]
 
-            return {
-                "title": title,
-                "description": description,
-                "game_design_text": description,
-                "game_guidance": guidance,
-                "html_code": html_code,
-                "js_files": js_files,
-                "full_response": response,
-            }
+            return {"title": title, "html_code": html_code, "js_files": js_files}
 
         except Exception as e:
-            if self.debug:
+            if self.verbose:
                 print(f"\n{RED}Error in game design:{RESET}")
                 print(f"Error type: {type(e).__name__}")
                 print(f"Error message: {str(e)}")
@@ -85,7 +78,16 @@ class InstructionSimpleDesigner:
         p5js_guidelines = """* Don't use any external assets.
 * Include a index.html to run the game (don't include anything in the index.html file except for the game).
 * Use ES6 modules (import/export) for all JavaScript files - do not use Node.js require() statements.
-* Use p5.js in instance mode. When using ES6 modules, access p5 from the global scope with `const p5 = window.p5;` rather than trying to import it directly.
+* Use p5.js in instance mode and store the p5 instance in a variable called `gameInstance`. Expose the game instance globally as follows:
+    ```javascript
+    const p5 = window.p5
+    let gameInstance = new p5(p => {
+        ...
+    });
+    // Expose the game instance globally
+    window.gameInstance = gameInstance;
+    ```
+  [IMPORTANT] Make sure to properly pass the object `p` in the game code to access p5js functions, otherwise you will have a "ReferenceError: p is not defined".
 * Use a finite state machine for the player character.
 * Make sure the player's controls and parameters are coherent with the gameplay and physics.
 * Make sure the game has a clear goal and win state.
@@ -95,39 +97,25 @@ class InstructionSimpleDesigner:
 """
 
         description = f"""Game Specifications:
-{narratives if narratives else 'Not specified, you should create an engaging storyline first.'}
-"""
+{narratives if narratives else 'Not specified, you should create an engaging storyline first.'}"""
 
-        prompt = f"""
----------------------------------------------------------
-TASK: Implement a game in p5.js based on the following description:
+        prompt = f"""TASK: Implement a game in p5.js based on the following description:
 <description>
 {description}
 </description>
-
 
 <p5js_guidelines>
 {p5js_guidelines}
 </p5js_guidelines>
 
-
 Here is a template for the HTML code:
 {FORMAT_HTML_TEMPLATE.format(title='YOUR_GAME_TITLE', p5js_url=self.p5js_url)}
-
 
 ---------------------------------------------------------
 REQUIREMENT: You should output things in the following format:
 <game_title>
 ... (game title)
 </game_title>
-
-<game_description>
-... (game description)
-</game_description>
-
-<game_guidance>
-... (game guidance to display on the start screen, keep it short, fun and engaging)
-</game_guidance>
 
 For each file, you should output the following:
 <code filename="{{name}}.{{extension}}">
@@ -162,36 +150,6 @@ Output HTML as the last file:
 
         return "Untitled Game"
 
-    def _extract_description(self, text: str) -> str:
-        """Extract game description from text"""
-        pattern = r"<game_description>\s*(.*?)\s*</game_description>"
-        match = re.search(pattern, text, re.DOTALL)
-        if match:
-            return match.group(1).strip()
-
-        # Fallback to old format if new format not found
-        fallback_pattern = r"```description\s*(.*?)```"
-        match = re.search(fallback_pattern, text, re.DOTALL)
-        if match:
-            return match.group(1).strip()
-
-        return "No description provided."
-
-    def _extract_guidance(self, text: str) -> str:
-        """Extract game guidance/instructions from text"""
-        pattern = r"<game_guidance>\s*(.*?)\s*</game_guidance>"
-        match = re.search(pattern, text, re.DOTALL)
-        if match:
-            return match.group(1).strip()
-
-        # Fallback to old format if new format not found
-        fallback_pattern = r"```guidance\s*(.*?)```"
-        match = re.search(fallback_pattern, text, re.DOTALL)
-        if match:
-            return match.group(1).strip()
-
-        return "No guidance provided."
-
     def _extract_code_block(
         self, text: str, language: str
     ) -> Union[str, Dict[str, str]]:
@@ -213,7 +171,7 @@ Output HTML as the last file:
 
             # If no JS files found, create a default game.js
             if not js_files:
-                if self.debug:
+                if self.verbose:
                     print(
                         f"{YELLOW}Warning: No JS files found, creating default game.js{RESET}"
                     )
