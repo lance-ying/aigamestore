@@ -14,11 +14,11 @@ class CharacterDrivenDesigner:
         self,
         model_api: ModelAPI,
         system_prompt: str = None,
-        debug: bool = False,
+        verbose: bool = False,
     ):
         self.model_api = model_api
         self.system_prompt = system_prompt or GAME_DESIGN_SYSTEM_PROMPT
-        self.debug = debug
+        self.verbose = verbose
 
     def design_game(
         self,
@@ -28,14 +28,14 @@ class CharacterDrivenDesigner:
     ) -> Dict[str, Any]:
         """Design a game through character-driven generation"""
         try:
-            if self.debug:
+            if self.verbose:
                 print(f"\n{BLUE}Starting character-driven design process...{RESET}")
 
             # Generate character and environment definitions
             character_definitions = self._sample_character_info(
                 genre, num_players, narratives
             )
-            if self.debug:
+            if self.verbose:
                 print(
                     f"\n{GREEN}Generated character definitions:{RESET}\n{character_definitions}"
                 )
@@ -53,7 +53,7 @@ class CharacterDrivenDesigner:
             }
 
         except Exception as e:
-            if self.debug:
+            if self.verbose:
                 print(f"\n{RED}Error in game design:{RESET}")
                 print(f"Error type: {type(e).__name__}")
                 print(f"Error message: {str(e)}")
@@ -111,7 +111,7 @@ IMPORTANT: Environment components must be truly independent, with their own beha
         return self.model_api.call(
             user_prompt=prompt,
             system_prompt=self.system_prompt,
-            debug=self.debug,
+            verbose=self.verbose,
         )
 
     def _create_final_design(self, character_definitions: str) -> str:
@@ -160,7 +160,7 @@ Make it exciting and engaging while keeping all the depth from the design!"""
         return self.model_api.call(
             user_prompt=prompt,
             system_prompt=self.system_prompt,
-            debug=self.debug,
+            verbose=self.verbose,
         )
 
     def _extract_title(self, text: str) -> str:
@@ -219,7 +219,7 @@ Focus on concrete suggestions in natural language, not code. Imagine you are the
         return self.model_api.call(
             user_prompt=prompt,
             system_prompt=self.system_prompt,
-            debug=self.debug,
+            verbose=self.verbose,
         )
 
     def get_character_feedback(
@@ -262,7 +262,7 @@ Express your feedback in natural language as if you were the character. Focus on
         return self.model_api.call(
             user_prompt=prompt,
             system_prompt=self.system_prompt,
-            debug=self.debug,
+            verbose=self.verbose,
         )
 
     def _extract_character_info(self, char_idx: int, character_definitions: str) -> str:
@@ -354,5 +354,5 @@ Make it exciting and engaging while keeping all the depth from the design discus
         return self.model_api.call(
             user_prompt=prompt,
             system_prompt=self.system_prompt,
-            debug=self.debug,
+            verbose=self.verbose,
         )

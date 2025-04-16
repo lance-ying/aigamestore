@@ -44,7 +44,7 @@ def generate_game(
     model: str = "openai:gpt-4o",
     narrative: Optional[str] = None,
     narrative_path: Optional[str] = None,
-    debug: bool = False,
+    verbose: bool = False,
 ) -> Path:
     """
     Generate a game using the specified method and model
@@ -55,7 +55,7 @@ def generate_game(
         num_players: Number of players
         model: AI model to use
         narratives: Optional narrative constraints
-        debug: Whether to print debug information
+        verbose: Whether to print verbose information
 
     Returns:
         Path: Path to the generated game directory
@@ -64,17 +64,17 @@ def generate_game(
         # Initialize game generator
         if method == "character_driven":
             generator = CharacterDrivenGameGenerator(
-                method_name=method, model_name=model, debug=debug
+                method_name=method, model_name=model, verbose=verbose
             )
         else:
-            generator = GameGenerator(method_name=method, model_name=model, debug=debug)
+            generator = GameGenerator(method_name=method, model_name=model, verbose=verbose)
 
         # Generate the game
         title = generator.generate_game(
             narrative=narrative, narrative_path=narrative_path
         )
 
-        if debug:
+        if verbose:
             print(f"\n{GREEN}Successfully generated game:{RESET}")
             print(f"{BLUE}Title:{RESET} {title}")
 
@@ -143,7 +143,7 @@ def main():
         help="Optional narrative constraints or story elements",
     )
 
-    parser.add_argument("--debug", action="store_true", help="Enable debug output")
+    parser.add_argument("--verbose", action="store_true", help="Enable verbose output")
 
     args = parser.parse_args()
 
@@ -157,7 +157,7 @@ def main():
             model=args.model,
             narrative=narratives_text,
             narrative_path=args.narratives,
-            debug=args.debug,
+            verbose=args.verbose,
         )
         print(f"\n{GREEN}Game generated successfully at: {game_path}{RESET}")
 

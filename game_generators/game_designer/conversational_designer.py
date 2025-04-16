@@ -8,11 +8,11 @@ class ConversationalDesigner:
     """Designer that creates game designs through multi-agent conversation"""
 
     def __init__(
-        self, model_api: ModelAPI, system_prompt: str = None, debug: bool = False
+        self, model_api: ModelAPI, system_prompt: str = None, verbose: bool = False
     ):
         self.model_api = model_api
         self.system_prompt = system_prompt or GAME_DESIGN_SYSTEM_PROMPT
-        self.debug = debug
+        self.verbose = verbose
 
         self.max_discussion_rounds = 2
 
@@ -39,7 +39,7 @@ Your role is to:
     ) -> Dict[str, Any]:
         """Create game design through conversation"""
         try:
-            if self.debug:
+            if self.verbose:
                 print(f"\n{BLUE}Starting game design conversation...{RESET}")
 
             # Phase 1: Conversational Planning
@@ -67,7 +67,7 @@ Technical Details:
 Design Evolution:
 {plan['full_discussion']}"""
 
-            if self.debug:
+            if self.verbose:
                 print(f"\n{BLUE}Final Design:{RESET}")
                 print(f"Title: {title}")
                 print(f"Description: {description}")
@@ -82,7 +82,7 @@ Design Evolution:
             }
 
         except Exception as e:
-            if self.debug:
+            if self.verbose:
                 print(f"\n{RED}Error in game design:{RESET}")
                 print(f"Error type: {type(e).__name__}")
                 print(f"Error message: {str(e)}")
@@ -271,7 +271,7 @@ Game Guidance: [Must be wrapped in ```guidance code block as shown above]
         response = self.model_api.call(
             user_prompt=prompt,
             system_prompt=system_prompt,
-            debug=self.debug,
+            verbose=self.verbose,
         )
 
         return response

@@ -8,11 +8,11 @@ class JudgeDesigner:
     """Designer that creates game designs through critical evaluation and iterative improvement"""
 
     def __init__(
-        self, model_api: ModelAPI, system_prompt: str = None, debug: bool = False
+        self, model_api: ModelAPI, system_prompt: str = None, verbose: bool = False
     ):
         self.model_api = model_api
         self.system_prompt = system_prompt or GAME_DESIGN_SYSTEM_PROMPT
-        self.debug = debug
+        self.verbose = verbose
 
         # Updated evaluation criteria focusing on complexity and interactions
         self.evaluation_criteria = {
@@ -38,12 +38,12 @@ class JudgeDesigner:
     def design_game(self, narrative: Optional[str] = None) -> Dict[str, Any]:
         """Create game design through critical evaluation process"""
         try:
-            if self.debug:
+            if self.verbose:
                 print(f"\n{BLUE}Starting critical design process...{RESET}")
 
             # Phase 1: Initial Proposal
             title, initial_design = self._create_initial_design(narrative)
-            if self.debug:
+            if self.verbose:
                 print(f"\n{GREEN}Initial Design:{RESET}\n{initial_design}")
 
             # Phase 2: Critical Review & Revision Cycles
@@ -51,17 +51,17 @@ class JudgeDesigner:
             for round in range(self.max_rounds):
                 # Get critical review
                 review = self._review_design(title, current_design)
-                if self.debug:
+                if self.verbose:
                     print(f"\n{YELLOW}Review Round {round + 1}:{RESET}\n{review}")
 
                 # Improve based on criticism
                 current_design = self._revise_design(title, current_design, review)
-                if self.debug:
+                if self.verbose:
                     print(f"\n{GREEN}Revised Design:{RESET}\n{current_design}")
 
             # Phase 3: Final Polish
             final_design = self._create_final_design(title, current_design)
-            if self.debug:
+            if self.verbose:
                 print(f"\n{BLUE}Final Design:{RESET}\n{final_design}")
 
             return {
@@ -70,7 +70,7 @@ class JudgeDesigner:
             }
 
         except Exception as e:
-            if self.debug:
+            if self.verbose:
                 print(f"\n{RED}Error in game design:{RESET}")
                 print(f"Error type: {type(e).__name__}")
                 print(f"Error message: {str(e)}")
@@ -278,5 +278,5 @@ This is the final submission:
         return self.model_api.call(
             user_prompt=prompt,
             system_prompt=system_prompt,
-            debug=self.debug,
+            verbose=self.verbose,
         )

@@ -8,19 +8,19 @@ class TemplateDesigner:
     """Designer that creates games through template-based, coarse-to-fine specification"""
 
     def __init__(
-        self, model_api: ModelAPI, system_prompt: str = None, debug: bool = False
+        self, model_api: ModelAPI, system_prompt: str = None, verbose: bool = False
     ):
         """
-        Initialize the template designer with model API and debug option
+        Initialize the template designer with model API and verbose option
 
         Args:
             model_api: API wrapper for the AI model
             system_prompt: Optional system prompt to override default
-            debug: Whether to print debug information
+            verbose: Whether to print verbose information
         """
         self.model_api = model_api
         self.system_prompt = system_prompt or GAME_DESIGN_SYSTEM_PROMPT
-        self.debug = debug  # Store debug as instance variable
+        self.verbose = verbose  # Store verbose as instance variable
 
         # Template components to be specified
         self.design_components = {
@@ -49,7 +49,7 @@ class TemplateDesigner:
     ) -> Dict[str, Any]:
         """Create game design through template-based specification"""
         try:
-            if self.debug:
+            if self.verbose:
                 print(f"\n{BLUE}Starting template-based design process...{RESET}")
 
             num_ai = num_players - 1
@@ -170,7 +170,7 @@ Make each section exciting - especially the description and start screen!"""
             fuzzy_code = self._generate_fuzzy_code(final_design)
             complete_design = self._format_complete_design(final_design, fuzzy_code)
 
-            if self.debug:
+            if self.verbose:
                 print(f"\n{BLUE}Final Design Components:{RESET}")
                 print(f"Title: {self._extract_title(final_design)}")
                 print(f"Description: {self._extract_description(final_design)}")
@@ -186,7 +186,7 @@ Make each section exciting - especially the description and start screen!"""
             }
 
         except Exception as e:
-            if self.debug:
+            if self.verbose:
                 print(f"\n{RED}Error in game design:{RESET}")
                 print(f"Error type: {type(e).__name__}")
                 print(f"Error message: {str(e)}")
@@ -416,7 +416,7 @@ Use this as a guide for implementation while maintaining the dynamic and surpris
             description = match.group(1).strip()
             if len(description) > 10:  # Basic validation
                 return description
-        if self.debug:
+        if self.verbose:
             print(f"{YELLOW}Warning: No valid description found in text{RESET}")
         return "No description provided."
 
@@ -435,7 +435,7 @@ Use this as a guide for implementation while maintaining the dynamic and surpris
         return self.model_api.call(
             user_prompt=prompt,
             system_prompt=self.system_prompt,
-            debug=self.debug,
+            verbose=self.verbose,
         )
 
     def _generate_fuzzy_code(self, final_design: str) -> str:
@@ -545,7 +545,7 @@ Your response MUST be wrapped in a ```javascript code block and include detailed
             return match.group(1).strip()
 
         # If no code block found, provide a character-driven structure
-        if self.debug:
+        if self.verbose:
             print(
                 f"{YELLOW}No valid code block found, generating character-driven structure...{RESET}"
             )

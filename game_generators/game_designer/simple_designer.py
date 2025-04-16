@@ -18,19 +18,19 @@ class SimpleDesigner:
     """Simple designer that creates game design and code"""
 
     def __init__(
-        self, model_api: ModelAPI = None, system_prompt: str = None, debug: bool = False
+        self, model_api: ModelAPI = None, system_prompt: str = None, verbose: bool = False
     ):
         self.model_api = model_api
         self.system_prompt = system_prompt or CODE_GENERATION_SYSTEM_PROMPT
         self.p5js_url = "https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"
-        self.debug = debug
+        self.verbose = verbose
 
     def design_game(
         self,
         narrative: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        Create game design and implementation with debugging steps
+        Create game design and implementation with verboseging steps
         """
         try:
             # Generate initial game design
@@ -39,7 +39,7 @@ class SimpleDesigner:
             response = self.model_api.call(
                 user_prompt=prompt,
                 system_prompt=self.system_prompt,
-                debug=self.debug,
+                verbose=self.verbose,
             )
 
             # Extract initial components
@@ -62,7 +62,7 @@ class SimpleDesigner:
             }
 
         except Exception as e:
-            if self.debug:
+            if self.verbose:
                 print(f"\n{RED}Error in game design:{RESET}")
                 print(f"Error type: {type(e).__name__}")
                 print(f"Error message: {str(e)}")
@@ -147,7 +147,7 @@ Output HTML as the last file:
 
             # If no JS files found, create a default game.js
             if not js_files:
-                if self.debug:
+                if self.verbose:
                     print(
                         f"{YELLOW}Warning: No JS files found, creating default game.js{RESET}"
                     )

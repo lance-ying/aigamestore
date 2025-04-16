@@ -8,11 +8,11 @@ class ComplexityGuideDesigner:
     """Designer that creates complex and imaginative game designs through guided discussion"""
 
     def __init__(
-        self, model_api: ModelAPI, system_prompt: str = None, debug: bool = False
+        self, model_api: ModelAPI, system_prompt: str = None, verbose: bool = False
     ):
         self.model_api = model_api
         self.system_prompt = system_prompt or GAME_DESIGN_SYSTEM_PROMPT
-        self.debug = debug
+        self.verbose = verbose
 
     def design_game(
         self,
@@ -20,29 +20,29 @@ class ComplexityGuideDesigner:
     ) -> Dict[str, Any]:
         """Create complex game design through guided discussion"""
         try:
-            if self.debug:
+            if self.verbose:
                 print(f"\n{BLUE}Starting imaginative design process...{RESET}")
 
             # Phase 1: Initial Brainstorming
             initial_ideas = self._brainstorm_initial_ideas(narrative)
-            if self.debug:
+            if self.verbose:
                 print(f"\n{GREEN}Initial Ideas:{RESET}\n{initial_ideas}")
 
             # Phase 2: Complexity Discussion
             complex_ideas = self._explore_complexity(initial_ideas)
-            if self.debug:
+            if self.verbose:
                 print(f"\n{GREEN}Complexity Layer:{RESET}\n{complex_ideas}")
 
             # Phase 3: Final Design Plan
             final_design = self._create_final_design(initial_ideas, complex_ideas)
-            if self.debug:
+            if self.verbose:
                 print(f"\n{GREEN}Final Design:{RESET}\n{final_design}")
 
             # Extract components
             title = self._extract_title(final_design)
             game_design_text = self._extract_design_plan(final_design)
 
-            if self.debug:
+            if self.verbose:
                 print(f"\n{BLUE}Final Design Components:{RESET}")
                 print(f"Title: {title}")
                 print(f"Design: {game_design_text}")
@@ -50,7 +50,7 @@ class ComplexityGuideDesigner:
             return {"title": title, "game_design_text": game_design_text}
 
         except Exception as e:
-            if self.debug:
+            if self.verbose:
                 print(f"\n{RED}Error in game design:{RESET}")
                 print(f"Error type: {type(e).__name__}")
                 print(f"Error message: {str(e)}")
@@ -174,5 +174,5 @@ Make it WILD but IMPLEMENTABLE - push creative boundaries while keeping it feasi
         return self.model_api.call(
             user_prompt=user_prompt,
             system_prompt=system_prompt or self.system_prompt,
-            debug=self.debug,
+            verbose=self.verbose,
         )

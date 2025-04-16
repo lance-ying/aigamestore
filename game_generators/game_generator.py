@@ -63,7 +63,7 @@ class GameGenerator:
         self,
         method_name: str,
         model_name: str = "openai:gpt-3.5-turbo",
-        debug: bool = False,
+        verbose: bool = False,
     ):
         """
         Initialize the game generator
@@ -71,7 +71,7 @@ class GameGenerator:
         Args:
             method_name: Name of the game generation method to use
             model_name: Name of the AI model to use
-            debug: Whether to print debug information
+            verbose: Whether to print verbose information
         """
         if method_name not in self.VALID_METHODS:
             raise ValueError(
@@ -80,7 +80,7 @@ class GameGenerator:
 
         self.method_name = method_name
         self.model_name = model_name
-        self.debug = debug
+        self.verbose = verbose
         # Initialize model API
         self.model_api = ModelAPI(model_name)
 
@@ -89,13 +89,13 @@ class GameGenerator:
             self.designer = self.VALID_METHODS[method_name]["designer"](
                 model_api=self.model_api,
                 system_prompt=CODE_GENERATION_SYSTEM_PROMPT,
-                debug=self.debug,
+                verbose=self.verbose,
             )
         else:
             self.designer = self.VALID_METHODS[method_name]["designer"](
                 model_api=self.model_api,
                 system_prompt=GAME_DESIGN_SYSTEM_PROMPT,
-                debug=self.debug,
+                verbose=self.verbose,
             )
 
         # Initialize code generator
@@ -103,7 +103,7 @@ class GameGenerator:
             self.code_generator = self.VALID_METHODS[method_name]["code_generator"](
                 model_api=self.model_api,
                 system_prompt=CODE_GENERATION_SYSTEM_PROMPT,
-                debug=self.debug,
+                verbose=self.verbose,
             )
         else:
             self.code_generator = None
@@ -123,7 +123,7 @@ class GameGenerator:
         Returns:
             Tuple of (html_code, js_files, game_title, description, full_response)
         """
-        if self.debug:
+        if self.verbose:
             print(f"\n{BLUE}Starting game generation process...{RESET}")
 
         try:
@@ -137,7 +137,7 @@ class GameGenerator:
             # Extract or generate game title
             title = design.get("title")
             if not title:
-                if self.debug:
+                if self.verbose:
                     print(
                         f"{YELLOW}No title in design, generating from response{RESET}"
                     )
@@ -160,13 +160,13 @@ class GameGenerator:
                 narrative_path=narrative_path,
             )
 
-            if self.debug:
+            if self.verbose:
                 print(f"{GREEN}Game generated successfully at: {game_path}{RESET}")
 
             return title
 
         except Exception as e:
-            if self.debug:
+            if self.verbose:
                 print(f"\n{RED}Error in game generation:{RESET}")
                 print(f"Error type: {type(e).__name__}")
                 print(f"Error message: {str(e)}")

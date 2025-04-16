@@ -6,6 +6,7 @@ METHODS=(
     "simple_prompt" 
     "instruction_simple_prompt"
     "complexity_guide"
+    "judge"
 )
 
 for i in $(seq -f "%04g" 0 $(($NUM_NARRATIVES - 1)))

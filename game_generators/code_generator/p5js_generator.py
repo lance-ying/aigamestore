@@ -22,11 +22,16 @@ class P5JSGenerator:
         self.p5js_url = "https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"
         self.debug = debug
 
-    def _create_user_prompt(self, game_concept: str) -> str:
+    def _create_user_prompt(self, title: str, game_concept: str) -> str:
         """Create the user prompt for code generation"""
         return f"""
 ---------------------------------------------------------
 TASK: Implement a game in p5.js based on the following description:
+
+<game_title>
+{title}
+</game_title>
+
 <description>
 {game_concept}
 </description>
@@ -48,18 +53,10 @@ Here is a template for the HTML code:
 {FORMAT_HTML_TEMPLATE.format(title='YOUR_GAME_TITLE', p5js_url=self.p5js_url)}
 
 ---------------------------------------------------------
-REQUIREMENT: You should output things in the following format:
+REQUIREMENT: 
 <game_title>
-... (game title)
+... (Create a title if it hasn't been specified)
 </game_title>
-
-<game_description>
-... (game description)
-</game_description>
-
-<game_guidance>
-... (game guidance to display on the start screen, keep it short, fun and engaging)
-</game_guidance>
 
 For each file, you should output the following:
 <code filename="{{name}}.{{extension}}">
@@ -116,13 +113,14 @@ Output HTML as the last file:
             if self.debug:
                 print(f"\n{BLUE}Starting code generation...{RESET}")
 
+            title = design.get("title", "NOT SPECIFIED!")
             # Extract game concept from design
             game_concept = design.get("game_design_text")
             if not game_concept:
                 raise ValueError("Design must include 'game_design_text'")
 
             # Generate game code
-            user_prompt = self._create_user_prompt(game_concept)
+            user_prompt = self._create_user_prompt(title, game_concept)
             response = self.model_api.call(
                 user_prompt=user_prompt,
                 system_prompt=self.system_prompt,
@@ -152,7 +150,10 @@ Output HTML as the last file:
             else:
                 js_files = [("game.js", js_code or "")]
 
-            return html_code, js_files
+            if title == "NOT SPECIFIED!":
+                title = self._extract_title(response)
+
+            return html_code, js_files, title
 
         except Exception as e:
             if self.debug:
@@ -165,62 +166,12 @@ Output HTML as the last file:
             raise
 
     def _extract_title(self, text: str) -> str:
-        """
-        Extract game title from text
-
-        Args:
-            text: Text to search for title
-
-        Returns:
-            str: Extracted title or 'Game' if not found
-        """
-        if self.debug:
-            print(f"\n{BLUE}Extracting title{RESET}")
-
-        patterns = [
-            r"```game_title\s*(.*?)```",
-            r"GAME TITLE:\s*(.*?)(?:\n|$)",
-            r"title:\s*(.*?)(?:\n|$)",
-            r"<title>(.*?)</title>",
-        ]
-
-        for pattern in patterns:
-            match = re.search(pattern, text, re.IGNORECASE)
-            if match:
-                title = match.group(1).strip()
-                if self.debug:
-                    print(f"{GREEN}Found title: {title}{RESET}")
-                return title
-
-        if self.debug:
-            print(f"{YELLOW}No title found, using default{RESET}")
-        return "Game"
-
-    def _generate_title(self, game_concept: str) -> str:
-        """Generate a title from the game concept if none is provided"""
-        try:
-            # Ask the model to generate a title
-            prompt = f"Generate a short, catchy title (3-4 words max) for this game concept:\n{game_concept}"
-            response = self.model_api.call(
-                user_prompt=prompt,
-                system_prompt=self.system_prompt,
-                debug=self.debug,
-            )
-
-            # Clean up the response
-            title = response.strip().strip('"').strip("'")
-
-            # Limit length and remove newlines
-            title = " ".join(title.split()[:4])
-
-            if self.debug:
-                print(f"{GREEN}Generated title: {title}{RESET}")
-
-            return title
-        except Exception as e:
-            if self.debug:
-                print(f"{YELLOW}Error generating title, using default{RESET}")
-            return "My P5.js Game"
+        """Extract the title from the text"""
+        pattern = r"<game_title>\s*(.*?)\s*</game_title>"
+        match = re.search(pattern, text, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+        return "Untitled Game"
 
     def _validate_js_code(self, js_files: Dict[str, str]) -> Dict[str, str]:
         """Validate JavaScript code files"""
