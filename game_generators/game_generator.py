@@ -240,6 +240,14 @@ class GameGenerator:
                 "method": self.method_name,
                 "model": self.model_name,
                 "timestamp": timestamp,
+                "concept": (
+                    narrative_path.split("/")[-1]
+                    .replace(".json", "")
+                    .replace("game", "concept")
+                    if narrative_path
+                    else "None"
+                ),
+                "sample_index": f"sample_{next_sample}",
             },
             "game_files": {
                 "html": "index.html",

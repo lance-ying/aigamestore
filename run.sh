@@ -1,7 +1,7 @@
 #! /bin/bash
-START_NUM=0
-NUM_GAMES=2
-NUM_NARRATIVES=2
+START_NUM=2
+NUM_GAMES=5
+NUM_NARRATIVES=10
 
 METHODS=(
     "simple_prompt" 
