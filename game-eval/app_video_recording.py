@@ -56,10 +56,7 @@ GAMES_DATASET = load_games_dataset()
 
 
 def get_random_games(num_games=2):
-    """Get random games from the dataset"""
-    # 1) sample a game concept
-    # 2) sample two different methods
-    # 3) sample a game for each method
+    """Get random games from the dataset and generate a unique pair_id"""
     concept_ids = GAMES_DATASET.unique("game_concept_id")
     concept_id = random.choice(concept_ids)
     games = GAMES_DATASET.filter(lambda x: x["game_concept_id"] == concept_id)
@@ -72,7 +69,8 @@ def get_random_games(num_games=2):
     games_b = games.filter(lambda x: x["method"] == method_b)
     game_a = random.choice(games_a)
     game_b = random.choice(games_b)
-    return [game_a, game_b]
+    pair_id = str(uuid.uuid4())
+    return [game_a, game_b], pair_id
 
 
 # HTML template for the main page
@@ -691,6 +689,9 @@ HTML_TEMPLATE = '''
                 better_game: 'game_' + (betterGameValue == 1 ? 'a' : 'b')
             };
             
+            // Add pair_id to ratings
+            ratings['pair_id'] = '{{ pair_id }}';
+            
             // Wait for all video uploads to complete before reloading
             window._pendingVideoUploads = document.querySelectorAll('.game-frame').length;
             window._videoUploadCompleteHandler = function(event) {
@@ -729,28 +730,25 @@ HTML_TEMPLATE = '''
 @app.route('/')
 def index():
     """Main page that displays random games and rating interface"""
-    games = get_random_games(2)
-    
-    # Format games for template
+    games, pair_id = get_random_games(2)
     formatted_games = []
     for game in games:
         formatted_games.append({
-            "path": f"{game['id']}/index.html",  # Use game ID in path
+            "path": f"pair_{pair_id}/game_{game['id']}/index.html",  # Use pair and game ID in path
             "name": game["game_title"],
             "concept": game["game_concept"],
             "model": game["model"],
-            "method": game["method"]
+            "method": game["method"],
+            "id": game["id"]
         })
-
-        print(formatted_games)
-    
-    return render_template_string(HTML_TEMPLATE, games=formatted_games)
+    return render_template_string(HTML_TEMPLATE, games=formatted_games, pair_id=pair_id)
 
 @app.route('/game/<path:game_path>')
 def serve_game(game_path):
     """Serve game HTML files and other assets"""
     # Extract game ID from path
-    game_id = game_path.split('/')[0]
+    pair_id = game_path.split('/')[0].replace('pair_', '')
+    game_id = game_path.split('/')[1].replace('game_', '')
     
     # Find game in dataset
     # game = None
@@ -767,7 +765,7 @@ def serve_game(game_path):
     if game_path.endswith('.js'):
         # Return JavaScript file
         # remove game id from path
-        js_file = '/'.join(game_path.split('/')[1:])
+        js_file = '/'.join(game_path.split('/')[2:])
         if js_file in game["game_file_paths"]:
             js_file_content = game["game_file_contents"][game["game_file_paths"].index(js_file)]
             return js_file_content, 200, {'Content-Type': 'application/javascript'}
@@ -827,6 +825,7 @@ def serve_game(game_path):
                     },
                     body: JSON.stringify({
                         gameId: '""" + game_id + """',
+                        pairId: '""" + pair_id + """',
                         events: events
                     }),
                 });
@@ -958,9 +957,11 @@ def serve_game(game_path):
                       // Upload video to backend with correct game_id
                       console.log('[p5capture] beforeDownload: video ready', ctx.filename, 'size:', blob.size);
                       const gameId = '""" + game_id + """';
+                      const pairId = '""" + pair_id + """';
                       const formData = new FormData();
                       formData.append('video', blob, ctx.filename);
                       formData.append('game_id', gameId);
+                      formData.append('pair_id', pairId);
                       fetch('/upload-video', {
                         method: 'POST',
                         body: formData
@@ -969,12 +970,12 @@ def serve_game(game_path):
                       .then(data => {
                         console.log('[p5capture] Video uploaded:', data);
                         // Notify parent that upload is complete
-                        window.parent.postMessage({ action: "videoUploadComplete", gameId: gameId }, "*");
-                        next();
+                        window.parent.postMessage({ action: "videoUploadComplete", gameId: gameId, pairId: pairId }, "*");
+                        // next();
                       })
                       .catch(err => {
                         console.error('[p5capture] Upload failed:', err);
-                        next();
+                        // next();
                       });
                     }
                   });
@@ -1015,16 +1016,15 @@ def record_events():
     print("Received events")
     event_data = request.json
     game_id = event_data.get('gameId')
-    
-    if game_id not in game_events:
-        game_events[game_id] = []
-    
+    pair_id = event_data.get('pairId')
+    key = (pair_id, game_id)
+    if key not in game_events:
+        game_events[key] = []
     # check if event is video_recording_started
     for event in event_data.get('events', []):
         if event['type'] == 'video_recording_started':
             print("Video recording started")
-    
-    game_events[game_id].extend(event_data.get('events', []))
+    game_events[key].extend(event_data.get('events', []))
     return jsonify({"status": "success"})
 
 
@@ -1033,17 +1033,25 @@ def submit_ratings():
     """Handle game ratings submission"""
     global ratings_counter
     ratings = request.json
-    
-    # Print ratings to console for debugging
     print("Received ratings:", ratings)
-    
-    # Add events data to ratings
+    pair_id = ratings.get('pair_id')
+
+    # Add events data to ratings and add video path
     for key in ['game_a', 'game_b']:
-        game_id = ratings.get(key, {}).get('url', '').split('/')[0]
-        if game_id in game_events:
-            ratings[key]['events'] = game_events[game_id]
-            # Clear events after storing them
-            del game_events[game_id]
+        game_id = ratings.get(key, {}).get('url', '').split('/')[1].replace('game_', '')
+
+        event_key = (pair_id, game_id)
+        if event_key in game_events:
+            ratings[key]['events'] = game_events[event_key]
+            del game_events[event_key]
+        # Find the video file in the results/pair_{pair_id}/game_{game_id}/ directory
+        video_dir = RESULTS_DIR / f"pair_{pair_id}" / f"game_{game_id}"
+        video_path = None
+        if video_dir.exists():
+            files = list(video_dir.iterdir())
+            if files:
+                video_path = str(files[0])
+        ratings[key]['video_path'] = video_path
     
     # Create a timestamp for this pair of ratings
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1081,7 +1089,7 @@ def submit_ratings():
         # Format rating data for HF
         # TODO: more general game_a_ratings dict field
         preference = {
-            "id": str(uuid.uuid4()),
+            "id": pair_id,
             "game_a_id": game_a['url'].split('/')[0],
             "game_b_id": game_b['url'].split('/')[0],
             "winner": winner,
@@ -1124,12 +1132,13 @@ def upload_video():
     video = request.files['video']
     filename = video.filename
     game_id = request.form.get('game_id', 'unknown')
-    # Save the video in the results directory, in a subfolder by game_id
-    save_dir = RESULTS_DIR / game_id
+    pair_id = request.form.get('pair_id', 'unknown')
+    # Save the video in the results directory, in a subfolder by pair_id/game_id
+    save_dir = RESULTS_DIR / f"pair_{pair_id}" / f"game_{game_id}"
     save_dir.mkdir(parents=True, exist_ok=True)
     save_path = save_dir / filename
     video.save(save_path)
-    print(f"Saved video for game {game_id} at {save_path}")
+    print(f"Saved video for game {game_id} (pair {pair_id}) at {save_path}")
     return jsonify({"status": "success", "filename": str(save_path)})
 
 if __name__ == '__main__':
