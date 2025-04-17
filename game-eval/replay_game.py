@@ -13,6 +13,8 @@ import datasets
 save_dir = Path(__file__).parent / "results" / Path(__file__).stem
 save_dir.mkdir(parents=True, exist_ok=True)
 
+games_dataset_id = "generative-games/gen-games-v4"
+preferences_dataset_id = "generative-games/gen-games-v4-preferences-test"
 
 
 def replay_game(game_files: Dict[str, Any], actions: List[Dict[str, Any]], save_dir: Path = None, debug: bool = False):
@@ -125,6 +127,14 @@ def replay_game(game_files: Dict[str, Any], actions: List[Dict[str, Any]], save_
             });
             """)
 
+            # try to access frameCount
+            try:
+                frame_count = page.evaluate("window.gameInstance.frameCount")
+            except Exception as e:
+                print(f"Error getting frame count: {e}")
+                breakpoint()
+                return
+
             # Set up action replay
             current_action_idx = 0
 
@@ -220,7 +230,7 @@ def replay_game(game_files: Dict[str, Any], actions: List[Dict[str, Any]], save_
             # if debug:
             #     print("All actions executed. Press Enter to continue...")
             #     input()
-            
+            time.sleep(1)
             browser.close()
             
     finally:
@@ -231,8 +241,6 @@ def replay_game(game_files: Dict[str, Any], actions: List[Dict[str, Any]], save_
 if __name__ == "__main__":
     debug = True
 
-    games_dataset_id = "generative-games/gen-games-v3"
-    preferences_dataset_id = "generative-games/gen-games-v3-preferences-test"
 
     # Load datasets
     games_dataset = datasets.load_dataset(games_dataset_id, split="train")
@@ -253,14 +261,17 @@ if __name__ == "__main__":
         
         game_a = game_a[0]
         game_b = game_b[0]
+
+        if game_a["id"] != "2268bae415617264cd66ea74f548c4587e2c4daaaca3c58b9224ad37f611269e" and game_b["id"] != "2268bae415617264cd66ea74f548c4587e2c4daaaca3c58b9224ad37f611269e":
+            continue
         
         # Create dictionaries mapping file paths to file contents
         game_a_files = {path: content for path, content in zip(game_a["game_file_paths"], game_a["game_file_contents"])}
         game_b_files = {path: content for path, content in zip(game_b["game_file_paths"], game_b["game_file_contents"])}
 
-        print(f"Replaying game A with {len(actions_a)} actions, method: {game_a['method']}, narrative_id: {game_a['game_narrative_id']}, sample_id: {game_a['game_title']}")
+        print(f"Replaying game A with {len(actions_a)} actions, method: {game_a['method']}, concept_id: {game_a['game_concept_id']}, sample_id: {game_a['game_sample_id']}, id: {game_a['id']}")
         replay_game(game_a_files, actions_a, save_dir, debug=debug)
-        print(f"Replaying game B with {len(actions_b)} actions, method: {game_b['method']}, narrative_id: {game_b['game_narrative_id']}, sample_id: {game_b['game_title']}")
+        print(f"Replaying game B with {len(actions_b)} actions, method: {game_b['method']}, concept_id: {game_b['game_concept_id']}, sample_id: {game_b['game_sample_id']}, id: {game_b['id']}")
         replay_game(game_b_files, actions_b, save_dir, debug=debug)
 
 

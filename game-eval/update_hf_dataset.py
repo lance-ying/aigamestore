@@ -9,9 +9,8 @@ import re
 import numpy as np
 
 
-# GAMES_DIR = Path(__file__).parent / "games/games_v3"
-GAMES_DIR = Path(__file__).parent / "games/games_test"
-HF_DATASET_REPO = "generative-games/gen-games-v3"
+GAMES_DIR = Path(__file__).parent / "games/games_v4"
+HF_DATASET_REPO = "generative-games/gen-games-v4"
 
 
 def get_game_key(method, model, narrative_id, game_name):
@@ -35,17 +34,17 @@ def collect_samples(existing_games=None):
         for method_dir in model_dir.iterdir(): 
             if not method_dir.is_dir():
                 continue
-            for narrative_dir in method_dir.iterdir():
-                if not narrative_dir.is_dir():
+            for concept_dir in method_dir.iterdir():
+                if not concept_dir.is_dir():
                     continue
-                narrative_name = narrative_dir.name
-                for game_dir in narrative_dir.iterdir():                       
+                concept_name = concept_dir.name
+                for game_dir in concept_dir.iterdir():                       
                     if not game_dir.is_dir():
                         continue
                     game_name = game_dir.name
                     
                     # Create a key for this game
-                    game_key = get_game_key(method_dir.name, model_name, narrative_name, game_name)
+                    game_key = get_game_key(method_dir.name, model_name, concept_name, game_name)
                     
                     if game_key in existing_games:
                         print(f"Found existing game: {game_key}")
@@ -78,18 +77,17 @@ def collect_samples(existing_games=None):
                             game_file_contents.append(file_content)
                             game_file_paths.append(file_path)
 
-                    # e.g. narrative id = "0001" extract from folder name "game_0001"
-                    narrative_id = narrative_name.split("_")[1]
+                    # e.g. concept id = "0001" extract from folder name "game_0001"
+                    concept_id = concept_name.split("_")[1]
 
-                    # TODO: change naming convention for samples?
                     sample_id = game_name
 
                     sample = {
                         "id": game_id,
                         "method": metadata["generation_info"]["method"],
                         "model": metadata["generation_info"]["model"],
-                        "game_narrative_id": narrative_id,
-                        "game_narrative": metadata["game_info"]["narrative"],
+                        "game_concept_id": concept_id,
+                        "game_concept": metadata["game_info"]["narrative"],
                         "game_title": metadata["game_info"]["title"],
                         "game_sample_id": sample_id,
                         "game_file_paths": game_file_paths,

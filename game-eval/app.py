@@ -12,8 +12,8 @@ from scheduler import ParquetScheduler
 
 # Hugging Face configuration
 HF_TOKEN = os.environ.get("HF_TOKEN")
-GAMES_DATASET = "generative-games/gen-games-v3"
-PREFERENCES_DATASET = "generative-games/gen-games-v3-preferences-test"  # Dataset to save ratings
+GAMES_DATASET = "generative-games/gen-games-v4"
+PREFERENCES_DATASET = "generative-games/gen-games-v4-preferences-test"  # Dataset to save ratings
 
 PUSH_EVERY_N_RATINGS = 10
 
@@ -57,24 +57,12 @@ GAMES_DATASET = load_games_dataset()
 
 def get_random_games(num_games=2):
     """Get random games from the dataset"""
-    # print("Getting random games")
-    # if GAMES_DATASET is None:
-    #     return []
-    
-    # # Get all games
-    # all_games = list(GAMES_DATASET)
-    
-    # if len(all_games) < num_games:
-    #     return all_games
-    
-    # return random.sample(all_games, num_games)
-
-    # 1) sample a narrative
+    # 1) sample a game concept
     # 2) sample two different methods
     # 3) sample a game for each method
-    narrative_ids = GAMES_DATASET.unique("game_narrative_id")
-    narrative_id = random.choice(narrative_ids)
-    games = GAMES_DATASET.filter(lambda x: x["game_narrative_id"] == narrative_id)
+    concept_ids = GAMES_DATASET.unique("game_concept_id")
+    concept_id = random.choice(concept_ids)
+    games = GAMES_DATASET.filter(lambda x: x["game_concept_id"] == concept_id)
     methods = games.unique("method")
     method_a = random.choice(methods)
     method_b = random.choice(methods)
@@ -752,7 +740,7 @@ def index():
         formatted_games.append({
             "path": f"{game['id']}/index.html",  # Use game ID in path
             "name": game["game_title"],
-            "narrative": game["game_narrative"],
+            "concept": game["game_concept"],
             "model": game["model"],
             "method": game["method"]
         })

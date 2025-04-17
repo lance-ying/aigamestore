@@ -47,7 +47,7 @@ def test_p5_game(game_files: dict, debug: bool = False):
             
             # Access frameCount variable
             # frame_count = page.evaluate("frameCount")
-            # frame_count = page.evaluate("window.gameInstance.frameCount")
+            frame_count = page.evaluate("window.gameInstance.frameCount")
             # frame_count = page.evaluate("window.gameInstance.draw")
             breakpoint()
             print(f"Current frame count: {frame_count}")
@@ -67,8 +67,7 @@ def test_p5_game(game_files: dict, debug: bool = False):
 
 if __name__ == "__main__":
     # Example usage with the cloudy game
-    game_dir = Path("game-eval/games_v3/claude-3.7-sonnet/instruction_simple_prompt/game_0000/cloudy_with_a_chance")
-    
+    game_dir = Path("game-eval/games/games_test/claude-3.7-sonnet/complexity_guide/concept_0020/simple_p5_game")
     # Read all game files
     game_files = {}
     for file_path in game_dir.glob("**/*"):

@@ -1,6 +1,7 @@
 from flask import Flask, request, send_from_directory, jsonify
 from pathlib import Path
 import os
+import json
 
 app = Flask(__name__)
 
@@ -8,7 +9,8 @@ app = Flask(__name__)
 # GAME_DIR = Path(__file__).parent / "games_v3/claude-3.7-sonnet/instruction_simple_prompt/game_0000/cloudy_with_a_chance"
 # GAME_ID = "cloudy_with_a_chance"
 
-GAME_DIR = Path(__file__).parent / "games_test/claude-3.7-sonnet/complexity_guide/concept_0020/sample_0"
+# GAME_DIR = Path(__file__).parent / "games/games_test/claude-3.7-sonnet/complexity_guide/concept_0020/simple_p5_game"
+GAME_DIR = Path(__file__).parent / "games/games_v4/claude-3.7-sonnet/judge/concept_0001/sample_0"
 GAME_ID = "sample_0"
 
 game_events = []
@@ -99,7 +101,23 @@ def index():
 def record_events():
     event_data = request.json
     print("Received events:", event_data)
-    game_events.extend(event_data.get('events', []))
+    new_events = event_data.get('events', [])
+    game_events.extend(new_events)
+
+    # Save to file in GAME_DIR
+    events_file = GAME_DIR / 'recorded_events.json'
+    if events_file.exists():
+        try:
+            with open(events_file, 'r') as f:
+                existing = json.load(f)
+        except Exception:
+            existing = []
+    else:
+        existing = []
+    existing.extend(new_events)
+    with open(events_file, 'w') as f:
+        json.dump(existing, f, indent=2)
+
     return jsonify({"status": "success"})
 
 @app.route("/<path:filename>")
