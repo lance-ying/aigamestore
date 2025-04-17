@@ -81,19 +81,17 @@ class GameGenerator:
         self.method_name = method_name
         self.model_name = model_name
         self.verbose = verbose
-        # Initialize model API
-        self.model_api = ModelAPI(model_name)
 
         # Initialize appropriate designer
         if method_name in ["instruction_simple_prompt", "simple_prompt"]:
             self.designer = self.VALID_METHODS[method_name]["designer"](
-                model_api=self.model_api,
+                model_name=model_name,
                 system_prompt=CODE_GENERATION_SYSTEM_PROMPT,
                 verbose=self.verbose,
             )
         else:
             self.designer = self.VALID_METHODS[method_name]["designer"](
-                model_api=self.model_api,
+                model_name=model_name,
                 system_prompt=GAME_DESIGN_SYSTEM_PROMPT,
                 verbose=self.verbose,
             )
@@ -101,7 +99,7 @@ class GameGenerator:
         # Initialize code generator
         if self.VALID_METHODS[method_name]["code_generator"] is not None:
             self.code_generator = self.VALID_METHODS[method_name]["code_generator"](
-                model_api=self.model_api,
+                model_name=model_name,
                 system_prompt=CODE_GENERATION_SYSTEM_PROMPT,
                 verbose=self.verbose,
             )
@@ -235,6 +233,7 @@ class GameGenerator:
                 "narrative": narrative if narrative else "None",
                 "narrative_path": narrative_path if narrative_path else "None",
                 "game_instructions": game_instructions,
+                "playability": False,
             },
             "generation_info": {
                 "method": self.method_name,
@@ -259,7 +258,17 @@ class GameGenerator:
         with open(game_dir / "metadata.json", "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=2)
 
-        with open(game_dir / "generation_log.json", "w", encoding="utf-8") as f:
-            json.dump(self.model_api.get_call_history(), f, indent=2)
-
+        for role in ["designer", "code_generator"]:
+            if self.designer.model_api.get_call_history():
+                with open(
+                    game_dir / f"{role}_generation_log.json", "w", encoding="utf-8"
+                ) as f:
+                    json.dump(self.designer.model_api.get_call_history(), f, indent=2)
+            if self.code_generator and self.code_generator.model_api.get_call_history():
+                with open(
+                    game_dir / f"{role}_generation_log.json", "w", encoding="utf-8"
+                ) as f:
+                    json.dump(
+                        self.code_generator.model_api.get_call_history(), f, indent=2
+                    )
         return game_dir

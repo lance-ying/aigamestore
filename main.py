@@ -67,7 +67,9 @@ def generate_game(
                 method_name=method, model_name=model, verbose=verbose
             )
         else:
-            generator = GameGenerator(method_name=method, model_name=model, verbose=verbose)
+            generator = GameGenerator(
+                method_name=method, model_name=model, verbose=verbose
+            )
 
         # Generate the game
         title = generator.generate_game(
@@ -125,10 +127,11 @@ def main():
     parser.add_argument(
         "--model",
         type=str,
-        default="anthropic:claude-3.7-sonnet",
+        default="openai:o4-mini",
         choices=[
             "openai:gpt-4o",
             "openai:o3-mini",
+            "openai:o4-mini",
             "anthropic:claude-3.5-sonnet",
             "anthropic:claude-3.7-sonnet",
             "google:gemini-2.0-flash",
@@ -160,6 +163,9 @@ def main():
             verbose=args.verbose,
         )
         print(f"\n{GREEN}Game generated successfully at: {game_path}{RESET}")
+
+        # TODO: Run the game to check if pressing Enter works
+        
 
     except Exception as e:
         print(f"\n{RED}Failed to generate game: {str(e)}{RESET}")

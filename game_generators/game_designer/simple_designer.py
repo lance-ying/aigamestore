@@ -19,11 +19,11 @@ class SimpleDesigner:
 
     def __init__(
         self,
-        model_api: ModelAPI = None,
+        model_name: str = "openai:gpt-4o",
         system_prompt: str = None,
         verbose: bool = False,
     ):
-        self.model_api = model_api
+        self.model_api = ModelAPI(model_name)
         self.system_prompt = system_prompt or CODE_GENERATION_SYSTEM_PROMPT
         self.p5js_url = "https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"
         self.verbose = verbose

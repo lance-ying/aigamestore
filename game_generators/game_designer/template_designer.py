@@ -8,17 +8,20 @@ class TemplateDesigner:
     """Designer that creates games through template-based, coarse-to-fine specification"""
 
     def __init__(
-        self, model_api: ModelAPI, system_prompt: str = None, verbose: bool = False
+        self,
+        model_name: str = "openai:gpt-4o",
+        system_prompt: str = None,
+        verbose: bool = False,
     ):
         """
         Initialize the template designer with model API and verbose option
 
         Args:
-            model_api: API wrapper for the AI model
+            model_name: API wrapper for the AI model
             system_prompt: Optional system prompt to override default
             verbose: Whether to print verbose information
         """
-        self.model_api = model_api
+        self.model_api = ModelAPI(model_name)
         self.system_prompt = system_prompt or GAME_DESIGN_SYSTEM_PROMPT
         self.verbose = verbose  # Store verbose as instance variable
 
