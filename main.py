@@ -80,22 +80,7 @@ def generate_game(
             print(f"\n{GREEN}Successfully generated game:{RESET}")
             print(f"{BLUE}Title:{RESET} {title}")
 
-        # Return the game directory path
-        if narrative_path:
-            return (
-                Path("games")
-                / method
-                / model.split(":")[1]
-                / narrative_path.split("/")[-1].replace(".json", "")
-                / f"{title.lower().replace(' ', '_')}"
-            )
-        else:
-            return (
-                Path("games")
-                / method
-                / model.split(":")[1]
-                / f"{title.lower().replace(' ', '_')}"
-            )
+        return title
 
     except Exception as e:
         print(f"{RED}Error generating game: {str(e)}{RESET}")
@@ -114,13 +99,13 @@ def main():
         choices=[
             # "conversation",
             # "character_driven",
-            # "template",
+            "template",
             "judge",
             "simple_prompt",
             "instruction_simple_prompt",
             "complexity_guide",
         ],
-        default="simple_prompt",
+        default="template",
         help="Game generation method to use",
     )
 
@@ -165,7 +150,6 @@ def main():
         print(f"\n{GREEN}Game generated successfully at: {game_path}{RESET}")
 
         # TODO: Run the game to check if pressing Enter works
-        
 
     except Exception as e:
         print(f"\n{RED}Failed to generate game: {str(e)}{RESET}")

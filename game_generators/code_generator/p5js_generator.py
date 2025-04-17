@@ -25,7 +25,6 @@ class P5JSGenerator:
     def _create_user_prompt(self, title: str, game_concept: str) -> str:
         """Create the user prompt for code generation"""
         return f"""
----------------------------------------------------------
 TASK: Implement a game in p5.js based on the following description:
 
 <game_title>

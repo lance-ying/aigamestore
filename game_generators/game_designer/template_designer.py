@@ -25,167 +25,53 @@ class TemplateDesigner:
         self.system_prompt = system_prompt or GAME_DESIGN_SYSTEM_PROMPT
         self.verbose = verbose  # Store verbose as instance variable
 
-        # Template components to be specified
-        self.design_components = {
-            "environment": {
-                "theme": "Overall visual and gameplay theme",
-                "global_state": "Game-wide state variables",
-                "components": "Independent environmental elements",
-            },
-            "mechanics": {
-                "core_loop": "Primary gameplay loop",
-                "progression": "How gameplay evolves over time",
-                "interactions": "How elements interact",
-            },
-            "entities": {
-                "player": "Player character capabilities",
-                "ai_agents": "AI-controlled characters",
-                "objects": "Interactive game objects",
-            },
-        }
-
-    def design_game(
-        self,
-        genre: str,
-        num_players: int,
-        narratives: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """Create game design through template-based specification"""
+    def design_game(self, narrative: Optional[str] = None) -> Dict[str, Any]:
         try:
             if self.verbose:
                 print(f"\n{BLUE}Starting template-based design process...{RESET}")
 
-            num_ai = num_players - 1
+            # Step 1: Sample environment and component information
+            environment_info = self._sample_environment_info(narrative)
+            if self.verbose:
+                print(f"\n{GREEN}Environment Information:{RESET}\n{environment_info}")
 
-            # Step 1: Generate initial templates
-            template_prompt = f"""Hey! Let's create a really cool {genre} game together! I'm thinking of something where one player goes up against {num_ai} AI opponents.
+            # Step 2: Generate core mechanics and interactions
+            mechanics_info = self._generate_mechanics(environment_info)
+            if self.verbose:
+                print(f"\n{GREEN}Core Mechanics:{RESET}\n{mechanics_info}")
 
-{narratives if narratives else "We can come up with a fun story that fits!"}
+            # Step 3: Define progression and evolution
+            progression_info = self._design_progression_system(
+                environment_info, mechanics_info
+            )
+            if self.verbose:
+                print(f"\n{GREEN}Progression System:{RESET}\n{progression_info}")
 
-First, let's figure out what makes this game special:
+            # Step 4: Create final design
+            game_title, final_design = self._create_final_design(
+                {
+                    "environment": environment_info,
+                    "mechanics": mechanics_info,
+                    "progression": progression_info,
+                }
+            )
 
-Tell me about the world:
-- What's the coolest thing about how it looks and feels?
-- What kind of crazy stuff happens in the environment?
-- What are 3-5 things in the world that do interesting things on their own?
-
-Now the characters:
-For the player:
-- What makes them super fun to control?
-- What cool moves can they do?
-- How do they get even cooler as you play?
-
-For each AI opponent:
-- What's their unique personality quirk?
-- How do they surprise the player?
-- What makes them different from typical game AI?
-
-And here's the fun part - how does everything interact?
-- What happens when abilities combine?
-- How does the environment create crazy moments?
-- What kind of "wow, I can't believe that worked!" moments can happen?
-
-Just brainstorm freely - we can refine it later!"""
-
-            templates = self._call_model_api(template_prompt)
-
-            # Step 2: Generate core design
-            design_prompt = f"""Awesome ideas! Now let's turn this into a real game design.
-
-Looking at what we have:
-{templates}
-
-Let's think about how it all works together:
-
-The basics:
-- How do simple controls lead to cool results?
-- What secrets can players discover?
-- How does the environment react to chaos?
-
-The fun stuff:
-- What kind of power-ups or transformations happen?
-- How do the {num_ai} AIs create interesting situations?
-- What unexpected strategies might players discover?
-
-The technical side:
-- How do we make all these wild interactions work?
-- How do we keep it fun but not totally broken?
-- What systems need to track all this chaos?
-
-Remember, we want players to have those "That was amazing!" moments while keeping the game playable!"""
-
-            core_design = self._call_model_api(design_prompt)
-
-            # Step 3: Create final design with guidance
-            final_prompt = f"""Great! Let's wrap this up with the final details.
-
-Based on everything we've discussed:
-{templates}
-
-{core_design}
-
-We need these exact sections with their markers:
-
-1. The Title:
-```title
-[Your catchy title here]
-```
-
-2. The Description:
-```description
-[Write 2-3 sentences that explain what makes your game awesome and gets players excited to try it!]
-```
-
-3. The Start Screen (Example below):
-```guidance
-Welcome to [Game Name]!
-
-[Write a fun welcome message here]
-
-Controls:
-- Arrow keys or WASD: Move around
-- Space: [Primary action]
-- Shift: [Special ability]
-
-Meet your opponents:
-[Introduce the {num_ai} AI characters and their quirks]
-
-Pro tip: [Hint at some cool secret or strategy]
-```
-
-4. Technical Notes:
-```technical
-[Any important implementation details]
-```
-
-Make each section exciting - especially the description and start screen!"""
-
-            final_design = f"""=== Templates ===
-{templates}
-
-=== Core Design ===
-{core_design}
-
-=== Final Specification ===
-{self._call_model_api(final_prompt)}"""
-
-            # Generate fuzzy code and continue as before...
-            fuzzy_code = self._generate_fuzzy_code(final_design)
+            # Generate code structure
+            fuzzy_code = self._generate_fuzzy_code(game_title, final_design)
             complete_design = self._format_complete_design(final_design, fuzzy_code)
 
             if self.verbose:
                 print(f"\n{BLUE}Final Design Components:{RESET}")
-                print(f"Title: {self._extract_title(final_design)}")
-                print(f"Description: {self._extract_description(final_design)}")
-                print(f"\n{YELLOW}Generated Code Structure:{RESET}")
-                print(fuzzy_code)
+                print(f"Title: {game_title}")
 
             return {
-                "title": self._extract_title(final_design),
-                "description": self._extract_description(final_design),
+                "title": game_title,
                 "game_design_text": complete_design,
-                "game_guidance": self._extract_guidance(final_design),
-                "full_response": final_design,
+                "fuzzy_code": fuzzy_code,
+                "environment": environment_info,
+                "mechanics": mechanics_info,
+                "progression": progression_info,
+                "final_design": final_design,
             }
 
         except Exception as e:
@@ -198,481 +84,207 @@ Make each section exciting - especially the description and start screen!"""
                 traceback.print_exc()
             raise
 
-    def _generate_high_level_design(
-        self, genre: str, num_players: int, narratives: Optional[str]
-    ) -> str:
-        """Generate high-level game concept"""
-        prompt = f"""Create an innovative {genre} game concept for {num_players} players (1 human + {num_players-1} AI).
+    def _sample_environment_info(self, narrative: Optional[str]) -> str:
+        """Generate detailed environment and component definitions"""
+        prompt = f"""Based on this narrative:
+<narrative_context>
+{narrative if narrative else 'Create something wildly imaginative!'}
+</narrative_context>
 
-Narrative Context:
-{narratives if narratives else 'Create an engaging story that fits the genre'}
+Please provide a detailed breakdown of the game environment in the following format:
 
-Focus on three key aspects:
-1. Core Innovation:
-- What's the unique twist that makes this game special?
-- How does it stand out in the {genre} genre?
-
-2. Evolution Points:
-- How will the game surprise players over time?
-- What new elements are introduced as players progress?
-
-3. Dynamic World:
-- What makes the game environment feel alive?
-- How do environmental elements create interesting situations?
-
-Provide a high-level overview of:
-1. Game Title: [Catchy title]
-2. Core Concept: [Main gameplay idea]
-3. Key Features: [List 3-5 standout features]
-4. Evolution Path: [How the game grows in complexity]"""
-
-        return self._call_model_api(prompt)
-
-    def _specify_environment(self, high_level: str) -> str:
-        """Specify detailed environment design"""
-        prompt = f"""Based on this high-level design:
-{high_level}
-
-Design a dynamic game environment with independent components that create emergent gameplay.
-
-Specify:
-1. Environment Theme:
-- Visual style
-- Atmosphere
-- Time/space setting
-
+<environment>
+1. Theme:
+    - Overall aesthetic and atmosphere
+    - Time and setting
+    - Visual style and mood
 2. Global State:
-- Score system
-- Resource management
-- Time/progression tracking
+    - What resources or scores are tracked?
+    - What global conditions affect gameplay?
+    - How does time or progression work?
+3. Components:
+    - Name and purpose
+    - Autonomous behavior pattern
+    - How it evolves over time
+    - How it affects gameplay
+4. Interactions:
+    - What chain reactions can occur?
+    - What emergent behaviors might arise?
+    - How do components affect each other?
+</environment>"""
 
-3. Independent Components (at least 3):
-For each component, define:
-- Name and purpose
-- Autonomous behavior pattern
-- Interaction rules
-- Evolution over time
+        response = self._call_model_api(prompt, system_prompt=self.system_prompt)
+        return self._extract_section(response, "environment")
 
-4. Environmental Events:
-- Regular occurrences
-- Random events
-- Progressive challenges
+    def _generate_mechanics(self, environment_info: str) -> str:
+        """Generate detailed mechanics and interaction systems"""
+        prompt = f"""Based on this environment:
+<environment_info>
+{environment_info}
+</environment_info>
 
-Make sure each component operates independently and creates interesting situations!"""
+Design the core gameplay mechanics in the following format:
 
-        return self._call_model_api(prompt)
+<mechanics>
+1. Core:
+    - What are the basic actions available?
+    - How do controls translate to interesting results?
+    - What makes the moment-to-moment gameplay engaging?
+2. Advanced:
+    - What special abilities or moves are possible?
+    - What advanced techniques can players discover?
+    - How do different mechanics combine?
+3. Interactions:
+    - How do players interact with environment components?
+    - What unexpected combinations are possible?
+    - What "wow" moments can emerge from these systems?
+</mechanics>"""
 
-    def _design_progression(self, environment: str) -> str:
-        """Design the progression system"""
-        prompt = f"""Using this environment design:
-{environment}
+        response = self._call_model_api(prompt, system_prompt=self.system_prompt)
+        return self._extract_section(response, "mechanics")
 
-Create an engaging progression system that constantly introduces new elements and challenges.
+    def _design_progression_system(
+        self, environment_info: str, mechanics_info: str
+    ) -> str:
+        """Design the progression and evolution systems"""
+        prompt = f"""Based on the environment and mechanics:
+<environment>
+{environment_info}
+</environment>
 
-Detail:
-1. Level Structure:
-- Starting mechanics
-- Introduction points for new elements
-- Difficulty curve
-- Peak challenges
+<mechanics>
+{mechanics_info}
+</mechanics>
 
-2. Mechanical Layers:
-- Basic mechanics
-- Advanced techniques
-- Hidden combinations
-- Master-level skills
+Design how the game evolves over time in the following format:
 
-3. Discovery Points:
-- Tutorial revelations
-- Surprise mechanics
-- Environmental changes
-- Special events
+<progression>
+1. Characters:
+    - What characters are in the game?
+    - What are their capabilities?
+    - What are their motivations?
+    - What are their goals?
+2. Evolution:
+    - How does the game evolve over time?
+    - How does the characters evolve over time?
+    - How does the environment evolve over time?
+    - How does the mechanics evolve over time?
+</progression>
+"""
 
-4. Challenge Evolution:
-- How basic challenges evolve
-- New obstacle combinations
-- Environmental hazards
-- Ultimate tests
-
-Make each stage introduce something new or combine existing elements in surprising ways!"""
-
-        return self._call_model_api(prompt)
-
-    def _define_entities(self, progression: str) -> str:
-        """Define detailed entity behaviors"""
-        prompt = f"""Based on this progression system:
-{progression}
-
-Design the entities that will populate the game world, focusing on dynamic behaviors and interactions.
-
-Define:
-1. Player Character:
-- Basic abilities
-- Unlockable skills
-- Advanced techniques
-- Strategic options
-
-2. AI Agents:
-- Unique personalities
-- Individual behaviors
-- Learning patterns
-- Interaction styles
-
-3. Interactive Objects:
-- Basic objects
-- Special items
-- Power-ups
-- Environmental tools
-
-4. Interaction Rules:
-- Entity relationships
-- Combination effects
-- Chain reactions
-- Emergent behaviors
-
-Ensure each entity adds depth to the gameplay and creates interesting situations!"""
-
-        return self._call_model_api(prompt)
+        response = self._call_model_api(prompt, system_prompt=self.system_prompt)
+        return self._extract_section(response, "progression")
 
     def _create_final_design(self, components: Dict[str, str]) -> str:
         """Create final detailed design"""
         prompt = f"""Based on all these components:
 
-High-Level Design:
-{components['high_level']}
-
 Environment:
 {components['environment']}
+
+Mechanics:
+{components['mechanics']}
 
 Progression:
 {components['progression']}
 
-Entities:
-{components['entities']}
-
 Create a complete, implementation-ready game design that includes:
 
-1. Game Title:
-[Final title]
+<game_title>
+...(Your appealing game title here)
+</game_title>
 
-2. Game Description:
-[Polished description of core concept and features]
+<game_design>
 
-3. Game Guidance:
-```guidance
+1. Game Description:
+[Polished description of core concept and features for what the game is about, should be fun and engaging]
+
+2. Game Guidance:
 [Write an engaging start screen message that:
 - Welcomes players
 - Explains basic controls
 - Hints at deeper mechanics
 - Teases future surprises]
-```
 
-4. Technical Design:
+3. Technical Design:
 - Complete mechanics specification
-- Entity behavior definitions
+- Character behavior definitions
 - Progression system details
 - Interaction rules
 
-5. Implementation Notes:
-- Core systems
-- State management
-- Physics/collision handling
-- Visual requirements
+4. Implementation Notes:
+- Core systems for game (clear, bug-free, etc.)
+- Visual requirements (appealing to the eye, easy to understand, etc.)
+</game_design>
 
 Remember: The game should constantly surprise players with new mechanics, combinations, and challenges!"""
 
-        return self._call_model_api(prompt)
+        response = self._call_model_api(prompt, system_prompt=self.system_prompt)
+
+        return self._extract_section(response, "game_title"), self._extract_section(
+            response, "game_design"
+        )
 
     def _format_complete_design(self, final_design: str, fuzzy_code: str) -> str:
         """Format the complete design document with fuzzy code structure"""
-        return f"""=== Complete Game Design Document ===
-
+        return f"""
+<game_design>
 {final_design}
+</game_design>
 
-=== Code Structure Guide ===
-The following code structure outlines the key dynamic elements and their interactions:
-
-```javascript
+<fuzzy_code>
 {fuzzy_code}
-```
+</fuzzy_code>
+"""
 
-This structure shows:
-- Core state management and progression
-- Entity relationships and behaviors
-- Dynamic element evolution points
-- Interaction patterns and combinations
-Use this as a guide for implementation while maintaining the dynamic and surprising nature of the game."""
+    def _extract_section(self, text: str, section: str) -> str:
+        """Extract content from XML-style section tags"""
+        # pattern = f"<{section}>(.*?)</{section}>"
+        pattern = f"<{section}>\s*(.*?)\s*</{section}>"
+        match = re.search(pattern, text, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+        return text
+
+    def _extract_nested_section(self, text: str, parent: str, child: str) -> str:
+        """Extract content from nested XML-style section tags"""
+        parent_content = self._extract_section(text, parent)
+        if parent_content:
+            return self._extract_section(parent_content, child)
+        return ""
 
     def _extract_title(self, text: str) -> str:
         """Extract game title from text"""
-        pattern = r"```title\s*(.*?)```"
-        match = re.search(pattern, text, re.DOTALL)
-        if match:
-            return match.group(1).strip()
-        return "Untitled Game"
+        return self._extract_section(text, "title")
 
-    def _extract_description(self, text: str) -> str:
-        """Extract game description from text"""
-        pattern = r"```description\s*(.*?)```"
-        match = re.search(pattern, text, re.DOTALL)
-        if match:
-            description = match.group(1).strip()
-            if len(description) > 10:  # Basic validation
-                return description
-        if self.verbose:
-            print(f"{YELLOW}Warning: No valid description found in text{RESET}")
-        return "No description provided."
-
-    def _extract_guidance(self, text: str) -> str:
-        """Extract game guidance from text"""
-        pattern = r"```guidance\s*(.*?)```"
-        match = re.search(pattern, text, re.DOTALL)
-        if not match:
-            raise ValueError(
-                "No guidance block found in the final design. This is required for the start screen."
-            )
-        return match.group(1).strip()
-
-    def _call_model_api(self, prompt: str) -> str:
+    def _call_model_api(self, prompt: str, system_prompt: str = None) -> str:
         """Call the model API with proper prompts"""
         return self.model_api.call(
             user_prompt=prompt,
-            system_prompt=self.system_prompt,
+            system_prompt=system_prompt or self.system_prompt,
             verbose=self.verbose,
         )
 
-    def _generate_fuzzy_code(self, final_design: str) -> str:
-        """Generate a rough code structure using ECS pattern"""
+    def _generate_fuzzy_code(self, game_title: str, final_design: str) -> str:
+        """Generate a rough code structure"""
         prompt = f"""Based on this final design:
+<game_title>
+{game_title}
+</game_title>
+
+<game_design>
 {final_design}
+</game_design>
 
-Create a JavaScript code structure that enables rich character-driven gameplay. Focus on:
+Create a fuzzy code in JavaScript that faithfully follows the design, which serves as a guide for a detailed implementation from scratch.
+- Your fuzzy code should be written in a way that is easy to understand and implement.
+- Your fuzzy code is going to guide the code generator to generate the final code, so it should be detailed and complete, but not too verbose in terms of detailed implementation. The more guidance and more detailed about the requirements, the better.
 
-1. Environment Components:
-```javascript
-/**
- * Define independent environmental elements that create dynamic situations
- * Each component should have:
- * - Autonomous behavior patterns
- * - State evolution over time
- * - Interaction rules with other elements
- */
-class EnvironmentComponent extends Component {{
-    constructor(type, behavior) {{
-        this.type = type;
-        this.behaviorPattern = behavior;
-        this.state = new Map();  // Track component-specific state
-        this.evolutionStage = 0;
-    }}
+Your fuzzy code MUST be wrapped in code block in the format:
 
-    // Show how this component evolves and interacts
-    update(deltaTime, worldState) {{...}}
-}}
-```
-
-2. Character Behaviors:
-```javascript
-/**
- * Define character behavior patterns that create emergent gameplay
- * Each character should have:
- * - Unique personality traits affecting decisions
- * - Memory of past interactions
- * - Ability to learn and adapt
- */
-class BehaviorComponent extends Component {{
-    constructor(personality) {{
-        this.traits = personality;
-        this.memory = new Map();
-        this.learningRate = 0.1;
-    }}
-
-    // Show how behavior adapts based on experience
-    decideAction(worldState, otherEntities) {{...}}
-}}
-```
-
-3. Interaction Systems:
-```javascript
-/**
- * Define systems that handle rich interactions between:
- * - Characters and environment
- * - Characters with each other
- * - Chain reactions and emergent effects
- */
-class InteractionSystem extends System {{
-    constructor() {{
-        this.reactions = new Map();
-        this.chainEffects = [];
-    }}
-
-    // Show how different elements interact
-    processInteractions(entities, environment) {{...}}
-}}
-```
-
-4. Game State Evolution:
-```javascript
-/**
- * Track how the game state evolves through:
- * - Character learning and adaptation
- * - Environmental changes
- * - Emergent behaviors
- */
-class GameState {{
-    constructor() {{
-        this.characterStates = new Map();
-        this.environmentState = new Map();
-        this.emergentEffects = [];
-    }}
-
-    // Show how the game evolves over time
-    evolve(deltaTime) {{...}}
-}}
-```
-
-Create a structure that enables:
-- Rich autonomous behaviors
-- Character learning and adaptation
-- Environmental chain reactions
-- Emergent gameplay moments
-
-Your response MUST be wrapped in a ```javascript code block and include detailed docstrings explaining behavior patterns."""
-
-        fuzzy_code = self._call_model_api(prompt)
-
-        # First try to extract code block
-        pattern = r"```javascript\s*(.*?)```"
-        match = re.search(pattern, fuzzy_code, re.DOTALL)
-
-        if match:
-            return match.group(1).strip()
-
-        # If no code block found, provide a character-driven structure
-        if self.verbose:
-            print(
-                f"{YELLOW}No valid code block found, generating character-driven structure...{RESET}"
-            )
-
-        return """/**
- * Core component for autonomous behavior
- * @property {string} type - Component type identifier
- * @property {Object} state - Current state variables
- * @property {Function} behaviorPattern - Update function for autonomous behavior
- */
-class BehaviorComponent extends Component {
-    constructor(type, behaviorPattern) {
-        super(type);
-        this.state = new Map();
-        this.behaviorPattern = behaviorPattern;
-        this.memory = new Map();
-        this.evolutionStage = 0;
-    }
-
-    /**
-     * Update this component's state and behavior
-     * @param {number} deltaTime - Time since last update
-     * @param {Object} worldState - Current game state
-     * @param {Array<Entity>} entities - All game entities
-     */
-    update(deltaTime, worldState, entities) {
-        // Execute behavior pattern
-        this.behaviorPattern(this, worldState, entities);
-        
-        // Learn from interactions
-        this._evolvePattern();
-        
-        // Update state based on memory
-        this._updateState();
-    }
-}
-
-/**
- * System for processing character and environment interactions
- */
-class InteractionSystem {
-    constructor() {
-        this.reactionHandlers = new Map();
-        this.chainEffects = [];
-    }
-
-    /**
-     * Register a new type of interaction
-     * @param {string} trigger - What triggers this interaction
-     * @param {Function} handler - How to handle the interaction
-     * @param {Array<string>} chainEffects - What other effects might trigger
-     */
-    registerInteraction(trigger, handler, chainEffects = []) {
-        this.reactionHandlers.set(trigger, {
-            handler,
-            chainEffects
-        });
-    }
-
-    /**
-     * Process all pending interactions
-     * @param {Array<Entity>} entities - All game entities
-     * @param {Object} worldState - Current game state
-     */
-    update(entities, worldState) {
-        // Process direct interactions
-        this._handleDirectInteractions(entities);
-        
-        // Process chain reactions
-        this._processChainEffects(worldState);
-        
-        // Update world state based on interactions
-        this._evolveWorld(worldState);
-    }
-}
-
-/**
- * Game state manager that tracks evolution and emergence
- */
-class GameState {
-    constructor() {
-        this.entityStates = new Map();
-        this.environmentState = new Map();
-        this.emergentEffects = [];
-        this.learningHistory = new Map();
-    }
-
-    /**
-     * Update game state and process emergent effects
-     * @param {number} deltaTime - Time since last update
-     */
-    evolve(deltaTime) {
-        // Update entity states
-        this._updateEntities(deltaTime);
-        
-        // Process environmental changes
-        this._evolveEnvironment(deltaTime);
-        
-        // Handle emergent behaviors
-        this._processEmergentEffects();
-        
-        // Update learning and adaptation
-        this._updateLearning();
-    }
-}
-
-/**
- * Main game loop with character-driven updates
- * @param {number} timestamp - Current timestamp
- */
-function gameLoop(timestamp) {
-    const deltaTime = calculateDeltaTime(timestamp);
-    
-    // Update autonomous behaviors
-    updateBehaviors(deltaTime);
-    
-    // Process interactions and chain reactions
-    processInteractions();
-    
-    // Evolve game state
-    gameState.evolve(deltaTime);
-    
-    // Handle emergent effects
-    processEmergentEffects();
-    
-    requestAnimationFrame(gameLoop);
-}"""
+<code>
+...(Your fuzzy code with detailed docstrings here)
+</code>
+"""
+        fuzzy_code = self._call_model_api(prompt, system_prompt=self.system_prompt)
+        return self._extract_section(fuzzy_code, "code")

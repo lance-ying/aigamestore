@@ -4,6 +4,7 @@ from typing import Dict, Any, Optional, List, Union
 from openai import OpenAI
 import json
 import datetime
+import re
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -28,6 +29,16 @@ load_dotenv()
 os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
 os.environ["ANTHROPIC_API_KEY"] = os.getenv("ANTHROPIC_API_KEY")
 os.environ["GOOGLE_API_KEY"] = os.getenv("GOOGLE_API_KEY")
+
+
+def extract_section(text: str, section_name: str) -> str:
+    """Extract content from XML-style section tags"""
+    # pattern = f"<{section}>(.*?)</{section}>"
+    pattern = f"<{section_name}>\s*(.*?)\s*</{section_name}>"
+    match = re.search(pattern, text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    return text
 
 
 class ModelAPI:
@@ -135,6 +146,12 @@ class ModelAPI:
 
         # Add system prompt if provided
         if system_prompt:
+            if not len(self.conversation_history):
+                # Only add system prompt if it's not already in the conversation history
+                # TODO: should we append system prompt to each of the call again?
+                self.conversation_history.append(
+                    {"role": "system", "content": system_prompt}
+                )
             messages.append({"role": "system", "content": system_prompt})
 
         # Add conversation history if enabled
@@ -347,6 +364,10 @@ class ModelAPI:
     def get_call_history(self) -> List[Dict[str, Any]]:
         """Return the list of all API calls made"""
         return self.call_history
+
+    def get_conversation_history(self) -> List[Dict[str, Any]]:
+        """Return the list of all conversation exchanges"""
+        return self.conversation_history
 
     def clear_conversation_history(self):
         """Clear the stored conversation history"""

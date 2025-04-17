@@ -232,7 +232,7 @@ class GameGenerator:
                 "title": title,
                 "narrative": narrative if narrative else "None",
                 "narrative_path": narrative_path if narrative_path else "None",
-                "game_instructions": game_instructions,
+                "instruction": game_instructions,
                 "playability": False,
             },
             "generation_info": {
@@ -258,17 +258,23 @@ class GameGenerator:
         with open(game_dir / "metadata.json", "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=2)
 
-        for role in ["designer", "code_generator"]:
-            if self.designer.model_api.get_call_history():
-                with open(
-                    game_dir / f"{role}_generation_log.json", "w", encoding="utf-8"
-                ) as f:
-                    json.dump(self.designer.model_api.get_call_history(), f, indent=2)
-            if self.code_generator and self.code_generator.model_api.get_call_history():
-                with open(
-                    game_dir / f"{role}_generation_log.json", "w", encoding="utf-8"
-                ) as f:
-                    json.dump(
-                        self.code_generator.model_api.get_call_history(), f, indent=2
-                    )
+        if self.designer.model_api.get_conversation_history():
+            with open(
+                game_dir / f"designer_generation_log.json", "w", encoding="utf-8"
+            ) as f:
+                json.dump(
+                    self.designer.model_api.get_conversation_history(), f, indent=2
+                )
+        if (
+            self.code_generator
+            and self.code_generator.model_api.get_conversation_history()
+        ):
+            with open(
+                game_dir / f"code_generator_generation_log.json", "w", encoding="utf-8"
+            ) as f:
+                json.dump(
+                    self.code_generator.model_api.get_conversation_history(),
+                    f,
+                    indent=2,
+                )
         return game_dir
