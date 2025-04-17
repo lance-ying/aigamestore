@@ -8,9 +8,12 @@ class ComplexityGuideDesigner:
     """Designer that creates complex and imaginative game designs through guided discussion"""
 
     def __init__(
-        self, model_api: ModelAPI, system_prompt: str = None, verbose: bool = False
+        self,
+        model_name: str = "openai:gpt-4o",
+        system_prompt: str = None,
+        verbose: bool = False,
     ):
-        self.model_api = model_api
+        self.model_api = ModelAPI(model_name)
         self.system_prompt = system_prompt or GAME_DESIGN_SYSTEM_PROMPT
         self.verbose = verbose
 
