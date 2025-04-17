@@ -112,7 +112,7 @@ HTML_TEMPLATE = '''
             display: flex;
             justify-content: space-between;
             gap: 15px;
-            margin-bottom: 10px;
+            margin-bottom: 0px;
         }
         .game-box {
             flex: 1;
@@ -126,7 +126,7 @@ HTML_TEMPLATE = '''
         .game-frame {
             width: 100%;
             max-width: 600px;
-            height: 380px;
+            height: 400px;
             border: none;
             background: #222;
             overflow: hidden; /* Prevent scrolling within iframe */
@@ -134,7 +134,7 @@ HTML_TEMPLATE = '''
             box-shadow: 0 2px 8px rgba(0,0,0,0.1);
         }
         .rating-sliders {
-            margin-top: 15px;
+            margin-top: 10px;
             background: white;
             padding: 16px;
             border-radius: 6px;
@@ -385,7 +385,7 @@ HTML_TEMPLATE = '''
             box-shadow: 0 1px 3px rgba(0,0,0,0.08);
             text-align: center;
             max-width: 500px;
-            margin: 10px auto;
+            margin: 2px auto;
         }
         .overall-comparison h3 {
             display: inline-block;
@@ -412,25 +412,7 @@ HTML_TEMPLATE = '''
             width: 18px;
             height: 18px;
         }
-        
-        /* Responsive adjustments */
-        @media (max-height: 820px) {
-            .game-frame {
-                height: 320px;
-            }
-            .rating-item {
-                margin-bottom: 5px;
-            }
-            label {
-                font-size: 13px;
-            }
-        }
-        
-        @media (max-height: 740px) {
-            .game-frame {
-                height: 280px;
-            }
-        }
+                
         </style>
     </head>
     <body>

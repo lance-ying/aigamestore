@@ -708,9 +708,9 @@ HTML_TEMPLATE = '''
                         .then(response => response.json())
                         .then(data => {
                             resetAllSliders(); // Reset sliders before reloading
-                            
                             // Store that instructions have been seen to prevent showing again after reload
                             localStorage.setItem("gameArenaVisited", "true");
+                            window.location.reload(); // Reload page to get new games
                         })
                         .catch((error) => {
                             console.error('Error:', error);
