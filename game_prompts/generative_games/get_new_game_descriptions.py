@@ -31,8 +31,7 @@ load_dotenv()
 MIN_WAIT_TIME = 1  # Minimum wait time in seconds
 MAX_WAIT_TIME = 3  # Maximum wait time in seconds
 RATE_LIMIT_WAIT = 60  # Wait time in seconds when hitting rate limit
-
-NUM_CONCEPTS_PER_GAME = 100
+MAX_CONCEPTS_PER_BATCH = 50
 
 # Game genres to generate
 GENRES = [
@@ -41,18 +40,18 @@ GENRES = [
     "Arcade",
     "Fighting",
     "Platformer",
-    "Puzzle",
     "Racing",
     "Shooter",
     "Sports",
-    "Strategy",
+    "Survival",
+    "Turn-based",
 ]
     
 def ensure_dir(directory: str) -> None:
     """Ensure that the directory exists."""
     Path(directory).mkdir(parents=True, exist_ok=True)
 
-def load_existing_games(games_dir: str, max_games: int = 50) -> List[Dict[str, Any]]:
+def load_existing_games(games_dir: str, max_games: int = -1) -> List[Dict[str, Any]]:
     """
     Load previously generated game descriptions.
     
@@ -79,7 +78,7 @@ def load_existing_games(games_dir: str, max_games: int = 50) -> List[Dict[str, A
     
     return game_archive
 
-def generate_new_game_concept(api: ModelAPI, game_archive: List[Dict[str, Any]] = None, max_retries: int = 10, temperature: float = 0.7) -> List[Dict[str, Any]]:
+def generate_new_game_concept(api: ModelAPI, num_games: int = MAX_CONCEPTS_PER_BATCH, game_archive: List[Dict[str, Any]] = None, max_retries: int = 10, temperature: float = 1.0) -> List[Dict[str, Any]]:
     """
     Generate new game concepts using the specified model.
     
@@ -95,95 +94,106 @@ def generate_new_game_concept(api: ModelAPI, game_archive: List[Dict[str, Any]] 
     genre_list_str = ', '.join(GENRES)
 
     prompt = f"""
-                Describe {NUM_CONCEPTS_PER_GAME} completely original, interesting, and imaginative concepts for single-player video games.
-
-                For each game, pick one or more genres from this list: {genre_list_str}.
+                Describe {num_games} completely original, interesting, and imaginative concepts for single-player video games in 2 to 5 sentences. 
+                - Think differently from the standard game ideas and create something unique and interesting.
+                - Write in an enthusiastic and original tone with distinct vocabulary in each game concept to express your request. Do not use the same words in different game concepts.
+                - For each game, pick one or more genres from this list: {genre_list_str}. Ensure equal distribution of genres in the response.
 
                 Format your response like this:
                 ```json
                 [
                     {{
-                        "concept": "What if there was a game where time only moves when you stand still?",
-                        "genre": "Puzzle, Platformer"
+                        "concept":  ...
+                        "genre": ...
                     }},
-                    {{
-                        "concept": "A game about a lost robot trying to find its way home by solving circuit puzzles",
-                        "genre": "Puzzle, Adventure"
-                    }},
-                    ... and so on for all {NUM_CONCEPTS_PER_GAME} games
+                    ... and so on for all {num_games} games
                 ]
                 ```
                 """
         
 
-    EXAMPLES = [
-    "Can you create a game where every platform is made of wobbly jelly?",
-    "Could you design a game where every a frog jumps on lily pads and wooden logs.",
-    "How about developing a game where hidden dangers awaken only when motion occurs? The slightest movement should summon bats and spiders.",
-    "Make a game which is two rooms connected by a portal. The rooms are identical but have different colors. The player can switch between the rooms by passing through the portal.",
-    "Can you build an adventure on a massive grid where each sector hides its own enigma? Let every clue become a fragment of a hidden map, combining subtle riddles with clever puzzles.",
-    "Think of a game where the character can switch between two different worlds. The worlds have different challenges but character plays both worlds. The player can switch between the worlds.",
-    "Could you invent a game where color serves as a secret weapon? Switching hues should baffle relentless foes, turning combat into a vivid and strategic spectacle.",
-    "Would you develop a futuristic city defense game where rearranging skyscrapers is key? Every building move should transform the urban battleground into a dynamic tactical fortress.",
-    "Could you design a game where the power to rewrite physics is at the player's fingertips? Bend gravity, twist inertia, or warp time to overcome obstacles that defy conventional logic.",
-    "How about constructing a game that lets players leap between parallel universes to mend a fractured world? Each alternate dimension should offer its own unique set of puzzles and perils for an epic saga.",
-    "How about a game where you balance on a unicycle and have to avoid obstacles?",
-    "Make me a game where the environment is a maze but the player can transform the maze by changing the color of the walls.",
-    "Can you generate a game related to a dog that needs to find its way home but lots of troubles and traps await?",
-    "What if there was a game where the player switches between two characters that have different abilities?",
-    "Would you create a game with rules that evolve unpredictably at every level? Introduce surprise twists on gameplay mechanics to continuously keep players on their toes.",
-    "Navigate through a multi-layered environment avoiding the light towers trying to catch you.",
-    "How about designing a multi-room game where each room has a different challenge.",
-    "Could you make a game where the termites are eating your house?",
-    "Would you create a game where you control a space ship across space to search for a new home planet?",
-    "Can you build a game where the player has to get out of a dynamically changing maze?",
-    "A castle is under attack by a dragon spitting fire. The player has to save the castle by shooting the dragon.",
-    "I want to control a robot through a town on fire to rescue people and put out the fire.",
-    "A race between turtles where there is both land and water terrain.",
-    "Can you create a game with a plane that picks up packages and has to deliver them to the right place?",
-    "How about setting a game in a jungle with a river?",
-    "Could you develop the game in a world in which the player moves in side a bubble which they can shrink and expand?",
-]
+    EXAMPLES = ["Can you create a game where every platform is made of wobbly jelly? The player has to navigate through the platform to reach the end.",
+                "Could you design a game where every a frog jumps on lily pads and wooden logs. The player has to collect all the flowers before reaching the end of the pond.",
+                "How about developing a game where hidden dangers awaken only when motion occurs? The slightest movement should summon bats and spiders. The player has to navigate through the platform to reach the end.",
+                "Make a game which is two rooms connected by a portal. The rooms are identical but have different colors. The player can switch between the rooms by passing through the portal.",
+                "Can you build an adventure on a massive grid where each sector hides its own enigma? Let every clue become a fragment of a hidden map, combining subtle riddles with clever puzzles.",
+                "Think of a game where the character can switch between two different worlds. The worlds have different challenges but character plays both worlds. The player can switch between the worlds.",
+                "Could you invent a game where color serves as a secret weapon? Switching hues should baffle relentless foes, turning combat into a vivid and strategic spectacle.",
+                "Would you develop a futuristic city defense game where rearranging skyscrapers is key? Every building move should transform the urban battleground into a dynamic tactical fortress.",
+                "Could you design a game where the power to rewrite physics is at the player's fingertips? Bend gravity, twist inertia, or warp time to overcome obstacles that defy conventional logic.",
+                "How about a game where you balance on a unicycle and have to avoid obstacles?",
+                "Make me a game where the environment is a maze but the player can transform the maze by changing the color of the walls.",
+                "Can you generate a game related to a dog that needs to find its way home but lots of troubles and traps await?",
+                "What if there was a game where the player switches between two characters that have different abilities?",
+                "Can you design a game where the enemies attack with laser beams?",
+                "Think of a game with a bridge made of ice. The player has to navigate through the bridge without falling into the water below. Wait for the snow if the bridge breaks.",
+                "Set a game in a mountain range where the player skis down the mountain and has to avoid the trees and rocks. It has multiple levels.",
+                "Game with a player is stuck in a hotel. Some of the walls can be passed through but look opaque. There might be a ghost chasing you in the hotel.",
+                "Enagage me with a game with 5 opponents trying to steal candies hidden in the garden. The player has to collect the most number of candies.",
+                "Keys and locks are everywhere. The player has to unlock the keys to open the locks in the correct order to make progress. There might be rust in some locks requiring you to fix those using resources which are scarce.",
+                "Would you create a game with rules that evolve unpredictably at every level? Introduce surprise twists on gameplay mechanics to continuously keep players on their toes.",
+                "Navigate through a multi-layered environment avoiding the light towers trying to catch you.",
+                "How about designing a multi-room game where each room has a different challenge.",
+                "Could you make a game where the termites are eating your house?",
+                "Would you create a game where you control a space ship across space to search for a new home planet?",
+                "Can you build a game where the player has to get out of a dynamically changing maze?",
+                "A castle is under attack by a dragon spitting fire. The player has to save the castle by shooting the dragon.",
+                "I want to control a robot through a town on fire to rescue people and put out the fire.",
+                "A race between turtles where there is both land and water terrain.",
+                "Can you create a game with a plane that picks up packages and has to deliver them to the right place?",
+                "How about setting a game in a jungle with a river?",
+                "Make a game where cars are driving to drop off passengers at their destination. The player has to avoid crashing into other cars and obstacles to make it to the destination in time.",
+                "Can you think of a game where the player is playing as a venus fly trap and has to catch flies? You can multiply the number of mouths to catch more flies but beware of the flies that can sting you. Protect yourself from overeating the flies.",
+                "Make a game as an elephant on mars searching for the rat friend who is lost in the desert. Collect food and water to survive and find your friend. Fight the aliens who can attack you.",
+                "It would be interesting to play as a monkey leaping through in a forest. The monkey has to collect bananas and avoid the tigers.",
+                "Tanks are everywhere hiding in the bushes. The player controls a tank and has to shoot the other tanks while avoiding their fire. Multiple battlefields to play before the win. Collect ammunition and repair the tank using the collected resources. Last tank standing wins.",
+                "There are lasers in the room but you can spray fog to see them locally. The player has to navigate through to find the exit without getting caught by the lasers.",
+                "Control a helicopter through a city with tall buildings. The helicopter has to rescue people from the top of the buildings.",
+                "Curate a game where the player can change the environment by collecting and rearranging blocks to make progress.",
+                "What if there was a game where you shoot balloons moving up but you need to be careful not to shoot balloons which have a stone in it?"
+                "Can you make me a game where the player throws a ball to dislodge a tower of blocks to rescue the pets? Have multiple levels in the game.",
+                "Design a game with a player controlling a spaceship to race against other spaceships to collect the most asteroid fragments. The gravity of the planets can attract objects so avoid crashing into them.",
+                "Could you develop the game in a world in which the player moves in side a bubble which they can shrink and expand? Don't let the bubble pop.",
+    ]
+            
 
     # Sample a few examples to include in the prompt
     # example_sample = random.sample(EXAMPLES, 20)
-    example_block = "\n".join(f"- \"{e.strip()}\"" for e in random.sample(EXAMPLES, len(EXAMPLES)))
+    example_block = "\n".join(f"- \"{e.strip()}\"" for e in random.sample(EXAMPLES, 10))
 
     # Build the system prompt with additional guidance on what game elements can be altered.
     system_prompt = f"""
-            You are a creative video game enthusiast with the ability to invent original and imaginative game concepts.
-            Your goal is to pitch cool single-player game concepts for 2D video games.
+            You are a creative video game enthusiast with the ability to invent unique, interesting, and imaginative game concepts.
+            The game concept will used to make a 2D video game to be played in a web browser by a single human player with all other characters being AI controlled. Keep this in mind when coming up with the request.            
 
             ### Instructions:
             - Create truly innovative game concepts that challenge conventional design patterns, and introduce fresh mechanics or narrative approaches.
-            - Focus on the core narrative, characters, twists, or gameplay mechanic that makes each concept unique.
-            - Balance creativity with playability - concepts should be fun and technically feasible without being too derivative.
-            - Avoid common gaming tropes, clichés, and mechanics that dominate the current market.
-            - Do not specify implementation details like graphics, sound design, or technical specifics. 
-            - Some of the things among many others that can be thought about when defining game elements are:
-                - **Characters:** Define unique player characters, adversaries, or supporting roles with interesting abilities or backgrounds.
-                - **Narrative and Story:** Propose compelling storylines with challenging goals and objectives.
-                - **Game Mechanics:** Innovate with gameplay rules, player agency models, or dynamic systems.
-                - **World elements:** Create interesting worlds with static and dynamic elements with interesting physics and rules.
-            - Adopt an enthusiastic and original tone using simple vocabulary to express your request.
+            - The game concepts can be 2 to 5 sentences long with a few game concepts being 1 sentence long. Keep it variable in terms of length and complexity.
+            - Some elements that can be considered when defining the game concept are characters, reward structure, game mechanics, and world elements. Feel free to combine them or mention just one of them or even none of them and come up with something unique.
+            - Avoid common existing game concepts exist. 
+            - Do not specify implementation details like graphics or technical specifications. 
+            - Avoid being too abstract. You can be very specific and detailed in your game concepts about the desired aspect of the game.            
+            - You can use the following examples to inspire the structure and the content of the game concepts, but do not copy the examples exactly.
+            
+            ## Example game concepts:
+                {example_block}
 
-            Below are a few sample ideas to inspire you:
-            {example_block}
-
-            Your response must be a valid JSON array containing {NUM_CONCEPTS_PER_GAME} objects, each with exactly two keys: "concept" and "genre". 
+            ## Constraints on games that can be generated:
+            - Do not have concepts that require sound, audio, or music.
+            - Do not have concepts that require 3D graphics. The game will be strictly a 2D game.
+            - The games will be played in a web browser using a keyboard.  
+            
+            ### Response Format:
+            Your response must be a valid JSON array containing dictionaries, each with exactly two keys: "concept" and "genre". 
             Do not include any extra text, markdown formatting, or commentary outside of the JSON.
 
             Example format:
             ```json
             [
                 {{
-                    "concept": "What if there was a game where time only moves when you stand still? Imagine a protagonist navigating a frozen world while everything else remains motionless.",
-                    "genre": "Puzzle, Platformer"
+                    "concept": "Make me a game the player controls a rat evading cats ready to catch it. The rat can hide in holes and use cheese to lure the cats away.",
+                    "genre": "Survival"
                 }},
-                {{
-                    "concept": "A game where you play as a shadow that must stay connected to its owner while solving environmental puzzles.",
-                    "genre": "Puzzle, Adventure"
-                }}
             ]
             ```
         """
@@ -196,12 +206,14 @@ def generate_new_game_concept(api: ModelAPI, game_archive: List[Dict[str, Any]] 
             [f"- {g['concept'][:100]}..." for g in recent_games]
         )
         
-        system_prompt += f"""\nHere are some game concepts that were already generated:
-                            {prior_games_str}
+        system_prompt += f"""\n
+        ### Previous Game Concepts:
+        Here are some game concepts that were already generated:
+        {prior_games_str}
 
-                            Do NOT repeat game concepts similar to the previous descriptions. Think creatively and create something different from existing game concepts which is interesting, fun, and engaging and not yet generated.
-                            Format your response exactly as requested.
-                            """
+        Do NOT repeat game concepts similar to the previous descriptions. Think creatively and create something different from existing game concepts which is interesting, fun, and engaging and not yet generated.
+        Format your response exactly as requested.
+        """
     
     retries = 0
     while retries <= max_retries:
@@ -285,7 +297,7 @@ def main(model_string: str, num_games: int = 5, temperature: float = 0.7):
         print(f"Error initializing model: {str(e)}")
         print("Please make sure the required API keys are set in your .env file.")
         return
-    
+    MAX_CONCEPTS_PER_BATCH = 50
     # Extract model name for directory structure
     model_name = model_string.replace(":", "_")
     
@@ -299,16 +311,11 @@ def main(model_string: str, num_games: int = 5, temperature: float = 0.7):
     
     # Load existing games for context (to avoid repeating)
     # First try to load from the model-specific directory
-    model_game_archive = load_existing_games(output_dir, max_games=50)
+    # model_game_archive = load_existing_games(output_dir, max_games=-1)
     
     # Then load from the base directory for backward compatibility
-    base_game_archive = load_existing_games(base_dir, max_games=50)
+    game_archive = load_existing_games(base_dir, max_games=-1)
     
-    # Combine both archives, prioritizing model-specific games
-    game_archive = model_game_archive + [g for g in base_game_archive if g not in model_game_archive]
-    if len(game_archive) > 50:
-        game_archive = game_archive[:50]  # Keep only up to 50 games
-
     if game_archive:
         print(f"Loaded {len(game_archive)} existing games for context")
     
@@ -319,15 +326,18 @@ def main(model_string: str, num_games: int = 5, temperature: float = 0.7):
     # Process each game
     generated_count = 0
     batch_count = 0
-    
+    if num_games < MAX_CONCEPTS_PER_BATCH:
+        MAX_CONCEPTS_PER_BATCH = num_games
+
     while generated_count < num_games:
         batch_count += 1
-        print(f"Generating batch #{batch_count} of game concepts...")
+        print(f"Generating batch #{batch_count} of {num_games} game concepts...")
 
         # Generate descriptions - now returns a list of games
-        games_to_process = generate_new_game_concept(api, game_archive, temperature=temperature)
+        games_to_process = generate_new_game_concept(api, MAX_CONCEPTS_PER_BATCH, game_archive, temperature=temperature)
         
         for game_data in games_to_process:
+            game_data["model"] = model_string
             # Check if generation was successful and if we still need more games
             if "Error" not in game_data.get("concept", "") and generated_count < num_games:
                 total_success += 1
@@ -358,8 +368,8 @@ def main(model_string: str, num_games: int = 5, temperature: float = 0.7):
                 
                 # Add to archive for context in future generations
                 game_archive.append(game_data)
-                if len(game_archive) > 50:
-                    game_archive = game_archive[1:]  # Keep only the most recent 50 games
+                # if len(game_archive) > 50:
+                #     game_archive = game_archive[1:]  # Keep only the most recent 50 games
             elif "Error" in game_data.get("concept", ""):
                 total_failed += 1
                 print(f"  ❌ Failed to generate game")
@@ -380,13 +390,13 @@ if __name__ == "__main__":
         "--model", 
         type=str, 
         default="google:gemini-1.5-flash", 
-        help="Model to use in format 'provider:model_name' (e.g., 'openai:gpt-4o', 'anthropic:claude-3.5-sonnet', 'google:gemini-1.5-flash')"
+        help="Model to use in format 'provider:model_name' (e.g., 'openai:gpt-4o', 'anthropic:claude-3.7-sonnet', 'google:gemini-1.5-flash')"
     )
     parser.add_argument(
         "--num_games", 
         type=int, 
         default=5, 
-        help="Number of games to generate (will be generated in batches of 10)"
+        help="Number of games to generate (will be generated in batches of 50)"
     )
     parser.add_argument(
         "--min_wait", 
