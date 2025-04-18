@@ -78,15 +78,17 @@ def load_existing_games(games_dir: str, max_games: int = -1) -> List[Dict[str, A
     
     return game_archive
 
-def generate_new_game_concept(api: ModelAPI, num_games: int = MAX_CONCEPTS_PER_BATCH, game_archive: List[Dict[str, Any]] = None, max_retries: int = 10, temperature: float = 1.0) -> List[Dict[str, Any]]:
+def generate_new_game_concept(api: ModelAPI, num_games: int = MAX_CONCEPTS_PER_BATCH, game_archive: List[Dict[str, Any]] = None, max_retries: int = 10, temperature: float = 1.0, num_sentences: int = 3) -> List[Dict[str, Any]]:
     """
     Generate new game concepts using the specified model.
     
     Args:
         api: ModelAPI instance
+        num_games: Number of game concepts to generate
         game_archive: List of previously generated games to avoid repeating
         max_retries: Maximum number of retries on rate limit or timeout errors
         temperature: Controls randomness in generation (0.0-1.0, higher = more creative)
+        num_sentences: Number of sentences for each game description
         
     Returns:
         List[Dict]: A list of generated game descriptions as dictionaries
@@ -94,8 +96,8 @@ def generate_new_game_concept(api: ModelAPI, num_games: int = MAX_CONCEPTS_PER_B
     genre_list_str = ', '.join(GENRES)
 
     prompt = f"""
-                Describe {num_games} completely original, interesting, and imaginative concepts for single-player video games in 2 to 5 sentences. 
-                - Think differently from the standard game ideas and create something unique and interesting.
+                Describe {num_games} completely original, interesting, and imaginative concepts for single-player video games in {num_sentences} sentences. 
+                - Think differently from the standard game ideas and create something unique and interesting. Each game concept must have a distinct description of the elements of the game.
                 - Write in an enthusiastic and original tone with distinct vocabulary in each game concept to express your request. Do not use the same words in different game concepts.
                 - For each game, pick one or more genres from this list: {genre_list_str}. Ensure equal distribution of genres in the response.
 
@@ -168,12 +170,13 @@ def generate_new_game_concept(api: ModelAPI, num_games: int = MAX_CONCEPTS_PER_B
 
             ### Instructions:
             - Create truly innovative game concepts that challenge conventional design patterns, and introduce fresh mechanics or narrative approaches.
-            - The game concepts can be 2 to 5 sentences long with a few game concepts being 1 sentence long. Keep it variable in terms of length and complexity.
+            - The game concepts should be exactly {num_sentences} sentences long.
             - Some elements that can be considered when defining the game concept are characters, reward structure, game mechanics, and world elements. Feel free to combine them or mention just one of them or even none of them and come up with something unique.
             - Avoid common existing game concepts exist. 
             - Do not specify implementation details like graphics or technical specifications. 
             - Avoid being too abstract. You can be very specific and detailed in your game concepts about the desired aspect of the game.            
             - You can use the following examples to inspire the structure and the content of the game concepts, but do not copy the examples exactly.
+            - Avoid using game concepts that involve music or sound.
             
             ## Example game concepts:
                 {example_block}
@@ -222,6 +225,7 @@ def generate_new_game_concept(api: ModelAPI, num_games: int = MAX_CONCEPTS_PER_B
                 user_prompt=prompt,
                 system_prompt=system_prompt,
                 temperature=temperature,
+                verbose=True,  # Enable streaming to avoid timeouts for long requests
             )
             
             # Extract the JSON part from the response using regex
@@ -279,7 +283,7 @@ def generate_new_game_concept(api: ModelAPI, num_games: int = MAX_CONCEPTS_PER_B
         "genre": "Genre of the game",
     }]
 
-def main(model_string: str, num_games: int = 5, temperature: float = 0.7):
+def main(model_string: str, num_games: int = 5, temperature: float = 0.7, num_sentences: int = 3):
     """
     Main function to generate new game concepts for each genre.
     The generated game concepts are saved in JSON format in the 'new_games/' directory.
@@ -288,6 +292,7 @@ def main(model_string: str, num_games: int = 5, temperature: float = 0.7):
         model_string: Model specification in format "provider:model_name"
         num_games: Number of games to generate (will be generated in batches of 10)
         temperature: Controls randomness in generation (0.0-1.0, higher = more creative)
+        num_sentences: Number of sentences for each game description
     """
     # Initialize model API
     try:
@@ -334,7 +339,7 @@ def main(model_string: str, num_games: int = 5, temperature: float = 0.7):
         print(f"Generating batch #{batch_count} of {num_games} game concepts...")
 
         # Generate descriptions - now returns a list of games
-        games_to_process = generate_new_game_concept(api, MAX_CONCEPTS_PER_BATCH, game_archive, temperature=temperature)
+        games_to_process = generate_new_game_concept(api, MAX_CONCEPTS_PER_BATCH, game_archive, temperature=temperature, num_sentences=num_sentences)
         
         for game_data in games_to_process:
             game_data["model"] = model_string
@@ -416,6 +421,12 @@ if __name__ == "__main__":
         default=0.7,
         help="Temperature for model generation (0.0-1.0, higher = more creative)"
     )
+    parser.add_argument(
+        "--num_sentences",
+        type=int,
+        default=3,
+        help="Number of sentences for each game description (2-5 recommended)"
+    )
     
     args = parser.parse_args()
     
@@ -423,4 +434,4 @@ if __name__ == "__main__":
     MIN_WAIT_TIME = args.min_wait
     MAX_WAIT_TIME = args.max_wait
     
-    main(args.model, args.num_games, args.temperature)
+    main(args.model, args.num_games, args.temperature, args.num_sentences)
