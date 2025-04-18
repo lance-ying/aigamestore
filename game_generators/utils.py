@@ -184,9 +184,6 @@ class ModelAPI:
             if self.model_provider == "anthropic":
                 claude_messages = []
 
-                if system_prompt:
-                    claude_messages.append({"role": "system", "content": system_prompt})
-
                 # Add conversation history if enabled
                 if use_history:
                     for msg in self.conversation_history:
@@ -273,6 +270,12 @@ class ModelAPI:
                     {"role": "assistant", "content": result}
                 )
 
+                if system_prompt and self.conversation_history[0]["role"] != "system":
+                    # Only add system prompt if it's not already in the conversation history
+                    self.conversation_history.insert(
+                        0, {"role": "system", "content": system_prompt}
+                    )
+
                 return result
 
             elif self.model_provider == "openai":
@@ -304,19 +307,19 @@ class ModelAPI:
                 )
                 result = response.choices[0].message.content
 
-            elif self.model_provider == "google":
-                model = self.client.GenerativeModel(model_name=self.model)
-                # Convert messages to Gemini format
-                prompt = self._format_messages_for_gemini(messages)
-                response = model.generate_content(
-                    prompt,
-                    generation_config={
-                        "max_output_tokens": max_tokens,
-                        "temperature": temperature,
-                        **kwargs,
-                    },
-                )
-                result = response.text
+            # elif self.model_provider == "google":
+            #     model = self.client.GenerativeModel(model_name=self.model)
+            #     # Convert messages to Gemini format
+            #     prompt = self._format_messages_for_gemini(messages)
+            #     response = model.generate_content(
+            #         prompt,
+            #         generation_config={
+            #             "max_output_tokens": max_tokens,
+            #             "temperature": temperature,
+            #             **kwargs,
+            #         },
+            #     )
+            #     result = response.text
 
             # Record the call with cleaner formatting
             call_record = {
@@ -417,6 +420,7 @@ if __name__ == "__main__":
             print(f"Test 1 Result: {response}")
 
             # Test 2: With system prompt
+            api = ModelAPI(model_name)
             print(f"\n{GREEN}Test 2: With system prompt{RESET}")
             response = api.call(
                 user_prompt="What is your role?",
@@ -427,10 +431,16 @@ if __name__ == "__main__":
             print(f"Test 2 Result: {response}")
 
             # Test 3: With chat history
+            api = ModelAPI(model_name)
             print(f"\n{GREEN}Test 3: With chat history{RESET}")
             response = api.call(
+                user_prompt="What is your role?",
+                system_prompt="You are a friendly math tutor who loves numbers.",
+                temperature=0.7 if "claude" in model_name else None,
+                verbose=True,
+            )
+            response = api.call(
                 user_prompt="What should I do next?",
-                system_prompt="You are a helpful coding assistant.",
                 use_history=True,
                 temperature=0.7 if "claude" in model_name else None,
                 verbose=True,
@@ -445,7 +455,7 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"\n{RED}Error testing {model_name}: {str(e)}{RESET}")
 
-    # # Test OpenAI
+    # Test OpenAI
     run_test("openai:gpt-4o")
 
     # # Test Claude (if available)
