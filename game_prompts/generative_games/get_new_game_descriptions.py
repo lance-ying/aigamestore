@@ -96,7 +96,7 @@ def generate_new_game_concept(api: ModelAPI, num_games: int = MAX_CONCEPTS_PER_B
     genre_list_str = ', '.join(GENRES)
 
     prompt = f"""
-                Describe {num_games} completely original, interesting, and imaginative concepts for single-player video games in {num_sentences} sentences. 
+                Describe {num_games} completely original, interesting, and imaginative concepts for single-player video games each of which is {num_sentences} sentences long. Try to keep each sentence roughly 8 to 10 words long.
                 - Think differently from the standard game ideas and create something unique and interesting. Each game concept must have a distinct description of the elements of the game.
                 - Write in an enthusiastic and original tone with distinct vocabulary in each game concept to express your request. Do not use the same words in different game concepts.
                 - For each game, pick one or more genres from this list: {genre_list_str}. Ensure equal distribution of genres in the response.
@@ -108,7 +108,7 @@ def generate_new_game_concept(api: ModelAPI, num_games: int = MAX_CONCEPTS_PER_B
                         "concept":  ...
                         "genre": ...
                     }},
-                    ... and so on for all {num_games} games
+                    ... and so on for all {num_games} games.
                 ]
                 ```
                 """
