@@ -96,10 +96,12 @@ def generate_new_game_concept(api: ModelAPI, num_games: int = MAX_CONCEPTS_PER_B
     genre_list_str = ', '.join(GENRES)
 
     prompt = f"""
-                Describe {num_games} completely original, interesting, and imaginative concepts for single-player video games each of which is {num_sentences} sentences long. Try to keep each sentence roughly 8 to 10 words long.
+                Describe {num_games} completely original, interesting, and imaginative concepts for single-player video games each of which is {num_sentences} sentences long.
                 - Think differently from the standard game ideas and create something unique and interesting. Each game concept must have a distinct description of the elements of the game.
-                - Write in an enthusiastic and original tone with distinct vocabulary in each game concept to express your request. Do not use the same words in different game concepts.
+                - Write in an original tone with distinct vocabulary in each game concept to express your request. Use language to sound more personal and different in each game concept as if you are asking a game designer to make a game for you. Do not use the same words in different game concepts.
                 - For each game, pick one or more genres from this list: {genre_list_str}. Ensure equal distribution of genres in the response.
+                - Vary the abstractness of the game concepts. Some should be more abstract and others more specific.
+                - Do not generate game concepts that involve music or sound.
 
                 Format your response like this:
                 ```json
@@ -161,7 +163,7 @@ def generate_new_game_concept(api: ModelAPI, num_games: int = MAX_CONCEPTS_PER_B
 
     # Sample a few examples to include in the prompt
     # example_sample = random.sample(EXAMPLES, 20)
-    example_block = "\n".join(f"- \"{e.strip()}\"" for e in random.sample(EXAMPLES, 10))
+    example_block = "\n".join(f"- \"{e.strip()}\"" for e in random.sample(EXAMPLES, len(EXAMPLES)))
 
     # Build the system prompt with additional guidance on what game elements can be altered.
     system_prompt = f"""
@@ -174,7 +176,7 @@ def generate_new_game_concept(api: ModelAPI, num_games: int = MAX_CONCEPTS_PER_B
             - Some elements that can be considered when defining the game concept are characters, reward structure, game mechanics, and world elements. Feel free to combine them or mention just one of them or even none of them and come up with something unique.
             - Avoid common existing game concepts exist. 
             - Do not specify implementation details like graphics or technical specifications. 
-            - Avoid being too abstract. You can be very specific and detailed in your game concepts about the desired aspect of the game.            
+            - You can be abstract or very specific and detailed in your game concepts about the desired aspect of the game.
             - You can use the following examples to inspire the structure and the content of the game concepts, but do not copy the examples exactly.
             - Avoid using game concepts that involve music or sound.
             
@@ -195,7 +197,15 @@ def generate_new_game_concept(api: ModelAPI, num_games: int = MAX_CONCEPTS_PER_B
             [
                 {{
                     "concept": "Make me a game the player controls a rat evading cats ready to catch it. The rat can hide in holes and use cheese to lure the cats away.",
-                    "genre": "Survival"
+                    "genre": "Arcade, Survival"
+                }},
+                {{
+                    "concept": "Can you think of a sports game where a bouncy ball is used to hit a target with a moving platform? The ball bounces off the platform before hitting the target. The game progresses with more difficult levels.",
+                    "genre": "Sports"
+                }},
+                {{
+                    "concept": "Make me a game where the player controls a spaceship to race against other spaceships to collect the most asteroid fragments. The gravity of the planets can attract objects so avoid crashing into them.",
+                    "genre": "Racing, Shooter, Survival"
                 }},
             ]
             ```
@@ -209,13 +219,13 @@ def generate_new_game_concept(api: ModelAPI, num_games: int = MAX_CONCEPTS_PER_B
             [f"- {g['concept'][:100]}..." for g in recent_games]
         )
         
-        system_prompt += f"""\n
+        prompt += f"""\n
         ### Previous Game Concepts:
         Here are some game concepts that were already generated:
         {prior_games_str}
 
         Do NOT repeat game concepts similar to the previous descriptions. Think creatively and create something different from existing game concepts which is interesting, fun, and engaging and not yet generated.
-        Format your response exactly as requested.
+        Format your response exactly as requested paying attention to the number of sentences in each game concept.
         """
     
     retries = 0

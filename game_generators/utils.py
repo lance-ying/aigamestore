@@ -4,7 +4,6 @@ from typing import Dict, Any, Optional, List, Union
 from openai import OpenAI
 import json
 import datetime
-import re
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -31,16 +30,6 @@ os.environ["ANTHROPIC_API_KEY"] = os.getenv("ANTHROPIC_API_KEY")
 os.environ["GOOGLE_API_KEY"] = os.getenv("GOOGLE_API_KEY")
 
 
-def extract_section(text: str, section_name: str) -> str:
-    """Extract content from XML-style section tags"""
-    # pattern = f"<{section}>(.*?)</{section}>"
-    pattern = f"<{section_name}>\s*(.*?)\s*</{section_name}>"
-    match = re.search(pattern, text, re.DOTALL)
-    if match:
-        return match.group(1).strip()
-    return text
-
-
 class ModelAPI:
     """Centralized handler for different model API calls"""
 
@@ -61,8 +50,6 @@ class ModelAPI:
         self.client = self._initialize_client()
         # Add call history list
         self.call_history = []
-        # Add conversation history
-        self.conversation_history = []
 
     def _parse_model_name(self, model_name: str) -> tuple[str, str]:
         """Parse the model name string to extract provider and model name"""
@@ -119,7 +106,7 @@ class ModelAPI:
         self,
         user_prompt: str,
         system_prompt: Optional[str] = None,
-        use_history: bool = True,
+        chat_history: Optional[List[Dict[str, str]]] = None,
         max_tokens: Optional[int] = 40000,
         temperature: Optional[float] = None,
         verbose: bool = False,
@@ -132,7 +119,7 @@ class ModelAPI:
         Args:
             user_prompt: The main user prompt/question
             system_prompt: Optional system prompt to set context/behavior
-            use_history: Whether to include conversation history in the call
+            chat_history: Optional list of previous messages in the conversation
             max_tokens: Optional maximum number of tokens in response
             temperature: Optional temperature parameter for response randomness
             verbose: Whether to print verbose information
@@ -146,17 +133,11 @@ class ModelAPI:
 
         # Add system prompt if provided
         if system_prompt:
-            if not len(self.conversation_history):
-                # Only add system prompt if it's not already in the conversation history
-                # TODO: should we append system prompt to each of the call again?
-                self.conversation_history.append(
-                    {"role": "system", "content": system_prompt}
-                )
             messages.append({"role": "system", "content": system_prompt})
 
-        # Add conversation history if enabled
-        if use_history:
-            messages.extend(self.conversation_history)
+        # Add chat history if provided
+        if chat_history:
+            messages.extend(chat_history)
 
         # Add the current user prompt
         messages.append({"role": "user", "content": user_prompt})
@@ -165,28 +146,26 @@ class ModelAPI:
             print(f"\n{BLUE}verbose: API Call{RESET}")
             if system_prompt:
                 print(f"{BLUE}System Prompt:{RESET}\n{system_prompt}")
-            if use_history:
-                print("======================================================")
-                print(f"{BLUE}Conversation History:{RESET}\n")
-                for msg in self.conversation_history:
+            if chat_history:
+                print(f"{BLUE}Chat History:{RESET}")
+                for msg in chat_history:
                     if msg["role"] == "user":
                         print(
-                            f"{GREEN}{msg['role'].title()}: {msg['content'][:300]} \n...{RESET}"
+                            f"{GREEN}{msg['role'].title()}: {msg['content'][:100]}...{RESET}"
                         )
                     else:
                         print(
-                            f"{YELLOW}{msg['role'].title()}: {msg['content'][:300]} \n...{RESET}"
+                            f"{YELLOW}{msg['role'].title()}: {msg['content'][:100]}...{RESET}"
                         )
-                print("======================================================")
             print(f"{GREEN}User Prompt:{RESET}\n{user_prompt}")
 
         try:
             if self.model_provider == "anthropic":
                 claude_messages = []
 
-                # Add conversation history if enabled
-                if use_history:
-                    for msg in self.conversation_history:
+                # Add chat history if provided
+                if chat_history:
+                    for msg in chat_history:
                         role = msg["role"]
                         if role not in ["user", "assistant"]:
                             continue
@@ -262,64 +241,30 @@ class ModelAPI:
                 }
                 self.call_history.append(call_record)
 
-                # Store the conversation exchange
-                self.conversation_history.append(
-                    {"role": "user", "content": user_prompt}
-                )
-                self.conversation_history.append(
-                    {"role": "assistant", "content": result}
-                )
-
-                if system_prompt and self.conversation_history[0]["role"] != "system":
-                    # Only add system prompt if it's not already in the conversation history
-                    self.conversation_history.insert(
-                        0, {"role": "system", "content": system_prompt}
-                    )
-
                 return result
 
             elif self.model_provider == "openai":
-                # Ensure messages are in the correct format for OpenAI
-                openai_messages = []
-
-                # Add system prompt if provided
-                if system_prompt:
-                    openai_messages.append({"role": "system", "content": system_prompt})
-
-                # Add conversation history if enabled
-                if use_history:
-                    for msg in self.conversation_history:
-                        role = msg["role"]
-                        if role not in ["user", "assistant"]:
-                            continue
-                        openai_messages.append(
-                            {"role": role, "content": msg["content"]}
-                        )
-
-                # Add current user prompt
-                openai_messages.append({"role": "user", "content": user_prompt})
-
                 response = self.client.chat.completions.create(
                     model=self.model,
-                    messages=openai_messages,
-                    max_completion_tokens=min(max_tokens, 16384),
+                    messages=messages,
+                    max_completion_tokens=max_tokens,
                     **kwargs,
                 )
                 result = response.choices[0].message.content
 
-            # elif self.model_provider == "google":
-            #     model = self.client.GenerativeModel(model_name=self.model)
-            #     # Convert messages to Gemini format
-            #     prompt = self._format_messages_for_gemini(messages)
-            #     response = model.generate_content(
-            #         prompt,
-            #         generation_config={
-            #             "max_output_tokens": max_tokens,
-            #             "temperature": temperature,
-            #             **kwargs,
-            #         },
-            #     )
-            #     result = response.text
+            elif self.model_provider == "google":
+                model = self.client.GenerativeModel(model_name=self.model)
+                # Convert messages to Gemini format
+                prompt = self._format_messages_for_gemini(messages)
+                response = model.generate_content(
+                    prompt,
+                    generation_config={
+                        "max_output_tokens": max_tokens,
+                        "temperature": temperature,
+                        **kwargs,
+                    },
+                )
+                result = response.text
 
             # Record the call with cleaner formatting
             call_record = {
@@ -330,10 +275,6 @@ class ModelAPI:
                 "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             }
             self.call_history.append(call_record)
-
-            # Store the conversation exchange
-            self.conversation_history.append({"role": "user", "content": user_prompt})
-            self.conversation_history.append({"role": "assistant", "content": result})
 
             if verbose:
                 print(f"{YELLOW}Model Response:\n{result}{RESET}")
@@ -358,7 +299,7 @@ class ModelAPI:
         for msg in messages:
             role = msg.get("role", "user").upper()
             content = msg.get("content", "")
-            if role == "system":
+            if role == "SYSTEM":
                 formatted.append(f"Instructions: {content}")
             else:
                 formatted.append(f"{role}: {content}")
@@ -367,34 +308,6 @@ class ModelAPI:
     def get_call_history(self) -> List[Dict[str, Any]]:
         """Return the list of all API calls made"""
         return self.call_history
-
-    def get_conversation_history(self) -> List[Dict[str, Any]]:
-        """Return the list of all conversation exchanges"""
-        return self.conversation_history
-
-    def clear_conversation_history(self):
-        """Clear the stored conversation history"""
-        self.conversation_history = []
-
-    def save_conversation_history(self, filename: str):
-        """Save the conversation history to a file"""
-        with open(filename, "w") as f:
-            json.dump(self.conversation_history, f, indent=2)
-
-    def save_call_history(self, filename: str):
-        """Save the call history to a file"""
-        with open(filename, "w") as f:
-            json.dump(self.call_history, f, indent=2)
-
-    def load_conversation_history(self, filename: str):
-        """Load the conversation history from a file"""
-        with open(filename, "r") as f:
-            self.conversation_history = json.load(f)
-
-    def load_call_history(self, filename: str):
-        """Load the call history from a file"""
-        with open(filename, "r") as f:
-            self.call_history = json.load(f)
 
 
 if __name__ == "__main__":
@@ -420,7 +333,6 @@ if __name__ == "__main__":
             print(f"Test 1 Result: {response}")
 
             # Test 2: With system prompt
-            api = ModelAPI(model_name)
             print(f"\n{GREEN}Test 2: With system prompt{RESET}")
             response = api.call(
                 user_prompt="What is your role?",
@@ -431,24 +343,22 @@ if __name__ == "__main__":
             print(f"Test 2 Result: {response}")
 
             # Test 3: With chat history
-            api = ModelAPI(model_name)
             print(f"\n{GREEN}Test 3: With chat history{RESET}")
             response = api.call(
-                user_prompt="What is your role?",
-                system_prompt="You are a friendly math tutor who loves numbers.",
-                temperature=0.7 if "claude" in model_name else None,
-                verbose=True,
-            )
-            response = api.call(
                 user_prompt="What should I do next?",
-                use_history=True,
+                system_prompt="You are a helpful coding assistant.",
+                chat_history=[
+                    {"role": "user", "content": "I want to learn programming."},
+                    {
+                        "role": "assistant",
+                        "content": "That's great! What languages interest you?",
+                    },
+                    {"role": "user", "content": "Python seems cool."},
+                ],
                 temperature=0.7 if "claude" in model_name else None,
                 verbose=True,
             )
             print(f"Test 3 Result: {response}")
-
-            api.save_call_history("call_history.json")
-            api.save_conversation_history("conversation_history.json")
 
             print(f"\n{GREEN}All tests passed for {model_name}!{RESET}")
 
@@ -458,19 +368,19 @@ if __name__ == "__main__":
     # Test OpenAI
     run_test("openai:gpt-4o")
 
-    # # Test Claude (if available)
-    # if anthropic:
-    #     # Test with the correct model name
-    #     run_test("anthropic:claude-3.7-sonnet")
-    # else:
-    #     print(
-    #         f"\n{YELLOW}Skipping Claude tests - anthropic package not installed{RESET}"
-    #     )
+    # Test Claude (if available)
+    if anthropic:
+        # Test with the correct model name
+        run_test("anthropic:claude-3.5-sonnet")
+    else:
+        print(
+            f"\n{YELLOW}Skipping Claude tests - anthropic package not installed{RESET}"
+        )
 
-    # # Test Gemini (if available)
-    # if genai:
-    #     run_test("google:gemini-2.0-flash")
-    # else:
-    #     print(
-    #         f"\n{YELLOW}Skipping Gemini tests - google-generativeai package not installed{RESET}"
-    #     )
+    # Test Gemini (if available)
+    if genai:
+        run_test("google:gemini-2.0-flash")
+    else:
+        print(
+            f"\n{YELLOW}Skipping Gemini tests - google-generativeai package not installed{RESET}"
+        )
