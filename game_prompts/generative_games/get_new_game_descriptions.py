@@ -98,10 +98,10 @@ def generate_new_game_concept(api: ModelAPI, num_games: int = MAX_CONCEPTS_PER_B
     prompt = f"""
                 Describe {num_games} completely original, interesting, and imaginative concepts for single-player video games each of which is {num_sentences} sentences long.
                 - Think differently from the standard game ideas and create something unique and interesting. Each game concept must have a distinct description of the elements of the game.
-                - Write in an original tone with distinct vocabulary in each game concept to express your request. Use language to sound more personal and different in each game concept as if you are asking a game designer to make a game for you. Do not use the same words in different game concepts.
-                - For each game, pick one or more genres from this list: {genre_list_str}. Ensure equal distribution of genres in the response.
-                - Vary the abstractness of the game concepts. Some should be more abstract and others more specific.
+                - Write each new game concept from the perspective of a different person with a distinct taste in video games. Use an original tone with distinct vocabulary in each game concept to express your request. Use language to sound more personal and unique in each game concept as if you are asking a game designer to make a game for you. Choose different ways of expressing the ideas such as change in active/passive voice, change in tense, change in sentence structure, etc. 
+                - Vary the abstract and specification of the game concepts across the game concepts. Some should be more abstract, leaving the game designer with more freedom to design the game around the elements of elements you describe, and others more specific. Vary the length of the game concepts.
                 - Do not generate game concepts that involve music or sound.
+                - For each game concept, pick the genres from this list: {genre_list_str}. Ensure that there is an equal representation and combination of genres in all the game concepts. You can pick between 1 and 3 genres for each game concept. Keep the number of genres have a uniform distribution between 1 and 3.
 
                 Format your response like this:
                 ```json
@@ -172,13 +172,13 @@ def generate_new_game_concept(api: ModelAPI, num_games: int = MAX_CONCEPTS_PER_B
 
             ### Instructions:
             - Create truly innovative game concepts that challenge conventional design patterns, and introduce fresh mechanics or narrative approaches.
-            - The game concepts should be exactly {num_sentences} sentences long.
-            - Some elements that can be considered when defining the game concept are characters, reward structure, game mechanics, and world elements. Feel free to combine them or mention just one of them or even none of them and come up with something unique.
+            - Make sure that the game concepts are exactly {num_sentences} sentences long.
+            - Some elements that can be considered when defining the game concept are characters, reward structure, game mechanics, and world elements. Feel free to combine them or mention just one of them or even none of them and come up with something unique. Sometimes, you can define what the player's goals, motivations, and objectives are, sometimes you can mention an idea defining just the enemies, or just the overall broad environment description, or defining a unique the reward system. These are just some examples, you can come up with unique game concepts defining one or more of these elements of the game to vary the abstraction of the game concept.
             - Avoid common existing game concepts exist. 
             - Do not specify implementation details like graphics or technical specifications. 
             - You can be abstract or very specific and detailed in your game concepts about the desired aspect of the game.
-            - You can use the following examples to inspire the structure and the content of the game concepts, but do not copy the examples exactly.
-            - Avoid using game concepts that involve music or sound.
+            - Do not generate game concepts that involve music or sound.
+            - You can use the following examples to inspire the structure and the content of the game concepts, but do not copy ideas from the examples.
             
             ## Example game concepts:
                 {example_block}
@@ -188,7 +188,7 @@ def generate_new_game_concept(api: ModelAPI, num_games: int = MAX_CONCEPTS_PER_B
             - Do not have concepts that require 3D graphics. The game will be strictly a 2D game.
             - The games will be played in a web browser using a keyboard.  
             
-            ### Response Format:
+            ## Response Format:
             Your response must be a valid JSON array containing dictionaries, each with exactly two keys: "concept" and "genre". 
             Do not include any extra text, markdown formatting, or commentary outside of the JSON.
 
