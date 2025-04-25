@@ -246,7 +246,9 @@ if __name__ == "__main__":
     games_dataset = datasets.load_dataset(games_dataset_id, split="train")
     preferences_dataset = datasets.load_dataset(preferences_dataset_id, split="train")
     
-    
+    datasets.Dataset()
+    breakpoint()
+
     for preference in preferences_dataset:
         actions_a = json.loads(preference["actions_a"])
         actions_b = json.loads(preference["actions_b"])
@@ -261,9 +263,6 @@ if __name__ == "__main__":
         
         game_a = game_a[0]
         game_b = game_b[0]
-
-        if game_a["id"] != "2268bae415617264cd66ea74f548c4587e2c4daaaca3c58b9224ad37f611269e" and game_b["id"] != "2268bae415617264cd66ea74f548c4587e2c4daaaca3c58b9224ad37f611269e":
-            continue
         
         # Create dictionaries mapping file paths to file contents
         game_a_files = {path: content for path, content in zip(game_a["game_file_paths"], game_a["game_file_contents"])}

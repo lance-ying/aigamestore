@@ -82,12 +82,6 @@ def get_random_game():
     unrated_games = [game for game in GAMES_DATASET if game["id"] not in rated_games]
     if not unrated_games:
         return None, None
-
-    # TODO: sometimes index.html is missing (skip the game and add it to the rated games set)
-    # valid_games = [game for game in unrated_games if "index.html" in game["game_file_paths"]]
-    # if not valid_games:
-    #     return None, None
-
     game = random.choice(unrated_games)
     rating_id = str(uuid.uuid4())
     return game, rating_id
@@ -153,6 +147,11 @@ HTML_TEMPLATE = '''
             align-items: center;
             justify-content: center;
             box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .game-error {
+            color: white;
+            text-align: center;
+            padding: 20px;
         }
         .rating-sliders {
             margin-top: 10px;
@@ -414,21 +413,11 @@ HTML_TEMPLATE = '''
             background-color: #4CAF50;
             color: white;
             border-radius: 5px;
+            display: none;
         }
         </style>
     </head>
     <body>
-    <!-- Loading Overlay -->
-    <div id="loading-overlay" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(255,255,255,0.85); z-index:2000; justify-content:center; align-items:center; flex-direction:column;">
-        <div style="margin-bottom:20px;">
-            <svg width="60" height="60" viewBox="0 0 50 50">
-                <circle cx="25" cy="25" r="20" fill="none" stroke="#3498db" stroke-width="5" stroke-linecap="round" stroke-dasharray="31.4 31.4" transform="rotate(-90 25 25)">
-                    <animateTransform attributeName="transform" type="rotate" from="0 25 25" to="360 25 25" dur="1s" repeatCount="indefinite"/>
-                </circle>
-            </svg>
-        </div>
-        <div style="font-size:20px; color:#3498db; font-weight:bold;">Submitting your rating, please wait...</div>
-    </div>
     <!-- Instructions Modal -->
     <div id="instructionsModal" class="modal">
         <div class="modal-content">
@@ -482,14 +471,13 @@ HTML_TEMPLATE = '''
     </div>
         
     <div class="main-content">
-        {% if game_id %}
         <div class="progress-container">
             <span id="games-left">Loading...</span>
         </div>
         {% if game_id %}
         <div class="game-container">
         <div class="game-box">
-            <iframe class="game-frame" src="/game/{{ game_path }}"></iframe>
+            <iframe class="game-frame" src="/game/{{ game_path }}" id="game-frame"></iframe>
             <div class="rating-sliders">
                 <div class="rating-item">
                     <label>Fun: How enjoyable is the game to play?</label>
@@ -535,15 +523,19 @@ HTML_TEMPLATE = '''
         const closeBtn = document.getElementsByClassName("close")[0];
         const startBtn = document.getElementById("startButton");
         const showInstructionsBtn = document.getElementById("show-instructions");
+        const gameFrame = document.getElementById("game-frame");
+        const submitRatingsBtn = document.getElementById("submit-ratings");
+        let gameLoaded = false;
+        let gameError = false;
         
         // Check if this is the first visit
         if (!localStorage.getItem("gameArenaVisited")) {
             // First visit, show modal
-            modal.style.display = "flex";
+            if (modal) modal.style.display = "flex";
             localStorage.setItem("gameArenaVisited", "true");
         } else {
             // Not first visit, hide modal
-            modal.style.display = "none";
+            if (modal) modal.style.display = "none";
         }
         
         // Function to reset all sliders to default value
@@ -554,24 +546,30 @@ HTML_TEMPLATE = '''
         }
         
         // Close modal when clicking close button
-        closeBtn.onclick = function() {
-            modal.style.display = "none";
+        if (closeBtn) {
+            closeBtn.onclick = function() {
+                if (modal) modal.style.display = "none";
+            }
         }
         
         // Close modal when clicking Start button
-        startBtn.onclick = function() {
-            modal.style.display = "none";
+        if (startBtn) {
+            startBtn.onclick = function() {
+                if (modal) modal.style.display = "none";
+            }
         }
         
         // Show instructions when clicking Instructions button
-        showInstructionsBtn.onclick = function() {
-            modal.style.display = "flex";
+        if (showInstructionsBtn) {
+            showInstructionsBtn.onclick = function() {
+                if (modal) modal.style.display = "flex";
+            }
         }
         
         // Close modal when clicking outside of it
         window.onclick = function(event) {
             if (event.target == modal) {
-                modal.style.display = "none";
+                if (modal) modal.style.display = "none";
             }
         }
         
@@ -610,84 +608,112 @@ HTML_TEMPLATE = '''
             });
         });
         
-        // Submit ratings
-        document.getElementById('submit-ratings').addEventListener('click', function() {
-            // Show loading overlay
-            document.getElementById('loading-overlay').style.display = 'flex';
-            // Tell all game iframes to stop recording before submitting ratings
-            document.querySelectorAll('.game-frame').forEach(iframe => {
-                iframe.contentWindow.postMessage({ action: "stopRecording" }, "*");
-            });
-            
-            // Get logs from the game iframe
-            const iframe = document.querySelector('.game-frame');
-            let logs = [];
-            try {
-                logs = iframe.contentWindow.gameInstance && iframe.contentWindow.gameInstance.logs ? iframe.contentWindow.gameInstance.logs : [];
-            } catch (e) {
-                console.error('Error getting logs:', e);
+        // Handle messages from the game iframe
+        window.addEventListener('message', function(event) {
+            if (event.data.action === "gameLoaded") {
+                gameLoaded = true;
+                gameError = false;
+            } else if (event.data.action === "gameError") {
+                gameError = true;
+                // Show error message in the iframe
+                if (gameFrame && gameFrame.contentWindow) {
+                    try {
+                        gameFrame.contentWindow.document.body.innerHTML = `
+                            <div class="game-error">
+                                <h2>Game Error</h2>
+                                <p>The game could not be loaded.</p>
+                                <p>You can still submit a rating for this game.</p>
+                            </div>
+                        `;
+                    } catch (e) {
+                        console.log('Could not update iframe content');
+                    }
+                }
             }
-            
-            // Check if video recording started in the iframe
-            let videoStarted = false;
-            try {
-                videoStarted = !!iframe.contentWindow._videoRecordingStarted;
-            } catch (e) {}
-            
-            function submitRatings() {
+        });
+        
+        // Submit ratings
+        if (submitRatingsBtn) {
+            submitRatingsBtn.addEventListener('click', function() {
+                // Tell all game iframes to stop recording before submitting ratings
+                document.querySelectorAll('.game-frame').forEach(iframe => {
+                    try {
+                        iframe.contentWindow.postMessage({ action: "stopRecording" }, "*");
+                    } catch (e) {
+                        console.log('Could not send stopRecording message to iframe');
+                    }
+                });
+                
+                // Get logs from the game iframe
+                const iframe = document.querySelector('.game-frame');
+                let logs = [];
+                try {
+                    logs = iframe.contentWindow.gameInstance && iframe.contentWindow.gameInstance.logs ? iframe.contentWindow.gameInstance.logs : [];
+                } catch (e) {
+                    console.log('Could not get logs from iframe');
+                }
+                
+                // Prepare data to submit
                 const data = {
                     ratings: {
                         fun: document.getElementById('fun-1').value
                     },
                     logs: logs,
                     rating_id: '{{ rating_id }}',
-                    game_id: '{{ game_id }}'
+                    game_id: '{{ game_id }}',
+                    game_error: gameError
                 };
-                fetch('/submit-ratings', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify(data),
-                })
-                .then(response => response.json())
-                .then(data => {
-                    updateGamesLeft();
-                    // Hide loading overlay
-                    document.getElementById('loading-overlay').style.display = 'none';
-                    window.location.reload();
-                })
-                .catch((error) => {
-                    // Hide loading overlay
-                    document.getElementById('loading-overlay').style.display = 'none';
-                    console.error('Error:', error);
-                    alert('Error submitting ratings');
-                });
-            }
-            
-            if (videoStarted) {
-                // Wait for video upload to complete, but add a timeout fallback
-                window._pendingVideoUploads = 1;
-                let timeoutId = setTimeout(() => {
+                
+                // For games with errors, submit immediately
+                if (gameError) {
+                    submitRatingData(data);
+                    return;
+                }
+                
+                // Function to submit rating data
+                function submitRatingData(data) {
+                    fetch('/submit-ratings', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(data),
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        updateGamesLeft();
+                        window.location.reload();
+                    })
+                    .catch((error) => {
+                        console.error('Error:', error);
+                        // If the fetch fails, we still want to continue to the next game
+                        alert('Error submitting ratings, but continuing to next game');
+                        window.location.reload();
+                    });
+                }
+                
+                // Add a timeout to ensure we don't wait forever
+                let submissionTimeout = setTimeout(function() {
+                    console.log('Video upload timed out, submitting ratings anyway');
                     window.removeEventListener('message', window._videoUploadCompleteHandler);
-                    submitRatings();
-                }, 10000); // 10 seconds
+                    submitRatingData(data);
+                }, 5000);  // 5 second timeout
+                
+                // Wait for all video uploads to complete before submitting ratings
+                window._pendingVideoUploads = 1;  // Only count one video
                 window._videoUploadCompleteHandler = function(event) {
                     if (event.data && event.data.action === "videoUploadComplete") {
                         window._pendingVideoUploads--;
                         if (window._pendingVideoUploads <= 0) {
-                            clearTimeout(timeoutId);
+                            clearTimeout(submissionTimeout);
                             window.removeEventListener('message', window._videoUploadCompleteHandler);
-                            submitRatings();
+                            submitRatingData(data);
                         }
                     }
                 };
                 window.addEventListener('message', window._videoUploadCompleteHandler);
-            } else {
-                // No video, just submit
-                submitRatings();
-            }
-        });
+            });
+        }
         
         // Update games left counter
         function updateGamesLeft() {
@@ -696,8 +722,14 @@ HTML_TEMPLATE = '''
                 .then(data => {
                     const gamesLeft = data.games_left;
                     const totalGames = data.total_games;
-                    document.getElementById('games-left').textContent = 
-                        `Games left: ${gamesLeft} / ${totalGames}`;
+                    const gamesLeftElement = document.getElementById('games-left');
+                    if (gamesLeftElement) {
+                        gamesLeftElement.textContent = 
+                            `Games left: ${gamesLeft} / ${totalGames}`;
+                    }
+                })
+                .catch(error => {
+                    console.log('Error updating games left counter:', error);
                 });
         }
         
@@ -734,9 +766,11 @@ def serve_game(game_path):
     game_id = game_path.split('/')[1].replace('game_', '')
     
     # Find game in dataset
-    game = GAMES_DATASET.filter(lambda x: x["id"] == game_id)[0]
-
-
+    try:
+        game = GAMES_DATASET.filter(lambda x: x["id"] == game_id)[0]
+    except IndexError:
+        return "Game not found", 404
+    
     print("Serve game:", game["game_concept"], game["model"])
 
     if game is None:
@@ -753,22 +787,24 @@ def serve_game(game_path):
         return "JavaScript file not found", 404
     
     elif game_path.endswith('index.html'):
-        # Return HTML file
-        html = game["game_file_contents"][game["game_file_paths"].index("index.html")]
+        try:
+            # Return HTML file
+            html = game["game_file_contents"][game["game_file_paths"].index("index.html")]
 
-        # Inject p5.capture and event tracking scripts before </body>
-        p5capture_injection = '''
+            # Inject p5.capture and event tracking scripts before </body>
+            p5capture_injection = '''
 <script src="https://cdn.jsdelivr.net/npm/p5.capture@1.5.0/dist/p5.capture.umd.min.js"></script>
 <script>
     window.P5Capture.setDefaultOptions({ disableUi: true });
 </script>
 '''
-        # Use regex to find any p5.js script tag and inject p5.capture after it
-        p5_script_pattern = r'<script[^>]*src=[^>]*p5[^>]*\.js[^>]*></script>'
-        html = re.sub(p5_script_pattern, lambda m: m.group(0) + p5capture_injection, html, count=1)
 
-        # Inject centering styles
-        centering_styles = '''
+            # Use regex to find any p5.js script tag and inject p5.capture after it
+            p5_script_pattern = r'<script[^>]*src=[^>]*p5[^>]*\.js[^>]*></script>'
+            html = re.sub(p5_script_pattern, lambda m: m.group(0) + p5capture_injection, html, count=1)
+
+            # Inject centering styles
+            centering_styles = '''
 <style>
     body { 
         margin: 0; 
@@ -785,10 +821,10 @@ def serve_game(game_path):
     }
 </style>
 '''
-        # Inject styles after the head tag
-        html = re.sub(r'<head>', '<head>' + centering_styles, html)
+            # Inject styles after the head tag
+            html = re.sub(r'<head>', '<head>' + centering_styles, html)
 
-        tracking_js = """
+            tracking_js = """
 <script>
 const ratingId = '""" + rating_id + """';
 const gameId = '""" + game_id + """';
@@ -826,6 +862,7 @@ function recordAction(eventType, data) {
         });
     }
 }
+
 function sendBufferedEvents() {
     if (eventBuffer.length > 0) {
         const events = eventBuffer.slice();
@@ -841,6 +878,27 @@ function sendBufferedEvents() {
         });
     }
 }
+
+// Notify parent window if game fails to load
+window.addEventListener('error', function(e) {
+    console.error('Game error:', e);
+    window.parent.postMessage({ 
+        action: "gameError", 
+        gameId: gameId, 
+        ratingId: ratingId,
+        error: e.message
+    }, "*");
+});
+
+// Notify parent window when game is loaded
+window.addEventListener('load', function() {
+    window.parent.postMessage({ 
+        action: "gameLoaded", 
+        gameId: gameId, 
+        ratingId: ratingId
+    }, "*");
+});
+
 window.addEventListener("keydown", function(e) {
     recordAction('keydown', { keyCode: e.keyCode, key: e.key });
     if([32, 37, 38, 39, 40].indexOf(e.keyCode) > -1) { e.preventDefault(); }
@@ -940,7 +998,6 @@ window.addEventListener('beforeunload', sendBufferedEvents);
                     });
                 }
             });
-            window._videoRecordingStarted = true;
             started = true;
             video_start_framecount = inst.frameCount;
             recordAction('video_recording_started', {});
@@ -962,11 +1019,52 @@ window.addEventListener('beforeunload', sendBufferedEvents);
 
 </script>
 """
-        if "</body>" in html:
-            html = html.replace("</body>", tracking_js + "</body>")
-        else:
-            html += tracking_js
-        return Response(html, mimetype='text/html')    
+            if "</body>" in html:
+                html = html.replace("</body>", tracking_js + "</body>")
+            else:
+                html += tracking_js
+            return Response(html, mimetype='text/html')
+        except (IndexError, ValueError) as e:
+            # If index.html is not found or there's an error, return a simple error page
+            error_html = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                <title>Game Error</title>
+                <style>
+                    body {{ 
+                        margin: 0; 
+                        overflow: hidden; 
+                        background-color: #222; 
+                        display: flex; 
+                        justify-content: center; 
+                        align-items: center; 
+                        height: 100vh; 
+                        width: 100vw;
+                        color: white;
+                        font-family: Arial, sans-serif;
+                    }}
+                </style>
+            </head>
+            <body>
+                <div style="text-align: center;">
+                    <h2>Game Error</h2>
+                    <p>The game could not be loaded.</p>
+                    <p>You can still submit a rating for this game.</p>
+                </div>
+                <script>
+                    window.parent.postMessage({{
+                        action: "gameError",
+                        gameId: "{game_id}",
+                        ratingId: "{rating_id}",
+                        error: "Game could not be loaded"
+                    }}, "*");
+                </script>
+            </body>
+            </html>
+            """
+            return Response(error_html, mimetype='text/html')
     else:
         # For other file types, return 404
         return "File type not supported", 404
@@ -978,9 +1076,10 @@ def submit_ratings():
     global ratings_counter
     data = request.json
     ratings = data.get('ratings', {})
-    logs = data.get('logs', {})
+    logs = data.get('logs', [])
     rating_id = data.get('rating_id', 'unknown')
     game_id = data.get('game_id', 'local')
+    game_error = data.get('game_error', False)
 
     # Mark game as rated
     rated_games.add(game_id)
@@ -1001,6 +1100,8 @@ def submit_ratings():
             json.dump(ratings, f, indent=4)
         with open(save_dir / "logs.json", 'w') as f:
             json.dump(logs, f, indent=4)
+        with open(save_dir / "error.json", 'w') as f:
+            json.dump({"game_error": game_error}, f, indent=4)
 
     print(f"Saved ratings for rating_id {rating_id}")
 
@@ -1017,7 +1118,8 @@ def submit_ratings():
                 "fun": ratings.get('fun')
             },
             "logs": json.dumps(logs),
-            "events": json.dumps(events)
+            "events": json.dumps(events),
+            "game_error": game_error
         }
         
         # Add to scheduler
