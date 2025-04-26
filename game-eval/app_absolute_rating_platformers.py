@@ -1,6 +1,6 @@
 from pathlib import Path
 import random
-from flask import Flask, render_template_string, request, jsonify, Response
+from flask import Flask, render_template_string, request, jsonify, Response, redirect, url_for, session
 import os
 import json
 import datetime
@@ -17,12 +17,13 @@ HF_TOKEN = os.environ.get("HF_TOKEN")
 
 games_version = "v5"
 GAMES_DATASET = f"generative-games/gen-games-{games_version}"
-PREFERENCES_DATASET = f"generative-games/gen-games-{games_version}-absolute-rating-test"  # Dataset to save ratings
-VIDEO_DATASET = f"generative-games/gen-games-{games_version}-video-test"  # Dataset to save videos
+PREFERENCES_DATASET = f"generative-games/gen-games-{games_version}-absolute-rating-test2"  # Dataset to save ratings
+VIDEO_DATASET = f"generative-games/gen-games-{games_version}-video-test2"  # Dataset to save videos
 
 
 PUSH_EVERY_N_RATINGS = 10
-SAVE_LOCALLY = True  # Set to False to only save to HF
+SAVE_LOCALLY = True
+SAVE_HF = False
 
 RESULTS_DIR = Path(__file__).parent / "results" / f"games_{games_version}"
 
@@ -117,6 +118,30 @@ HTML_TEMPLATE = '''
             background-color: #f8f8f8;
             box-sizing: border-box;
             justify-content: center;
+        }
+        /* Game counter badge in top right */
+        .game-counter-badge {
+            position: fixed;
+            top: 24px;
+            right: 32px;
+            z-index: 1200;
+            background: #3498db;
+            color: #fff;
+            font-weight: bold;
+            font-size: 16px;
+            padding: 10px 14px;
+            border-radius: 24px 24px 24px 24px;
+            box-shadow: 0 2px 8px rgba(52,152,219,0.10);
+            letter-spacing: 0.5px;
+            transition: background 0.2s;
+            border: 1.5px solid #2980b9;
+            min-width: 120px;
+            text-align: center;
+            user-select: none;
+        }
+        .game-counter-badge span {
+            font-size: 15px;
+            font-weight: 500;
         }
         .main-content {
             display: flex;
@@ -401,12 +426,6 @@ HTML_TEMPLATE = '''
         #startButton:hover {
             background-color: #2980b9;
         }
-        .progress-container {
-            text-align: center;
-            margin-bottom: 20px;
-            font-size: 18px;
-            color: #333;
-        }
         .completion-message {
             text-align: center;
             margin: 20px;
@@ -418,6 +437,10 @@ HTML_TEMPLATE = '''
         </style>
     </head>
     <body>
+    <!-- Game Counter Badge -->
+    <div class="game-counter-badge">
+        <span id="games-left">Loading...</span>
+    </div>
     <!-- Loading Overlay -->
     <div id="loading-overlay" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(255,255,255,0.85); z-index:2000; justify-content:center; align-items:center; flex-direction:column;">
         <div style="margin-bottom:20px;">
@@ -433,59 +456,29 @@ HTML_TEMPLATE = '''
     <div id="instructionsModal" class="modal">
         <div class="modal-content">
             <span class="close">&times;</span>
-            <h2>Game Evaluation Study</h2>
-            <p>Thank you for participating in our game evaluation study! Your feedback will help us understand what makes games engaging and fun.</p>
-            
-            <h3>How to Evaluate the Game</h3>
-            <p>You'll be shown a game to play and evaluate. Please:</p>
-            
-            <div>
-                <h4>1. Play for about 1 minute to get a good feel for it. You can stop earlier if the game is broken and is impossible to play.</h4>
-                <h4>2. Rate the game on three aspects:</h4>
-                
-                <div style="margin-left: 15px; ">
-                    <h4>Controls (0-10)</h4>
-                    <p style="margin-left: 10px; ">
-                        - 0: Controls are completely confusing and unresponsive<br>
-                        - 5: Controls are somewhat intuitive but could be improved<br>
-                        - 10: Controls are perfectly intuitive and responsive
-                    </p>
-                    
-                    <h4>Difficulty (0-10)</h4>
-                    <p style="margin-left: 10px; ">
-                        - 0: Game is too easy and has no challenge at all<br>
-                        - 5: Game has a good balance of challenge<br>
-                        - 10: Game is extremely difficult
-                    </p>
-                    
-                    <h4>Fun Factor (0-10)</h4>
-                    <p style="margin-left: 10px; ">
-                        - 0: Game is not enjoyable at all<br>
-                        - 5: Game is somewhat enjoyable (like a basic mobile game you'd play once)<br>
-                        - 10: Game is extremely fun and engaging
-                    </p>
-                </div>
-            </div>
-            
-            <h3>Important Notes</h3>
+            <h2>How to Evaluate the Game</h2>
+            <p>Your task is to evaluate a series of games. You will be shown a total of 30 games to rate.</p>
+            <h3>Please follow these steps to provide your rating:</h3>
+            <ol>
+                <li><b>Please play each game for about 1 minute</b> to get a good feel for it. If the game is broken or unplayable, you may stop earlier.</li>
+                <li><b>Rate how fun the game is on a scale from 0 to 10:</b><br>
+                    - 0: Not fun at all<br>
+                    - 5: Somewhat enjoyable<br>
+                    - 10: Extremely fun and engaging (like a free mobile game you'd play multiple times)
+                </li>
+            </ol>
+            <h3>Important Notes:</h3>
             <ul style="padding-left: 25px;">
-                <li>We record your interactions with the game to understand how people play it</li>
-                <li>Please take this seriously - we use this data for research</li>
-                <li>There are no right or wrong answers - we want your honest opinion</li>
-                <li>If you're not serious about the evaluation, we won't be able to compensate you</li>
+                <li>We record your interactions with the game to understand how people play it.</li>
+                <li>Please take this seriously; we use this data for research.</li>
+                <li>There are no right or wrong answers—please give your honest opinion.</li>
+                <li>If you are not serious about the evaluation, we will not be able to compensate you.</li>
             </ul>
-            
-            <p>Ready to start? Click the button below to begin!</p>
-            
-            <button id="startButton">Start Playing</button>
+            <button id="startButton">Play</button>
         </div>
     </div>
         
     <div class="main-content">
-        {% if game_id %}
-        <div class="progress-container">
-            <span id="games-left">Loading...</span>
-        </div>
         {% if game_id %}
         <div class="game-container">
         <div class="game-box">
@@ -493,6 +486,9 @@ HTML_TEMPLATE = '''
             <div class="rating-sliders">
                 <div class="rating-item">
                     <label>Fun: How enjoyable is the game to play?</label>
+                    <div class="rating-description" style="font-size:12px; color:#666; margin-bottom:4px;">
+                        0: Not fun at all &nbsp;|&nbsp; 5: Somewhat enjoyable &nbsp;|&nbsp; 10: Extremely fun and engaging
+                    </div>
                     <fieldset class="range__field">
                         <input class="range" type="range" min="0" max="10" value="5" id="fun-1">
                         <svg role="presentation" width="100%" height="14" xmlns="http://www.w3.org/2000/svg">
@@ -509,10 +505,12 @@ HTML_TEMPLATE = '''
                             <text class="range__point" x="100%" y="14" text-anchor="end">10</text>
                         </svg>
                     </fieldset>
+                    <!--
                     <div class="scale-labels">
                         <span>Not fun</span>
                         <span>Very fun</span>
                     </div>
+                    -->
                 </div>
             </div>
         </div>
@@ -718,9 +716,68 @@ def get_games_left():
         'total_games': total_games
     })
 
+@app.route('/consent', methods=['GET', 'POST'])
+def consent():
+    consent_text = '''
+    <html>
+    <head>
+        <title>Consent Form</title>
+        <style>
+            body { font-family: Arial, sans-serif; max-width: 700px; margin: 40px auto; background: #f8f8f8; padding: 24px; border-radius: 8px; }
+            h2 { color: #2c3e50; }
+            .consent-box { background: #fff; padding: 24px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.07); }
+            .checkbox-group { margin: 18px 0; }
+            label { display: block; margin-bottom: 10px; font-size: 16px; }
+            button { padding: 10px 24px; font-size: 16px; background: #3498db; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
+            button:disabled { background: #ccc; cursor: not-allowed; }
+        </style>
+    </head>
+    <body>
+        <div class="consent-box">
+            <h2>Welcome to our study!</h2>
+            <p>By completing this study, you are participating in research conducted by researchers from the Massachusetts Institute of Technology (MIT). The purpose of this research is to study how people evaluate and interact with newly generated video games. The results will inform research in artificial intelligence and cognitive science.</p>
+            <ul>
+                <li><b>Eligibility:</b> You must be at least 18 years old to participate.</li>
+                <li><b>Risks & Benefits:</b> There are no specific benefits or anticipated risks associated with participation in this study.</li>
+                <li><b>Voluntary Participation:</b> Your participation is completely voluntary. You may withdraw at any time by simply exiting the study. You may decline to answer any or all questions. Choosing not to participate or withdrawing will result in no penalty.</li>
+                <li><b>Anonymity & Data Use:</b> Your anonymity is assured; the researchers will not receive any personal information about you. We may release anonymized gameplay data as part of open-source research. Please do not participate unless you are comfortable with your gameplay traces being shared in this way.</li>
+                <li><b>Contact:</b> If you have questions about this research, please contact the researchers at <a href="mailto:email@mit.edu">email@mit.edu</a>. For questions regarding your rights as a participant, or if problems arise which you do not feel you can discuss with the researchers, please contact the MIT Committee on the Use of Humans as Experimental Subjects (COUHES).</li>
+                <li><b>Records:</b> You may print a copy of this consent form for your records.</li>
+            </ul>
+            <form method="post" id="consent-form">
+                <div class="checkbox-group">
+                    <label><input type="checkbox" id="age" name="age"> I am age 18 or older</label>
+                    <label><input type="checkbox" id="read" name="read"> I have read and understand the information above</label>
+                    <label><input type="checkbox" id="participate" name="participate"> I want to participate in this research and continue with the experiment</label>
+                </div>
+                <button type="submit" id="start-btn" disabled>Start Experiment</button>
+                <button type="button" onclick="window.print()" style="background:#eee;color:#333;margin-left:10px;">Print Consent Form</button>
+            </form>
+        </div>
+        <script>
+            const form = document.getElementById('consent-form');
+            const btn = document.getElementById('start-btn');
+            const boxes = ['age', 'read', 'participate'].map(id => document.getElementById(id));
+            boxes.forEach(box => box.addEventListener('change', () => {
+                btn.disabled = !boxes.every(b => b.checked);
+            }));
+        </script>
+    </body>
+    </html>
+    '''
+    if request.method == 'POST':
+        # Check all boxes are checked
+        if all(request.form.get(box) == 'on' for box in ['age', 'read', 'participate']):
+            session['consented'] = True
+            return redirect(url_for('index'))
+        # If not all checked, reload page (button should prevent this)
+    return consent_text
+
 @app.route('/')
 def index():
-    """Main page that displays a single game and rating interface"""
+    # Require consent before proceeding
+    if not session.get('consented'):
+        return redirect(url_for('consent'))
     game, rating_id = get_random_game()
     if game is None:
         return render_template_string(HTML_TEMPLATE, game_id=None)
@@ -1005,35 +1062,36 @@ def submit_ratings():
     print(f"Saved ratings for rating_id {rating_id}")
 
     # Save to HuggingFace dataset
-    try:
-        # Create rating entry for HF dataset
-        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        rating_entry = {
-            "id": rating_id,
-            "game_id": game_id,
-            "judge": request.remote_addr,  # Use IP as anonymous identifier
-            "timestamp": timestamp,
-            "ratings": {
-                "fun": ratings.get('fun')
-            },
-            "logs": json.dumps(logs),
-            "events": json.dumps(events)
-        }
-        
-        # Add to scheduler
-        preferences_scheduler.append(rating_entry)
-        print(f"Added rating to HF dataset queue: {rating_entry['id']}")
-        
-        # Increment counter and check if we should push
-        ratings_counter += 1
-        print(f"Ratings counter: {ratings_counter}")
-        if ratings_counter >= PUSH_EVERY_N_RATINGS:
-            print(f"Reached {PUSH_EVERY_N_RATINGS} ratings, pushing to HuggingFace...")
-            preferences_scheduler.push_to_hub()
-            ratings_counter = 0  # Reset counter
+    if SAVE_HF:
+        try:
+            # Create rating entry for HF dataset
+            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            rating_entry = {
+                "id": rating_id,
+                "game_id": game_id,
+                "judge": request.remote_addr,  # Use IP as anonymous identifier
+                "timestamp": timestamp,
+                "ratings": {
+                    "fun": ratings.get('fun')
+                },
+                "logs": json.dumps(logs),
+                "events": json.dumps(events)
+            }
             
-    except Exception as e:
-        print(f"Error saving to HF dataset: {e}")
+            # Add to scheduler
+            preferences_scheduler.append(rating_entry)
+            print(f"Added rating to HF dataset queue: {rating_entry['id']}")
+            
+            # Increment counter and check if we should push
+            ratings_counter += 1
+            print(f"Ratings counter: {ratings_counter}")
+            if ratings_counter >= PUSH_EVERY_N_RATINGS:
+                print(f"Reached {PUSH_EVERY_N_RATINGS} ratings, pushing to HuggingFace...")
+                preferences_scheduler.push_to_hub()
+                ratings_counter = 0  # Reset counter
+                
+        except Exception as e:
+            print(f"Error saving to HF dataset: {e}")
     
     return jsonify({"status": "success"})
 
@@ -1073,23 +1131,27 @@ def upload_video():
             json.dump(metadata, f, indent=4)
         print(f"Saved video locally for game {game_id} (rating {rating_id}) at {save_path}")
     
-    try:
-        # Reset stream position and ensure binary mode
-        video.stream.seek(0)
-        # Upload to HuggingFace in the background
-        hf_api.upload_file(
-            path_or_fileobj=video.stream.read(),
-            path_in_repo=filename,
-            repo_id=VIDEO_DATASET,
-            repo_type="dataset",
-            token=HF_TOKEN,
-            run_as_future=True
-        )
-        print(f"Started background upload of video {filename} to {VIDEO_DATASET}")        
-        return jsonify({"status": "success", "filename": filename})
-    except Exception as e:
-        print(f"Error starting video upload: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+    if SAVE_HF:
+        try:
+            # Reset stream position and ensure binary mode
+            video.stream.seek(0)
+            # Upload to HuggingFace in the background
+            hf_api.upload_file(
+                path_or_fileobj=video.stream.read(),
+                path_in_repo=filename,
+                repo_id=VIDEO_DATASET,
+                repo_type="dataset",
+                token=HF_TOKEN,
+                run_as_future=True
+            )
+            print(f"Started background upload of video {filename} to {VIDEO_DATASET}")        
+            return jsonify({"status": "success", "filename": filename})
+        except Exception as e:
+            print(f"Error starting video upload: {e}")
+            return jsonify({"status": "error", "message": str(e)}), 500
+
+    return jsonify({"status": "success", "filename": filename})
+
 
 @app.route('/record-events', methods=['POST'])
 def record_events():
