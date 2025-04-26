@@ -10,12 +10,13 @@ import seaborn as sns
 
 games_version = "v5"
 GAMES_DATASET = f"generative-games/gen-games-{games_version}"
-RATING_DATASET = f"generative-games/gen-games-{games_version}-absolute-rating-test"
-VIDEO_DATASET = f"generative-games/gen-games-{games_version}-video-test"
+RATING_DATASET = f"generative-games/gen-games-{games_version}-absolute-rating-test2"
+VIDEO_DATASET = f"generative-games/gen-games-{games_version}-video-test2"
 STATIC_ANALYSIS_DATASET = f"generative-games/gen-games-{games_version}-static-analysis"
 
 
-save_dir = Path(__file__).parent / "results" / Path(__file__).stem
+# save_dir = Path(__file__).parent / "results" / Path(__file__).stem / games_version
+save_dir = Path(__file__).parent / "results" / Path(__file__).stem / (games_version + "-test2")
 
 def analyze_logs(logs, save_dir=None):
     movements_by_type = defaultdict(list)

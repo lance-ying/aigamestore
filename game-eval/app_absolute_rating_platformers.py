@@ -17,13 +17,14 @@ HF_TOKEN = os.environ.get("HF_TOKEN")
 
 games_version = "v5"
 GAMES_DATASET = f"generative-games/gen-games-{games_version}"
-PREFERENCES_DATASET = f"generative-games/gen-games-{games_version}-absolute-rating-test"  # Dataset to save ratings
-VIDEO_DATASET = f"generative-games/gen-games-{games_version}-video-test"  # Dataset to save videos
+PREFERENCES_DATASET = f"generative-games/gen-games-{games_version}-absolute-rating-test3"  # Dataset to save ratings
+VIDEO_DATASET = f"generative-games/gen-games-{games_version}-video-test3"  # Dataset to save videos
 
+COMPLETION_CODE = "MIT-STUDY-COMPLETED"
 
 PUSH_EVERY_N_RATINGS = 10
-SAVE_LOCALLY = True
-SAVE_HF = False
+SAVE_LOCALLY = False
+SAVE_HF = True
 
 RESULTS_DIR = Path(__file__).parent / "results" / f"games_{games_version}"
 
@@ -226,10 +227,11 @@ def index():
 
     game, rating_id = get_random_game()
     if game is None:
-        return render_template_string(HTML_TEMPLATE, game_id=None)
+        # No more games left for this user
+        return render_template_string(HTML_TEMPLATE, game_id=None, completion_code=COMPLETION_CODE)
     game_path = f'rating_{rating_id}/game_{game["id"]}/index.html'
     print(f"--- index() route: Selected game_id: {game['id']}, rating_id: {rating_id}")
-    return render_template_string(HTML_TEMPLATE, game_path=game_path, rating_id=rating_id, game_id=game["id"])
+    return render_template_string(HTML_TEMPLATE, game_path=game_path, rating_id=rating_id, game_id=game["id"], completion_code=None)
 
 @app.route('/get-games-left')
 def get_games_left():
@@ -648,10 +650,12 @@ HTML_TEMPLATE = '''
         </style>
     </head>
     <body>
+    {% if game_id %}
     <!-- Game Counter Badge -->
     <div class="game-counter-badge">
         <span id="games-left">Loading...</span>
     </div>
+    {% endif %}
     <!-- Loading Overlay -->
     <div id="loading-overlay" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(255,255,255,0.85); z-index:2000; justify-content:center; align-items:center; flex-direction:column;">
         <div style="margin-bottom:20px;">
@@ -714,12 +718,6 @@ HTML_TEMPLATE = '''
                             <text class="range__point" x="100%" y="14" text-anchor="end">10</text>
                         </svg>
                     </fieldset>
-                    <!--
-                    <div class="scale-labels">
-                        <span>Not fun</span>
-                        <span>Very fun</span>
-                    </div>
-                    -->
                 </div>
             </div>
         </div>
@@ -732,6 +730,8 @@ HTML_TEMPLATE = '''
         <div class="completion-message">
             <h2>Congratulations! 🎉</h2>
             <p>You have rated all available games. Thank you for your participation!</p>
+            <p>Please copy the following completion code and enter it into Prolific:</p>
+            <p style="font-weight: bold; font-size: 1.2em; color: #000; background: #eee; padding: 10px; border-radius: 4px; display: inline-block;">{{ completion_code }}</p>
         </div>
         {% endif %}
     </div>
