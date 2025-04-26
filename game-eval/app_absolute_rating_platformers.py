@@ -469,7 +469,7 @@ HTML_TEMPLATE = '''
             color: #333;
         }
         .rating-description {
-            font-size: 11px;
+            font-size: 12px;
             color: #666;
             margin-bottom: 3px;
             font-style: italic;
@@ -697,6 +697,7 @@ HTML_TEMPLATE = '''
             <div class="rating-sliders">
                 <div class="rating-item">
                     <label>Fun: How enjoyable is the game to play?</label>
+                    <div class="rating-description">0=Not fun at all, 5=Somewhat enjoyable, 10=Extremely fun</div>
                     <fieldset class="range__field">
                         <input class="range" type="range" min="0" max="10" value="5" id="fun-1">
                         <svg role="presentation" width="100%" height="14" xmlns="http://www.w3.org/2000/svg">
@@ -713,10 +714,12 @@ HTML_TEMPLATE = '''
                             <text class="range__point" x="100%" y="14" text-anchor="end">10</text>
                         </svg>
                     </fieldset>
+                    <!--
                     <div class="scale-labels">
                         <span>Not fun</span>
                         <span>Very fun</span>
                     </div>
+                    -->
                 </div>
             </div>
         </div>
