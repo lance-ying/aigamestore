@@ -35,16 +35,27 @@ app.secret_key = os.urandom(24)  # For session management
 
 # Store game events in memory
 game_events = {}
+# Store rated games per user persistently on the server
+rated_games_by_user = {}
+
 # Track which games have been rated per user_id
 def get_rated_games():
-    if 'rated_games' not in session:
-        session['rated_games'] = []
-    return set(session['rated_games'])
+    user_id = session.get('user_id')
+    if not user_id:
+        return set() # Should not happen if routes are protected, but return empty set
+    # Get the set for the user, creating it if it doesn't exist
+    return rated_games_by_user.setdefault(user_id, set())
 
 def add_rated_game(game_id):
-    rated = get_rated_games()
-    rated.add(game_id)
-    session['rated_games'] = list(rated)
+    user_id = session.get('user_id')
+    if not user_id:
+        return # Cannot add if no user is logged in
+    # Get the set for the user (creates if needed) and add the game ID
+    user_rated_set = rated_games_by_user.setdefault(user_id, set())
+    user_rated_set.add(game_id)
+    # Optionally print for debugging
+    # print(f"[DEBUG] Rated games for user {user_id}: {sorted(user_rated_set)}")
+
 
 # Initialize HF scheduler
 preferences_scheduler = ParquetScheduler(
@@ -189,8 +200,10 @@ def login():
     if request.method == 'POST':
         prolific_id = request.form.get('prolific_id', '').strip()
         if prolific_id:
+            # Just set the user_id in the session. 
+            # The rated games list is managed server-side in rated_games_by_user.
             session['user_id'] = prolific_id
-            session['rated_games'] = []  # Reset rated games for new user
+            # No longer reset session['rated_games'] here
             return redirect(url_for('index'))
     return render_template_string(LOGIN_TEMPLATE)
 
@@ -327,7 +340,7 @@ HTML_TEMPLATE = '''
             color: #fff;
             font-weight: bold;
             font-size: 16px;
-            padding: 8px 12px;
+            padding: 10px 14px;
             border-radius: 24px 24px 24px 24px;
             box-shadow: 0 2px 8px rgba(52,152,219,0.10);
             letter-spacing: 0.5px;
