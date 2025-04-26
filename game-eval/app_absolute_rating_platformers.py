@@ -1,6 +1,6 @@
 from pathlib import Path
 import random
-from flask import Flask, render_template_string, request, jsonify, Response, redirect, url_for, session
+from flask import Flask, render_template_string, request, jsonify, Response, session, redirect, url_for
 import os
 import json
 import datetime
@@ -17,8 +17,8 @@ HF_TOKEN = os.environ.get("HF_TOKEN")
 
 games_version = "v5"
 GAMES_DATASET = f"generative-games/gen-games-{games_version}"
-PREFERENCES_DATASET = f"generative-games/gen-games-{games_version}-absolute-rating-test2"  # Dataset to save ratings
-VIDEO_DATASET = f"generative-games/gen-games-{games_version}-video-test2"  # Dataset to save videos
+PREFERENCES_DATASET = f"generative-games/gen-games-{games_version}-absolute-rating-test"  # Dataset to save ratings
+VIDEO_DATASET = f"generative-games/gen-games-{games_version}-video-test"  # Dataset to save videos
 
 
 PUSH_EVERY_N_RATINGS = 10
@@ -35,7 +35,16 @@ app.secret_key = os.urandom(24)  # For session management
 
 # Store game events in memory
 game_events = {}
-rated_games = set()  # Track which games have been rated
+# Track which games have been rated per user_id
+def get_rated_games():
+    if 'rated_games' not in session:
+        session['rated_games'] = []
+    return set(session['rated_games'])
+
+def add_rated_game(game_id):
+    rated = get_rated_games()
+    rated.add(game_id)
+    session['rated_games'] = list(rated)
 
 # Initialize HF scheduler
 preferences_scheduler = ParquetScheduler(
@@ -78,20 +87,209 @@ def load_games_dataset():
 GAMES_DATASET = load_games_dataset()
 
 def get_random_game():
-    """Get a random game from the dataset and generate a unique rating_id"""
-    # Filter out already rated games
+    """Get a random game from the dataset and generate a unique rating_id, per user"""
+    rated_games = get_rated_games()
     unrated_games = [game for game in GAMES_DATASET if game["id"] not in rated_games]
     if not unrated_games:
         return None, None
-
-    # TODO: sometimes index.html is missing (skip the game and add it to the rated games set)
-    # valid_games = [game for game in unrated_games if "index.html" in game["game_file_paths"]]
-    # if not valid_games:
-    #     return None, None
-
     game = random.choice(unrated_games)
     rating_id = str(uuid.uuid4())
     return game, rating_id
+
+# HTML template for Prolific ID login
+LOGIN_TEMPLATE = '''
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Enter Prolific ID</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #f8f8f8; display: flex; justify-content: center; align-items: center; height: 100vh; }
+        .login-box { background: #fff; padding: 32px 40px; border-radius: 8px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); }
+        h2 { margin-top: 0; }
+        label { font-weight: bold; }
+        input[type="text"] { width: 100%; padding: 8px; margin: 10px 0 20px 0; border-radius: 4px; border: 1px solid #ccc; font-size: 16px; }
+        button { background: #3498db; color: #fff; border: none; border-radius: 4px; padding: 10px 24px; font-size: 16px; cursor: pointer; }
+        button:hover { background: #2980b9; }
+    </style>
+</head>
+<body>
+    <form class="login-box" method="post">
+        <h2>Enter Your Prolific ID</h2>
+        <label for="prolific_id">Prolific ID:</label>
+        <input type="text" id="prolific_id" name="prolific_id" required maxlength="32" autocomplete="off">
+        <button type="submit">Continue</button>
+    </form>
+</body>
+</html>
+'''
+
+@app.route('/consent', methods=['GET', 'POST'])
+def consent():
+    consent_text = '''
+    <html>
+    <head>
+        <title>Consent Form</title>
+        <style>
+            body { font-family: Arial, sans-serif; max-width: 700px; margin: 40px auto; background: #f8f8f8; padding: 24px; border-radius: 8px; }
+            h2 { color: #2c3e50; }
+            .consent-box { background: #fff; padding: 24px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.07); }
+            .checkbox-group { margin: 18px 0; }
+            label { display: block; margin-bottom: 10px; font-size: 16px; }
+            button { padding: 10px 24px; font-size: 16px; background: #3498db; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
+            button:disabled { background: #ccc; cursor: not-allowed; }
+        </style>
+    </head>
+    <body>
+        <div class="consent-box">
+            <h2>Welcome to our study!</h2>
+            <p>By completing this study, you are participating in research conducted by researchers from the Massachusetts Institute of Technology (MIT). The purpose of this research is to study how people evaluate and interact with newly generated video games. The results will inform research in artificial intelligence and cognitive science.</p>
+            <ul>
+                <li><b>Eligibility:</b> You must be at least 18 years old to participate.</li>
+                <li><b>Risks & Benefits:</b> There are no specific benefits or anticipated risks associated with participation in this study.</li>
+                <li><b>Voluntary Participation:</b> Your participation is completely voluntary. You may withdraw at any time by simply exiting the study. You may decline to answer any or all questions. Choosing not to participate or withdrawing will result in no penalty.</li>
+                <li><b>Anonymity & Data Use:</b> Your anonymity is assured; the researchers will not receive any personal information about you. We may release anonymized gameplay data as part of open-source research. Please do not participate unless you are comfortable with your gameplay traces being shared in this way.</li>
+                <li><b>Contact:</b> If you have questions about this research, please contact the researchers at <a href="mailto:email@mit.edu">email@mit.edu</a>. For questions regarding your rights as a participant, or if problems arise which you do not feel you can discuss with the researchers, please contact the MIT Committee on the Use of Humans as Experimental Subjects (COUHES).</li>
+                <li><b>Records:</b> You may print a copy of this consent form for your records.</li>
+            </ul>
+            <form method="post" id="consent-form">
+                <div class="checkbox-group">
+                    <label><input type="checkbox" id="age" name="age"> I am age 18 or older</label>
+                    <label><input type="checkbox" id="read" name="read"> I have read and understand the information above</label>
+                    <label><input type="checkbox" id="participate" name="participate"> I want to participate in this research and continue with the experiment</label>
+                </div>
+                <button type="submit" id="start-btn" disabled>Start Experiment</button>
+                <button type="button" onclick="window.print()" style="background:#eee;color:#333;margin-left:10px;">Print Consent Form</button>
+            </form>
+        </div>
+        <script>
+            const form = document.getElementById('consent-form');
+            const btn = document.getElementById('start-btn');
+            const boxes = ['age', 'read', 'participate'].map(id => document.getElementById(id));
+            boxes.forEach(box => box.addEventListener('change', () => {
+                btn.disabled = !boxes.every(b => b.checked);
+            }));
+        </script>
+    </body>
+    </html>
+    '''
+    if request.method == 'POST':
+        # Check all boxes are checked
+        if all(request.form.get(box) == 'on' for box in ['age', 'read', 'participate']):
+            session['consented'] = True
+            return redirect(url_for('login')) # Redirect to login after consent
+        # If not all checked, reload page (button should prevent this)
+    return consent_text
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    # Check for consent before allowing login
+    if not session.get('consented'):
+        return redirect(url_for('consent'))
+
+    if request.method == 'POST':
+        prolific_id = request.form.get('prolific_id', '').strip()
+        if prolific_id:
+            session['user_id'] = prolific_id
+            session['rated_games'] = []  # Reset rated games for new user
+            return redirect(url_for('index'))
+    return render_template_string(LOGIN_TEMPLATE)
+
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect(url_for('login'))
+
+@app.route('/')
+def index():
+    # Check for consent first
+    if not session.get('consented'):
+        return redirect(url_for('consent'))
+
+    # Then check for user_id (login)
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+
+    print(f"--- index() route: session['rated_games'] before get_random_game: {session.get('rated_games', 'Not Set')}")
+
+    game, rating_id = get_random_game()
+    if game is None:
+        return render_template_string(HTML_TEMPLATE, game_id=None)
+    game_path = f'rating_{rating_id}/game_{game["id"]}/index.html'
+    print(f"--- index() route: Selected game_id: {game['id']}, rating_id: {rating_id}")
+    return render_template_string(HTML_TEMPLATE, game_path=game_path, rating_id=rating_id, game_id=game["id"])
+
+@app.route('/get-games-left')
+def get_games_left():
+    if 'user_id' not in session:
+        return jsonify({'games_left': 0, 'total_games': len(GAMES_DATASET)})
+    rated_games = get_rated_games()
+    total_games = len(GAMES_DATASET)
+    games_left = total_games - len(rated_games)
+    return jsonify({
+        'games_left': games_left,
+        'total_games': total_games
+    })
+
+@app.route('/submit-ratings', methods=['POST'])
+def submit_ratings():
+    global ratings_counter
+    if 'user_id' not in session:
+        return jsonify({'status': 'error', 'message': 'Not logged in'}), 401
+    data = request.json
+    ratings = data.get('ratings', {})
+    logs = data.get('logs', {})
+    rating_id = data.get('rating_id', 'unknown')
+    game_id = data.get('game_id', 'local')
+    user_id = session['user_id']
+
+    # Mark game as rated for this user
+    add_rated_game(game_id)
+
+    # Add events data to ratings
+    event_key = (rating_id, game_id)
+    if event_key in game_events:
+        events = game_events[event_key]  # This is already a list of events
+        del game_events[event_key]
+    else:
+        events = []
+
+    if SAVE_LOCALLY:
+        save_dir = RESULTS_DIR / f"rating_{rating_id}_game_{game_id}"
+        save_dir.mkdir(parents=True, exist_ok=True)
+        with open(save_dir / "ratings.json", 'w') as f:
+            json.dump(ratings, f, indent=4)
+        with open(save_dir / "logs.json", 'w') as f:
+            json.dump(logs, f, indent=4)
+        with open(save_dir / "user_id.txt", 'w') as f:
+            f.write(user_id)
+
+    print(f"Saved ratings for rating_id {rating_id} (user {user_id})")
+
+    if SAVE_HF:
+        try:
+            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            rating_entry = {
+                "id": rating_id,
+                "game_id": game_id,
+                "user_id": user_id,
+                "timestamp": timestamp,
+                "ratings": {
+                    "fun": ratings.get('fun')
+                },
+                "logs": json.dumps(logs),
+                "events": json.dumps(events)
+            }
+            preferences_scheduler.append(rating_entry)
+            print(f"Added rating to HF dataset queue: {rating_entry['id']}")
+            ratings_counter += 1
+            print(f"Ratings counter: {ratings_counter}")
+            if ratings_counter >= PUSH_EVERY_N_RATINGS:
+                print(f"Reached {PUSH_EVERY_N_RATINGS} ratings, pushing to HuggingFace...")
+                preferences_scheduler.push_to_hub()
+                ratings_counter = 0
+        except Exception as e:
+            print(f"Error saving to HF dataset: {e}")
+    return jsonify({"status": "success"})
 
 # HTML template for the main page
 HTML_TEMPLATE = '''
@@ -129,7 +327,7 @@ HTML_TEMPLATE = '''
             color: #fff;
             font-weight: bold;
             font-size: 16px;
-            padding: 10px 14px;
+            padding: 8px 12px;
             border-radius: 24px 24px 24px 24px;
             box-shadow: 0 2px 8px rgba(52,152,219,0.10);
             letter-spacing: 0.5px;
@@ -486,9 +684,6 @@ HTML_TEMPLATE = '''
             <div class="rating-sliders">
                 <div class="rating-item">
                     <label>Fun: How enjoyable is the game to play?</label>
-                    <div class="rating-description" style="font-size:12px; color:#666; margin-bottom:4px;">
-                        0: Not fun at all &nbsp;|&nbsp; 5: Somewhat enjoyable &nbsp;|&nbsp; 10: Extremely fun and engaging
-                    </div>
                     <fieldset class="range__field">
                         <input class="range" type="range" min="0" max="10" value="5" id="fun-1">
                         <svg role="presentation" width="100%" height="14" xmlns="http://www.w3.org/2000/svg">
@@ -505,12 +700,10 @@ HTML_TEMPLATE = '''
                             <text class="range__point" x="100%" y="14" text-anchor="end">10</text>
                         </svg>
                     </fieldset>
-                    <!--
                     <div class="scale-labels">
                         <span>Not fun</span>
                         <span>Very fun</span>
                     </div>
-                    -->
                 </div>
             </div>
         </div>
@@ -653,7 +846,8 @@ HTML_TEMPLATE = '''
                     updateGamesLeft();
                     // Hide loading overlay
                     document.getElementById('loading-overlay').style.display = 'none';
-                    window.location.reload();
+                    // Redirect to root to load the next game cleanly
+                    window.location.href = '/'; 
                 })
                 .catch((error) => {
                     // Hide loading overlay
@@ -706,90 +900,14 @@ HTML_TEMPLATE = '''
     </html>
 '''
 
-@app.route('/get-games-left')
-def get_games_left():
-    """Return the number of games left to rate"""
-    total_games = len(GAMES_DATASET)
-    games_left = total_games - len(rated_games)
-    return jsonify({
-        'games_left': games_left,
-        'total_games': total_games
-    })
-
-@app.route('/consent', methods=['GET', 'POST'])
-def consent():
-    consent_text = '''
-    <html>
-    <head>
-        <title>Consent Form</title>
-        <style>
-            body { font-family: Arial, sans-serif; max-width: 700px; margin: 40px auto; background: #f8f8f8; padding: 24px; border-radius: 8px; }
-            h2 { color: #2c3e50; }
-            .consent-box { background: #fff; padding: 24px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.07); }
-            .checkbox-group { margin: 18px 0; }
-            label { display: block; margin-bottom: 10px; font-size: 16px; }
-            button { padding: 10px 24px; font-size: 16px; background: #3498db; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
-            button:disabled { background: #ccc; cursor: not-allowed; }
-        </style>
-    </head>
-    <body>
-        <div class="consent-box">
-            <h2>Welcome to our study!</h2>
-            <p>By completing this study, you are participating in research conducted by researchers from the Massachusetts Institute of Technology (MIT). The purpose of this research is to study how people evaluate and interact with newly generated video games. The results will inform research in artificial intelligence and cognitive science.</p>
-            <ul>
-                <li><b>Eligibility:</b> You must be at least 18 years old to participate.</li>
-                <li><b>Risks & Benefits:</b> There are no specific benefits or anticipated risks associated with participation in this study.</li>
-                <li><b>Voluntary Participation:</b> Your participation is completely voluntary. You may withdraw at any time by simply exiting the study. You may decline to answer any or all questions. Choosing not to participate or withdrawing will result in no penalty.</li>
-                <li><b>Anonymity & Data Use:</b> Your anonymity is assured; the researchers will not receive any personal information about you. We may release anonymized gameplay data as part of open-source research. Please do not participate unless you are comfortable with your gameplay traces being shared in this way.</li>
-                <li><b>Contact:</b> If you have questions about this research, please contact the researchers at <a href="mailto:email@mit.edu">email@mit.edu</a>. For questions regarding your rights as a participant, or if problems arise which you do not feel you can discuss with the researchers, please contact the MIT Committee on the Use of Humans as Experimental Subjects (COUHES).</li>
-                <li><b>Records:</b> You may print a copy of this consent form for your records.</li>
-            </ul>
-            <form method="post" id="consent-form">
-                <div class="checkbox-group">
-                    <label><input type="checkbox" id="age" name="age"> I am age 18 or older</label>
-                    <label><input type="checkbox" id="read" name="read"> I have read and understand the information above</label>
-                    <label><input type="checkbox" id="participate" name="participate"> I want to participate in this research and continue with the experiment</label>
-                </div>
-                <button type="submit" id="start-btn" disabled>Start Experiment</button>
-                <button type="button" onclick="window.print()" style="background:#eee;color:#333;margin-left:10px;">Print Consent Form</button>
-            </form>
-        </div>
-        <script>
-            const form = document.getElementById('consent-form');
-            const btn = document.getElementById('start-btn');
-            const boxes = ['age', 'read', 'participate'].map(id => document.getElementById(id));
-            boxes.forEach(box => box.addEventListener('change', () => {
-                btn.disabled = !boxes.every(b => b.checked);
-            }));
-        </script>
-    </body>
-    </html>
-    '''
-    if request.method == 'POST':
-        # Check all boxes are checked
-        if all(request.form.get(box) == 'on' for box in ['age', 'read', 'participate']):
-            session['consented'] = True
-            return redirect(url_for('index'))
-        # If not all checked, reload page (button should prevent this)
-    return consent_text
-
-@app.route('/')
-def index():
-    # Require consent before proceeding
-    if not session.get('consented'):
-        return redirect(url_for('consent'))
-    game, rating_id = get_random_game()
-    if game is None:
-        return render_template_string(HTML_TEMPLATE, game_id=None)
-    game_path = f'rating_{rating_id}/game_{game["id"]}/index.html'
-    return render_template_string(HTML_TEMPLATE, game_path=game_path, rating_id=rating_id, game_id=game["id"])
-
 @app.route('/game/<path:game_path>')
 def serve_game(game_path):
     """Serve game HTML files and other assets"""
     rating_id = game_path.split('/')[0].replace('rating_', '')
     game_id = game_path.split('/')[1].replace('game_', '')
     
+    print(f"--- serve_game() route: Requested game_id: {game_id}, rating_id: {rating_id}")
+
     # Find game in dataset
     game = GAMES_DATASET.filter(lambda x: x["id"] == game_id)[0]
 
@@ -1028,72 +1146,6 @@ window.addEventListener('beforeunload', sendBufferedEvents);
         # For other file types, return 404
         return "File type not supported", 404
 
-
-@app.route('/submit-ratings', methods=['POST'])
-def submit_ratings():
-    """Handle game ratings submission"""
-    global ratings_counter
-    data = request.json
-    ratings = data.get('ratings', {})
-    logs = data.get('logs', {})
-    rating_id = data.get('rating_id', 'unknown')
-    game_id = data.get('game_id', 'local')
-
-    # Mark game as rated
-    rated_games.add(game_id)
-
-    # Add events data to ratings
-    event_key = (rating_id, game_id)
-    if event_key in game_events:
-        events = game_events[event_key]  # This is already a list of events
-        del game_events[event_key]
-    else:
-        events = []
-
-    if SAVE_LOCALLY:
-        # Save to local files
-        save_dir = RESULTS_DIR / f"rating_{rating_id}_game_{game_id}"
-        save_dir.mkdir(parents=True, exist_ok=True)
-        with open(save_dir / "ratings.json", 'w') as f:
-            json.dump(ratings, f, indent=4)
-        with open(save_dir / "logs.json", 'w') as f:
-            json.dump(logs, f, indent=4)
-
-    print(f"Saved ratings for rating_id {rating_id}")
-
-    # Save to HuggingFace dataset
-    if SAVE_HF:
-        try:
-            # Create rating entry for HF dataset
-            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            rating_entry = {
-                "id": rating_id,
-                "game_id": game_id,
-                "judge": request.remote_addr,  # Use IP as anonymous identifier
-                "timestamp": timestamp,
-                "ratings": {
-                    "fun": ratings.get('fun')
-                },
-                "logs": json.dumps(logs),
-                "events": json.dumps(events)
-            }
-            
-            # Add to scheduler
-            preferences_scheduler.append(rating_entry)
-            print(f"Added rating to HF dataset queue: {rating_entry['id']}")
-            
-            # Increment counter and check if we should push
-            ratings_counter += 1
-            print(f"Ratings counter: {ratings_counter}")
-            if ratings_counter >= PUSH_EVERY_N_RATINGS:
-                print(f"Reached {PUSH_EVERY_N_RATINGS} ratings, pushing to HuggingFace...")
-                preferences_scheduler.push_to_hub()
-                ratings_counter = 0  # Reset counter
-                
-        except Exception as e:
-            print(f"Error saving to HF dataset: {e}")
-    
-    return jsonify({"status": "success"})
 
 @app.route('/upload-video', methods=['POST'])
 def upload_video():
