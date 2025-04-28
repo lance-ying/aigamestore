@@ -16,11 +16,13 @@ HF_TOKEN = os.environ.get("HF_TOKEN")
 
 
 games_version = "v5"
-GAMES_DATASET = f"generative-games/gen-games-{games_version}"
-PREFERENCES_DATASET = f"generative-games/gen-games-{games_version}-absolute-rating-test3"  # Dataset to save ratings
-VIDEO_DATASET = f"generative-games/gen-games-{games_version}-video-test3"  # Dataset to save videos
+run_name = "test3"
 
-COMPLETION_CODE = "MIT-STUDY-COMPLETED"
+GAMES_DATASET = f"generative-games/gen-games-{games_version}"
+PREFERENCES_DATASET = f"generative-games/gen-games-{games_version}-absolute-rating-{run_name}"  # Dataset to save ratings
+VIDEO_DATASET = f"generative-games/gen-games-{games_version}-video-{run_name}"  # Dataset to save videos
+
+COMPLETION_CODE = "CH1OQ9N6"
 
 PUSH_EVERY_N_RATINGS = 10
 SAVE_LOCALLY = False
@@ -300,6 +302,15 @@ def submit_ratings():
             print(f"Ratings counter: {ratings_counter}")
             if ratings_counter >= PUSH_EVERY_N_RATINGS:
                 print(f"Reached {PUSH_EVERY_N_RATINGS} ratings, pushing to HuggingFace...")
+
+                # check if the repo id exists, if not create it
+                hf_api.create_repo(
+                    repo_id=PREFERENCES_DATASET,
+                    repo_type="dataset",
+                    token=HF_TOKEN,
+                    exist_ok=True
+                )
+
                 preferences_scheduler.push_to_hub()
                 ratings_counter = 0
         except Exception as e:
@@ -1203,6 +1214,15 @@ def upload_video():
         try:
             # Reset stream position and ensure binary mode
             video.stream.seek(0)
+
+            # Make sure the repo exists
+            hf_api.create_repo(
+                repo_id=VIDEO_DATASET,
+                repo_type="dataset",
+                token=HF_TOKEN,
+                exist_ok=True
+            )
+
             # Upload to HuggingFace in the background
             hf_api.upload_file(
                 path_or_fileobj=video.stream.read(),
