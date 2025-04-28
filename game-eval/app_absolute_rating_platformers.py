@@ -162,7 +162,7 @@ def consent():
                 <li><b>Risks & Benefits:</b> There are no specific benefits or anticipated risks associated with participation in this study.</li>
                 <li><b>Voluntary Participation:</b> Your participation is completely voluntary. You may withdraw at any time by simply exiting the study. You may decline to answer any or all questions. Choosing not to participate or withdrawing will result in no penalty.</li>
                 <li><b>Anonymity & Data Use:</b> Your anonymity is assured; the researchers will not receive any personal information about you. We may release anonymized gameplay data as part of open-source research. Please do not participate unless you are comfortable with your gameplay traces being shared in this way.</li>
-                <li><b>Contact:</b> If you have questions about this research, please contact the researchers at <a href="mailto:email@mit.edu">email@mit.edu</a>. For questions regarding your rights as a participant, or if problems arise which you do not feel you can discuss with the researchers, please contact the MIT Committee on the Use of Humans as Experimental Subjects (COUHES).</li>
+                <li><b>Contact:</b> If you have questions about this research, please contact the researchers at <a href="mailto:katiemc@mit.edu">katiemc@mit.edu</a>. For questions regarding your rights as a participant, or if problems arise which you do not feel you can discuss with the researchers, please contact the MIT Committee on the Use of Humans as Experimental Subjects (COUHES).</li>
                 <li><b>Records:</b> You may print a copy of this consent form for your records.</li>
             </ul>
             <form method="post" id="consent-form">
@@ -683,7 +683,7 @@ HTML_TEMPLATE = '''
         <div class="modal-content">
             <span class="close">&times;</span>
             <h2>How to Evaluate the Game</h2>
-            <p>Your task is to evaluate a series of games. You will be shown a total of 30 games to rate.</p>
+            <p>Your task is to evaluate a series of games. You will be shown a total of 30 games to rate. These games may contain issues. You should take these issues into account when rating the games.</p>
             <h3>Please follow these steps to provide your rating:</h3>
             <ol>
                 <li><b>Please play each game for about 1 minute</b> to get a good feel for it. If the game is broken or unplayable, you may stop earlier.</li>
