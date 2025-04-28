@@ -1,5 +1,6 @@
 from pathlib import Path
 import random
+from tkinter.font import names
 from flask import Flask, render_template_string, request, jsonify, Response, session, redirect, url_for
 import os
 import json
@@ -24,6 +25,7 @@ VIDEO_DATASET = f"generative-games/gen-games-{games_version}-video-{run_name}"  
 
 COMPLETION_CODE = "CH1OQ9N6"
 
+NUM_GAMES_TO_RATE = 10
 PUSH_EVERY_N_RATINGS = 10
 SAVE_LOCALLY = False
 SAVE_HF = True
@@ -103,9 +105,14 @@ GAMES_DATASET = load_games_dataset()
 def get_random_game():
     """Get a random game from the dataset and generate a unique rating_id, per user"""
     rated_games = get_rated_games()
+    
+    # Check if the user has already rated the target number of games
+    if len(rated_games) >= NUM_GAMES_TO_RATE:
+        return None, None
+
     unrated_games = [game for game in GAMES_DATASET if game["id"] not in rated_games]
     if not unrated_games:
-        return None, None
+        return None, None # Should not happen if NUM_GAMES_TO_RATE is less than dataset size, but good practice
     game = random.choice(unrated_games)
     rating_id = str(uuid.uuid4())
     return game, rating_id
@@ -238,13 +245,14 @@ def index():
 @app.route('/get-games-left')
 def get_games_left():
     if 'user_id' not in session:
-        return jsonify({'games_left': 0, 'total_games': len(GAMES_DATASET)})
+        # If user_id not in session, assume 0 games rated, show total needed
+        return jsonify({'games_left': NUM_GAMES_TO_RATE, 'total_games': NUM_GAMES_TO_RATE})
     rated_games = get_rated_games()
-    total_games = len(GAMES_DATASET)
-    games_left = total_games - len(rated_games)
+    games_rated_count = len(rated_games)
+    games_left = max(0, NUM_GAMES_TO_RATE - games_rated_count)
     return jsonify({
         'games_left': games_left,
-        'total_games': total_games
+        'total_games': NUM_GAMES_TO_RATE
     })
 
 @app.route('/submit-ratings', methods=['POST'])
@@ -683,7 +691,7 @@ HTML_TEMPLATE = '''
         <div class="modal-content">
             <span class="close">&times;</span>
             <h2>How to Evaluate the Game</h2>
-            <p>Your task is to evaluate a series of games. You will be shown a total of 30 games to rate. These games may contain issues. You should take these issues into account when rating the games.</p>
+            <p>Your task is to evaluate a series of games. You will be shown a total of ''' + str(NUM_GAMES_TO_RATE) + ''' games to rate. These games may contain issues. You should take these issues into account when rating the games.</p>
             <h3>Please follow these steps to provide your rating:</h3>
             <ol>
                 <li><b>Please play each game for about 1 minute</b> to get a good feel for it. If the game is broken or unplayable, you may stop earlier.</li>
