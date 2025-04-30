@@ -12,7 +12,7 @@ GAME_DESIGN_SYSTEM_PROMPT = open("system_prompts/game_design.txt").read()
 
 CODE_GENERATION_SYSTEM_PROMPT = open("system_prompts/code_generation.txt").read()
 
-CANVAS_SIZE = {"width": 800, "height": 600}
+CANVAS_SIZE = {"width": 600, "height": 400}
 
 AVAILABLE_CONTROL_PROMPT = """Available Control Actions (You should only use the following actions):
 1. Directional Movement:
