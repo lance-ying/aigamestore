@@ -6,7 +6,7 @@ import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple, List, Union
 
-from game_generators.utils import ModelAPI
+from utils import ModelAPI
 
 
 class GameGenerator(ABC):
@@ -177,6 +177,7 @@ class GameGenerator(ABC):
         concept_path: Optional[str] = None,
         genre: Optional[str] = None,
         intermediate_outputs: Optional[Dict[str, Any]] = None,
+        conversation_log: Optional[List[Dict[str, str]]] = None
     ) -> Path:
         """
         Save generated game files and metadata
@@ -190,6 +191,7 @@ class GameGenerator(ABC):
             concept_path: Path to the original concept file
             genre: Game genre if available
             intermediate_outputs: Intermediate outputs to save as logs
+            conversation_log: Log of prompts and responses
 
         Returns:
             Path to the saved game directory
@@ -266,27 +268,29 @@ class GameGenerator(ABC):
         with open(game_dir / "metadata.json", "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=2)
 
-        # Save conversation history log
-        self.output_summary(game_dir, intermediate_outputs)
+        # Save conversation history log and intermediate outputs
+        self.output_summary(game_dir, conversation_log, intermediate_outputs)
         
         return game_dir
 
     def output_summary(
-        self, game_dir: Path, intermediate_outputs: Optional[Dict[str, Any]] = None
+        self, 
+        game_dir: Path, 
+        conversation_log: Optional[List[Dict[str, str]]] = None,
+        intermediate_outputs: Optional[Dict[str, Any]] = None
     ) -> None:
         """
-        Save the entire log of the game generation process
+        Save the log of the game generation process
 
         Args:
             game_dir: Directory to save logs
+            conversation_log: Log of prompts and responses
             intermediate_outputs: Intermediate outputs to save as logs
         """
-        # Save conversation history from the model API
-        if self.model_api.get_conversation_history():
+        # Save conversation history from the provided log
+        if conversation_log:
             with open(game_dir / "generation_log.json", "w", encoding="utf-8") as f:
-                json.dump(
-                    self.model_api.get_conversation_history(), f, indent=2
-                )
+                json.dump(conversation_log, f, indent=2)
         
         # Save any intermediate outputs if provided
         if intermediate_outputs:

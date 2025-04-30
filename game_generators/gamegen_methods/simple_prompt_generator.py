@@ -1,7 +1,7 @@
 from typing import Dict, Any, Optional, List, Tuple
 import json
 
-from game_generators.gamegen_methods.game_generator_base import GameGenerator
+from gamegen_methods.game_generator_base import GameGenerator
 
 
 class SimplePromptGenerator(GameGenerator):
@@ -21,13 +21,28 @@ class SimplePromptGenerator(GameGenerator):
             User prompt for the LLM
         """
         prompt = f"""
-TASK: Design and implement a game in p5.js based on the following concept:
+TASK: Implement a 2D video game that follows the game concept.
+Game concept: {game_concept}
 
-<concept>
-{game_concept}
-</concept>
+Output instructions:
+Output the game in the following format with NO OTHER TEXT.
+<game_title>
+... (game title)
+</game_title>
 
-Please create a complete and playable game that follows the concept described above.
+<game_instructions>
+... (game description and controls; interesting and clear instructions for the game: how to play, what to do, etc. Keep it short and concise.)
+</game_instructions>
+
+For each file, you should output the following:
+<code filename="{{name}}.{{extension}}">
+... (code)
+</code>
+
+Output HTML as the last file:
+<code filename="index.html">
+... (html code)
+</code>
 """
         return prompt
 
@@ -56,8 +71,16 @@ Please create a complete and playable game that follows the concept described ab
             response = self.model_api.call(
                 user_prompt=user_prompt,
                 system_prompt=combined_system_prompt,
+                # max_tokens=16384,
                 verbose=self.verbose,
             )
+            
+            # Prepare conversation log for saving
+            conversation_log = [
+                {"role": "system", "content": combined_system_prompt},
+                {"role": "user", "content": user_prompt},
+                {"role": "assistant", "content": response}
+            ]
             
             # Extract game components from response
             title = self.extract_title(response)
@@ -90,7 +113,8 @@ Please create a complete and playable game that follows the concept described ab
                 game_concept=game_concept,
                 concept_path=concept_path,
                 genre=genre,
-                intermediate_outputs={"full_response": response}
+                intermediate_outputs={"full_response": response},
+                conversation_log=conversation_log
             )
             
             if self.verbose:

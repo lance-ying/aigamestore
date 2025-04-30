@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 from typing import Dict, Any, Optional
 
-from game_generators.gamegen_methods.simple_prompt_generator import SimplePromptGenerator
+from gamegen_methods.simple_prompt_generator import SimplePromptGenerator
 
 
 def parse_args():
@@ -21,7 +21,7 @@ def parse_args():
     parser.add_argument(
         "--model",
         type=str,
-        default="anthropic:claude-3.5-sonnet",
+        default="anthropic:claude-3.7-sonnet",
         help="LLM model to use (e.g., 'openai:gpt-4o', 'anthropic:claude-3.5-sonnet')",
     )
     
