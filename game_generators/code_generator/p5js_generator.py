@@ -26,11 +26,6 @@ class P5JSGenerator:
         """Create the user prompt for code generation"""
         return f"""
 TASK: Implement a game in p5.js based on the following description:
-
-<game_title>
-{title}
-</game_title>
-
 <description>
 {game_concept}
 </description>
