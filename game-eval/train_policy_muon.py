@@ -1,4 +1,3 @@
-from datetime import datetime
 from pathlib import Path
 import json
 import shutil
@@ -41,8 +40,7 @@ INPUT_EVENT_TYPES = ["keyPressed", "keyReleased"]
 games_version = "v5"
 GAMES_DATASET = f"generative-games/gen-games-{games_version}"
 
-timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-RUN_NAME = f"run_{timestamp}"
+RUN_NAME = "run1"
 CHECKPOINT_DIR = Path(__file__).parent / "results" / Path(__file__).stem / "checkpoints" / RUN_NAME
 
 
@@ -889,13 +887,13 @@ def train_policy(frames, key_actions, batch_size=32, epochs=5, lr=1e-4, img_size
     if use_wandb:
         try:
             import wandb
-            wandb.init(project="game-policy", name=RUN_NAME, config={
+            wandb.init(project="game-policy", config={
                 "learning_rate": lr,
                 "epochs": epochs,
                 "batch_size": batch_size,
                 "img_size": img_size,
                 "obs_seq_len": obs_seq_len,
-                "optimizer": "AdamW",
+                "optimizer": "Muon",
                 "model": "CNN-Policy"
             })
         except ImportError:
@@ -935,7 +933,29 @@ def train_policy(frames, key_actions, batch_size=32, epochs=5, lr=1e-4, img_size
         wandb.watch(model, log="all")
     
     # optimizer = optim.Adam(model.parameters(), lr=lr)
-    optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
+    from muon import Muon
+    import torch.distributed as dist
+    import os
+    import socket
+
+    # Initialize process group for distributed operations (even with single GPU)
+    if not dist.is_initialized():
+        os.environ['MASTER_ADDR'] = 'localhost'
+        # Find a free port instead of using a fixed one
+        def find_free_port():
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(('', 0))
+                return s.getsockname()[1]
+        os.environ['MASTER_PORT'] = str(find_free_port())
+        dist.init_process_group(backend='nccl', rank=0, world_size=1)
+
+    # Separate convolutional filters for Muon optimizer and the rest for AdamW
+    muon_params = [p for name, p in model.named_parameters() if 'conv' in name and p.ndim >= 2]
+    adamw_params = [p for name, p in model.named_parameters() if not ('conv' in name and p.ndim >= 2)]
+
+    optimizers = [Muon(muon_params, lr=lr, rank=0, world_size=1),
+                torch.optim.AdamW(adamw_params, lr=lr)]
+
     criterion = nn.BCELoss()  # Binary cross-entropy for multi-label classification
     
     # Select a few examples to visualize during training
@@ -950,10 +970,6 @@ def train_policy(frames, key_actions, batch_size=32, epochs=5, lr=1e-4, img_size
                 target.numpy()
             ))
     
-    # Variables to track the best model
-    best_val_loss = float('inf')
-    best_model_state = None
-    
     # Training loop
     for epoch in range(epochs):
         # Training
@@ -966,13 +982,19 @@ def train_policy(frames, key_actions, batch_size=32, epochs=5, lr=1e-4, img_size
             targets = targets.to(device)
             
             # Forward pass
-            optimizer.zero_grad()
+            # optimizer.zero_grad()
+            for opt in optimizers:
+                opt.zero_grad()
+
             outputs = model(frame_stack, action_stack)
             
             # Calculate loss and backpropagate
             loss = criterion(outputs, targets)
             loss.backward()
-            optimizer.step()
+
+            # optimizer.step()
+            for opt in optimizers:
+                opt.step()
             
             train_loss += loss.item()
             
@@ -998,15 +1020,6 @@ def train_policy(frames, key_actions, batch_size=32, epochs=5, lr=1e-4, img_size
         avg_train_loss = train_loss / len(train_loader)
         avg_val_loss = val_loss / len(val_loader)
         
-        # Save the best model based on validation loss
-        if avg_val_loss < best_val_loss:
-            best_val_loss = avg_val_loss
-            best_model_state = model.state_dict().copy()
-            # Save the best model so far
-            best_model_path = models_dir / "best_policy_model.pth"
-            torch.save(best_model_state, best_model_path)
-            print(f"New best model saved with val_loss: {best_val_loss:.4f}")
-        
         # Print progress
         print(f'Epoch {epoch+1}/{epochs}, Train Loss: {avg_train_loss:.4f}, Val Loss: {avg_val_loss:.4f}')
         
@@ -1027,11 +1040,6 @@ def train_policy(frames, key_actions, batch_size=32, epochs=5, lr=1e-4, img_size
                     plt.close(fig)
             
             wandb.log(log_dict)
-    
-    # Load the best model before returning
-    if best_model_state is not None:
-        model.load_state_dict(best_model_state)
-        print(f"Loaded best model with val_loss: {best_val_loss:.4f}")
     
     # Finish wandb run
     if use_wandb:
@@ -1669,9 +1677,9 @@ if __name__ == "__main__":
             model = train_policy(
                 frames, 
                 key_actions, 
-                epochs=50, 
-                lr=1e-3, 
-                # lr=1e-4, 
+                epochs=100, 
+                # lr=1e-3, 
+                lr=1e-4, 
                 img_size=img_size, 
                 use_wandb=use_wandb,
                 obs_seq_len=obs_seq_len
