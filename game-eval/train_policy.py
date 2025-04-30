@@ -1,31 +1,3 @@
-"""
-Policy training for game control based on video frames and key actions.
-
-This script provides functionality to:
-1. Load game data (frames, key actions, player positions, events)
-2. Create a PyTorch dataset for training
-3. Build and train a CNN policy network
-4. Visualize predictions and log metrics with wandb
-
-Example usage:
-
-# View game animation:
-python train_policy.py
-
-# Train a policy network without wandb:
-python train_policy.py train
-
-# Train a policy network with wandb logging:
-python train_policy.py train --wandb
-
-# Run inference with a trained model:
-python train_policy.py infer
-
-# Usage in custom code:
-frames, key_actions, player_positions, events = load_data(video_path, logs, video_framecount_start)
-dataset = GameDataset(frames, key_actions, img_size=(96, 96))
-model = train_policy(frames, key_actions, epochs=5, use_wandb=True)
-"""
 from pathlib import Path
 import json
 import shutil
@@ -60,6 +32,8 @@ KEY_TO_INDEX = {
     "ArrowRight": 4, # arrow right
     "ArrowDown": 5, # arrow down
     "r": 6, # r
+    # "e": 7, # e
+    # "a": 8, # a
 }
 INPUT_EVENT_TYPES = ["keyPressed", "keyReleased"]
 
@@ -302,7 +276,7 @@ def load_data(video_path, logs, video_framecount_start):
 
 
 class GameDataset(Dataset):
-    def __init__(self, frames, key_actions, transform=None, img_size=(96, 96)):
+    def __init__(self, frames, key_actions, transform=None, img_size=(96, 96), obs_seq_len=4):
         """
         PyTorch Dataset for game frames and actions
         
@@ -311,35 +285,54 @@ class GameDataset(Dataset):
             key_actions: Array of shape (num_frames, num_keys) with binary key states
             transform: Optional transform to apply to the frames
             img_size: Target size for resizing images (height, width)
+            obs_seq_len: Length of observation sequence (frames and actions)
         """
         self.frames = frames
         self.key_actions = key_actions
         self.transform = transform
         self.img_size = img_size
+        self.obs_seq_len = obs_seq_len
         
     def __len__(self):
-        # Skip first frame since we need previous action
-        return len(self.frames) - 1
+        # Skip first frames plus (obs_seq_len - 1) frames
+        return max(0, len(self.frames) - self.obs_seq_len)
     
     def __getitem__(self, idx):
-        # Current frame
-        frame = self.frames[idx + 1]  # +1 since we're skipping first frame
+        # Get a stack of consecutive frames
+        frame_stack = []
+        action_stack = []
         
-        # Resize the frame to match model's expected input
-        frame = cv2.resize(frame, self.img_size)
+        for i in range(self.obs_seq_len):
+            # Stack frames
+            frame = self.frames[idx + i]
+            # Resize the frame to match model's expected input
+            frame = cv2.resize(frame, self.img_size)
+            
+            # Convert frame to tensor and normalize
+            if self.transform:
+                frame = self.transform(frame)
+            else:
+                # Simple default transform: convert to tensor and normalize
+                frame = torch.FloatTensor(frame.transpose(2, 0, 1)) / 255.0
+                
+            frame_stack.append(frame)
+            
+            # Stack actions (except for the last frame which is the target)
+            if i < self.obs_seq_len - 1:
+                action = torch.FloatTensor(self.key_actions[idx + i])
+                action_stack.append(action)
         
-        # Convert frame to tensor and normalize
-        if self.transform:
-            frame = self.transform(frame)
-        else:
-            # Simple default transform: convert to tensor and normalize
-            frame = torch.FloatTensor(frame.transpose(2, 0, 1)) / 255.0
+        # Stack the frames along the channel dimension
+        # Each frame has shape [C, H, W], stack to get [C*obs_seq_len, H, W]
+        stacked_frames = torch.cat(frame_stack, dim=0)
         
-        # Previous action (at idx) as input and current action (at idx+1) as target
-        prev_action = torch.FloatTensor(self.key_actions[idx])
-        current_action = torch.FloatTensor(self.key_actions[idx + 1])
+        # Stack the actions into a single tensor
+        stacked_actions = torch.stack(action_stack, dim=0)  # Shape: [obs_seq_len-1, num_keys]
         
-        return {'frame': frame, 'prev_action': prev_action}, current_action
+        # Target is the action for the last frame in the sequence
+        target_action = torch.FloatTensor(self.key_actions[idx + self.obs_seq_len - 1])
+        
+        return {'frame_stack': stacked_frames, 'action_stack': stacked_actions}, target_action
 
 
 def analyze_video_logs(video_path, logs, video_framecount_start):
@@ -404,7 +397,7 @@ def analyze_video_logs(video_path, logs, video_framecount_start):
 
     key_actions = np.zeros((total_frames, len(KEY_TO_INDEX)))
     # idx starts at 0 and frame starts at 1
-    for idx, framecount in enumerate(range(video_framecount_start, total_frames + video_framecount_start)):
+    for idx, framecount in enumerate(range(1, total_frames + 1)):
         if idx == 0:
             prev_key_vector = np.zeros(len(KEY_TO_INDEX))
         else:
@@ -772,11 +765,11 @@ def animate_frames(frames, key_actions, player_positions=None, events=None, fps=
 
 
 class PolicyNetwork(nn.Module):
-    def __init__(self, input_channels, num_keys, img_size):
+    def __init__(self, input_channels=3, num_keys=len(KEY_TO_INDEX), img_size=(96, 96), obs_seq_len=4):
         super().__init__()
         # Simple CNN for image processing
         self.conv = nn.Sequential(
-            nn.Conv2d(input_channels, 32, kernel_size=8, stride=4),
+            nn.Conv2d(input_channels * obs_seq_len, 32, kernel_size=8, stride=4),
             nn.ReLU(),
             nn.Conv2d(32, 64, kernel_size=4, stride=2),
             nn.ReLU(),
@@ -788,57 +781,72 @@ class PolicyNetwork(nn.Module):
         # Calculate the actual flattened size based on input dimensions
         # Create a dummy input to determine output size
         with torch.no_grad():
-            dummy_input = torch.zeros(1, input_channels, img_size[1], img_size[0])
+            dummy_input = torch.zeros(1, input_channels * obs_seq_len, img_size[1], img_size[0])
             conv_out = self.conv(dummy_input)
             self.fc_input_size = conv_out.shape[1]
         
-        # Combine image features with previous action and predict next action
+        # Process action sequence with a small MLP
+        self.action_encoder = nn.Sequential(
+            nn.Linear(num_keys * (obs_seq_len - 1), 64),
+            nn.ReLU()
+        )
+        
+        # Combine image features with action history and predict next action
         self.fc = nn.Sequential(
-            nn.Linear(self.fc_input_size + num_keys, 512),
+            nn.Linear(self.fc_input_size + 64, 512),
             nn.ReLU(),
             nn.Linear(512, num_keys),
             nn.Sigmoid()  # Output activation for multi-label binary classification
         )
         
-    def forward(self, x, prev_action):
-        # Process image
+    def forward(self, x, action_stack):
+        # Process image sequence
         img_features = self.conv(x)
-        # Concatenate with previous action
-        combined = torch.cat([img_features, prev_action], dim=1)
+        
+        # Flatten action stack
+        batch_size = action_stack.shape[0]
+        action_flat = action_stack.reshape(batch_size, -1)  # Flatten to [batch, (obs_seq_len-1)*num_keys]
+        
+        # Process action sequence
+        action_features = self.action_encoder(action_flat)
+        
+        # Concatenate image and action features
+        combined = torch.cat([img_features, action_features], dim=1)
+        
         # Predict next action
         return self.fc(combined)
 
 
-def visualize_prediction(model, frame, prev_action, target, device, img_size=(96, 96)):
+def visualize_prediction(model, frames, action_stack, target, device, img_size=(96, 96)):
     """
     Visualize model prediction vs target
     
     Args:
         model: Trained policy network
-        frame: Current frame (numpy array)
-        prev_action: Previous action vector
+        frames: List of frames to stack
+        action_stack: Stack of previous actions
         target: Target action vector
         device: Torch device
-        img_size: Size to resize frame to (width, height)
+        img_size: Size to resize frames to (width, height)
         
     Returns:
         Figure with visualization
     """
     import matplotlib.pyplot as plt
     
-    # Get prediction
-    pred = run_inference(model, frame, prev_action, device, img_size)
+    # Get prediction using run_inference
+    pred = run_inference(model, frames, action_stack, device, img_size)
     
     # Create figure
     fig, axs = plt.subplots(2, 1, figsize=(8, 10))
     
-    # Plot the frame
-    axs[0].imshow(frame)
-    axs[0].set_title("Input Frame")
+    # Plot the last frame in the sequence
+    axs[0].imshow(frames[-1])
+    axs[0].set_title("Current Frame")
     axs[0].axis("off")
     
     # Plot the actions
-    key_names = ["Enter", "Space", "Left", "Up", "Right", "Down", "R"]
+    key_names = list(KEY_TO_INDEX.keys())
     x = range(len(key_names))
     
     axs[1].bar(x, target, width=0.4, label="Target", alpha=0.6)
@@ -853,7 +861,7 @@ def visualize_prediction(model, frame, prev_action, target, device, img_size=(96
     return fig
 
 
-def train_policy(frames, key_actions, batch_size=32, epochs=5, lr=1e-4, img_size=(96, 96), use_wandb=True):
+def train_policy(frames, key_actions, batch_size=32, epochs=5, lr=1e-4, img_size=(96, 96), use_wandb=True, obs_seq_len=4):
     """
     Train a policy network on the given frames and key actions
     
@@ -865,6 +873,7 @@ def train_policy(frames, key_actions, batch_size=32, epochs=5, lr=1e-4, img_size
         lr: Learning rate
         img_size: Size to resize frames to (width, height)
         use_wandb: Whether to use wandb for logging
+        obs_seq_len: Length of observation sequence (frames and actions)
         
     Returns:
         Trained policy network
@@ -883,6 +892,7 @@ def train_policy(frames, key_actions, batch_size=32, epochs=5, lr=1e-4, img_size
                 "epochs": epochs,
                 "batch_size": batch_size,
                 "img_size": img_size,
+                "obs_seq_len": obs_seq_len,
                 "optimizer": "Adam",
                 "model": "CNN-Policy"
             })
@@ -891,16 +901,13 @@ def train_policy(frames, key_actions, batch_size=32, epochs=5, lr=1e-4, img_size
             use_wandb = False
     
     # Create dataset
-    dataset = GameDataset(frames, key_actions, img_size=img_size)
+    dataset = GameDataset(frames, key_actions, img_size=img_size, obs_seq_len=obs_seq_len)
     print(f"Dataset length: {len(dataset)}")
 
     x, y = dataset[0]
-    print(f"Frame shape: {x['frame'].shape}")
-    print(f"Previous action shape: {x['prev_action'].shape}")
+    print(f"Frame shape: {x['frame_stack'].shape}")
+    print(f"Action stack shape: {x['action_stack'].shape}")
     print(f"Target action shape: {y.shape}")
-    # plt.imshow(x['frame'][0])
-    # plt.show()
-    # breakpoint()
     
     # Split into train and validation sets (80/20 split)
     train_size = int(0.8 * len(dataset))
@@ -913,7 +920,12 @@ def train_policy(frames, key_actions, batch_size=32, epochs=5, lr=1e-4, img_size
     
     # Create model, optimizer, and loss function
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = PolicyNetwork(input_channels=3, num_keys=7, img_size=img_size)
+    model = PolicyNetwork(
+        input_channels=3, 
+        num_keys=len(KEY_TO_INDEX), 
+        img_size=img_size, 
+        obs_seq_len=obs_seq_len
+    )
     model = model.to(device)
     
     # Log model architecture to wandb
@@ -930,8 +942,8 @@ def train_policy(frames, key_actions, batch_size=32, epochs=5, lr=1e-4, img_size
         if idx < len(dataset):
             inputs, target = dataset[idx]
             vis_examples.append((
-                frames[idx + 1],  # Original frame before processing
-                inputs['prev_action'].numpy(),
+                frames[idx + obs_seq_len - 1],  # Last frame in the sequence
+                inputs['action_stack'].numpy(),
                 target.numpy()
             ))
     
@@ -942,13 +954,13 @@ def train_policy(frames, key_actions, batch_size=32, epochs=5, lr=1e-4, img_size
         train_loss = 0
         for i, (inputs, targets) in enumerate(train_loader):
             # Move data to device
-            frame = inputs['frame'].to(device)
-            prev_action = inputs['prev_action'].to(device)
+            frame_stack = inputs['frame_stack'].to(device)
+            action_stack = inputs['action_stack'].to(device)
             targets = targets.to(device)
             
             # Forward pass
             optimizer.zero_grad()
-            outputs = model(frame, prev_action)
+            outputs = model(frame_stack, action_stack)
             
             # Calculate loss and backpropagate
             loss = criterion(outputs, targets)
@@ -967,11 +979,11 @@ def train_policy(frames, key_actions, batch_size=32, epochs=5, lr=1e-4, img_size
         val_loss = 0
         with torch.no_grad():
             for inputs, targets in val_loader:
-                frame = inputs['frame'].to(device)
-                prev_action = inputs['prev_action'].to(device)
+                frame_stack = inputs['frame_stack'].to(device)
+                action_stack = inputs['action_stack'].to(device)
                 targets = targets.to(device)
                 
-                outputs = model(frame, prev_action)
+                outputs = model(frame_stack, action_stack)
                 loss = criterion(outputs, targets)
                 val_loss += loss.item()
         
@@ -992,8 +1004,9 @@ def train_policy(frames, key_actions, batch_size=32, epochs=5, lr=1e-4, img_size
             
             # Log visualizations for sample predictions
             if (epoch + 1) % 1 == 0:  # Every epoch
-                for i, (frame, prev_action, target) in enumerate(vis_examples):
-                    fig = visualize_prediction(model, frame, prev_action, target, device, img_size)
+                for i, (frame, action_stack, target) in enumerate(vis_examples):
+                    # Use visualization function
+                    fig = visualize_prediction(model, [frame] * obs_seq_len, action_stack, target, device, img_size)
                     log_dict[f"example_{i}"] = wandb.Image(fig)
                     plt.close(fig)
             
@@ -1018,6 +1031,7 @@ class P5jsEnv(gym.Env):
         framerate: int = 60,
         obs_size: tuple = (96, 96),
         max_episode_steps: int = 2000,
+        obs_seq_len: int = 4,
     ):
         """Initialize the P5js data environment.
         
@@ -1028,6 +1042,7 @@ class P5jsEnv(gym.Env):
             framerate: Framerate of the game
             obs_size: Target size for resizing images (width, height)
             max_episode_steps: Maximum steps per episode
+            obs_seq_len: Length of observation sequence
         """
         if not game_code or "index.html" not in game_code:
             raise ValueError("`game_code` must be a dictionary containing at least 'index.html'")
@@ -1037,6 +1052,7 @@ class P5jsEnv(gym.Env):
         self.framerate = framerate
         self.obs_size = obs_size
         self._max_episode_steps = max_episode_steps
+        self.obs_seq_len = obs_seq_len
         
         # State variables
         self.browser = None
@@ -1044,20 +1060,22 @@ class P5jsEnv(gym.Env):
         self.temp_path = None # This will become the temporary directory path
         self.frame_count = 0
         self.playwright = None  # Initialize playwright to None
+        self.frame_history = []  # Store frame history for stacking
+        self.action_history = []  # Store action history for stacking
         
         self.action_space = spaces.Box(low=0, high=1, shape=(len(KEY_TO_INDEX),), dtype=np.float32)
         self.observation_space = spaces.Dict(
             {
-                "pixels": spaces.Box(
+                "frame_stack": spaces.Box(
                     low=0,
                     high=255,
-                    shape=(self.obs_size[1], self.obs_size[0], 3),
+                    shape=(3 * self.obs_seq_len, self.obs_size[1], self.obs_size[0]),
                     dtype=np.uint8,
                 ),
-                "prev_action": spaces.Box(
+                "action_stack": spaces.Box(
                     low=0,
                     high=1,
-                    shape=(len(KEY_TO_INDEX),),
+                    shape=((self.obs_seq_len - 1), len(KEY_TO_INDEX)),
                     dtype=np.float32,
                 ),
             }
@@ -1075,6 +1093,10 @@ class P5jsEnv(gym.Env):
             info: Additional information
         """
         super().reset(seed=seed)
+
+        # Clear frame and action history
+        self.frame_history = []
+        self.action_history = []
 
         # Instead of closing and reopening the browser, just reload the page
         if self.browser is not None and self.page is not None:
@@ -1101,10 +1123,6 @@ class P5jsEnv(gym.Env):
         self._redraw()
         self.page.keyboard.up("Enter")
         
-        # Initialize action state
-        self.previous_action = np.zeros(len(KEY_TO_INDEX), dtype=np.float32)
-        self.last_action = np.zeros(len(KEY_TO_INDEX), dtype=np.float32)
-        
         # Get the initial observation
         obs = self._get_observation()
         self.iter = 0
@@ -1126,14 +1144,11 @@ class P5jsEnv(gym.Env):
             truncated: Whether the episode is truncated
             info: Additional information
         """
-        # Store the current action for next observation
-        self.previous_action = action
-        print(f"Action: {action}")
-        
         # Convert binary action vector to key press/release events
-        if hasattr(self, 'last_action'):
+        if len(self.action_history) > 0:
+            last_action = self.action_history[-1]
             # Compare with previous action to detect changes
-            for i, (prev, curr) in enumerate(zip(self.last_action, action)):
+            for i, (prev, curr) in enumerate(zip(last_action, action)):
                 # Get the key name for this index
                 key = list(KEY_TO_INDEX.keys())[list(KEY_TO_INDEX.values()).index(i)]
                 
@@ -1154,8 +1169,8 @@ class P5jsEnv(gym.Env):
                     print(f"Pressing {key}")
                     self.page.keyboard.down(key)
         
-        # Store current action for next comparison
-        self.last_action = action.copy()
+        # Add action to history
+        self.action_history.append(action.copy())
 
         # Redraw the game
         self._redraw()
@@ -1169,7 +1184,7 @@ class P5jsEnv(gym.Env):
         # Additional info
         info = {
             "frame_count": self._get_framecount(),
-            "position": self._get_player_position(),
+            # "position": self._get_player_position(),
             "is_success": False
         }
         
@@ -1325,16 +1340,41 @@ window.addEventListener('load', function() {
         # Resize the frame to match model's expected input
         processed_image = cv2.resize(image_array, self.obs_size)
         
-        # Get the previous action state
-        if not hasattr(self, 'previous_action'):
-            # Initialize with zeros if no previous action
-            prev_action = np.zeros(len(KEY_TO_INDEX), dtype=np.float32)
-        else:
-            prev_action = self.previous_action
+        # Add to frame history
+        self.frame_history.append(processed_image)
+        
+        # Keep only the last obs_seq_len frames
+        if len(self.frame_history) > self.obs_seq_len:
+            self.frame_history = self.frame_history[-self.obs_seq_len:]
+        
+        # If we don't have enough frames yet, duplicate the current frame
+        while len(self.frame_history) < self.obs_seq_len:
+            self.frame_history.append(processed_image)
+        
+        # Convert to tensor format for consistency with PyTorch
+        frame_stack = []
+        for frame in self.frame_history:
+            # Convert to CHW format
+            frame = frame.transpose(2, 0, 1)
+            frame_stack.append(frame)
+        
+        # Stack frames along channel dimension
+        stacked_frames = np.concatenate(frame_stack, axis=0)
+        
+        # Get the action history
+        if len(self.action_history) > self.obs_seq_len - 1:
+            self.action_history = self.action_history[-(self.obs_seq_len - 1):]
+        
+        # If we don't have enough actions yet, pad with zeros
+        while len(self.action_history) < self.obs_seq_len - 1:
+            self.action_history.insert(0, np.zeros(len(KEY_TO_INDEX), dtype=np.float32))
+        
+        # Stack the actions
+        stacked_actions = np.array(self.action_history)
         
         return {
-            "pixels": processed_image,
-            "prev_action": prev_action
+            "frame_stack": stacked_frames,
+            "action_stack": stacked_actions
         }
     
     def _get_player_position(self) -> Tuple[float, float]:
@@ -1365,16 +1405,17 @@ window.addEventListener('load', function() {
 
 
 
-def run_inference(model, frame, prev_action, device=None, img_size=(96, 96)):
+def run_inference(model, frames, action_stack, device=None, img_size=(96, 96), obs_seq_len=4):
     """
     Run inference with the trained policy network
     
     Args:
         model: Trained policy network
-        frame: Current frame (numpy array)
-        prev_action: Previous action vector
+        frames: List of consecutive frames (numpy arrays)
+        action_stack: Stack of previous actions
         device: Torch device to use (defaults to cuda if available)
         img_size: Size to resize frame to (width, height)
+        obs_seq_len: Length of observation sequence
         
     Returns:
         Predicted action probabilities
@@ -1382,21 +1423,50 @@ def run_inference(model, frame, prev_action, device=None, img_size=(96, 96)):
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
+    if len(frames) < obs_seq_len:
+        raise ValueError(f"Expected at least {obs_seq_len} frames, got {len(frames)}")
+    
+    if isinstance(action_stack, np.ndarray) and action_stack.ndim == 2:
+        # Action history is already in correct format
+        if action_stack.shape[0] != obs_seq_len - 1:
+            raise ValueError(f"Expected action_history with {obs_seq_len-1} actions, got {action_stack.shape[0]}")
+    else:
+        # Convert list or single action to correct format
+        if not isinstance(action_stack, list):
+            action_stack = [action_stack]
+        
+        # Pad if necessary
+        while len(action_stack) < obs_seq_len - 1:
+            action_stack.insert(0, np.zeros(len(KEY_TO_INDEX), dtype=np.float32))
+        
+        # Truncate if necessary
+        if len(action_stack) > obs_seq_len - 1:
+            action_stack = action_stack[-(obs_seq_len - 1):]
+        
+        action_stack = np.array(action_stack)
+    
     model.eval()
     
-    # Resize frame to match network input size
-    frame = cv2.resize(frame, img_size)
+    # Process the stack of frames
+    frame_stack = []
+    for frame in frames[-obs_seq_len:]:  # Use only the last obs_seq_len frames
+        # Resize frame to match network input size
+        frame = cv2.resize(frame, img_size)
+        
+        # Convert to tensor and normalize
+        frame_tensor = torch.FloatTensor(frame.transpose(2, 0, 1)) / 255.0
+        frame_stack.append(frame_tensor)
     
-    # Preprocess frame
-    frame_tensor = torch.FloatTensor(frame.transpose(2, 0, 1)) / 255.0
-    frame_tensor = frame_tensor.unsqueeze(0).to(device)  # Add batch dimension
+    # Stack frames along channel dimension
+    stacked_frames = torch.cat(frame_stack, dim=0)
+    stacked_frames = stacked_frames.unsqueeze(0).to(device)  # Add batch dimension
     
-    # Convert previous action to tensor
-    prev_action_tensor = torch.FloatTensor(prev_action).unsqueeze(0).to(device)
+    # Convert action history to tensor
+    action_tensor = torch.FloatTensor(action_stack).unsqueeze(0).to(device)
     
     # Run inference
     with torch.no_grad():
-        predicted_action = model(frame_tensor, prev_action_tensor)
+        predicted_action = model(stacked_frames, action_tensor)
     
     return predicted_action.cpu().numpy()[0]
 
@@ -1431,30 +1501,21 @@ def rollout_policy(env, policy_model, num_steps=500, device=None):
     
     for _ in range(num_steps):
         # Convert observation to tensor
-        frame = torch.FloatTensor(obs["pixels"]).permute(2, 0, 1).unsqueeze(0).to(device) / 255.0
-        prev_action = torch.FloatTensor(obs["prev_action"]).unsqueeze(0).to(device)
+        frame_stack = torch.FloatTensor(obs["frame_stack"]).unsqueeze(0).to(device) / 255.0
+        action_stack = torch.FloatTensor(obs["action_stack"]).unsqueeze(0).to(device)
         
         # Get action from policy network
         with torch.no_grad():
-            action = policy_model(frame, prev_action)
+            action = policy_model(frame_stack, action_stack)
 
         # Convert action to numpy array
         action_np = action.squeeze(0).cpu().numpy()
 
         action_str = "".join([f"{key}: {action_np[i]:.2f} " for i, key in enumerate(KEY_TO_INDEX.keys())])
         print(f"Action: {action_str}")
-        # if _ % 100 == 0:
-        #     plt.figure()
-        #     plt.bar(range(len(action_np)), action_np)
-        #     plt.xticks(range(len(action_np)), list(KEY_TO_INDEX.keys()), rotation=90)
-        #     plt.show()
         
-        # Threshold action probabilities to binary
-        # action_binary = (action_np >= 0.5).astype(np.float32)
-
         # Randomly sample from action distribution
-        action_binary = np.random.binomial(1, action_np)
-        
+        action_binary = np.random.binomial(1, action_np).astype(np.float32)
         
         # Take step in environment
         next_obs, reward, terminated, truncated, _ = env.step(action_binary)
@@ -1474,7 +1535,7 @@ def rollout_policy(env, policy_model, num_steps=500, device=None):
     return rewards, observations, actions
 
 
-def evaluate_policy(model_path, game_code, num_episodes=5, max_steps=500):
+def evaluate_policy(model_path, game_code, num_episodes=5, max_steps=500, obs_seq_len=4):
     """
     Evaluate a trained policy on a game.
     
@@ -1483,18 +1544,32 @@ def evaluate_policy(model_path, game_code, num_episodes=5, max_steps=500):
         game_code: Dictionary mapping file paths to their content
         num_episodes: Number of episodes to run
         max_steps: Maximum steps per episode
+        obs_seq_len: Length of observation sequence
         
     Returns:
         success_rate: Fraction of episodes that were successful
         mean_reward: Mean reward across episodes
         mean_steps: Mean number of steps across episodes
     """
-    # Create environment
-    env = P5jsEnv(game_code, headless=False, max_episode_steps=max_steps)
+    # Create environment with frame stacking
+    env = P5jsEnv(
+        game_code, 
+        headless=False, 
+        max_episode_steps=max_steps,
+        obs_seq_len=obs_seq_len
+    )
+    
+    # Get observation size from environment
+    obs_size = env.obs_size
     
     # Load model
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = PolicyNetwork(input_channels=3, num_keys=len(KEY_TO_INDEX), img_size=env.obs_size).to(device)
+    model = PolicyNetwork(
+        input_channels=3, 
+        num_keys=len(KEY_TO_INDEX), 
+        img_size=obs_size,
+        obs_seq_len=obs_seq_len
+    ).to(device)
     model.load_state_dict(torch.load(model_path, map_location=device))
     
     # Run evaluations
@@ -1531,11 +1606,8 @@ def evaluate_policy(model_path, game_code, num_episodes=5, max_steps=500):
 
 
 if __name__ == "__main__":
-    # long waiting time before start the game
-    # log_dir = Path(__file__).parent / "results" / "games_v5" / "rating_26db5ff3-73ab-4a7c-8e95-e166682a2715_game_6ecf4c0a8bcbc48f1e16c651e829606539c10ca59a172a4302c125063a3c7dc1"
-
     # simple left/right movements
-    log_dir = Path(__file__).parent / "results" / "games_v5" / "rating_b6251405-403d-4df1-a3bb-046ab0075e1b_game_6ecf4c0a8bcbc48f1e16c651e829606539c10ca59a172a4302c125063a3c7dc1"
+    # log_dir = Path(__file__).parent / "results" / "games_v5" / "rating_b6251405-403d-4df1-a3bb-046ab0075e1b_game_6ecf4c0a8bcbc48f1e16c651e829606539c10ca59a172a4302c125063a3c7dc1"
 
     # around 5 min of gameplay
     log_dir = Path(__file__).parent / "results" / "games_v5" / "rating_46cb9522-1ca3-4676-96f4-855276f1ea2a_game_6ecf4c0a8bcbc48f1e16c651e829606539c10ca59a172a4302c125063a3c7dc1"
@@ -1551,12 +1623,6 @@ if __name__ == "__main__":
     video_framecount_start = int(video_metadata["video_start_framecount"])
     video_fps = int(video_metadata["fps"])
 
-    # Load the data
-    # frames, key_actions, player_positions, events = load_data(video_path, logs, video_framecount_start)
-    
-    # analyze_video_logs(video_path, logs, video_framecount_start)
-    # animate_frames(frames, key_actions, player_positions=player_positions, events=events)
-
     # Create models directory if it doesn't exist
     models_dir = CHECKPOINT_DIR
     models_dir.mkdir(exist_ok=True, parents=True)
@@ -1564,6 +1630,7 @@ if __name__ == "__main__":
     
     # Set image size for model
     img_size = (96, 96)  # (width, height)
+    obs_seq_len = 4  # Length of observation sequence (frames and actions)
     
     # Choose what to do based on arguments (can be extended with argparse)
     use_wandb = "--wandb" in sys.argv
@@ -1578,12 +1645,19 @@ if __name__ == "__main__":
             frames, key_actions, player_positions, events = load_data(video_path, logs, video_framecount_start)
             
             # Train the policy network
-            model = train_policy(frames, key_actions, epochs=50, lr=1e-3, img_size=img_size, use_wandb=use_wandb)
+            model = train_policy(
+                frames, 
+                key_actions, 
+                epochs=50, 
+                lr=1e-3, 
+                img_size=img_size, 
+                use_wandb=use_wandb,
+                obs_seq_len=obs_seq_len
+            )
             
             # Save the model
             torch.save(model.state_dict(), model_path)
             print(f"Model saved to {model_path}")
-            
         elif "infer" in sys.argv:
             # Load the data
             frames, key_actions, player_positions, events = load_data(video_path, logs, video_framecount_start)
@@ -1594,21 +1668,32 @@ if __name__ == "__main__":
                 sys.exit(1)
             
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-            model = PolicyNetwork(input_channels=3, num_keys=len(KEY_TO_INDEX), img_size=img_size).to(device)
+            model = PolicyNetwork(
+                input_channels=3, 
+                num_keys=len(KEY_TO_INDEX), 
+                img_size=img_size,
+                obs_seq_len=obs_seq_len
+            ).to(device)
             model.load_state_dict(torch.load(model_path, map_location=device))
             print(f"Model loaded from {model_path}")
             
             # Run inference on a sample frame
             sample_idx = 10  # Choose a sample frame
-            prev_action = key_actions[sample_idx]
-            frame = frames[sample_idx + 1]
+            frame_stack = [frames[sample_idx + i] for i in range(obs_seq_len)]
+            action_stack = key_actions[sample_idx:sample_idx + obs_seq_len - 1]
             
-            predicted_action = run_inference(model, frame, prev_action, device, img_size=img_size)
-            actual_action = key_actions[sample_idx + 1]
+            predicted_action = run_inference(
+                model, 
+                frame_stack, 
+                action_stack, 
+                device, 
+                img_size=img_size,
+                obs_seq_len=obs_seq_len
+            )
+            actual_action = key_actions[sample_idx + obs_seq_len - 1]
             
             print("Predicted action:", predicted_action)
             print("Actual action:   ", actual_action)
-            
         elif "eval" in sys.argv:
             # Load game code from dataset
             import datasets
@@ -1640,20 +1725,17 @@ if __name__ == "__main__":
                 model_path, 
                 game_code,
                 num_episodes=3, 
-                max_steps=1000
+                max_steps=1000,
+                obs_seq_len=obs_seq_len
             )
-        elif "visualize" in sys.argv or "animate" in sys.argv:
-            # Load the data
-            frames, key_actions, player_positions, events = load_data(video_path, logs, video_framecount_start)
-            
-            # Visualize the data with animation
-            animate_frames(frames, key_actions, player_positions=player_positions, events=events)
+        elif "analyze_video":
+            analyze_video_logs(video_path, logs, video_framecount_start)
     else:
         # Load the data
         frames, key_actions, player_positions, events = load_data(video_path, logs, video_framecount_start)
         
         # Visualize the data with animation
-        animate_frames(frames, key_actions, player_positions=player_positions, events=events)
+    animate_frames(frames, key_actions, player_positions=player_positions, events=events)
 
 
 
