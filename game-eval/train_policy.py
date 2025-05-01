@@ -89,9 +89,9 @@ def load_data(video_path, logs, video_framecount_start):
     key_actions = np.zeros((total_frames, len(KEY_TO_INDEX)))
     for idx, framecount in enumerate(range(video_framecount_start, total_frames + video_framecount_start)):
         if idx == 0:
-            continue
-
-        prev_key_vector = key_actions[idx-1]
+            prev_key_vector = np.zeros(len(KEY_TO_INDEX))
+        else:
+            prev_key_vector = key_actions[idx-1]
             
         if framecount not in inputs_by_frame:
             new_key_vector = prev_key_vector
@@ -112,11 +112,13 @@ def load_data(video_path, logs, video_framecount_start):
                 elif event_type == "keyReleased":
                     new_key_vector[key_idx] = 0
 
-        # key_actions[idx] = new_key_vector
+        key_actions[idx] = new_key_vector    
 
-        # make sure action precedes change in frame (a_t is the action from I_t to I_{t+1})
-        key_actions[idx-1] = new_key_vector
-    
+    # make sure action precedes change in frame (a_t is the action from I_t to I_{t+1})
+    key_actions = key_actions[1:]  # shift actions back by 1
+    # add zero action at the end
+    key_actions = np.concatenate([key_actions, np.zeros((1, len(KEY_TO_INDEX)))], axis=0)
+
     # Process player positions
     canvas_size = (600, 400)  # Default canvas size
     scale_x = video_width / canvas_size[0]
@@ -1697,6 +1699,18 @@ if __name__ == "__main__":
 
     # animate_frames(frames, key_actions, player_positions, events)
 
+    # for i in range(200):
+    #     print(key_actions[i])
+
+
+    # for i in range(100):
+    #     plt.figure()
+    #     actions = np.array(key_actions)
+    #     plt.imshow(actions[i*100:(i+1)*100].T)
+    #     plt.yticks(range(len(KEY_TO_INDEX)), list(KEY_TO_INDEX.keys()))
+    #     plt.tight_layout()
+    #     plt.show()
+
     # Create models directory if it doesn't exist
     models_dir = CHECKPOINT_DIR
     models_dir.mkdir(exist_ok=True, parents=True)
@@ -1709,7 +1723,7 @@ if __name__ == "__main__":
     
     # Set image size for model
     img_size = (96, 96)  # (width, height)
-    obs_seq_len = 2  # Length of observation sequence (frames and actions)
+    obs_seq_len = 4  # Length of observation sequence (frames and actions)
     
     # Use wandb based on argument
     # use_wandb = args.wandb
@@ -1754,7 +1768,7 @@ if __name__ == "__main__":
                 img_size=img_size,
                 obs_seq_len=obs_seq_len
             ).to(device)
-            model.load_state_dict(torch.load(model_path, map_location=device))
+            # model.load_state_dict(torch.load(model_path, map_location=device))
             print(f"Model loaded from {model_path}")
 
             # Create dataset
@@ -1806,9 +1820,8 @@ if __name__ == "__main__":
                     x[key] = x[key].squeeze(0)
                 y = y.squeeze(0)
 
-                if (y == x["action_stack"][-1]).all():
-
-                    continue
+                # if (y == x["action_stack"][-1]).all():
+                #     continue
 
                 visualize_sample(x, y, pred)
 
