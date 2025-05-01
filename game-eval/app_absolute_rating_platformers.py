@@ -17,11 +17,12 @@ HF_TOKEN = os.environ.get("HF_TOKEN")
 
 
 games_version = "v5"
-run_name = "test3"
+run_name = "pilot1"
 
 GAMES_DATASET = f"generative-games/gen-games-{games_version}"
 PREFERENCES_DATASET = f"generative-games/gen-games-{games_version}-absolute-rating-{run_name}"  # Dataset to save ratings
 VIDEO_DATASET = f"generative-games/gen-games-{games_version}-video-{run_name}"  # Dataset to save videos
+FEEDBACK_DATASET = f"generative-games/gen-games-{games_version}-feedback-{run_name}"  # Dataset to save feedback
 
 COMPLETION_CODE = "CH1OQ9N6"
 
@@ -232,14 +233,11 @@ def index():
     if 'user_id' not in session:
         return redirect(url_for('login'))
 
-    print(f"--- index() route: session['rated_games'] before get_random_game: {session.get('rated_games', 'Not Set')}")
-
     game, rating_id = get_random_game()
     if game is None:
         # No more games left for this user
         return render_template_string(HTML_TEMPLATE, game_id=None, completion_code=COMPLETION_CODE)
     game_path = f'rating_{rating_id}/game_{game["id"]}/index.html'
-    print(f"--- index() route: Selected game_id: {game['id']}, rating_id: {rating_id}")
     return render_template_string(HTML_TEMPLATE, game_path=game_path, rating_id=rating_id, game_id=game["id"], completion_code=None)
 
 @app.route('/get-games-left')
@@ -895,17 +893,103 @@ HTML_TEMPLATE = '''
             if (videoStarted) {
                 // Wait for video upload to complete, but add a timeout fallback
                 window._pendingVideoUploads = 1;
+                
+                // Show video upload progress bar
+                const uploadProgressContainer = document.createElement('div');
+                uploadProgressContainer.className = 'upload-progress-container';
+                uploadProgressContainer.innerHTML = `
+                    <div class="upload-progress-overlay">
+                        <div class="upload-progress-box">
+                            <div class="upload-progress-title">Uploading rating...</div>
+                            <div class="upload-progress-bar-container">
+                                <div class="upload-progress-bar" id="videoUploadProgressBar"></div>
+                            </div>
+                            <div class="upload-progress-text">This may take up to 1 minute</div>
+                        </div>
+                    </div>
+                `;
+                document.body.appendChild(uploadProgressContainer);
+                
+                // Style for video upload progress
+                const uploadProgressStyle = document.createElement('style');
+                uploadProgressStyle.textContent = `
+                    .upload-progress-overlay {
+                        position: fixed;
+                        top: 0;
+                        left: 0;
+                        width: 100%;
+                        height: 100%;
+                        background: rgba(0,0,0,0.7);
+                        display: flex;
+                        justify-content: center;
+                        align-items: center;
+                        z-index: 9999;
+                    }
+                    .upload-progress-box {
+                        background: white;
+                        padding: 20px;
+                        border-radius: 8px;
+                        width: 80%;
+                        max-width: 400px;
+                        text-align: center;
+                    }
+                    .upload-progress-title {
+                        font-size: 18px;
+                        margin-bottom: 15px;
+                        font-weight: bold;
+                    }
+                    .upload-progress-bar-container {
+                        height: 20px;
+                        background: #eee;
+                        border-radius: 10px;
+                        overflow: hidden;
+                        margin-bottom: 10px;
+                    }
+                    .upload-progress-bar {
+                        height: 100%;
+                        background: #3498db;
+                        width: 0%;
+                        transition: width 0.5s ease;
+                    }
+                    .upload-progress-text {
+                        font-size: 14px;
+                        color: #666;
+                    }
+                `;
+                document.head.appendChild(uploadProgressStyle);
+                
+                // Animate the progress bar
+                const progressBar = document.getElementById('videoUploadProgressBar');
+                let startTime = Date.now();
+                let timeoutDuration = 60000; // 60 seconds (1 minute)
+                
+                let progressInterval = setInterval(() => {
+                    const elapsed = Date.now() - startTime;
+                    const progress = Math.min(elapsed / timeoutDuration * 100, 99); // Max 99% until complete
+                    progressBar.style.width = `${progress}%`;
+                }, 100);
+                
                 let timeoutId = setTimeout(() => {
+                    clearInterval(progressInterval);
+                    progressBar.style.width = '100%';
                     window.removeEventListener('message', window._videoUploadCompleteHandler);
                     submitRatings();
-                }, 10000); // 10 seconds
+                    document.body.removeChild(uploadProgressContainer);
+                }, 60000); // 60 seconds timeout
+                
                 window._videoUploadCompleteHandler = function(event) {
                     if (event.data && event.data.action === "videoUploadComplete") {
                         window._pendingVideoUploads--;
                         if (window._pendingVideoUploads <= 0) {
                             clearTimeout(timeoutId);
-                            window.removeEventListener('message', window._videoUploadCompleteHandler);
-                            submitRatings();
+                            clearInterval(progressInterval);
+                            progressBar.style.width = '100%';
+                            // Give a moment to show 100% before removing
+                            setTimeout(() => {
+                                window.removeEventListener('message', window._videoUploadCompleteHandler);
+                                document.body.removeChild(uploadProgressContainer);
+                                submitRatings();
+                            }, 500);
                         }
                     }
                 };
@@ -941,13 +1025,8 @@ def serve_game(game_path):
     rating_id = game_path.split('/')[0].replace('rating_', '')
     game_id = game_path.split('/')[1].replace('game_', '')
     
-    print(f"--- serve_game() route: Requested game_id: {game_id}, rating_id: {rating_id}")
-
     # Find game in dataset
     game = GAMES_DATASET.filter(lambda x: x["id"] == game_id)[0]
-
-
-    print("Serve game:", game["game_concept"], game["model"])
 
     if game is None:
         return "Game not found", 404
@@ -1252,7 +1331,6 @@ def upload_video():
 @app.route('/record-events', methods=['POST'])
 def record_events():
     """Handle events from games"""
-    print("Received events")
     event_data = request.json
     game_id = event_data.get('gameId')
     rating_id = event_data.get('ratingId')
