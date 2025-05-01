@@ -21,6 +21,8 @@ from gymnasium import spaces
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset
+import torch.optim as optim
+from torch.utils.data import DataLoader, random_split
     
 from playwright.sync_api import sync_playwright
 
@@ -50,6 +52,8 @@ CHECKPOINT_DIR = None  # Will be set once RUN_NAME is determined
 def load_data(video_path, logs, video_framecount_start):
     """
     Load data from video and logs.
+    By convention, action a_t is the action from frame I_t to I_{t+1}.
+
     Args:
         video_path: Path to the video file
         logs: Dictionary containing game logs
@@ -85,9 +89,9 @@ def load_data(video_path, logs, video_framecount_start):
     key_actions = np.zeros((total_frames, len(KEY_TO_INDEX)))
     for idx, framecount in enumerate(range(video_framecount_start, total_frames + video_framecount_start)):
         if idx == 0:
-            prev_key_vector = np.zeros(len(KEY_TO_INDEX))
-        else:
-            prev_key_vector = key_actions[idx-1]
+            continue
+
+        prev_key_vector = key_actions[idx-1]
             
         if framecount not in inputs_by_frame:
             new_key_vector = prev_key_vector
@@ -108,7 +112,10 @@ def load_data(video_path, logs, video_framecount_start):
                 elif event_type == "keyReleased":
                     new_key_vector[key_idx] = 0
 
-        key_actions[idx] = new_key_vector
+        # key_actions[idx] = new_key_vector
+
+        # make sure action precedes change in frame (a_t is the action from I_t to I_{t+1})
+        key_actions[idx-1] = new_key_vector
     
     # Process player positions
     canvas_size = (600, 400)  # Default canvas size
@@ -813,11 +820,6 @@ def train_policy(frames, key_actions, player_positions=None, batch_size=32, epoc
     Returns:
         Trained policy network
     """
-    # Import necessary libraries
-    import torch.optim as optim
-    import torch.nn as nn
-    from torch.utils.data import DataLoader, random_split
-    
     # Initialize wandb if requested
     if use_wandb:
         try:
@@ -1693,6 +1695,8 @@ if __name__ == "__main__":
         player_positions.extend(_player_positions)
         events.extend(_events)        
 
+    # animate_frames(frames, key_actions, player_positions, events)
+
     # Create models directory if it doesn't exist
     models_dir = CHECKPOINT_DIR
     models_dir.mkdir(exist_ok=True, parents=True)
@@ -1734,6 +1738,7 @@ if __name__ == "__main__":
             # Save the model
             torch.save(model.state_dict(), model_path)
             print(f"Model saved to {model_path}")
+
         elif args.action == "infer":            
             # Load the model
             if not model_path.exists():
@@ -1751,7 +1756,62 @@ if __name__ == "__main__":
             ).to(device)
             model.load_state_dict(torch.load(model_path, map_location=device))
             print(f"Model loaded from {model_path}")
-            
+
+            # Create dataset
+            dataset = GameDataset(frames, key_actions, player_positions, img_size=img_size, obs_seq_len=obs_seq_len)
+            print(f"Dataset length: {len(dataset)}")
+
+            def visualize_sample(x, y, pred=None):
+                frames = x["frame_stack"].reshape(obs_seq_len, 3, 96, 96)
+                actions = x["action_stack"]  # (obs_seq_len - 1, num_keys)
+                positions = x["position_stack"]  # (obs_seq_len, 2)
+
+                # plot sequence: frame, position, action, frame, position, action, ...
+                n_plots = 3 * obs_seq_len
+                plt.figure(figsize=(25, 5))
+                for i in range(n_plots):
+                    plt.subplot(1, n_plots, i + 1)
+                    if i % 3 == 0:
+                        frame = frames[i // 3].permute(1, 2, 0).cpu().numpy()
+                        plt.imshow(frame)
+                        plt.title(f"Frame {i // 3}")
+                    elif i % 3 == 1:
+                        position = positions[i // 3].cpu().numpy()
+                        plt.scatter(position[0], position[1], color="red")
+                        plt.title(f"Position {i // 3}")
+                    else:
+                        # show target if last action
+                        if i // 3 == obs_seq_len - 1:
+                            action = y.cpu().numpy()
+                            plt.bar(range(len(action)), action)
+                            if pred is not None:
+                                plt.scatter(range(len(pred)), pred, color="red")
+                            plt.xticks(range(len(action)), list(KEY_TO_INDEX.keys()), rotation=90)
+                            plt.title(f"Target {i // 3}")
+                        else:
+                            action = actions[i // 3].cpu().numpy()
+                            plt.bar(range(len(action)), action)
+                            plt.xticks(range(len(action)), list(KEY_TO_INDEX.keys()), rotation=90)
+                            plt.title(f"Action {i // 3}")
+                plt.tight_layout()
+                plt.show()
+
+            dataloader = DataLoader(dataset, batch_size=1, shuffle=True)
+            for i, (x, y) in enumerate(dataloader):
+                pred = model(x["frame_stack"], x["action_stack"], x["position_stack"])
+                pred = pred.squeeze(0).cpu().detach().numpy()
+
+                # remove batch dimension
+                for key in x.keys():
+                    x[key] = x[key].squeeze(0)
+                y = y.squeeze(0)
+
+                if (y == x["action_stack"][-1]).all():
+
+                    continue
+
+                visualize_sample(x, y, pred)
+
             # Run inference on a sample frame
             sample_idx = 10  # Choose a sample frame
             frame_stack = [frames[sample_idx + i] for i in range(obs_seq_len)]
