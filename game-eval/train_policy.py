@@ -1651,18 +1651,37 @@ if __name__ == "__main__":
     # log_dir = Path(__file__).parent / "results" / "games_v5" / "rating_b6251405-403d-4df1-a3bb-046ab0075e1b_game_6ecf4c0a8bcbc48f1e16c651e829606539c10ca59a172a4302c125063a3c7dc1"
 
     # around 5 min of gameplay
-    log_dir = Path(__file__).parent / "results" / "games_v5" / "rating_46cb9522-1ca3-4676-96f4-855276f1ea2a_game_6ecf4c0a8bcbc48f1e16c651e829606539c10ca59a172a4302c125063a3c7dc1"
+    log_dirs = [
+        Path(__file__).parent / "results" / "games_v5" / "rating_46cb9522-1ca3-4676-96f4-855276f1ea2a_game_6ecf4c0a8bcbc48f1e16c651e829606539c10ca59a172a4302c125063a3c7dc1",
+        Path(__file__).parent / "results" / "games_v5" / "rating_42a0b09d-9cfe-4ebe-8e59-13c9b46ab150_game_6ecf4c0a8bcbc48f1e16c651e829606539c10ca59a172a4302c125063a3c7dc1"
+    ]
 
-    with open(log_dir / "logs.json", "r", encoding="utf-8") as f:
-        logs = json.load(f)
+    def load_data_from_dir(log_dir):
+        with open(log_dir / "logs.json", "r", encoding="utf-8") as f:
+            logs = json.load(f)
 
-    video_path = log_dir / "video.mp4"
+        video_path = log_dir / "video.mp4"
 
-    video_metadata = json.load(open(video_path.parent / "metadata.json", "r"))
-    # Important: the first frame in the video corresponds to video_framecount_start + 1
-    # the video is started at video_framecount_start but the first captured frame is video_framecount_start + 1
-    video_framecount_start = int(video_metadata["video_start_framecount"])
-    video_fps = int(video_metadata["fps"])
+        video_metadata = json.load(open(video_path.parent / "metadata.json", "r"))
+        # Important: the first frame in the video corresponds to video_framecount_start + 1
+        # the video is started at video_framecount_start but the first captured frame is video_framecount_start + 1
+        video_framecount_start = int(video_metadata["video_start_framecount"])
+        # video_fps = int(video_metadata["fps"])
+
+        return video_path, logs, video_framecount_start
+
+    # Create dataset
+    frames = []
+    key_actions = []
+    player_positions = []
+    events = []
+    for log_dir in log_dirs:
+        video_path, logs, video_framecount_start = load_data_from_dir(log_dir)
+        _frames, _key_actions, _player_positions, _events = load_data(video_path, logs, video_framecount_start)
+        frames.extend(_frames)
+        key_actions.extend(_key_actions)
+        player_positions.extend(_player_positions)
+        events.extend(_events)        
 
     # Create models directory if it doesn't exist
     models_dir = CHECKPOINT_DIR
@@ -1688,9 +1707,6 @@ if __name__ == "__main__":
             # copy content of log_dir to models_dir
             for file in log_dir.iterdir():
                 shutil.copy(file, models_dir / file.name)
-
-            # Load the data
-            frames, key_actions, player_positions, events = load_data(video_path, logs, video_framecount_start)
             
             # Train the policy network
             model = train_policy(
@@ -1708,10 +1724,7 @@ if __name__ == "__main__":
             # Save the model
             torch.save(model.state_dict(), model_path)
             print(f"Model saved to {model_path}")
-        elif args.action == "infer":
-            # Load the data
-            frames, key_actions, player_positions, events = load_data(video_path, logs, video_framecount_start)
-            
+        elif args.action == "infer":            
             # Load the model
             if not model_path.exists():
                 print(f"Model not found at {model_path}. Please check the path or train a model first.")
@@ -1751,6 +1764,10 @@ if __name__ == "__main__":
             import datasets
             game_dataset = datasets.load_dataset(GAMES_DATASET, split="train")
             
+            # take first log_dir
+            log_dir = log_dirs[0]
+            video_metadata = json.load(open(log_dir / "metadata.json", "r"))
+
             # Get game_id from metadata
             game_id = video_metadata["game_id"]
             
@@ -1792,7 +1809,6 @@ if __name__ == "__main__":
     else:
         # If no action is specified, load the data and visualize it
         print("No action specified. Loading data and visualizing...")
-        frames, key_actions, player_positions, events = load_data(video_path, logs, video_framecount_start)
         
         # Visualize the data with animation
         animate_frames(frames, key_actions, player_positions=player_positions, events=events)
