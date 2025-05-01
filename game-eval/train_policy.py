@@ -748,7 +748,7 @@ class PolicyNetwork(nn.Module):
         return self.fc(combined)
 
 
-def visualize_prediction(model, frames, action_stack, target, device, img_size=(96, 96)):
+def visualize_prediction(model, frames, action_stack, target, device, img_size=(96, 96), position_stack=None, obs_seq_len=4):
     """
     Visualize model prediction vs target
     
@@ -759,6 +759,8 @@ def visualize_prediction(model, frames, action_stack, target, device, img_size=(
         target: Target action vector
         device: Torch device
         img_size: Size to resize frames to (width, height)
+        position_stack: Optional stack of player positions
+        obs_seq_len: Length of observation sequence
         
     Returns:
         Figure with visualization
@@ -766,7 +768,7 @@ def visualize_prediction(model, frames, action_stack, target, device, img_size=(
     import matplotlib.pyplot as plt
     
     # Get prediction using run_inference
-    pred = run_inference(model, frames, action_stack, device, img_size)
+    pred = run_inference(model, frames, action_stack, device, img_size, obs_seq_len=obs_seq_len, position_stack=position_stack)
     
     # Create figure
     fig, axs = plt.subplots(2, 1, figsize=(8, 10))
@@ -827,7 +829,7 @@ def train_policy(frames, key_actions, player_positions=None, batch_size=32, epoc
                 "img_size": img_size,
                 "obs_seq_len": obs_seq_len,
                 "use_positions": use_positions,
-                "optimizer": "AdamW",
+                "optimizer": "Adam",
                 "model": "CNN-Policy"
             })
         except ImportError:
@@ -868,8 +870,8 @@ def train_policy(frames, key_actions, player_positions=None, batch_size=32, epoc
     if use_wandb:
         wandb.watch(model, log="all")
     
-    # optimizer = optim.Adam(model.parameters(), lr=lr)
-    optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
+    optimizer = optim.Adam(model.parameters(), lr=lr)
+    # optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
     criterion = nn.BCELoss()  # Binary cross-entropy for multi-label classification
     
     # Select a few examples to visualize during training
@@ -966,7 +968,8 @@ def train_policy(frames, key_actions, player_positions=None, batch_size=32, epoc
                         target, 
                         device, 
                         img_size,
-                        position_stack
+                        position_stack,
+                        obs_seq_len
                     )
                     log_dict[f"example_{i}"] = wandb.Image(fig)
                     plt.close(fig)
@@ -1422,7 +1425,7 @@ window.addEventListener('load', function() {
 
 
 
-def run_inference(model, frames, action_stack, device=None, img_size=(96, 96), obs_seq_len=4):
+def run_inference(model, frames, action_stack, device=None, img_size=(96, 96), obs_seq_len=4, position_stack=None):
     """
     Run inference with the trained policy network
     
@@ -1433,6 +1436,7 @@ def run_inference(model, frames, action_stack, device=None, img_size=(96, 96), o
         device: Torch device to use (defaults to cuda if available)
         img_size: Size to resize frame to (width, height)
         obs_seq_len: Length of observation sequence
+        position_stack: Optional stack of player positions
         
     Returns:
         Predicted action probabilities
@@ -1481,9 +1485,15 @@ def run_inference(model, frames, action_stack, device=None, img_size=(96, 96), o
     # Convert action history to tensor
     action_tensor = torch.FloatTensor(action_stack).unsqueeze(0).to(device)
     
+    # Process position stack if available
+    position_tensor = None
+    if position_stack is not None:
+        if isinstance(position_stack, np.ndarray):
+            position_tensor = torch.FloatTensor(position_stack).unsqueeze(0).to(device)
+    
     # Run inference
     with torch.no_grad():
-        predicted_action = model(stacked_frames, action_tensor)
+        predicted_action = model(stacked_frames, action_tensor, position_tensor)
     
     return predicted_action.cpu().numpy()[0]
 
