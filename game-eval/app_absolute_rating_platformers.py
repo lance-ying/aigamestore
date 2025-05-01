@@ -236,7 +236,8 @@ def index():
     game, rating_id = get_random_game()
     if game is None:
         # No more games left for this user
-        return render_template_string(HTML_TEMPLATE, game_id=None, completion_code=COMPLETION_CODE)
+        # Redirect to feedback form instead of showing completion directly
+        return redirect(url_for('feedback_form'))
     game_path = f'rating_{rating_id}/game_{game["id"]}/index.html'
     return render_template_string(HTML_TEMPLATE, game_path=game_path, rating_id=rating_id, game_id=game["id"], completion_code=None)
 
@@ -1353,6 +1354,286 @@ def record_events():
         print(f"Saved events for game {game_id} (rating {rating_id}) at {save_path}")
     
     return jsonify({"status": "success"})
+
+@app.route('/feedback', methods=['GET', 'POST'])
+def feedback_form():
+    # Check if user is logged in
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+    
+    if request.method == 'POST':
+        # Process submitted feedback
+        user_id = session.get('user_id')
+        
+        # Collect all feedback fields from the form
+        feedback_data = {
+            "user_id": user_id,
+            "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "issues": request.form.get('issues', ''),
+            "confusing": request.form.get('confusing', ''),
+            "suggestions": request.form.get('suggestions', ''),
+            "fun_criteria": request.form.get('fun_criteria', ''),
+            "age": request.form.get('age', ''),
+            "gender": request.form.get('gender', ''),
+            "gaming_frequency": request.form.get('gaming_frequency', ''),
+            "gaming_experience": request.form.get('gaming_experience', '')
+        }
+        
+        # Generate a unique filename for the feedback
+        feedback_filename = f"feedback_{user_id}_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}.json"
+        
+        # Save locally if enabled
+        if SAVE_LOCALLY:
+            save_dir = RESULTS_DIR / f"feedback_{user_id}"
+            save_dir.mkdir(parents=True, exist_ok=True)
+            with open(save_dir / "feedback.json", 'w') as f:
+                json.dump(feedback_data, f, indent=4)
+            print(f"Saved feedback for user {user_id}")
+        
+        # Save to HuggingFace dataset
+        if SAVE_HF:
+            try:
+                # Make sure the repo exists
+                hf_api.create_repo(
+                    repo_id=FEEDBACK_DATASET,
+                    repo_type="dataset",
+                    token=HF_TOKEN,
+                    exist_ok=True
+                )
+                
+                # Convert feedback data to JSON string
+                feedback_json = json.dumps(feedback_data, indent=4)
+                
+                # Upload to HuggingFace
+                hf_api.upload_file(
+                    path_or_fileobj=feedback_json.encode('utf-8'),
+                    path_in_repo=feedback_filename,
+                    repo_id=FEEDBACK_DATASET,
+                    repo_type="dataset",
+                    token=HF_TOKEN
+                )
+                print(f"Uploaded feedback to HuggingFace: {feedback_filename}")
+            except Exception as e:
+                print(f"Error uploading feedback: {e}")
+        
+        # Show completion page with code
+        return render_template_string(COMPLETION_TEMPLATE, completion_code=COMPLETION_CODE)
+    
+    # Display feedback form
+    return render_template_string(FEEDBACK_TEMPLATE)
+
+# Template for the completion page
+COMPLETION_TEMPLATE = '''
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Study Completed</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f8f8f8;
+            text-align: center;
+        }
+        .completion-container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-top: 50px;
+        }
+        h1 {
+            color: #4CAF50;
+        }
+        .code-box {
+            background: #f1f1f1;
+            padding: 15px;
+            border-radius: 4px;
+            font-size: 24px;
+            font-weight: bold;
+            margin: 20px 0;
+            display: inline-block;
+        }
+        p {
+            color: #666;
+            line-height: 1.5;
+        }
+        .emoji {
+            font-size: 48px;
+            margin: 20px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="completion-container">
+        <div class="emoji">🎉</div>
+        <h1>Study Completed!</h1>
+        <p>Thank you for participating in our research. Your contributions are invaluable.</p>
+        <p>Please copy the following completion code and enter it into Prolific:</p>
+        <div class="code-box">{{ completion_code }}</div>
+        <p>You may now close this window.</p>
+    </div>
+</body>
+</html>
+'''
+
+# Add new template for the feedback form
+FEEDBACK_TEMPLATE = '''
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Study Feedback</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f8f8f8;
+        }
+        .feedback-container {
+            background: white;
+            padding: 24px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        h1 {
+            color: #333;
+            margin-top: 0;
+        }
+        p {
+            color: #666;
+            line-height: 1.5;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: bold;
+            color: #444;
+        }
+        textarea {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            min-height: 80px;
+            resize: vertical;
+        }
+        input[type="text"], select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        button {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+        .description {
+            font-size: 14px;
+            color: #777;
+            margin-top: 4px;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <div class="feedback-container">
+        <h1>Thank You for Participating!</h1>
+        <p>Before we finish, we'd appreciate your feedback on this experience. Your responses will help us improve our research.</p>
+        
+        <form method="post" action="/feedback">
+            <div class="form-group">
+                <label for="issues">Did you encounter any technical issues during the study?</label>
+                <textarea id="issues" name="issues" placeholder="Please describe any technical issues you faced..."></textarea>
+            </div>
+            
+            <div class="form-group">
+                <label for="confusing">Was any part of the experiment confusing?</label>
+                <textarea id="confusing" name="confusing" placeholder="Please tell us what was confusing or unclear..."></textarea>
+            </div>
+            
+            <div class="form-group">
+                <label for="suggestions">Do you have any suggestions or feedback to improve the study?</label>
+                <textarea id="suggestions" name="suggestions" placeholder="Your suggestions will help us improve..."></textarea>
+            </div>
+            
+            <div class="form-group">
+                <label for="fun_criteria">How did you decide whether a game was fun or not?</label>
+                <textarea id="fun_criteria" name="fun_criteria" placeholder="What criteria did you use to evaluate the games?"></textarea>
+            </div>
+            
+            <h2>Demographics (Optional)</h2>
+            <p class="description">This information helps us understand our participant pool better. All responses are anonymous.</p>
+            
+            <div class="form-group">
+                <label for="age">Age</label>
+                <select id="age" name="age">
+                    <option value="">Prefer not to say</option>
+                    <option value="18-24">18-24</option>
+                    <option value="25-34">25-34</option>
+                    <option value="35-44">35-44</option>
+                    <option value="45-54">45-54</option>
+                    <option value="55-64">55-64</option>
+                    <option value="65+">65+</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label for="gender">Gender</label>
+                <select id="gender" name="gender">
+                    <option value="">Prefer not to say</option>
+                    <option value="Male">Male</option>
+                    <option value="Female">Female</option>
+                    <option value="Non-binary">Non-binary</option>
+                    <option value="Other">Other</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label for="gaming_frequency">How often do you play video games?</label>
+                <select id="gaming_frequency" name="gaming_frequency">
+                    <option value="">Prefer not to say</option>
+                    <option value="Daily">Daily</option>
+                    <option value="Weekly">Weekly</option>
+                    <option value="Monthly">Monthly</option>
+                    <option value="Rarely">Rarely</option>
+                    <option value="Never">Never</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label for="gaming_experience">How would you rate your experience with video games?</label>
+                <select id="gaming_experience" name="gaming_experience">
+                    <option value="">Prefer not to say</option>
+                    <option value="Novice">Novice</option>
+                    <option value="Casual">Casual</option>
+                    <option value="Experienced">Experienced</option>
+                    <option value="Expert">Expert</option>
+                </select>
+            </div>
+            
+            <button type="submit">Submit Feedback & Complete Study</button>
+        </form>
+    </div>
+</body>
+</html>
+'''
 
 if __name__ == '__main__':
     app.run(debug=True)
