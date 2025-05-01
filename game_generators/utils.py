@@ -107,7 +107,7 @@ class ModelAPI:
         user_prompt: str,
         system_prompt: Optional[str] = None,
         chat_history: Optional[List[Dict[str, str]]] = None,
-        max_tokens: Optional[int] = 40000,
+        max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
         verbose: bool = False,
         max_retries: int = 3,
@@ -130,6 +130,27 @@ class ModelAPI:
         """
         # Construct messages list
         messages = []
+        MAX_ALLOWED_TOKENS = 40000
+
+        model_max_tokens = {
+            "openai": {
+                "o3-mini": 100000,
+                "o4-mini": 100000,  # Technically exceeds MAX_ALLOWED_TOKENS
+            },
+            "anthropic": {
+                "claude-3.5-sonnet": 8192,
+                "claude-3-7-sonnet-20250219": 128000,
+            },
+            "google": {
+                "gemini-2.0-flash": 8192,
+                "gemini-2.5-flash-preview-04-17": 65536,
+            },
+        }
+
+        if max_tokens is None:
+            max_tokens = model_max_tokens[self.model_provider][self.model]
+
+        max_tokens = min(MAX_ALLOWED_TOKENS, max_tokens)
 
         # Add system prompt if provided
         if system_prompt:

@@ -34,7 +34,7 @@ Output the game in the following format with NO OTHER TEXT.
 ... (game description and controls; interesting and clear instructions for the game: how to play, what to do, etc. Keep it short and concise.)
 </game_instructions>
 
-For each file, you should output the following:
+For each javascript file, you should output the following:
 <code filename="{{name}}.{{extension}}">
 ... (code)
 </code>
