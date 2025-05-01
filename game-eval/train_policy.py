@@ -5,6 +5,7 @@ import shutil
 import tempfile
 import cv2
 import sys
+import argparse
 from collections import defaultdict
 import numpy as np
 import matplotlib.pyplot as plt
@@ -42,121 +43,8 @@ games_version = "v5"
 GAMES_DATASET = f"generative-games/gen-games-{games_version}"
 
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-RUN_NAME = f"run_{timestamp}"
-CHECKPOINT_DIR = Path(__file__).parent / "results" / Path(__file__).stem / "checkpoints" / RUN_NAME
-
-
-# def preprocess_frame(image, position, obs_size=(96, 96), grayscale=False):
-#     """
-#     Preprocess a single image and position from a p5js environment.
-    
-#     Args:
-#         image: Image from p5js environment (numpy array)
-#         position: Position data (x, y coordinates)
-#         obs_size: Target size for resizing images (width, height)
-        
-#     Returns:
-#         processed_image: Resized and padded image
-#         processed_position: Adjusted position coordinates
-#     """
-#     def resize_with_padding(image, obs_size=(96, 96)):
-#         """
-#         Resize an image to the target size with padding to maintain aspect ratio.
-        
-#         Args:
-#             image: Input image (numpy array)
-#             obs_size: Target size as (width, height)
-            
-#         Returns:
-#             Resized image with padding (numpy array)
-#         """
-#         h, w = image.shape[:2]
-#         target_w, target_h = obs_size
-        
-#         # Calculate aspect ratios
-#         aspect_ratio_orig = w / h
-#         aspect_ratio_target = target_w / target_h
-        
-#         # Calculate new dimensions while preserving aspect ratio
-#         if aspect_ratio_orig > aspect_ratio_target:
-#             # Width is the limiting factor
-#             new_w = target_w
-#             new_h = int(new_w / aspect_ratio_orig)
-#         else:
-#             # Height is the limiting factor
-#             new_h = target_h
-#             new_w = int(new_h * aspect_ratio_orig)
-        
-#         # Resize the image while preserving aspect ratio
-#         resized = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
-        
-#         # Create a black canvas of the target size
-#         padded = np.zeros((target_h, target_w, 3), dtype=np.uint8)
-        
-#         # Calculate padding offsets to center the image
-#         pad_h = (target_h - new_h) // 2
-#         pad_w = (target_w - new_w) // 2
-        
-#         # Place the resized image on the canvas
-#         padded[pad_h:pad_h+new_h, pad_w:pad_w+new_w] = resized
-        
-#         return padded
-
-#     # Resize image with padding to maintain aspect ratio
-#     processed_image = resize_with_padding(image, obs_size)
-    
-#     # Get image dimensions for position adjustment
-#     h, w = image.shape[:2]
-#     target_w, target_h = obs_size
-    
-#     # Calculate scaling factors
-#     aspect_ratio_orig = w / h
-#     aspect_ratio_target = target_w / target_h
-    
-#     # Calculate new dimensions while preserving aspect ratio
-#     if aspect_ratio_orig > aspect_ratio_target:
-#         # Width is the limiting factor
-#         new_w = target_w
-#         new_h = int(new_w / aspect_ratio_orig)
-#         x_scale = target_w / w
-#         y_scale = new_h / h
-#         x_offset = 0
-#         y_offset = (target_h - new_h) // 2
-#     else:
-#         # Height is the limiting factor
-#         new_h = target_h
-#         new_w = int(new_h * aspect_ratio_orig)
-#         x_scale = new_w / w
-#         y_scale = target_h / h
-#         x_offset = (target_w - new_w) // 2
-#         y_offset = 0
-    
-#     # Extract position coordinates
-#     x, y = position
-    
-#     # Normalize original positions if needed
-#     if x > 1.0 or y > 1.0:
-#         # Positions are in pixel coordinates, normalize them first
-#         x_norm = x / w
-#         y_norm = y / h
-#     else:
-#         # Positions are already normalized [0,1]
-#         x_norm = x
-#         y_norm = y
-    
-#     # Apply scaling and offset for the new image size
-#     x_adjusted = (x_norm * x_scale * w + x_offset) / target_w
-#     y_adjusted = (y_norm * y_scale * h + y_offset) / target_h
-    
-#     processed_position = (x_adjusted, y_adjusted)
-    
-#     # convert image to grayscale
-#     if grayscale:
-#         processed_image = cv2.cvtColor(processed_image, cv2.COLOR_RGB2GRAY)
-#         # Convert grayscale back to 3 channels to match the expected shape
-#         processed_image = cv2.cvtColor(processed_image, cv2.COLOR_GRAY2RGB)
-
-#     return processed_image, processed_position
+RUN_NAME = f"run_{timestamp}"  # Default run name
+CHECKPOINT_DIR = None  # Will be set once RUN_NAME is determined
 
 
 def load_data(video_path, logs, video_framecount_start):
@@ -278,19 +166,21 @@ def load_data(video_path, logs, video_framecount_start):
 
 
 class GameDataset(Dataset):
-    def __init__(self, frames, key_actions, transform=None, img_size=(96, 96), obs_seq_len=4):
+    def __init__(self, frames, key_actions, player_positions=None, transform=None, img_size=(96, 96), obs_seq_len=4):
         """
         PyTorch Dataset for game frames and actions
         
         Args:
             frames: List of numpy arrays containing video frames
             key_actions: Array of shape (num_frames, num_keys) with binary key states
+            player_positions: List of (x, y) tuples for player positions
             transform: Optional transform to apply to the frames
             img_size: Target size for resizing images (height, width)
             obs_seq_len: Length of observation sequence (frames and actions)
         """
         self.frames = frames
         self.key_actions = key_actions
+        self.player_positions = player_positions
         self.transform = transform
         self.img_size = img_size
         self.obs_seq_len = obs_seq_len
@@ -303,6 +193,7 @@ class GameDataset(Dataset):
         # Get a stack of consecutive frames
         frame_stack = []
         action_stack = []
+        position_stack = []
         
         for i in range(self.obs_seq_len):
             # Stack frames
@@ -319,6 +210,16 @@ class GameDataset(Dataset):
                 
             frame_stack.append(frame)
             
+            # Stack positions if available
+            if self.player_positions is not None and self.player_positions[idx + i] is not None:
+                x, y = self.player_positions[idx + i]
+                # Normalize positions to [0, 1]
+                position = torch.FloatTensor([float(x) / self.img_size[0], float(y) / self.img_size[1]])
+                position_stack.append(position)
+            else:
+                # If position is not available, use zeros
+                position_stack.append(torch.zeros(2))
+            
             # Stack actions (except for the last frame which is the target)
             if i < self.obs_seq_len - 1:
                 action = torch.FloatTensor(self.key_actions[idx + i])
@@ -331,10 +232,17 @@ class GameDataset(Dataset):
         # Stack the actions into a single tensor
         stacked_actions = torch.stack(action_stack, dim=0)  # Shape: [obs_seq_len-1, num_keys]
         
+        # Stack the positions into a single tensor
+        stacked_positions = torch.stack(position_stack, dim=0)  # Shape: [obs_seq_len, 2]
+        
         # Target is the action for the last frame in the sequence
         target_action = torch.FloatTensor(self.key_actions[idx + self.obs_seq_len - 1])
         
-        return {'frame_stack': stacked_frames, 'action_stack': stacked_actions}, target_action
+        return {
+            'frame_stack': stacked_frames, 
+            'action_stack': stacked_actions,
+            'position_stack': stacked_positions
+        }, target_action
 
 
 def analyze_video_logs(video_path, logs, video_framecount_start):
@@ -767,7 +675,7 @@ def animate_frames(frames, key_actions, player_positions=None, events=None, fps=
 
 
 class PolicyNetwork(nn.Module):
-    def __init__(self, input_channels=3, num_keys=len(KEY_TO_INDEX), img_size=(96, 96), obs_seq_len=4):
+    def __init__(self, input_channels=3, num_keys=len(KEY_TO_INDEX), img_size=(96, 96), obs_seq_len=4, use_positions=True):
         super().__init__()
         # Simple CNN for image processing
         self.conv = nn.Sequential(
@@ -793,15 +701,26 @@ class PolicyNetwork(nn.Module):
             nn.ReLU()
         )
         
+        # Process position sequence with a small MLP
+        self.use_positions = use_positions
+        if use_positions:
+            self.position_encoder = nn.Sequential(
+                nn.Linear(2 * obs_seq_len, 32),  # 2D position for each frame
+                nn.ReLU()
+            )
+            combined_size = self.fc_input_size + 64 + 32
+        else:
+            combined_size = self.fc_input_size + 64
+        
         # Combine image features with action history and predict next action
         self.fc = nn.Sequential(
-            nn.Linear(self.fc_input_size + 64, 512),
+            nn.Linear(combined_size, 512),
             nn.ReLU(),
             nn.Linear(512, num_keys),
             nn.Sigmoid()  # Output activation for multi-label binary classification
         )
         
-    def forward(self, x, action_stack):
+    def forward(self, x, action_stack, position_stack=None):
         # Process image sequence
         img_features = self.conv(x)
         
@@ -812,8 +731,18 @@ class PolicyNetwork(nn.Module):
         # Process action sequence
         action_features = self.action_encoder(action_flat)
         
-        # Concatenate image and action features
-        combined = torch.cat([img_features, action_features], dim=1)
+        if self.use_positions and position_stack is not None:
+            # Flatten position stack
+            pos_flat = position_stack.reshape(batch_size, -1)  # Flatten to [batch, obs_seq_len*2]
+            
+            # Process position sequence
+            pos_features = self.position_encoder(pos_flat)
+            
+            # Concatenate image, action, and position features
+            combined = torch.cat([img_features, action_features, pos_features], dim=1)
+        else:
+            # Concatenate image and action features
+            combined = torch.cat([img_features, action_features], dim=1)
         
         # Predict next action
         return self.fc(combined)
@@ -863,19 +792,21 @@ def visualize_prediction(model, frames, action_stack, target, device, img_size=(
     return fig
 
 
-def train_policy(frames, key_actions, batch_size=32, epochs=5, lr=1e-4, img_size=(96, 96), use_wandb=True, obs_seq_len=4):
+def train_policy(frames, key_actions, player_positions=None, batch_size=32, epochs=5, lr=1e-4, img_size=(96, 96), use_wandb=True, obs_seq_len=4, use_positions=True):
     """
     Train a policy network on the given frames and key actions
     
     Args:
         frames: List of video frames
         key_actions: Array of shape (num_frames, num_keys) with binary key states
+        player_positions: List of (x, y) tuples for player positions
         batch_size: Batch size for training
         epochs: Number of epochs to train
         lr: Learning rate
         img_size: Size to resize frames to (width, height)
         use_wandb: Whether to use wandb for logging
         obs_seq_len: Length of observation sequence (frames and actions)
+        use_positions: Whether to use player positions as input
         
     Returns:
         Trained policy network
@@ -895,6 +826,7 @@ def train_policy(frames, key_actions, batch_size=32, epochs=5, lr=1e-4, img_size
                 "batch_size": batch_size,
                 "img_size": img_size,
                 "obs_seq_len": obs_seq_len,
+                "use_positions": use_positions,
                 "optimizer": "AdamW",
                 "model": "CNN-Policy"
             })
@@ -903,12 +835,13 @@ def train_policy(frames, key_actions, batch_size=32, epochs=5, lr=1e-4, img_size
             use_wandb = False
     
     # Create dataset
-    dataset = GameDataset(frames, key_actions, img_size=img_size, obs_seq_len=obs_seq_len)
+    dataset = GameDataset(frames, key_actions, player_positions, img_size=img_size, obs_seq_len=obs_seq_len)
     print(f"Dataset length: {len(dataset)}")
 
     x, y = dataset[0]
     print(f"Frame shape: {x['frame_stack'].shape}")
     print(f"Action stack shape: {x['action_stack'].shape}")
+    print(f"Position stack shape: {x['position_stack'].shape}")
     print(f"Target action shape: {y.shape}")
     
     # Split into train and validation sets (80/20 split)
@@ -926,7 +859,8 @@ def train_policy(frames, key_actions, batch_size=32, epochs=5, lr=1e-4, img_size
         input_channels=3, 
         num_keys=len(KEY_TO_INDEX), 
         img_size=img_size, 
-        obs_seq_len=obs_seq_len
+        obs_seq_len=obs_seq_len,
+        use_positions=use_positions
     )
     model = model.to(device)
     
@@ -947,6 +881,7 @@ def train_policy(frames, key_actions, batch_size=32, epochs=5, lr=1e-4, img_size
             vis_examples.append((
                 frames[idx + obs_seq_len - 1],  # Last frame in the sequence
                 inputs['action_stack'].numpy(),
+                inputs['position_stack'].numpy() if use_positions else None,
                 target.numpy()
             ))
     
@@ -963,11 +898,12 @@ def train_policy(frames, key_actions, batch_size=32, epochs=5, lr=1e-4, img_size
             # Move data to device
             frame_stack = inputs['frame_stack'].to(device)
             action_stack = inputs['action_stack'].to(device)
+            position_stack = inputs['position_stack'].to(device) if use_positions else None
             targets = targets.to(device)
             
             # Forward pass
             optimizer.zero_grad()
-            outputs = model(frame_stack, action_stack)
+            outputs = model(frame_stack, action_stack, position_stack)
             
             # Calculate loss and backpropagate
             loss = criterion(outputs, targets)
@@ -988,9 +924,10 @@ def train_policy(frames, key_actions, batch_size=32, epochs=5, lr=1e-4, img_size
             for inputs, targets in val_loader:
                 frame_stack = inputs['frame_stack'].to(device)
                 action_stack = inputs['action_stack'].to(device)
+                position_stack = inputs['position_stack'].to(device) if use_positions else None
                 targets = targets.to(device)
                 
-                outputs = model(frame_stack, action_stack)
+                outputs = model(frame_stack, action_stack, position_stack)
                 loss = criterion(outputs, targets)
                 val_loss += loss.item()
         
@@ -1020,9 +957,17 @@ def train_policy(frames, key_actions, batch_size=32, epochs=5, lr=1e-4, img_size
             
             # Log visualizations for sample predictions
             if (epoch + 1) % 1 == 0:  # Every epoch
-                for i, (frame, action_stack, target) in enumerate(vis_examples):
+                for i, (frame, action_stack, position_stack, target) in enumerate(vis_examples):
                     # Use visualization function
-                    fig = visualize_prediction(model, [frame] * obs_seq_len, action_stack, target, device, img_size)
+                    fig = visualize_prediction(
+                        model, 
+                        [frame] * obs_seq_len, 
+                        action_stack, 
+                        target, 
+                        device, 
+                        img_size,
+                        position_stack
+                    )
                     log_dict[f"example_{i}"] = wandb.Image(fig)
                     plt.close(fig)
             
@@ -1053,6 +998,7 @@ class P5jsEnv(gym.Env):
         obs_size: tuple = (96, 96),
         max_episode_steps: int = 2000,
         obs_seq_len: int = 4,
+        use_positions: bool = True,
     ):
         """Initialize the P5js data environment.
         
@@ -1064,6 +1010,7 @@ class P5jsEnv(gym.Env):
             obs_size: Target size for resizing images (width, height)
             max_episode_steps: Maximum steps per episode
             obs_seq_len: Length of observation sequence
+            use_positions: Whether to include player positions in observations
         """
         if not game_code or "index.html" not in game_code:
             raise ValueError("`game_code` must be a dictionary containing at least 'index.html'")
@@ -1074,6 +1021,7 @@ class P5jsEnv(gym.Env):
         self.obs_size = obs_size
         self._max_episode_steps = max_episode_steps
         self.obs_seq_len = obs_seq_len
+        self.use_positions = use_positions
         
         # State variables
         self.browser = None
@@ -1083,24 +1031,36 @@ class P5jsEnv(gym.Env):
         self.playwright = None  # Initialize playwright to None
         self.frame_history = []  # Store frame history for stacking
         self.action_history = []  # Store action history for stacking
+        self.position_history = []  # Store position history for stacking
         
         self.action_space = spaces.Box(low=0, high=1, shape=(len(KEY_TO_INDEX),), dtype=np.float32)
-        self.observation_space = spaces.Dict(
-            {
-                "frame_stack": spaces.Box(
-                    low=0,
-                    high=255,
-                    shape=(3 * self.obs_seq_len, self.obs_size[1], self.obs_size[0]),
-                    dtype=np.uint8,
-                ),
-                "action_stack": spaces.Box(
-                    low=0,
-                    high=1,
-                    shape=((self.obs_seq_len - 1), len(KEY_TO_INDEX)),
-                    dtype=np.float32,
-                ),
-            }
-        )
+        
+        # Define observation space based on whether positions are used
+        obs_dict = {
+            "frame_stack": spaces.Box(
+                low=0,
+                high=255,
+                shape=(3 * self.obs_seq_len, self.obs_size[1], self.obs_size[0]),
+                dtype=np.uint8,
+            ),
+            "action_stack": spaces.Box(
+                low=0,
+                high=1,
+                shape=((self.obs_seq_len - 1), len(KEY_TO_INDEX)),
+                dtype=np.float32,
+            ),
+        }
+        
+        # Add position_stack to observation space if using positions
+        if self.use_positions:
+            obs_dict["position_stack"] = spaces.Box(
+                low=0,
+                high=1,
+                shape=(self.obs_seq_len, 2),  # x, y coordinates for each frame
+                dtype=np.float32,
+            )
+            
+        self.observation_space = spaces.Dict(obs_dict)
 
     def reset(self, seed=None, options=None) -> Tuple[Dict, Dict]:
         """Reset the environment to initial state.
@@ -1115,9 +1075,10 @@ class P5jsEnv(gym.Env):
         """
         super().reset(seed=seed)
 
-        # Clear frame and action history
+        # Clear frame, action, and position history
         self.frame_history = []
         self.action_history = []
+        self.position_history = []
 
         # Instead of closing and reopening the browser, just reload the page
         if self.browser is not None and self.page is not None:
@@ -1393,10 +1354,45 @@ window.addEventListener('load', function() {
         # Stack the actions
         stacked_actions = np.array(self.action_history)
         
-        return {
+        # Create observation dictionary
+        observation = {
             "frame_stack": stacked_frames,
             "action_stack": stacked_actions
         }
+        
+        # Add position data if enabled
+        if self.use_positions:
+            # Get current player position
+            try:
+                pos_x, pos_y = self._get_player_position()
+                
+                # Normalize positions to [0, 1] based on image size
+                normalized_x = float(pos_x) / self.width
+                normalized_y = float(pos_y) / self.height
+                
+                # Add to position history
+                self.position_history.append(np.array([normalized_x, normalized_y], dtype=np.float32))
+                
+            except Exception as e:
+                print(f"Error getting player position: {e}")
+                # Use zeros if position can't be determined
+                self.position_history.append(np.zeros(2, dtype=np.float32))
+            
+            # Keep only the last obs_seq_len positions
+            if len(self.position_history) > self.obs_seq_len:
+                self.position_history = self.position_history[-self.obs_seq_len:]
+            
+            # If we don't have enough positions yet, pad with zeros
+            while len(self.position_history) < self.obs_seq_len:
+                self.position_history.insert(0, np.zeros(2, dtype=np.float32))
+            
+            # Stack the positions
+            stacked_positions = np.array(self.position_history)
+            
+            # Add to observation
+            observation["position_stack"] = stacked_positions
+        
+        return observation
     
     def _get_player_position(self) -> Tuple[float, float]:
         framecount = self._get_framecount()
@@ -1492,7 +1488,7 @@ def run_inference(model, frames, action_stack, device=None, img_size=(96, 96), o
     return predicted_action.cpu().numpy()[0]
 
 
-def rollout_policy(env, policy_model, num_steps=500, device=None):
+def rollout_policy(env, policy_model, num_steps=500, device=None, use_positions=True):
     """
     Run a trained policy network in the environment.
     
@@ -1501,6 +1497,7 @@ def rollout_policy(env, policy_model, num_steps=500, device=None):
         policy_model: The trained policy network
         num_steps: Number of steps to run
         device: Torch device to use
+        use_positions: Whether to use player positions as input
         
     Returns:
         rewards: List of rewards
@@ -1525,10 +1522,15 @@ def rollout_policy(env, policy_model, num_steps=500, device=None):
         frame_stack = torch.FloatTensor(obs["frame_stack"]).unsqueeze(0).to(device) / 255.0
         action_stack = torch.FloatTensor(obs["action_stack"]).unsqueeze(0).to(device)
         
+        # Get position stack if available and enabled
+        position_stack = None
+        if use_positions and "position_stack" in obs:
+            position_stack = torch.FloatTensor(obs["position_stack"]).unsqueeze(0).to(device)
+        
         # Get action from policy network
         with torch.no_grad():
-            action = policy_model(frame_stack, action_stack)
-
+            action = policy_model(frame_stack, action_stack, position_stack)
+        
         # Convert action to numpy array
         action_np = action.squeeze(0).cpu().numpy()
 
@@ -1600,7 +1602,7 @@ def evaluate_policy(model_path, game_code, num_episodes=5, max_steps=500, obs_se
     
     for episode in range(num_episodes):
         print(f"Episode {episode+1}/{num_episodes}")
-        rewards, observations, actions = rollout_policy(env, model, max_steps, device)
+        rewards, observations, actions = rollout_policy(env, model, max_steps, device, use_positions=True)
         
         # Calculate episode statistics
         episode_reward = sum(rewards)
@@ -1627,6 +1629,24 @@ def evaluate_policy(model_path, game_code, num_episodes=5, max_steps=500, obs_se
 
 
 if __name__ == "__main__":
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description="Train and evaluate a policy network for P5js games")
+    parser.add_argument("action", nargs="?", choices=["train", "infer", "eval", "analyze_video"], 
+                      help="Action to perform: train, infer, eval, or analyze_video")
+    parser.add_argument("--run-name", type=str, help="Name for this training run (default: auto-generated timestamp)")
+    parser.add_argument("--wandb", action="store_true", help="Use wandb for logging")
+    parser.add_argument("--ckpt-path", type=str, help="Path to a specific checkpoint file for evaluation or inference")
+    
+    # Parse only known args to avoid issues with additional arguments
+    args, unknown = parser.parse_known_args()
+    
+    # Set the run name if provided
+    if args.run_name:
+        RUN_NAME = args.run_name
+    
+    # Now set the checkpoint directory based on the run name
+    CHECKPOINT_DIR = Path(__file__).parent / "results" / Path(__file__).stem / "checkpoints" / RUN_NAME
+    
     # simple left/right movements
     # log_dir = Path(__file__).parent / "results" / "games_v5" / "rating_b6251405-403d-4df1-a3bb-046ab0075e1b_game_6ecf4c0a8bcbc48f1e16c651e829606539c10ca59a172a4302c125063a3c7dc1"
 
@@ -1647,17 +1667,24 @@ if __name__ == "__main__":
     # Create models directory if it doesn't exist
     models_dir = CHECKPOINT_DIR
     models_dir.mkdir(exist_ok=True, parents=True)
-    model_path = models_dir / "policy_model.pth"
+    
+    # Set the model path - either from args or default location
+    if args.ckpt_path:
+        model_path = Path(args.ckpt_path)
+    else:
+        model_path = models_dir / "policy_model.pth"
     
     # Set image size for model
     img_size = (96, 96)  # (width, height)
-    obs_seq_len = 4  # Length of observation sequence (frames and actions)
+    obs_seq_len = 2  # Length of observation sequence (frames and actions)
     
-    # Choose what to do based on arguments (can be extended with argparse)
-    use_wandb = "--wandb" in sys.argv
+    # Use wandb based on argument
+    # use_wandb = args.wandb
+    use_wandb = True
     
-    if len(sys.argv) > 1:
-        if "train" in sys.argv:
+    # Perform the specified action
+    if args.action:
+        if args.action == "train":
             # copy content of log_dir to models_dir
             for file in log_dir.iterdir():
                 shutil.copy(file, models_dir / file.name)
@@ -1669,25 +1696,28 @@ if __name__ == "__main__":
             model = train_policy(
                 frames, 
                 key_actions, 
+                player_positions, 
                 epochs=50, 
                 lr=1e-3, 
-                # lr=1e-4, 
                 img_size=img_size, 
                 use_wandb=use_wandb,
-                obs_seq_len=obs_seq_len
+                obs_seq_len=obs_seq_len,
+                use_positions=True
             )
             
             # Save the model
             torch.save(model.state_dict(), model_path)
             print(f"Model saved to {model_path}")
-        elif "infer" in sys.argv:
+        elif args.action == "infer":
             # Load the data
             frames, key_actions, player_positions, events = load_data(video_path, logs, video_framecount_start)
             
             # Load the model
             if not model_path.exists():
-                print(f"Model not found at {model_path}. Train a model first with 'python train_policy.py train'")
+                print(f"Model not found at {model_path}. Please check the path or train a model first.")
                 sys.exit(1)
+            else:
+                print(f"Using model from: {model_path}")
             
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
             model = PolicyNetwork(
@@ -1716,7 +1746,7 @@ if __name__ == "__main__":
             
             print("Predicted action:", predicted_action)
             print("Actual action:   ", actual_action)
-        elif "eval" in sys.argv:
+        elif args.action == "eval":
             # Load game code from dataset
             import datasets
             game_dataset = datasets.load_dataset(GAMES_DATASET, split="train")
@@ -1725,6 +1755,13 @@ if __name__ == "__main__":
             game_id = video_metadata["game_id"]
             
             print(f"Evaluating policy on game: {game_id}")
+            
+            # Check if the model exists
+            if not model_path.exists():
+                print(f"Model not found at {model_path}. Please check the path or train a model first.")
+                sys.exit(1)
+            else:
+                print(f"Using model from: {model_path}")
             
             # Filter dataset to get the specific game
             game_data = game_dataset.filter(lambda x: x["id"] == game_id)
@@ -1750,14 +1787,15 @@ if __name__ == "__main__":
                 max_steps=1000,
                 obs_seq_len=obs_seq_len
             )
-        elif "analyze_video":
+        elif args.action == "analyze_video":
             analyze_video_logs(video_path, logs, video_framecount_start)
     else:
-        # Load the data
+        # If no action is specified, load the data and visualize it
+        print("No action specified. Loading data and visualizing...")
         frames, key_actions, player_positions, events = load_data(video_path, logs, video_framecount_start)
         
         # Visualize the data with animation
-    animate_frames(frames, key_actions, player_positions=player_positions, events=events)
+        animate_frames(frames, key_actions, player_positions=player_positions, events=events)
 
 
 
