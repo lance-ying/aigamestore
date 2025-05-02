@@ -151,28 +151,36 @@ class GameGenerator(ABC):
 
         return "Untitled Game"
 
-    def extract_game_instructions(self, text: str) -> str:
+    def extract_game_description(self, text: str) -> str:
         """
-        Extract game instructions from text
+        Extract game description from text
 
         Args:
-            text: The text containing the game instructions
+            text: The text containing the game description
 
         Returns:
-            The extracted game instructions
+            The extracted game description
         """
-        pattern = r"<game_instructions>\s*(.*?)\s*</game_instructions>"
+        pattern = r"<game_description>\s*(.*?)\s*</game_description>"
         match = re.search(pattern, text, re.DOTALL)
         if match:
             return match.group(1).strip()
         return ""
-
+    
+    def extract_game_controls(self, text: str) -> str:
+        """
+        Extract game controls from text
+        """
+        pattern = r"<game_controls>\s*(.*?)\s*</game_controls>"
+        match = re.search(pattern, text, re.DOTALL)
+    
     def save_games(
         self,
         title: str,
         html_code: str,
         js_files: List[Tuple[str, str]],
-        game_instructions: str,
+        game_description: str,
+        game_controls: str,
         game_concept: str,
         concept_path: Optional[str] = None,
         genre: Optional[str] = None,
@@ -249,7 +257,8 @@ class GameGenerator(ABC):
                 "concept": game_concept,
                 "concept_path": concept_path if concept_path else "None",
                 "genre": genre if genre else "None",
-                "instruction": game_instructions,
+                "description": game_description,
+                "controls": game_controls,
                 "playability": False,
             },
             "generation_info": {

@@ -26,20 +26,25 @@ Game concept: {game_concept}
 
 Output instructions:
 Output the game in the following format with NO OTHER TEXT.
+Output the game in the following format with NO OTHER TEXT.
 <game_title>
 ... (game title)
 </game_title>
 
-<game_instructions>
-... (game description and controls; interesting and clear instructions for the game: how to play, what to do, etc. Keep it short and concise.)
-</game_instructions>
+<game_description>
+... Description: (game description; interesting and clear instructions for playing the game. Keep it short and concise.)
+</game_description>
 
-For each javascript file, you should output the following:
+<game_controls>
+... Controls: (game controls; list of controls for playing the game.)
+</game_controls>
+
+For the javascript files, you should output the following:
 <code filename="{{name}}.{{extension}}">
 ... (code)
 </code>
 
-Output HTML as the last file:
+Output HTML as the last file based on the template below:
 <code filename="index.html">
 ... (html code)
 </code>
@@ -84,7 +89,8 @@ Output HTML as the last file:
             
             # Extract game components from response
             title = self.extract_title(response)
-            game_instructions = self.extract_game_instructions(response)
+            game_description = self.extract_game_description(response)
+            game_controls = self.extract_game_controls(response)
             html_code = self.extract_code_block(response, "html") or ""
             
             # Get JavaScript files
@@ -109,7 +115,8 @@ Output HTML as the last file:
                 title=title,
                 html_code=html_code,
                 js_files=js_files,
-                game_instructions=game_instructions,
+                game_description=game_description,
+                game_controls=game_controls,
                 game_concept=game_concept,
                 concept_path=concept_path,
                 genre=genre,
@@ -124,7 +131,8 @@ Output HTML as the last file:
                 "title": title,
                 "html_code": html_code,
                 "js_files": js_files,
-                "game_instructions": game_instructions,
+                "game_description": game_description,
+                "game_controls": game_controls,
                 "game_dir": game_dir,
             }
             
