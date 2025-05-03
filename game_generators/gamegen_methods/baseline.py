@@ -1,18 +1,39 @@
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Dict, Any, Optional
 import json
+import re
 
 from gamegen_methods.game_generator_base import GameGenerator
 
 
-class SimplePromptGenerator(GameGenerator):
+class BaselineGenerator(GameGenerator):
     """
-    Simple prompt game generator that uses a single LLM call with concatenated system prompts
-    to generate both the game design and code implementation.
+    Baseline game generator that uses a single LLM call with a simple baseline system prompt
+    to generate both the game design and code implementation. The system prompt is a simpler version of the code_generation.txt system prompt.
     """
+
+    def __init__(
+        self,
+        model_name: str = "anthropic:claude-3.7-sonnet",
+        verbose: bool = False,
+        baseline_system_prompt_path: str = "game_generators/system_prompts/baseline_sysprompt.txt",
+    ):
+        """
+        Initialize the baseline generator
+
+        Args:
+            model_name: Name of the LLM model to use
+            verbose: Whether to print verbose output
+            baseline_system_prompt_path: Path to the baseline system prompt
+        """
+        super().__init__(model_name=model_name, verbose=verbose)
+        
+        # Load baseline system prompt
+        with open(baseline_system_prompt_path, "r") as f:
+            self.baseline_system_prompt = f.read()
 
     def generate_user_prompt(self, game_concept: str) -> str:
         """
-        Generate user prompt from game concept for the simple prompt method
+        Generate user prompt from game concept for the baseline method
         
         Args:
             game_concept: The game concept in natural language
@@ -50,9 +71,25 @@ Output HTML as the last file based on the template below:
 """
         return prompt
 
+    def extract_game_controls(self, text: str) -> str:
+        """
+        Extract game controls from text
+        
+        Args:
+            text: The text containing the game controls
+            
+        Returns:
+            The extracted game controls
+        """
+        pattern = r"<game_controls>\s*(.*?)\s*</game_controls>"
+        match = re.search(pattern, text, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+        return ""
+
     def generate_game(self, game_concept: str, concept_path: Optional[str] = None) -> Dict[str, Any]:
         """
-        Generate a game from the given concept using the simple prompt method
+        Generate a game from the given concept using the baseline method
         
         Args:
             game_concept: The game concept in natural language
@@ -65,22 +102,19 @@ Output HTML as the last file based on the template below:
             # Generate user prompt
             user_prompt = self.generate_user_prompt(game_concept)
             
-            # Concatenate system prompts for design and code generation
-            combined_system_prompt = f"{self.game_design_system_prompt}\n\n{self.code_generation_system_prompt}"
-            
-            # Call the LLM with the combined system prompt and user prompt
+            # Use the baseline system prompt
             if self.verbose:
                 print(f"Calling LLM with game concept: {game_concept[:100]}...")
                 
             response = self.model_api.call(
                 user_prompt=user_prompt,
-                system_prompt=combined_system_prompt,
+                system_prompt=self.baseline_system_prompt,
                 verbose=self.verbose,
             )
             
             # Prepare conversation log for saving
             conversation_log = [
-                {"role": "system", "content": combined_system_prompt},
+                {"role": "system", "content": self.baseline_system_prompt},
                 {"role": "user", "content": user_prompt},
                 {"role": "assistant", "content": response}
             ]
@@ -139,4 +173,4 @@ Output HTML as the last file based on the template below:
                 print(f"Error in game generation: {type(e).__name__}: {str(e)}")
                 import traceback
                 traceback.print_exc()
-            raise 
+            raise

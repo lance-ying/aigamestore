@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 
 from gamegen_methods.simple_prompt_generator import SimplePromptGenerator
+from gamegen_methods.baseline import BaselineGenerator
 from game_check.run_all_tests import run_all_tests
 
 
@@ -31,7 +32,7 @@ def parse_args():
         "--method",
         type=str,
         default="simple_prompt",
-        choices=["simple_prompt"], # TODO: "guide_complexity", "template", "template_character_driven", "template_with_critic", "template_with_play"],
+        choices=["baseline", "simple_prompt"], # TODO: "guide_complexity", "template", "template_character_driven", "template_with_critic", "template_with_play"],
         help="Game generation method to use",
     )
     
@@ -102,7 +103,12 @@ def main():
             print(f"Using model: {args.model}")
         
         # Initialize the appropriate generator based on the method
-        if args.method == "simple_prompt":
+        if args.method == "baseline":
+            generator = BaselineGenerator(
+                model_name=args.model,
+                verbose=args.verbose,
+            )
+        elif args.method == "simple_prompt":
             generator = SimplePromptGenerator(
                 model_name=args.model,
                 verbose=args.verbose,
