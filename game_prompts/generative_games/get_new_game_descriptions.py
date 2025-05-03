@@ -158,6 +158,12 @@ def generate_new_game_concept(api: ModelAPI, num_games: int = MAX_CONCEPTS_PER_B
                 "Can you make me a game where the player throws a ball to dislodge a tower of blocks to rescue the pets? Have multiple levels in the game.",
                 "Design a game with a player controlling a spaceship to race against other spaceships to collect the most asteroid fragments. The gravity of the planets can attract objects so avoid crashing into them.",
                 "Could you develop the game in a world in which the player moves in side a bubble which they can shrink and expand? Don't let the bubble pop.",
+                "Dense jungle with vines to swing on, carnivorous plants, and hidden temples.",
+                "A game where the player is a cat trying to catch mice in a maze. The cat can climb on the walls and ceilings.",
+                "Make me a platformer games set in an enchanted forest with magical creatures, mushroom platforms, and fairy dust mechanics.",
+                "Can we have a platformer games set in a space station with low gravity sections, asteroid fields, and airlock puzzles",
+                
+
     ]
             
 
@@ -174,7 +180,7 @@ def generate_new_game_concept(api: ModelAPI, num_games: int = MAX_CONCEPTS_PER_B
             - Create truly innovative game concepts that challenge conventional design patterns, and introduce fresh mechanics or narrative approaches.
             - Make sure that the game concepts are exactly {num_sentences} sentences long.
             - Some elements that can be considered when defining the game concept are characters, reward structure, game mechanics, and world elements. Feel free to combine them or mention just one of them or even none of them and come up with something unique. Sometimes, you can define what the player's goals, motivations, and objectives are, sometimes you can mention an idea defining just the enemies, or just the overall broad environment description, or defining a unique the reward system. These are just some examples, you can come up with unique game concepts defining one or more of these elements of the game to vary the abstraction of the game concept.
-            - Avoid common existing game concepts exist. 
+            - Avoid common existing game concepts and ideas. 
             - Do not specify implementation details like graphics or technical specifications. 
             - You can be abstract or very specific and detailed in your game concepts about the desired aspect of the game.
             - Do not generate game concepts that involve music or sound.
@@ -186,7 +192,7 @@ def generate_new_game_concept(api: ModelAPI, num_games: int = MAX_CONCEPTS_PER_B
             ## Constraints on games that can be generated:
             - Do not have concepts that require sound, audio, or music.
             - Do not have concepts that require 3D graphics. The game will be strictly a 2D game.
-            - The games will be played in a web browser using a keyboard.  
+            - The games will be played in a web browser using keyboard keys as inputs.  
             
             ## Response Format:
             Your response must be a valid JSON array containing dictionaries, each with exactly two keys: "concept" and "genre". 

@@ -41,17 +41,18 @@ class TemplateBasedGenerator(GameGenerator):
 TASK: Design a 2D video game based on the following game concept.
 Game concept: {game_concept}
 
-Please provide a comprehensive game design including:
-- Game title
-- Game narrative and theme
-- Core mechanics and gameplay
-- Entities and their interactions
-- Win/lose conditions
-- Controls and user interface
+<game_design>
+... (game design)
+</game_design>
 
 Focus on creating an interesting and playable 2D game design that follows the concept.
 """
-        return prompt
+        game_design = self.model_api.call(
+            user_prompt=prompt,
+            system_prompt=self.game_design_system_prompt,
+            verbose=self.verbose,
+        )
+        return game_design
 
     def generate_code_generation_prompt(self, game_concept: str, game_design: str) -> str:
         """

@@ -47,17 +47,6 @@ Game concept: {game_concept}
 
 Output instructions:
 Output the game in the following format with NO OTHER TEXT.
-<game_title>
-... (game title)
-</game_title>
-
-<game_description>
-... Description: (game description; interesting and clear instructions for playing the game. Keep it short and concise.)
-</game_description>
-
-<game_controls>
-... Controls: (game controls; list of controls for playing the game.)
-</game_controls>
 
 For the javascript files, you should output the following:
 <code filename="{{name}}.{{extension}}">
