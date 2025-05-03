@@ -162,9 +162,7 @@ def generate_new_game_concept(api: ModelAPI, num_games: int = MAX_CONCEPTS_PER_B
                 "A game where the player is a cat trying to catch mice in a maze. The cat can climb on the walls and ceilings.",
                 "Make me a platformer games set in an enchanted forest with magical creatures, mushroom platforms, and fairy dust mechanics.",
                 "Can we have a platformer games set in a space station with low gravity sections, asteroid fields, and airlock puzzles",
-                
-
-    ]
+            ]
             
 
     # Sample a few examples to include in the prompt

@@ -27,6 +27,13 @@ class TemplateBasedGenerator(GameGenerator):
         # but implement it to satisfy the abstract base class requirement
         return self.generate_game_design_prompt(game_concept)
 
+    def extract_game_design(self, output: str) -> str:
+        """
+        Extract the game design from the output
+        """
+        pattern = r"<game_design>\s*(.*?)\s*</game_design>"
+        return output
+
     def generate_game_design_prompt(self, game_concept: str) -> str:
         """
         Generate user prompt for the game designer LLM
@@ -47,11 +54,13 @@ Game concept: {game_concept}
 
 Focus on creating an interesting and playable 2D game design that follows the concept.
 """
-        game_design = self.model_api.call(
+        output = self.model_api.call(
             user_prompt=prompt,
             system_prompt=self.game_design_system_prompt,
             verbose=self.verbose,
         )
+
+        game_design = self.extract_game_design(output)
         return game_design
 
     def generate_code_generation_prompt(self, game_concept: str, game_design: str) -> str:
