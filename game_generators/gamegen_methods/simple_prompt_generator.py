@@ -26,7 +26,6 @@ Game concept: {game_concept}
 
 Output instructions:
 Output the game in the following format with NO OTHER TEXT.
-Output the game in the following format with NO OTHER TEXT.
 <game_title>
 ... (game title)
 </game_title>
