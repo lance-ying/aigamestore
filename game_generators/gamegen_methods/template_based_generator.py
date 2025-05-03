@@ -76,13 +76,23 @@ Focus on creating an interesting and playable 2D game design that follows the co
         """
         prompt = f"""
 TASK: Implement a 2D video game based on the following game design.
-Game concept: {game_concept}
 
 Game design:
 {game_design}
 
 Output instructions:
 Output the game in the following format with NO OTHER TEXT.
+
+For the javascript files, you should output the following:
+<code filename="{{name}}.{{extension}}">
+... (code)
+</code>
+
+Output HTML as the last file based on the template below:
+<code filename="index.html">
+... (html code)
+</code>
+
 <game_title>
 ... (game title)
 </game_title>
@@ -94,16 +104,6 @@ Output the game in the following format with NO OTHER TEXT.
 <game_controls>
 ... Controls: (game controls; list of controls for playing the game.)
 </game_controls>
-
-For the javascript files, you should output the following:
-<code filename="{{name}}.{{extension}}">
-... (code)
-</code>
-
-Output HTML as the last file based on the template below:
-<code filename="index.html">
-... (html code)
-</code>
 """
         return prompt
 

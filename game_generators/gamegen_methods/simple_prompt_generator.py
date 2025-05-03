@@ -26,6 +26,17 @@ Game concept: {game_concept}
 
 Output instructions:
 Output the game in the following format with NO OTHER TEXT.
+
+For the javascript files, you should output the following:
+<code filename="{{name}}.{{extension}}">
+... (code)
+</code>
+
+Output HTML as the last file based on the template below:
+<code filename="index.html">
+... (html code)
+</code>
+
 <game_title>
 ... (game title)
 </game_title>
@@ -37,16 +48,6 @@ Output the game in the following format with NO OTHER TEXT.
 <game_controls>
 ... Controls: (game controls; list of controls for playing the game.)
 </game_controls>
-
-For the javascript files, you should output the following:
-<code filename="{{name}}.{{extension}}">
-... (code)
-</code>
-
-Output HTML as the last file based on the template below:
-<code filename="index.html">
-... (html code)
-</code>
 """
         return prompt
 
@@ -66,7 +67,11 @@ Output HTML as the last file based on the template below:
             user_prompt = self.generate_user_prompt(game_concept)
             
             # Concatenate system prompts for design and code generation
-            combined_system_prompt = f"{self.game_design_system_prompt}\n\n{self.code_generation_system_prompt}"
+            combined_system_prompt = f"""
+            You will be playing the role of a game designer and a game developer to implement the game given a game concept. Here are useful instructions for both roles:
+            {self.game_design_system_prompt}
+            {self.code_generation_system_prompt}
+            """
             
             # Call the LLM with the combined system prompt and user prompt
             if self.verbose:
