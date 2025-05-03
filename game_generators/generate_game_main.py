@@ -1,10 +1,13 @@
 import os
 import json
 import argparse
+import sys
 from pathlib import Path
 from typing import Dict, Any, Optional
 
 from gamegen_methods.simple_prompt_generator import SimplePromptGenerator
+from gamegen_methods.baseline import BaselineGenerator
+from game_check.run_all_tests import run_all_tests
 
 
 def parse_args():
@@ -29,7 +32,7 @@ def parse_args():
         "--method",
         type=str,
         default="simple_prompt",
-        choices=["simple_prompt"], # TODO: "guide_complexity", "template", "template_character_driven", "template_with_critic", "template_with_play"],
+        choices=["baseline", "simple_prompt"], # TODO: "guide_complexity", "template", "template_character_driven", "template_with_critic", "template_with_play"],
         help="Game generation method to use",
     )
     
@@ -37,6 +40,13 @@ def parse_args():
         "--verbose",
         action="store_true",
         help="Enable verbose output",
+    )
+    
+    parser.add_argument(
+        "--allow_resample",
+        type=int,
+        default=0,
+        help="Number of automatic resamples allowed if tests fail (0 means ask for confirmation)",
     )
     
     return parser.parse_args()
@@ -56,6 +66,28 @@ def load_concept(concept_path: str) -> Dict[str, Any]:
     return concept_data
 
 
+def get_user_confirmation(message: str) -> bool:
+    """Get user confirmation with y/n prompt"""
+    response = input(f"{message} (y/n): ").lower().strip()
+    return response == 'y'
+
+
+def test_game(game_dir: str, verbose: bool) -> bool:
+    """Run tests on the generated game and return result"""
+    if verbose:
+        print(f"Running tests on game in directory: {game_dir}")
+    
+    try:
+        results = run_all_tests(game_dir)
+        return results["overall_result"]
+    except Exception as e:
+        print(f"Error running tests: {type(e).__name__}: {str(e)}")
+        if verbose:
+            import traceback
+            traceback.print_exc()
+        return False
+
+
 def main():
     """Main function to generate games from concepts"""
     args = parse_args()
@@ -71,7 +103,12 @@ def main():
             print(f"Using model: {args.model}")
         
         # Initialize the appropriate generator based on the method
-        if args.method == "simple_prompt":
+        if args.method == "baseline":
+            generator = BaselineGenerator(
+                model_name=args.model,
+                verbose=args.verbose,
+            )
+        elif args.method == "simple_prompt":
             generator = SimplePromptGenerator(
                 model_name=args.model,
                 verbose=args.verbose,
@@ -88,14 +125,54 @@ def main():
         else:
             raise ValueError(f"Unknown method: {args.method}")
         
-        # Generate the game
-        result = generator.generate_game(
-            game_concept=game_concept,
-            concept_path=args.concept_path,
-        )
+        # Generate and test the game, with resampling if needed
+        max_attempts = 3  # Maximum number of generation attempts
+        attempt = 1
+        game_passed = False
         
-        print(f"Game generated successfully: {result['title']}")
-        print(f"Saved to: {result['game_dir']}")
+        while attempt <= max_attempts and not game_passed:
+            if attempt > 1:
+                print(f"\nAttempting game generation again (attempt {attempt}/{max_attempts})...")
+            
+            # Generate the game
+            result = generator.generate_game(
+                game_concept=game_concept,
+                concept_path=args.concept_path,
+            )
+            
+            print(f"Game generated successfully: {result['title']}")
+            print(f"Saved to: {result['game_dir']}")
+            
+            # Test the game
+            print("\nTesting game functionality...")
+            game_passed = test_game(result['game_dir'], args.verbose)
+            
+            if game_passed:
+                print("\n✅ Game passed all tests!")
+            else:
+                print("\n❌ Game failed some tests.")
+                
+                # Check if we should resample
+                if attempt < max_attempts:
+                    if args.allow_resample > 0 and attempt <= args.allow_resample:
+                        print(f"Auto-resampling enabled ({args.allow_resample} allowed). Generating new game...")
+                    else:
+                        if not get_user_confirmation("Do you want to generate a new game?"):
+                            print("User chose not to resample. Keeping the current game.")
+                            break
+                else:
+                    print(f"Reached maximum attempts ({max_attempts}). Keeping the last generated game.")
+            
+            attempt += 1
+        
+        # Final outcome
+        if game_passed:
+            print(f"\nFinal game generation successful after {attempt-1} attempt(s)!")
+        else:
+            print(f"\nWarning: Final game did not pass all tests after {attempt-1} attempt(s).")
+        
+        print(f"Game title: {result['title']}")
+        print(f"Game location: {result['game_dir']}")
         
     except Exception as e:
         print(f"Error generating game: {type(e).__name__}: {str(e)}")

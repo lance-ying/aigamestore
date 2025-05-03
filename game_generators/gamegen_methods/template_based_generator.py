@@ -4,15 +4,18 @@ import json
 from gamegen_methods.game_generator_base import GameGenerator
 
 
-class SimplePromptGenerator(GameGenerator):
+class TemplateBasedGenerator(GameGenerator):
     """
-    Simple prompt game generator that uses a single LLM call with concatenated system prompts
-    to generate both the game design and code implementation.
+    Template-based game generator that uses two sequential LLM calls:
+    1. First call to design the game using the game design system prompt
+    2. Second call to implement the game code using the code generation system prompt
     """
 
     def generate_user_prompt(self, game_concept: str) -> str:
         """
-        Generate user prompt from game concept for the simple prompt method
+        Generate user prompt from game concept for the template-based method
+        This is required by the GameGenerator base class but not used directly in this implementation,
+        as we use separate methods for each stage.
         
         Args:
             game_concept: The game concept in natural language
@@ -20,9 +23,53 @@ class SimplePromptGenerator(GameGenerator):
         Returns:
             User prompt for the LLM
         """
+        # We don't use this directly in the template-based implementation
+        # but implement it to satisfy the abstract base class requirement
+        return self.generate_game_design_prompt(game_concept)
+
+    def generate_game_design_prompt(self, game_concept: str) -> str:
+        """
+        Generate user prompt for the game designer LLM
+        
+        Args:
+            game_concept: The game concept in natural language
+            
+        Returns:
+            User prompt for the game designer LLM
+        """
         prompt = f"""
-TASK: Implement a 2D video game that follows the game concept.
+TASK: Design a 2D video game based on the following game concept.
 Game concept: {game_concept}
+
+Please provide a comprehensive game design including:
+- Game title
+- Game narrative and theme
+- Core mechanics and gameplay
+- Entities and their interactions
+- Win/lose conditions
+- Controls and user interface
+
+Focus on creating an interesting and playable 2D game design that follows the concept.
+"""
+        return prompt
+
+    def generate_code_generation_prompt(self, game_concept: str, game_design: str) -> str:
+        """
+        Generate user prompt for the game developer LLM
+        
+        Args:
+            game_concept: The original game concept
+            game_design: The output from the game designer LLM
+            
+        Returns:
+            User prompt for the game developer LLM
+        """
+        prompt = f"""
+TASK: Implement a 2D video game based on the following game design.
+Game concept: {game_concept}
+
+Game design:
+{game_design}
 
 Output instructions:
 Output the game in the following format with NO OTHER TEXT.
@@ -52,7 +99,7 @@ Output HTML as the last file based on the template below:
 
     def generate_game(self, game_concept: str, concept_path: Optional[str] = None) -> Dict[str, Any]:
         """
-        Generate a game from the given concept using the simple prompt method
+        Generate a game from the given concept using the template-based method
         
         Args:
             game_concept: The game concept in natural language
@@ -62,26 +109,37 @@ Output HTML as the last file based on the template below:
             Dictionary containing game data and any intermediate outputs
         """
         try:
-            # Generate user prompt
-            user_prompt = self.generate_user_prompt(game_concept)
+            # Step 1: Generate the game design using the first LLM call
+            design_prompt = self.generate_game_design_prompt(game_concept)
             
-            # Concatenate system prompts for design and code generation
-            combined_system_prompt = f"{self.game_design_system_prompt}\n\n{self.code_generation_system_prompt}"
-            
-            # Call the LLM with the combined system prompt and user prompt
             if self.verbose:
-                print(f"Calling LLM with game concept: {game_concept[:100]}...")
-                
+                print(f"Calling game designer LLM with game concept: {game_concept[:100]}...")
+            
+            game_design = self.model_api.call(
+                user_prompt=design_prompt,
+                system_prompt=self.game_design_system_prompt,
+                verbose=self.verbose,
+            )
+            
+            # Step 2: Generate the game code using the second LLM call
+            code_generation_prompt = self.generate_code_generation_prompt(game_concept, game_design)
+            
+            if self.verbose:
+                print(f"Calling game developer LLM with game design...")
+            
             response = self.model_api.call(
-                user_prompt=user_prompt,
-                system_prompt=combined_system_prompt,
+                user_prompt=code_generation_prompt,
+                system_prompt=self.code_generation_system_prompt,
                 verbose=self.verbose,
             )
             
             # Prepare conversation log for saving
             conversation_log = [
-                {"role": "system", "content": combined_system_prompt},
-                {"role": "user", "content": user_prompt},
+                {"role": "system", "content": self.game_design_system_prompt},
+                {"role": "user", "content": design_prompt},
+                {"role": "assistant", "content": game_design},
+                {"role": "system", "content": self.code_generation_system_prompt},
+                {"role": "user", "content": code_generation_prompt},
                 {"role": "assistant", "content": response}
             ]
             
@@ -118,7 +176,10 @@ Output HTML as the last file based on the template below:
                 game_concept=game_concept,
                 concept_path=concept_path,
                 genre=genre,
-                intermediate_outputs={"full_response": response},
+                intermediate_outputs={
+                    "game_design": game_design,
+                    "full_response": response
+                },
                 conversation_log=conversation_log
             )
             
@@ -132,6 +193,7 @@ Output HTML as the last file based on the template below:
                 "game_description": game_description,
                 "game_controls": game_controls,
                 "game_dir": game_dir,
+                "game_design": game_design,
             }
             
         except Exception as e:
@@ -139,4 +201,4 @@ Output HTML as the last file based on the template below:
                 print(f"Error in game generation: {type(e).__name__}: {str(e)}")
                 import traceback
                 traceback.print_exc()
-            raise 
+            raise
