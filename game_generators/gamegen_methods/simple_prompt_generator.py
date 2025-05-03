@@ -68,7 +68,7 @@ Output HTML as the last file based on the template below:
             
             # Concatenate system prompts for design and code generation
             combined_system_prompt = f"""
-            You will be playing the role of a game designer and a game developer to implement the game given a game concept. Here are useful instructions for both roles:
+            You will be playing the role of a game designer and a game code developer to implement the game given a game concept. Here are useful instructions for both roles:
             {self.game_design_system_prompt}
             {self.code_generation_system_prompt}
             """
