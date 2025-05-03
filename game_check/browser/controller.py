@@ -435,7 +435,7 @@ class GameBrowserController:
                     random_action_results.append(random_action_info)
                     
                     # Wait between actions
-                    await page.wait_for_timeout(30)
+                    await page.wait_for_timeout(50)
                 
                 # Add random action results to the overall results
                 result["random_actions"] = random_action_results
@@ -517,7 +517,7 @@ class GameBrowserController:
             
             # Method 2: Try with down and up events
             await page.keyboard.down(key)
-            await page.wait_for_timeout(30)
+            await page.wait_for_timeout(50)
             await page.keyboard.up(key)
             
             # Method 3: Try sending key via JavaScript for games that use custom event listeners
@@ -542,7 +542,7 @@ class GameBrowserController:
                 }}""")
                         
             # Wait for visual changes
-            await page.wait_for_timeout(30)
+            await page.wait_for_timeout(50)
             
             # Take a single screenshot after the key press
             screenshot_filename = f"frame_{self.frame_counter:05d}_action_{key}.png"

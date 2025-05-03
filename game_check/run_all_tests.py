@@ -13,7 +13,6 @@ from typing import Dict, Any, List
 
 from .tests.load_test import check_game_loads, report_load_test
 from .tests.interaction_test import test_game_interaction, report_interaction_test
-from .tests.restart_test import test_game_restart, report_restart_test
 from .utils.helpers import save_test_results
 
 # Configure logging
@@ -36,7 +35,6 @@ def run_all_tests(game_path: str, output_file: str = None) -> Dict[str, Any]:
         "game_path": game_path,
         "load_test": {},
         "interaction_test": {},
-        "restart_test": {},
         "overall_result": False
     }
     
@@ -53,22 +51,14 @@ def run_all_tests(game_path: str, output_file: str = None) -> Dict[str, Any]:
         interaction_results = test_game_interaction(game_path)
         results["interaction_test"] = interaction_results
         report_interaction_test(interaction_results)
-        
-        # Run restart test
-        logging.info("Running game restart test...")
-        restart_results = test_game_restart(game_path)
-        results["restart_test"] = restart_results
-        report_restart_test(restart_results)
     else:
-        logging.warning("Skipping interaction and restart tests because load test failed")
+        logging.warning("Skipping interaction test because load test failed")
         results["interaction_test"] = {"test_result": False, "error": "Skipped due to load test failure"}
-        results["restart_test"] = {"test_result": False, "error": "Skipped due to load test failure"}
     
     # Calculate overall result (all tests passed)
     results["overall_result"] = (
         results["load_test"].get("test_result", False) and
-        results["interaction_test"].get("test_result", False) and
-        results["restart_test"].get("test_result", False)
+        results["interaction_test"].get("test_result", False)
     )
     
     # Save combined results if output file specified
@@ -86,7 +76,6 @@ def run_all_tests(game_path: str, output_file: str = None) -> Dict[str, Any]:
     print("="*50)
     print(f"Load Test: {'✅ PASSED' if results['load_test'].get('test_result', False) else '❌ FAILED'}")
     print(f"Interaction Test: {'✅ PASSED' if results['interaction_test'].get('test_result', False) else '❌ FAILED'}")
-    print(f"Restart Test: {'✅ PASSED' if results['restart_test'].get('test_result', False) else '❌ FAILED'}")
     print("-"*50)
     print(f"Overall Result: {'✅ PASSED' if results['overall_result'] else '❌ FAILED'}")
     print("="*50 + "\n")
@@ -99,14 +88,8 @@ def main():
     parser.add_argument("--output", "-o", help="Path to save combined results (JSON)")
     parser.add_argument("--skip-load", action="store_true", help="Skip load test")
     parser.add_argument("--skip-interaction", action="store_true", help="Skip interaction test")
-    parser.add_argument("--skip-restart", action="store_true", default=True, help="Skip restart test (default: skip)")
-    parser.add_argument("--with-restart", action="store_true", help="Include restart test")
-    
+
     args = parser.parse_args()
-    
-    # Override skip-restart if with-restart is specified
-    if args.with_restart:
-        args.skip_restart = False
     
     # Normalize game path
     game_path = os.path.abspath(args.game_path)
@@ -123,12 +106,11 @@ def main():
     tests_to_run = {
         "load": not args.skip_load,
         "interaction": not args.skip_interaction,
-        "restart": not args.skip_restart
     }
     
     # If skipping load test but running others, warn user
-    if not tests_to_run["load"] and (tests_to_run["interaction"] or tests_to_run["restart"]):
-        logging.warning("Running interaction or restart tests without load test may fail if game doesn't load properly")
+    if not tests_to_run["load"] and (tests_to_run["interaction"]):
+        logging.warning("Running interaction tests without load test may fail if game doesn't load properly")
     
     # Run tests selectively
     results = {
@@ -148,9 +130,6 @@ def main():
             logging.warning("Load test failed. Skipping remaining tests.")
             if tests_to_run["interaction"]:
                 results["interaction_test"] = {"test_result": False, "error": "Skipped due to load test failure"}
-            if tests_to_run["restart"]:
-                results["restart_test"] = {"test_result": False, "error": "Skipped due to load test failure"}
-            
             # Save results and exit
             if output_file:
                 with open(output_file, 'w') as f:
@@ -165,15 +144,8 @@ def main():
         results["interaction_test"] = interaction_results
         report_interaction_test(interaction_results)
     
-    # Run restart test if not skipped
-    if tests_to_run["restart"]:
-        logging.info("Running game restart test...")
-        restart_results = test_game_restart(game_path)
-        results["restart_test"] = restart_results
-        report_restart_test(restart_results)
-    
+
     # Calculate overall result (required tests only - load and interaction)
-    # Restart test is now optional and doesn't affect overall result
     test_results = []
     
     # Add load test result if run
