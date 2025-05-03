@@ -78,7 +78,7 @@ def load_existing_games(games_dir: str, max_games: int = -1) -> List[Dict[str, A
     
     return game_archive
 
-def generate_new_game_concept(api: ModelAPI, num_games: int = MAX_CONCEPTS_PER_BATCH, game_archive: List[Dict[str, Any]] = None, max_retries: int = 10, temperature: float = 1.0, num_sentences: int = 3) -> List[Dict[str, Any]]:
+def generate_new_game_concept(api: ModelAPI, num_games: int = MAX_CONCEPTS_PER_BATCH, game_archive: List[Dict[str, Any]] = None, max_retries: int = 10, temperature: float = 0.7, num_sentences: int = 3) -> List[Dict[str, Any]]:
     """
     Generate new game concepts using the specified model.
     
