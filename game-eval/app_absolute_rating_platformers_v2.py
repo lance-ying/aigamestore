@@ -16,7 +16,7 @@ from huggingface_hub import HfApi
 HF_TOKEN = os.environ.get("HF_TOKEN")
 
 
-games_version = "v5"
+games_version = "v6"
 run_name = "pilot1"
 
 GAMES_DATASET = f"generative-games/gen-games-{games_version}"
@@ -298,7 +298,8 @@ def submit_ratings():
                 "user_id": user_id,
                 "timestamp": timestamp,
                 "ratings": {
-                    "fun": ratings.get('fun')
+                    "fun": ratings.get('fun'),
+                    "playability": ratings.get('playability')
                 },
                 "logs": json.dumps(logs),
                 "events": json.dumps(events)
@@ -399,8 +400,8 @@ HTML_TEMPLATE = '''
             margin: 0 auto;
         }
         .game-frame {
-            width: 1000px;
-            height: 600px;
+            width: 600px;
+            height: 400px;
             border: none;
             background: #222;
             overflow: hidden; /* Prevent scrolling within iframe */
@@ -690,14 +691,19 @@ HTML_TEMPLATE = '''
         <div class="modal-content">
             <span class="close">&times;</span>
             <h2>How to Evaluate the Game</h2>
-            <p>Your task is to evaluate a series of games. You will be shown a total of ''' + str(NUM_GAMES_TO_RATE) + ''' games to rate. These games may contain issues. You should take these issues into account when rating the games.</p>
+            <p>Your task is to evaluate a series of basic 2D games. You will be shown a total of ''' + str(NUM_GAMES_TO_RATE) + ''' games to rate. These games may contain issues. You should take these issues into account when rating the games.</p>
             <h3>Please follow these steps to provide your rating:</h3>
             <ol>
                 <li><b>Please play each game for about 1 minute</b> to get a good feel for it. If the game is broken or unplayable, you may stop earlier.</li>
+                <li><b>Rate the playability of the game on a scale from 0 to 10:</b><br>
+                    - 0: Completely unplayable or broken<br>
+                    - 5: Average controls and interaction<br>
+                    - 10: Excellent, intuitive controls and interaction
+                </li>
                 <li><b>Rate how fun the game is on a scale from 0 to 10:</b><br>
                     - 0: Not fun at all<br>
                     - 5: Somewhat enjoyable<br>
-                    - 10: Extremely fun and engaging (like a free mobile game you'd play multiple times)
+                    - 10: Extremely fun (for a basic 2D game)
                 </li>
             </ol>
             <h3>Important Notes:</h3>
@@ -718,8 +724,28 @@ HTML_TEMPLATE = '''
             <iframe class="game-frame" src="/game/{{ game_path }}"></iframe>
             <div class="rating-sliders">
                 <div class="rating-item">
+                    <label>Playability: How easy is it to control and interact with the game?</label>
+                    <div class="rating-description">0=Unplayable/broken, 5=Average controls, 10=Excellent/intuitive controls</div>
+                    <fieldset class="range__field">
+                        <input class="range" type="range" min="0" max="10" value="5" id="playability-1">
+                        <svg role="presentation" width="100%" height="14" xmlns="http://www.w3.org/2000/svg">
+                            <text class="range__point" x="0%" y="14" text-anchor="start">0</text>
+                            <text class="range__point" x="10%" y="14" text-anchor="middle">1</text>
+                            <text class="range__point" x="20%" y="14" text-anchor="middle">2</text>
+                            <text class="range__point" x="30%" y="14" text-anchor="middle">3</text>
+                            <text class="range__point" x="40%" y="14" text-anchor="middle">4</text>
+                            <text class="range__point" x="50%" y="14" text-anchor="middle">5</text>
+                            <text class="range__point" x="60%" y="14" text-anchor="middle">6</text>
+                            <text class="range__point" x="70%" y="14" text-anchor="middle">7</text>
+                            <text class="range__point" x="80%" y="14" text-anchor="middle">8</text>
+                            <text class="range__point" x="90%" y="14" text-anchor="middle">9</text>
+                            <text class="range__point" x="100%" y="14" text-anchor="end">10</text>
+                        </svg>
+                    </fieldset>
+                </div>
+                <div class="rating-item">
                     <label>Fun: How enjoyable is the game to play?</label>
-                    <div class="rating-description">0=Not fun at all, 5=Somewhat enjoyable, 10=Extremely fun</div>
+                    <div class="rating-description">0=Not fun at all, 5=Somewhat enjoyable, 10=Extremely fun (for a basic 2D game)</div>
                     <fieldset class="range__field">
                         <input class="range" type="range" min="0" max="10" value="5" id="fun-1">
                         <svg role="presentation" width="100%" height="14" xmlns="http://www.w3.org/2000/svg">
@@ -862,7 +888,8 @@ HTML_TEMPLATE = '''
             function submitRatings() {
                 const data = {
                     ratings: {
-                        fun: document.getElementById('fun-1').value
+                        fun: document.getElementById('fun-1').value,
+                        playability: document.getElementById('playability-1').value
                     },
                     logs: logs,
                     rating_id: '{{ rating_id }}',
@@ -1188,8 +1215,8 @@ window.addEventListener('beforeunload', sendBufferedEvents);
         // Video parameters
         let fps = 60;
         let quality = 0.8;
-        let width = 300;
-        let height = 200;
+        let width = 600;
+        let height = 400;
 
         inst.draw = function() {
         if (!started) {
@@ -1570,7 +1597,7 @@ FEEDBACK_TEMPLATE = '''
             
             <div class="form-group">
                 <label for="suggestions">Do you have any suggestions or feedback to improve the study?</label>
-                <textarea id="suggestions" name="suggestions" placeholder="Your suggestions will help us improve..."></textarea>
+                <textarea id="suggestions" name="suggestions" placeholder="Your suggestions will help us improve these basic 2D games..."></textarea>
             </div>
             
             <div class="form-group">
@@ -1578,7 +1605,7 @@ FEEDBACK_TEMPLATE = '''
                 <textarea id="fun_criteria" name="fun_criteria" placeholder="What criteria did you use to evaluate the games?"></textarea>
             </div>
             
-            <h2>Demographics (Optional)</h2>
+            <h2>Demographics</h2>
             <p class="description">This information helps us understand our participant pool better. All responses are anonymous.</p>
             
             <div class="form-group">

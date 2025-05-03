@@ -10,7 +10,7 @@ import pandas as pd
 import seaborn as sns
 
 
-games_version = "v5"
+games_version = "v6"
 
 # run_name = "test"
 # run_name = "test3"
@@ -238,7 +238,7 @@ if __name__ == "__main__":
         print(f"{user_id}: {len(rating_dataset.filter(lambda x: x['user_id'] == user_id))}")
 
     # remove test users (any user with "test" in their id)
-    rating_dataset = rating_dataset.filter(lambda x: "test" not in x["user_id"])
+    # rating_dataset = rating_dataset.filter(lambda x: "test" not in x["user_id"])
     print(f"After removing test users: {rating_dataset}")
 
     results = defaultdict(list)
@@ -285,6 +285,7 @@ if __name__ == "__main__":
         logs = json.loads(entry["logs"])
         # TODO
         if len(logs) == 0:
+            print(f"No logs for user {entry['user_id']} and game {game_id}")
             res = None
         else:
             res = analyze_logs(logs)
@@ -305,16 +306,16 @@ if __name__ == "__main__":
                 results["time_spent"].append(time_spent)
             else:
                 results["time_spent"].append(0)
+            print(f"Number of key inputs: {len(key_inputs)}, time spent: {time_spent}")
         else:
             results["num_key_presses"].append(np.nan)
             results["time_spent"].append(np.nan)
-        print(f"Number of key inputs: {len(key_inputs)}, time spent: {time_spent}")
 
         results["model"].append(model)
         results["method"].append(method)
         # results["gameplay_analysis"].append(res)
-        assert len(entry["ratings"]) == 1, f"Found {len(entry['ratings'])} ratings for game {game_id}"
-        results["rating"].append(int(entry["ratings"]["fun"]))
+        results["rating_fun"].append(int(entry["ratings"]["fun"]))
+        results["rating_playability"].append(int(entry["ratings"]["playability"]))
 
         results["game_id"].append(game_id)
         results["rating_id"].append(rating_id)

@@ -1666,8 +1666,9 @@ if __name__ == "__main__":
 
     # around 5 min of gameplay
     log_dirs = [
-        Path(__file__).parent / "results" / "games_v5" / "rating_46cb9522-1ca3-4676-96f4-855276f1ea2a_game_6ecf4c0a8bcbc48f1e16c651e829606539c10ca59a172a4302c125063a3c7dc1",
-        Path(__file__).parent / "results" / "games_v5" / "rating_42a0b09d-9cfe-4ebe-8e59-13c9b46ab150_game_6ecf4c0a8bcbc48f1e16c651e829606539c10ca59a172a4302c125063a3c7dc1"
+        # Path(__file__).parent / "results" / "games_v5" / "rating_46cb9522-1ca3-4676-96f4-855276f1ea2a_game_6ecf4c0a8bcbc48f1e16c651e829606539c10ca59a172a4302c125063a3c7dc1",
+        # Path(__file__).parent / "results" / "games_v5" / "rating_42a0b09d-9cfe-4ebe-8e59-13c9b46ab150_game_6ecf4c0a8bcbc48f1e16c651e829606539c10ca59a172a4302c125063a3c7dc1"
+        Path(__file__).parent / "results" / "games_v6" / "rating_f44c1006-31f9-4621-a6d6-b46e2d181662_game_e94e6d38decf1bba54bcffd14217319d5f07cbafafb721b132efd2220519eabb"
     ]
 
     def load_data_from_dir(log_dir):
@@ -1697,6 +1698,12 @@ if __name__ == "__main__":
         player_positions.extend(_player_positions)
         events.extend(_events)        
 
+    # downsample data (60 to 10 fps)
+    # frames = frames[::6]
+    # key_actions = key_actions[::6]
+    # player_positions = player_positions[::6]
+    # events = events[::6]
+
     # animate_frames(frames, key_actions, player_positions, events)
 
     # for i in range(200):
@@ -1723,7 +1730,7 @@ if __name__ == "__main__":
     
     # Set image size for model
     img_size = (96, 96)  # (width, height)
-    obs_seq_len = 4  # Length of observation sequence (frames and actions)
+    obs_seq_len = 2  # Length of observation sequence (frames and actions)
     
     # Use wandb based on argument
     # use_wandb = args.wandb
