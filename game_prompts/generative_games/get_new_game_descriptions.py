@@ -108,14 +108,20 @@ def generate_new_game_concept(
     genre_list_str = ", ".join(GENRES)
 
     prompt = f"""
-You are providing {num_games} completely original, interesting, and imaginative concepts to an engineer to build single-player 2D JavaScript video games. The engineer will use the p5.js library and p5.collide library to build the games, so do not include any elements that are not compatible with the p5.js library.
+You are going to come up with {num_games} completely original and imaginative concepts for single-player 2D video games to be built in JavaScript using only the p5.js and p5.collide libraries.
 
-For each game concept, you'd better to:
-- Think differently from the standard game ideas and create something unique and interesting. Each game should be distinctively different from the others.
-- Pick 1-3 genres from this list: {genre_list_str} and mix them. Ensure that there is an equal representation and combination of genres in all the game concepts. 
-- Write as if you are a person with a distinct taste in video games. Use an original narrative style in each game concept. For example, you could be either a 10 year old girl who likes to play games with cute characters, a 30 year old man who likes to play Counter Strike, or a 70 year old grandmother who is a Sudoku expert. You don't have to specify who you are, but you should write the game concept from the perspective of a real person.
-- Vary the abstract and specification of the game concepts across the game concepts. Some should be more abstract, leaving the engineer with more freedom to design the game around the elements of elements you describe, and others more specific as you describe the game mechanics in detail. Vary the length of the game concepts.
-- No implementation details like graphics or technical specifications, you will leave that to the engineer.
+Each concept must be:
+- **Unique and creative**, clearly different from typical or existing game ideas. Avoid clichés or remixes of classic mazes, puzzles and board games.
+- **Feasible to implement** with simple 2D shapes, bounding box collisions, and keyboard-only input. No sprites, audio, mouse, 3D, or puzzle logic.
+
+When writing your concepts:
+- Choose **1 to 3 genres** from this list: {genre_list_str}. Use a **varied and balanced mix** across the concepts.
+- Imagine you are a **different person for each game idea** — someone with a distinct personality and taste in games. Let that voice come through in how the concept is described, but you don't necessarily need to introduce yourself.
+- It is better to have common objects and elements in the game concepts, but make the game unique and interesting by combining them in a new way.
+- You may focus on **any subset of gameplay elements**, such as movement mechanics, world rules, enemy behavior, reward systems, hazards, or player goals. You don’t need to describe all parts — highlight what matters and what makes the game unique.
+- Vary the **level of abstraction**: some aspects should be described in concise but detailed way, while others can be described in a high-level way and leave room for interpretation.
+- Keep each game concept short in 1-2 short sentences, and do **not include implementation details or visual styles** — leave those decisions to the engineer.
+- 
 """
 
     EXAMPLES = [
@@ -431,7 +437,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--num_games",
         type=int,
-        default=5,
+        default=10,
         help="Number of games to generate",
     )
     parser.add_argument(
