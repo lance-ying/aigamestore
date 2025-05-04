@@ -55,6 +55,7 @@ class GameGenerator(ABC):
         """
         pass
 
+
     @abstractmethod
     def generate_game(self, game_concept: str) -> Dict[str, Any]:
         """
@@ -168,6 +169,14 @@ class GameGenerator(ABC):
             return match.group(1).strip()
         return ""
     
+    def extract_game_plan(self, text: str) -> str:
+        """
+        Extract game plan from text
+        """
+        pattern = r"<plan>\s*(.*?)\s*</plan>"
+        match = re.search(pattern, text, re.DOTALL)
+        return match.group(1).strip()
+    
     def extract_game_controls(self, text: str) -> str:
         """
         Extract game controls from text
@@ -183,6 +192,7 @@ class GameGenerator(ABC):
         game_description: str,
         game_controls: str,
         game_concept: str,
+        game_plan: str,
         concept_path: Optional[str] = None,
         genre: Optional[str] = None,
         intermediate_outputs: Optional[Dict[str, Any]] = None,
@@ -260,6 +270,7 @@ class GameGenerator(ABC):
                 "description": game_description,
                 "controls": game_controls,
                 "playability": False,
+                "plan": game_plan,
             },
             "generation_info": {
                 "method": self.__class__.__name__,

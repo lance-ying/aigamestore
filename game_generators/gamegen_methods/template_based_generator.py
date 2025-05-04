@@ -75,35 +75,25 @@ Focus on creating an interesting and playable 2D game design that follows the co
             User prompt for the game developer LLM
         """
         prompt = f"""
-TASK: Implement a 2D video game based on the following game design.
-
-Game design:
-{game_design}
+TASK: Implement a 2D video game that follows the game concept.
+Game concept: {game_concept}
 
 Output instructions:
-Output the game in the following format with NO OTHER TEXT.
+Output the code plan and game files in this format with NO OTHER TEXT:
 
-For the javascript files, you should output the following:
+<plan>
+... (code plan in maximum 5 sentences)
+</plan>
+
+For the javascript files:
 <code filename="{{name}}.{{extension}}">
 ... (code)
 </code>
 
-Output HTML as the last file based on the template below:
+HTML (output last):
 <code filename="index.html">
 ... (html code)
 </code>
-
-<game_title>
-... (game title)
-</game_title>
-
-<game_description>
-... Description: (game description; interesting and clear instructions for playing the game. Keep it short and concise.)
-</game_description>
-
-<game_controls>
-... Controls: (game controls; list of controls for playing the game.)
-</game_controls>
 """
         return prompt
 
@@ -128,7 +118,6 @@ Output HTML as the last file based on the template below:
             game_design = self.model_api.call(
                 user_prompt=design_prompt,
                 system_prompt=self.game_design_system_prompt,
-                temperature=self.temperature,
                 verbose=self.verbose,
             )
             
@@ -141,7 +130,6 @@ Output HTML as the last file based on the template below:
             response = self.model_api.call(
                 user_prompt=code_generation_prompt,
                 system_prompt=self.code_generation_system_prompt,
-                temperature=self.temperature,
                 verbose=self.verbose,
             )
             
@@ -159,6 +147,7 @@ Output HTML as the last file based on the template below:
             title = self.extract_title(response)
             game_description = self.extract_game_description(response)
             game_controls = self.extract_game_controls(response)
+            game_plan = self.extract_game_plan(response)
             html_code = self.extract_code_block(response, "html") or ""
             
             # Get JavaScript files
@@ -186,6 +175,7 @@ Output HTML as the last file based on the template below:
                 game_description=game_description,
                 game_controls=game_controls,
                 game_concept=game_concept,
+                game_plan=game_plan,
                 concept_path=concept_path,
                 genre=genre,
                 intermediate_outputs={
@@ -205,6 +195,7 @@ Output HTML as the last file based on the template below:
                 "game_description": game_description,
                 "game_controls": game_controls,
                 "game_dir": game_dir,
+                "game_plan": game_plan,
                 "game_design": game_design,
             }
             

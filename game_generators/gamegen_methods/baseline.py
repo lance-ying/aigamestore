@@ -46,14 +46,14 @@ TASK: Implement a 2D video game that follows the game concept.
 Game concept: {game_concept}
 
 Output instructions:
-Output the game in the following format with NO OTHER TEXT.
+Output game files in this format with NO OTHER TEXT:
 
-For the javascript files, you should output the following:
+For the javascript files:
 <code filename="{{name}}.{{extension}}">
 ... (code)
 </code>
 
-Output HTML as the last file based on the template below:
+HTML (output last):
 <code filename="index.html">
 ... (html code)
 </code>
@@ -98,7 +98,6 @@ Output HTML as the last file based on the template below:
             response = self.model_api.call(
                 user_prompt=user_prompt,
                 system_prompt=self.baseline_system_prompt,
-                temperature=self.temperature,
                 verbose=self.verbose,
             )
             
