@@ -216,7 +216,6 @@ class GameGenerator(ABC):
                 / self.__class__.__name__
                 / concept_path.split("/")[-1]
                 .replace(".json", "")
-                .replace("game", "concept")
             )
         else:
             game_dir = Path("games") / self.model_name.split(":")[1] / self.__class__.__name__
