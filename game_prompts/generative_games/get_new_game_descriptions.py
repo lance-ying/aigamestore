@@ -100,7 +100,6 @@ def generate_new_game_concept(
         game_archive: List of previously generated games to avoid repeating
         max_retries: Maximum number of retries on rate limit or timeout errors
         temperature: Controls randomness in generation (0.0-1.0, higher = more creative)
-        num_sentences: Number of sentences for each game description
 
     Returns:
         List[Dict]: A list of generated game descriptions as dictionaries
@@ -108,20 +107,70 @@ def generate_new_game_concept(
     genre_list_str = ", ".join(GENRES)
 
     prompt = f"""
-You are going to come up with {num_games} completely original and imaginative concepts for single-player 2D video games to be built in JavaScript using only the p5.js and p5.collide libraries.
+You are going to create {num_games} original, innovative, and focused game concepts for single-player 2D games that can be built in JavaScript using p5.js and p5.collide2d libraries.
 
-Each concept must be:
-- **Unique and creative**, clearly different from typical or existing game ideas. Avoid clichés or remixes of classic mazes, puzzles and board games.
-- **Feasible to implement** with simple 2D shapes, bounding box collisions, and keyboard-only input. No sprites, audio, mouse, 3D, or puzzle logic.
+Focus on creating game concepts that:
+- Feature a unique, distinctive core mechanic or gameplay element
+- Could be implemented with p5.js primitives (basic shapes, colors, simple physics)
+- Avoid clichés and remixes of classic games
+- Leave room for creativity of the game designer and game developers to expand and interpret the concept
 
-When writing your concepts:
-- Choose **1 to 3 genres** from this list: {genre_list_str}. Use a **varied and balanced mix** across the concepts.
-- Imagine you are a **different person for each game idea** — someone with a distinct personality and taste in games. Let that voice come through in how the concept is described, but you don't necessarily need to introduce yourself.
-- It is better to have common objects and elements in the game concepts, but make the game unique and interesting by combining them in a new way.
-- You may focus on **any subset of gameplay elements**, such as movement mechanics, world rules, enemy behavior, reward systems, hazards, or player goals. You don’t need to describe all parts — highlight what matters and what makes the game unique.
-- Vary the **level of abstraction**: some aspects should be described in concise but detailed way, while others can be described in a high-level way and leave room for interpretation.
-- Keep each game concept short in 1-2 short sentences, and do **not include implementation details or visual styles** — leave those decisions to the engineer.
-- 
+When creating your concepts:
+- Choose 1-3 genres from: {genre_list_str}
+- Write each concept in 1-3 concise sentences
+- Write with a unique personality for each concept varying your writing style across concepts (questions, suggestions, statements)
+- Use casual, approachable language that sparks imagination
+"""
+
+    # Add recent games to system prompt if available
+    if game_archive and len(game_archive) > 0:
+        # Get random sample of recent games, but prioritize the most recent ones
+        recent_games = game_archive[:50]  # Most recent 50
+        if len(game_archive) > 50:
+            # Add some random older ones for variety
+            older_games = random.sample(game_archive[50:], min(50, len(game_archive) - 50))
+            recent_games.extend(older_games)
+        
+        # Extract concepts and create keyword lists to help avoid repetition
+        concepts = [g['concept'] for g in recent_games]
+        
+        # Create lists of common themes and mechanics to avoid
+        themes_to_avoid = []
+        mechanics_to_avoid = []
+        
+        # Extract common themes and mechanics from concepts
+        for concept in concepts:
+            # Extract key nouns that might represent themes
+            if "player" in concept.lower():
+                themes_to_avoid.extend([w for w in concept.lower().split() if len(w) > 4 and w != "player"])
+            
+            # Extract potential mechanics
+            if "has to" in concept.lower() or "needs to" in concept.lower():
+                idx = concept.lower().find("has to") if "has to" in concept.lower() else concept.lower().find("needs to")
+                if idx > -1:
+                    mechanics_to_avoid.append(concept[idx:idx+30].strip())
+        
+        # Remove duplicates and limit length
+        themes_to_avoid = list(set(themes_to_avoid))[:20]
+        mechanics_to_avoid = list(set(mechanics_to_avoid))[:20]
+        
+        # Format the examples of previous concepts
+        prior_games_str = "\n".join(
+            [f"- {g['concept']}" for g in random.sample(recent_games, min(20, len(recent_games)))]
+        )
+
+        prompt += f"""\n
+### Previous Game Concepts (DO NOT REPEAT OR CLOSELY IMITATE):
+Here are examples of previously generated game concepts:
+{prior_games_str}
+
+IMPORTANT: Generate entirely NEW concepts that are significantly different from the examples above. 
+Your concepts can be bring novelty in the following ways among many others:
+- Characters and their roles
+- Use a completely different central mechanic
+- Feature different environments or settings
+- Create unique player goals or obstacles
+- Approach the constraints in fresh, inventive ways
 """
 
     EXAMPLES = [
@@ -134,54 +183,57 @@ When writing your concepts:
         "Can you generate a game related to a dog that needs to find its way home but lots of troubles and traps await?",
         "Could you build me a game where I swing between glowing jellyfish towers under a violet sea, sword in hand to rescue luminescent crabs? I imagine hidden currents that whisk me to secret reefs filled with ancient treasure.",
         "Game with a player is stuck in a hotel and there might be a ghost chasing and frightening the player. The player has to find a way to escape from the hotel.",
-        "Enagage me with a game with 5 opponents trying to steal candies hidden in the garden. The player has to collect the most number of candies.",
+        "A frog jumps on lily pads and wooden logs, collecting all the flowers before reaching the end of the pond.",
         "A castle is under attack by a dragon spitting fire. The player has to save the castle by shooting the dragon.",
         "Can you create a game with a plane that picks up packages and has to deliver them to the right place?",
-        "Can you think of a game where the player is playing as a venus fly trap and has to catch flies? You can multiply the number of mouths to catch more flies but beware of the flies that can sting you. Protect yourself from overeating the flies.",
-        "Make a game as an elephant on mars searching for the rat friend who is lost in the desert. Collect food and water to survive and find your friend. Fight the aliens who can attack you.",
-        "It would be interesting to play as a monkey leaping through in a forest. The monkey has to collect bananas and avoid the tigers.",
-        "Tanks are everywhere hiding in the bushes. The player controls a tank and has to shoot the other tanks while avoiding their fire. Multiple battlefields to play before the win. Collect ammunition and repair the tank using the collected resources. Last tank standing wins.",
+        "A top-down game where the player is a cat and has to catch the mice while avoiding the dogs.",
+        "A magnetic ball in a side-scrolling game where it can attract or repel metallic objects by controlling the magnetic field.",
+        "Can you think of a game where the player is playing as a venus fly trap and has to catch flies? You can multiply the number of mouths to catch more flies but beware of the flies that can sting you.",
+        "Make a game as an elephant on mars searching for the rat friend who is lost in the desert. Collect food and water to survive and find your friend.",
+        "It would be interesting to play as a monkey leaping through a forest. The monkey has to collect bananas and avoid the tigers.",
+        "Tanks are everywhere hiding in the bushes. The player controls a tank and has to shoot the other tanks while avoiding their fire.",
         "There are lasers in the room but you can spray fog to see them locally. The player has to navigate through to find the exit without getting caught by the lasers.",
         "What if there was a game where you shoot balloons moving up but you need to be careful not to shoot balloons which have a stone in it?",
-        "Could you develop the game in a world in which the player moves in side a bubble which they can shrink and expand? Don't let the bubble pop.",
-        "Can we have a platformer games set in a space station with low gravity sections, asteroid fields, and airlock puzzles",
-        "I’ve been dreaming of a game where you’re the last lantern-keeper in a floating library, and every time your glowing orb illuminates hidden words, they materialize into new platforms and shifting obstacles.",
+        "Could you develop a game in which the player moves inside a bubble which they can shrink and expand? Don't let the bubble pop.",
+        "Can we have a platformer game set in a space station with low gravity sections, asteroid fields, and airlock puzzles?",
+        "I've been dreaming of a game where you're the last lantern-keeper in a floating library, and every time your glowing orb illuminates hidden words, they materialize into new platforms.",
+        "Make me a game where the environment is a maze but the player can transform the maze by changing the color of the walls.",
+        "Navigate through a multi-layered environment avoiding the light towers trying to catch you.",
+        "Keys and locks are everywhere. The player has to find the keys to open the locks in the correct order to make progress.",
+        "Control a helicopter through a city with tall buildings. The helicopter has to rescue people from the top of the buildings.",
     ]
 
-    # Sample a few examples to include in the prompt
-    # example_sample = random.sample(EXAMPLES, 20)
-    example_block = "\n".join(
-        f'- "{e.strip()}"' for e in random.sample(EXAMPLES, len(EXAMPLES))
-    )
+    # Sample some examples to include in the prompt
+    example_sample = random.sample(EXAMPLES, min(20, len(EXAMPLES)))
+    example_block = "\n".join(f'- "{e.strip()}"' for e in example_sample)
 
     # Build the system prompt with additional guidance on what game elements can be altered.
     system_prompt = f"""
-You are a practical but creative video game designer. Your job is to invent original, unique, and feasible game concepts for 2D JavaScript games using the p5.js library and p5.collide.
-
-The games are strictly 2D, played in a web browser, and controlled only by keyboard input.
-They must use no audio, no mouse, no sprites or external assets, and no 3D graphics or simulation.            
+You are an extremely creative and imaginative game concept creator specializing in 2D JavaScript games using p5.js and p5.collide2d. Your strength is creating innovative game concepts that focus on a single distinctive element while leaving room for designers to expand upon.
 
 ### Instructions:
-- Create truly innovative game concepts that challenge conventional design.
-- Produce completely original game concepts that are feasible enough to be built using only p5.js and p5.collide, yet interesting and engaging.
-- Game concepts can focus on any subset of gameplay elements, such as player abilities, movement mechanics, enemy behavior, player goals or objectives, reward systems, environmental features, level progression, or unique world rules or constraints. You do not need to describe all elements—some concepts may focus on just one (e.g. a movement restriction or an unusual scoring mechanic), while others may touch on several. Aim to vary the level of specificity across concepts: some can be highly detailed, others more abstract, leaving room for interpretation and creative design. 
-- You can be abstract or very specific and detailed in your game concepts about the desired aspect of the game.
-- Do not specify implementation details like graphics or technical specifications. 
+- Generate truly original game concepts that are technically feasible with p5.js primitives
+- Each concept should highlight ONE unique aspect: a mechanic, environment, player ability, obstacle, goal, or rule
+- Create a diverse range of concepts spanning different genres and gameplay styles
+- Focus on the player experience rather than implementation details
+- Vary the specificity of your concepts - some can be detailed about a particular aspect, others more open-ended
+- Write in a way that inspires further creative development and expansion to a 2D game. DO NOT write in a way that it defines the entire game.
+- Ensure the game mechanics are engaging and novel, not just the theme or setting
 - To note that the complexity of the game is not just how sophisticated the names of the game elements are, but also how complex the game mechanics are.
 
-
-You can use the following examples to inspire the content of the game concepts, but do not plagiarize ideas from the examples:
+Here are examples of the style, format, and creativity level expected:
 {example_block}
 
 ### Hard Constraints (Do Not Violate):
 - No sound, music, or audio-related mechanics.
 - No 3D graphics, rendering, or movement.
 - No use of mouse, touch input, or complex UI. Only keyboard input.
-- No sprites, images, external art, or visual effects beyond p5’s shape drawing.
-- No puzzle games or board-game logic.
+- No sprites, images, external art, or visual effects beyond p5's shape drawing.
+- No puzzle games, board-games, turn-based games, or any other genre outside of the ones listed.
 - No advanced AI behavior (no learning, planning, pathfinding; only basic rules like chase or patrol).
 - No complex animation systems, procedural world generation, or physics engines beyond p5 primitives.
-- To use common game elements and objects in real life, make the game unique and interesting by combining them in a new way.
+- Use common game elements and objects in real life, make the game unique and interesting by combining them in a new way.
+- Use commonly used terms and common nouns to describe the game concept. Feel free to use the tone and the style of the examples but do not plagiarize.
 
 You should generate your interesting yet feasible game concepts for 2D JavaScript games in the following format:
 ```json
@@ -212,7 +264,7 @@ You should generate your interesting yet feasible game concepts for 2D JavaScrip
         {prior_games_str}
 
         Do NOT repeat game concepts similar to the previous descriptions. Think creatively and create something different from existing game concepts which is interesting, fun, and engaging and not yet generated.
-        Format your response exactly as requested paying attention to the number of sentences in each game concept.
+        Format your response exactly as requested.
         """
 
     retries = 0
@@ -333,13 +385,16 @@ def main(
 
     # Load existing games for context (to avoid repeating)
     # First try to load from the model-specific directory
-    # model_game_archive = load_existing_games(output_dir, max_games=-1)
+    model_game_archive = load_existing_games(output_dir, max_games=200)
+    print(f"Loaded {len(model_game_archive)} existing games from model-specific directory")
 
     # Then load from the base directory for backward compatibility
-    game_archive = load_existing_games(base_dir, max_games=-1)
-
-    if game_archive:
-        print(f"Loaded {len(game_archive)} existing games for context")
+    base_game_archive = load_existing_games(base_dir, max_games=200)
+    print(f"Loaded {len(base_game_archive)} existing games from base directory")
+    
+    # Combine the archives, prioritizing model-specific games
+    game_archive = model_game_archive + [g for g in base_game_archive if g not in model_game_archive]
+    print(f"Total unique games loaded for context: {len(game_archive)}")
 
     # Track total successful and failed generations
     total_success = 0
@@ -437,7 +492,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--num_games",
         type=int,
-        default=10,
+        default=100,
         help="Number of games to generate",
     )
     parser.add_argument(

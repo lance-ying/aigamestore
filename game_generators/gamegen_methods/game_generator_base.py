@@ -14,7 +14,8 @@ class GameGenerator(ABC):
 
     def __init__(
         self,
-        model_name: str = "anthropic:claude-3.5-sonnet",
+        model_name: str = "anthropic:claude-3.7-sonnet",
+        temperature: float = 0.,
         verbose: bool = False,
         game_design_system_prompt_path: str = "game_generators/system_prompts/game_design.txt",
         code_generation_system_prompt_path: str = "game_generators/system_prompts/code_generation.txt",
@@ -30,7 +31,7 @@ class GameGenerator(ABC):
         """
         self.model_name = model_name
         self.verbose = verbose
-        
+        self.temperature = temperature
         # Load system prompts
         with open(game_design_system_prompt_path, "r") as f:
             self.game_design_system_prompt = f.read()

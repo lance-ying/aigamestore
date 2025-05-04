@@ -98,6 +98,7 @@ Output HTML as the last file based on the template below:
             response = self.model_api.call(
                 user_prompt=user_prompt,
                 system_prompt=self.baseline_system_prompt,
+                temperature=self.temperature,
                 verbose=self.verbose,
             )
             

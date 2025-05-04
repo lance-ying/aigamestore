@@ -128,6 +128,7 @@ Output HTML as the last file based on the template below:
             game_design = self.model_api.call(
                 user_prompt=design_prompt,
                 system_prompt=self.game_design_system_prompt,
+                temperature=self.temperature,
                 verbose=self.verbose,
             )
             
@@ -140,6 +141,7 @@ Output HTML as the last file based on the template below:
             response = self.model_api.call(
                 user_prompt=code_generation_prompt,
                 system_prompt=self.code_generation_system_prompt,
+                temperature=self.temperature,
                 verbose=self.verbose,
             )
             
