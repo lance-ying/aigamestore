@@ -46,8 +46,14 @@ def parse_args():
     parser.add_argument(
         "--allow_resample",
         type=int,
-        default=0,
+        default=3,
         help="Number of automatic resamples allowed if tests fail (0 means ask for confirmation)",
+    )
+
+    parser.add_argument(
+        "--no_ecs",
+        action="store_true",
+        help="Use non-ECS architecture for game generation",
     )
     
     return parser.parse_args()
@@ -113,12 +119,14 @@ def main():
             generator = SimplePromptGenerator(
                 model_name=args.model,
                 verbose=args.verbose,
+                use_ecs=not args.no_ecs,
             )
         elif args.method == "template_based":
             # Will be implemented in the future
             generator = TemplateBasedGenerator(
                 model_name=args.model,
                 verbose=args.verbose,
+                use_ecs=not args.no_ecs,
             )
         elif args.method == "template_with_critic":
             # Will be implemented in the future

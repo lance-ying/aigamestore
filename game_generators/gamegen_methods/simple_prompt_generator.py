@@ -31,6 +31,14 @@ Output the code plan and game files in this format with NO OTHER TEXT:
 ... (code plan in maximum 5 sentences)
 </plan>
 
+<game_description>
+... (game description to introduce the game to the user in maximum 3 sentences. Keep it short and concise.)
+</game_description>
+
+<game_controls>
+... (game controls as a list of key bindings, Key: Action)
+</game_controls>
+
 For the javascript files:
 <code filename="{{name}}.{{extension}}">
 ... (code)
