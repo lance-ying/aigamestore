@@ -6,6 +6,7 @@ Unlike existing games, these are completely new game concepts without control ma
 Supports OpenAI, Claude, and Gemini models through the ModelAPI interface.
 """
 
+from doctest import Example
 import os
 import json
 import argparse
@@ -33,7 +34,7 @@ load_dotenv()
 MIN_WAIT_TIME = 1  # Minimum wait time in seconds
 MAX_WAIT_TIME = 3  # Maximum wait time in seconds
 RATE_LIMIT_WAIT = 60  # Wait time in seconds when hitting rate limit
-MAX_CONCEPTS_PER_BATCH = 50
+MAX_CONCEPTS_PER_BATCH = 100
 
 # Game genres to generate
 GENRES = [
@@ -105,132 +106,48 @@ def generate_new_game_concept(
         List[Dict]: A list of generated game descriptions as dictionaries
     """
     genre_list_str = ", ".join(GENRES)
-
-    prompt = f"""
-You are going to create {num_games} original, innovative, and focused game concepts for single-player 2D games that can be built in JavaScript using p5.js and p5.collide2d libraries.
-
-Focus on creating game concepts that:
-- Feature a unique, distinctive core mechanic or gameplay element
-- Could be implemented with p5.js primitives (basic shapes, colors, simple physics)
-- Avoid clichés and remixes of classic games
-- Leave room for creativity of the game designer and game developers to expand and interpret the concept
-
-When creating your concepts:
-- Choose 1-3 genres from: {genre_list_str}
-- Write each concept in 1-3 concise sentences
-- Write with a unique personality for each concept varying your writing style across concepts (questions, suggestions, statements)
-- Use casual, approachable language that sparks imagination
-"""
-
-    # Add recent games to system prompt if available
-    if game_archive and len(game_archive) > 0:
-        # Get random sample of recent games, but prioritize the most recent ones
-        recent_games = game_archive[:50]  # Most recent 50
-        if len(game_archive) > 50:
-            # Add some random older ones for variety
-            older_games = random.sample(game_archive[50:], min(50, len(game_archive) - 50))
-            recent_games.extend(older_games)
-        
-        # Extract concepts and create keyword lists to help avoid repetition
-        concepts = [g['concept'] for g in recent_games]
-        
-        # Create lists of common themes and mechanics to avoid
-        themes_to_avoid = []
-        mechanics_to_avoid = []
-        
-        # Extract common themes and mechanics from concepts
-        for concept in concepts:
-            # Extract key nouns that might represent themes
-            if "player" in concept.lower():
-                themes_to_avoid.extend([w for w in concept.lower().split() if len(w) > 4 and w != "player"])
-            
-            # Extract potential mechanics
-            if "has to" in concept.lower() or "needs to" in concept.lower():
-                idx = concept.lower().find("has to") if "has to" in concept.lower() else concept.lower().find("needs to")
-                if idx > -1:
-                    mechanics_to_avoid.append(concept[idx:idx+30].strip())
-        
-        # Remove duplicates and limit length
-        themes_to_avoid = list(set(themes_to_avoid))[:20]
-        mechanics_to_avoid = list(set(mechanics_to_avoid))[:20]
-        
-        # Format the examples of previous concepts
-        prior_games_str = "\n".join(
-            [f"- {g['concept']}" for g in random.sample(recent_games, min(20, len(recent_games)))]
-        )
-
-        prompt += f"""\n
-### Previous Game Concepts (DO NOT REPEAT OR CLOSELY IMITATE):
-Here are examples of previously generated game concepts:
-{prior_games_str}
-
-IMPORTANT: Generate entirely NEW concepts that are significantly different from the examples above. 
-Your concepts can be bring novelty in the following ways among many others:
-- Characters and their roles
-- Use a completely different central mechanic
-- Feature different environments or settings
-- Create unique player goals or obstacles
-- Approach the constraints in fresh, inventive ways
-"""
-
+    
     EXAMPLES = [
-        "How about developing a game where hidden dangers awaken only when motion occurs? The slightest movement should summon bats and spiders. The player has to navigate through the platform to reach the end.",
-        "Make a game which is two rooms connected by a portal. The rooms are identical but have different colors. The player can switch between the rooms by passing through the portal.",
-        "Think of a game where the character can switch between two different worlds. The worlds have different challenges and the player needs to navigate through both worlds to reach the end.",
-        "Could you invent a game where color serves as a secret weapon? Switching hues should baffle relentless foes, turning combat into a vivid and strategic spectacle.",
-        "Could you design a game where the power to rewrite physics is at the player's fingertips? Bend gravity, twist inertia, or warp time to overcome obstacles that defy conventional logic.",
-        "How about a game where you balance on a unicycle and have to avoid obstacles and collect items?",
-        "Can you generate a game related to a dog that needs to find its way home but lots of troubles and traps await?",
-        "Could you build me a game where I swing between glowing jellyfish towers under a violet sea, sword in hand to rescue luminescent crabs? I imagine hidden currents that whisk me to secret reefs filled with ancient treasure.",
-        "Game with a player is stuck in a hotel and there might be a ghost chasing and frightening the player. The player has to find a way to escape from the hotel.",
+        "How about a game in space with amazing graphics showing planets, stars, and a spaceship.",
+        "A game where winning means going as far as possible in a vertical platformer game evading clouds.",
+        "Game with a player is stuck in a hotel and there might be a ghosts chasing. Turn the lights on and off to find the key to the door and save yourself from the ghosts.",
         "A frog jumps on lily pads and wooden logs, collecting all the flowers before reaching the end of the pond.",
-        "A castle is under attack by a dragon spitting fire. The player has to save the castle by shooting the dragon.",
         "Can you create a game with a plane that picks up packages and has to deliver them to the right place?",
-        "A top-down game where the player is a cat and has to catch the mice while avoiding the dogs.",
-        "A magnetic ball in a side-scrolling game where it can attract or repel metallic objects by controlling the magnetic field.",
-        "Can you think of a game where the player is playing as a venus fly trap and has to catch flies? You can multiply the number of mouths to catch more flies but beware of the flies that can sting you.",
-        "Make a game as an elephant on mars searching for the rat friend who is lost in the desert. Collect food and water to survive and find your friend.",
-        "It would be interesting to play as a monkey leaping through a forest. The monkey has to collect bananas and avoid the tigers.",
+        "A top-down view game where the player is a cat and has to catch the mice while avoiding the dogs.",
+        "It would be interesting to play as a monkey leaping through a forest. The monkey has to collect bananas.",
         "Tanks are everywhere hiding in the bushes. The player controls a tank and has to shoot the other tanks while avoiding their fire.",
         "There are lasers in the room but you can spray fog to see them locally. The player has to navigate through to find the exit without getting caught by the lasers.",
         "What if there was a game where you shoot balloons moving up but you need to be careful not to shoot balloons which have a stone in it?",
-        "Could you develop a game in which the player moves inside a bubble which they can shrink and expand? Don't let the bubble pop.",
         "Can we have a platformer game set in a space station with low gravity sections, asteroid fields, and airlock puzzles?",
-        "I've been dreaming of a game where you're the last lantern-keeper in a floating library, and every time your glowing orb illuminates hidden words, they materialize into new platforms.",
-        "Make me a game where the environment is a maze but the player can transform the maze by changing the color of the walls.",
-        "Navigate through a multi-layered environment avoiding the light towers trying to catch you.",
-        "Keys and locks are everywhere. The player has to find the keys to open the locks in the correct order to make progress.",
-        "Control a helicopter through a city with tall buildings. The helicopter has to rescue people from the top of the buildings.",
+        "Navigate through a prison avoiding the light towers trying to catch you. Beware of the guards!",
+        "Control a helicopter through a city with tall buildings. Stay away from the birds.",
+        "Make me a side-scrolling game controlling a ball. The ball can grow in size but beware of the spikes.",
+        "I want to play a game driving a car on the wrong side of the road.",
     ]
 
     # Sample some examples to include in the prompt
-    example_sample = random.sample(EXAMPLES, min(20, len(EXAMPLES)))
-    example_block = "\n".join(f'- "{e.strip()}"' for e in example_sample)
+    # example_sample = random.sample(EXAMPLES, min(20, len(EXAMPLES)))
+    example_block = "\n".join(f'- "{e.strip()}"' for e in EXAMPLES)
 
-    # Build the system prompt with additional guidance on what game elements can be altered.
-    system_prompt = f"""
+    prompt = f"""
 You are an extremely creative and imaginative game concept creator specializing in 2D JavaScript games using p5.js and p5.collide2d. Your strength is creating innovative game concepts that focus on a single distinctive element while leaving room for designers to expand upon.
+You are going to create {num_games} original, innovative, and focused game concepts for single-player 2D games that most people will be able to play and enjoy when first played. Do not generate the entire game description but rather just a small slice of what the game should include, leave room for the game designer to expand upon the concept.
 
 ### Instructions:
-- Generate truly original game concepts that are technically feasible with p5.js primitives
-- Each concept should highlight ONE unique aspect: a mechanic, environment, player ability, obstacle, goal, or rule
-- Create a diverse range of concepts spanning different genres and gameplay styles
-- Focus on the player experience rather than implementation details
-- Vary the specificity of your concepts - some can be detailed about a particular aspect, others more open-ended
+- Generate truly original game concepts for which you can imagine a 2D game to be implemented in p5.js. 
+- Each concept should highlight at least ONE unique aspect: a mechanic, environment, player ability, obstacle, goal, or rule
+- You can vary the game elements, the game mechanics, the game setting, visual style or viewpoint - be creative
 - Write in a way that inspires further creative development and expansion to a 2D game. DO NOT write in a way that it defines the entire game.
-- Ensure the game mechanics are engaging and novel, not just the theme or setting
-- To note that the complexity of the game is not just how sophisticated the names of the game elements are, but also how complex the game mechanics are.
 
 Here are examples of the style, format, and creativity level expected:
 {example_block}
 
-### Hard Constraints (Do Not Violate):
+Please guide your game concepts keeping in mind the hard constraints the game developers will have while expanding on your game concept and implementing it in p5.js:
 - No sound, music, or audio-related mechanics.
 - No 3D graphics, rendering, or movement.
 - No use of mouse, touch input, or complex UI. Only keyboard input.
 - No sprites, images, external art, or visual effects beyond p5's shape drawing.
 - No puzzle games, board-games, turn-based games, or any other genre outside of the ones listed.
-- No advanced AI behavior (no learning, planning, pathfinding; only basic rules like chase or patrol).
 - No complex animation systems, procedural world generation, or physics engines beyond p5 primitives.
 - Use common game elements and objects in real life, make the game unique and interesting by combining them in a new way.
 - Use commonly used terms and common nouns to describe the game concept. Feel free to use the tone and the style of the examples but do not plagiarize.
@@ -240,40 +157,30 @@ You should generate your interesting yet feasible game concepts for 2D JavaScrip
 [
     {{
         "concept": "...",
-        "genre": "..."
+        "genre": "...",
     }},
     {{
         "concept": "...",
-        "genre": "..."
+        "genre": "...",
     }},
 ]
 ```
-        """
+When creating your concepts:
+- Choose 1-3 genres from: {genre_list_str}
+- Write each concept in 1-3 concise sentences. Vary the number of sentences and the length of the sentences for each concept. There should be a third of the concepts in 1 sentence, a third in 2 sentences, and a third in 3 sentences.
+- Keep changing your focus when writing each concept: theme, genre, mechanics, setting, character, rewards, obstacles, etc.
+- Write with a unique personality for each concept varying your writing style across concepts (questions, suggestions, statements)
+- Use casual, approachable language that sparks imagination. Use terms and nouns that most people are familiar with and can be easily understood by a wide audience.
 
-    # Add recent games to system prompt if available
-    if game_archive and len(game_archive) > 0:
-        # Get random sample of recent games
-        recent_games = random.sample(game_archive, k=min(len(game_archive), 100))
-        prior_games_str = "\n".join(
-            [f"- {g['concept'][:100]}..." for g in recent_games]
-        )
-
-        prompt += f"""\n
-        ### Previous Game Concepts:
-        Here are some game concepts that were already generated:
-        {prior_games_str}
-
-        Do NOT repeat game concepts similar to the previous descriptions. Think creatively and create something different from existing game concepts which is interesting, fun, and engaging and not yet generated.
-        Format your response exactly as requested.
-        """
+"""
 
     retries = 0
     while retries <= max_retries:
         try:
             response = api.call(
                 user_prompt=prompt,
-                system_prompt=system_prompt,
-                temperature=temperature,
+                # system_prompt=system_prompt,
+                # temperature=,
                 verbose=True,  # Enable streaming to avoid timeouts for long requests
             )
 
@@ -371,7 +278,7 @@ def main(
         print(f"Error initializing model: {str(e)}")
         print("Please make sure the required API keys are set in your .env file.")
         return
-    MAX_CONCEPTS_PER_BATCH = 50
+    MAX_CONCEPTS_PER_BATCH = 100
     # Extract model name for directory structure
     model_name = model_string.replace(":", "_")
 
@@ -510,7 +417,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--temperature",
         type=float,
-        default=0.7,
+        default=0.0,
         help="Temperature for model generation (0.0-1.0, higher = more creative)",
     )
     # parser.add_argument(

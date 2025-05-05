@@ -4,10 +4,10 @@ import json
 from gamegen_methods.game_generator_base import GameGenerator
 
 
-class TemplateBasedGenerator(GameGenerator):
+class TemplateBasedFormGenerator(GameGenerator):
     """
     Template-based game generator that uses two sequential LLM calls:
-    1. First call to design the game using the game design system prompt
+    1. First call to design the game following a form-based approach using the game design system prompt
     2. Second call to implement the game code using the code generation system prompt
     """
 
@@ -48,14 +48,41 @@ class TemplateBasedGenerator(GameGenerator):
 TASK: Design a 2D video game based on the following game concept.
 Game concept: {game_concept}
 
+INSTRUCTIONS:
+First, analyze the concept:
+1. Identify key game elements explicitly requested in the game concept
+2. Determine what elements are missing and can be developed beyond the concept to make the game more interesting going beyond the concept. Make sure the game elements are consistent and aligned with the concept, enriching the gameplay experience.
+
+Create a comprehensive game design following this structure.
+
 OUTPUT INSTRUCTIONS:
-Output the game design in the following format with NO OTHER TEXT:
+Output only the game design in the following format with NO OTHER TEXT:
 
 <game_design>
-... (game design)
+# Game Overview
+- Concept Summary: [2-3 sentences explaining the core idea]
+- Target Experience: [What players should feel while playing]
+
+# Character and Story
+[Describe the player character and other characters including their capabilities, motivations, and roles.]
+
+# Entities and objects in the game
+- Player Character: [Abilities, movement, actions, controls]
+- Enemies/NPCs: [Types, behaviors, abilities]
+- Items/Power-ups: [Types, effects, acquisition]
+- Obstacles/Challenges: [Various challenges players will face]
+
+# Core Gameplay
+- Primary Mechanics: [Describe 2-4 key gameplay mechanics.]
+- Progression System: [How players advance through the game? Are there levels or just a continuous gameplay? ]
+- Player Objectives: [Define clear goals/win conditions. What is the player trying to achieve? What are sub-goals? What can be the side-quests?]
+
+# Game World
+- Environment: [Setting, theme, world structure]
+- Visual Style: [Viewpoint, color palette, animations]
 </game_design>
 
-Focus on creating an interesting and playable 2D game design that follows the concept.
+Focus on creating an interesting and playable 2D game design that follows the game concept but feel free to add more elements to create a more interesting game going beyond the game concept.
 """
         output = self.model_api.call(
             user_prompt=prompt,
@@ -71,6 +98,7 @@ Focus on creating an interesting and playable 2D game design that follows the co
         Generate user prompt for the game developer LLM
         
         Args:
+            game_concept: The original game concept
             game_design: The output from the game designer LLM
             
         Returns:
@@ -132,7 +160,7 @@ HTML (output last):
             )
             
             # Step 2: Generate the game code using the second LLM call
-            code_generation_prompt = self.generate_code_generation_prompt(game_design)
+            code_generation_prompt = self.generate_code_generation_prompt(game_concept, game_design)
             
             if self.verbose:
                 print(f"Calling game developer LLM with game design...")

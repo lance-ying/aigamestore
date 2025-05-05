@@ -141,6 +141,8 @@ HTML (output last):
                 game_concept=game_concept,
                 concept_path=concept_path,
                 genre=genre,
+                game_plan="",
+                use_ecs=False,
                 intermediate_outputs={"full_response": response},
                 conversation_log=conversation_log
             )

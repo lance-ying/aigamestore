@@ -8,6 +8,7 @@ from typing import Dict, Any, Optional
 from gamegen_methods.baseline import BaselineGenerator
 from gamegen_methods.simple_prompt_generator import SimplePromptGenerator
 from gamegen_methods.template_based_generator import TemplateBasedGenerator
+from gamegen_methods.template_based_form_generator import TemplateBasedFormGenerator
 from game_check.run_all_tests import run_all_tests
 
 
@@ -33,7 +34,7 @@ def parse_args():
         "--method",
         type=str,
         default="simple_prompt",
-        choices=["baseline", "simple_prompt", "template_based"], # TODO: "guide_complexity", "template", "template_character_driven", "template_with_critic", "template_with_play"],
+        choices=["baseline", "simple_prompt", "template_based", "template_based_form"], # TODO: "guide_complexity", "template", "template_character_driven", "template_with_critic", "template_with_play"],
         help="Game generation method to use",
     )
     
@@ -124,6 +125,12 @@ def main():
         elif args.method == "template_based":
             # Will be implemented in the future
             generator = TemplateBasedGenerator(
+                model_name=args.model,
+                verbose=args.verbose,
+                use_ecs=not args.no_ecs,
+            )
+        elif args.method == "template_based_form":
+            generator = TemplateBasedFormGenerator(
                 model_name=args.model,
                 verbose=args.verbose,
                 use_ecs=not args.no_ecs,
