@@ -8,16 +8,18 @@ from typing import Dict, Any, Optional, Tuple, List, Union
 
 from utils import ModelAPI
 
-
 class GameGenerator(ABC):
     """Abstract base class for game generation methods"""
 
     def __init__(
         self,
-        model_name: str = "anthropic:claude-3.5-sonnet",
+        model_name: str = "anthropic:claude-3.7-sonnet",
+        temperature: float = 0.7,
         verbose: bool = False,
+        use_ecs: bool = True,
         game_design_system_prompt_path: str = "game_generators/system_prompts/game_design.txt",
         code_generation_system_prompt_path: str = "game_generators/system_prompts/code_generation.txt",
+        code_generation_nonecs_system_prompt_path: str = "game_generators/system_prompts/code_generation_nonecs.txt",
     ):
         """
         Initialize the game generator
@@ -27,16 +29,22 @@ class GameGenerator(ABC):
             verbose: Whether to print verbose output
             game_design_system_prompt_path: Path to the game design system prompt
             code_generation_system_prompt_path: Path to the code generation system prompt
+            code_generation_nonecs_system_prompt_path: Path to the code generation system prompt for non-ECS games
         """
         self.model_name = model_name
         self.verbose = verbose
-        
+        self.temperature = temperature
+        self.use_ecs = use_ecs
         # Load system prompts
         with open(game_design_system_prompt_path, "r") as f:
             self.game_design_system_prompt = f.read()
             
-        with open(code_generation_system_prompt_path, "r") as f:
-            self.code_generation_system_prompt = f.read()
+        if use_ecs:
+            with open(code_generation_system_prompt_path, "r") as f:
+                self.code_generation_system_prompt = f.read()
+        else:
+            with open(code_generation_nonecs_system_prompt_path, "r") as f:
+                self.code_generation_system_prompt = f.read()
             
         # Initialize the model API
         self.model_api = ModelAPI(model_name)
@@ -53,6 +61,7 @@ class GameGenerator(ABC):
             User prompt for the LLM
         """
         pass
+
 
     @abstractmethod
     def generate_game(self, game_concept: str) -> Dict[str, Any]:
@@ -167,6 +176,14 @@ class GameGenerator(ABC):
             return match.group(1).strip()
         return ""
     
+    def extract_game_plan(self, text: str) -> str:
+        """
+        Extract game plan from text
+        """
+        pattern = r"<plan>\s*(.*?)\s*</plan>"
+        match = re.search(pattern, text, re.DOTALL)
+        return match.group(1).strip()
+    
     def extract_game_controls(self, text: str) -> str:
         """
         Extract game controls from text
@@ -182,10 +199,12 @@ class GameGenerator(ABC):
         game_description: str,
         game_controls: str,
         game_concept: str,
+        game_plan: str,
         concept_path: Optional[str] = None,
         genre: Optional[str] = None,
         intermediate_outputs: Optional[Dict[str, Any]] = None,
-        conversation_log: Optional[List[Dict[str, str]]] = None
+        conversation_log: Optional[List[Dict[str, str]]] = None,
+        use_ecs: bool = True,
     ) -> Path:
         """
         Save generated game files and metadata
@@ -200,6 +219,7 @@ class GameGenerator(ABC):
             genre: Game genre if available
             intermediate_outputs: Intermediate outputs to save as logs
             conversation_log: Log of prompts and responses
+            use_ecs: Whether to use ECS architecture for game generation
 
         Returns:
             Path to the saved game directory
@@ -209,14 +229,22 @@ class GameGenerator(ABC):
         
         # Determine game directory based on the concept path
         if concept_path:
-            game_dir = (
-                Path("games")
-                / self.model_name.split(":")[1]
-                / self.__class__.__name__
-                / concept_path.split("/")[-1]
-                .replace(".json", "")
-                .replace("game", "concept")
-            )
+            if use_ecs:
+                game_dir = (
+                    Path("games")
+                    / self.model_name.split(":")[1]
+                    / self.__class__.__name__
+                    / concept_path.split("/")[-1]
+                    .replace(".json", "")
+                )
+            else:
+                game_dir = (
+                    Path("games")
+                    / self.model_name.split(":")[1]
+                    / (self.__class__.__name__ + "_NOECS")
+                    / concept_path.split("/")[-1]
+                    .replace(".json", "")
+                )
         else:
             game_dir = Path("games") / self.model_name.split(":")[1] / self.__class__.__name__
 
@@ -260,6 +288,7 @@ class GameGenerator(ABC):
                 "description": game_description,
                 "controls": game_controls,
                 "playability": False,
+                "plan": game_plan,
             },
             "generation_info": {
                 "method": self.__class__.__name__,

@@ -25,25 +25,26 @@ TASK: Implement a 2D video game that follows the game concept.
 Game concept: {game_concept}
 
 Output instructions:
-Output the game in the following format with NO OTHER TEXT.
-<game_title>
-... (game title)
-</game_title>
+Output the code plan and game files in this format with NO OTHER TEXT:
+
+<plan>
+... (code plan in maximum 5 sentences)
+</plan>
 
 <game_description>
-... Description: (game description; interesting and clear instructions for playing the game. Keep it short and concise.)
+... (game description to introduce the game to the user in maximum 3 sentences. Keep it short and concise.)
 </game_description>
 
 <game_controls>
-... Controls: (game controls; list of controls for playing the game.)
+... (game controls as a list of key bindings, Key: Action)
 </game_controls>
 
-For the javascript files, you should output the following:
+For the javascript files:
 <code filename="{{name}}.{{extension}}">
 ... (code)
 </code>
 
-Output HTML as the last file based on the template below:
+HTML (output last):
 <code filename="index.html">
 ... (html code)
 </code>
@@ -66,7 +67,7 @@ Output HTML as the last file based on the template below:
             user_prompt = self.generate_user_prompt(game_concept)
             
             # Concatenate system prompts for design and code generation
-            combined_system_prompt = f"{self.game_design_system_prompt}\n\n{self.code_generation_system_prompt}"
+            combined_system_prompt = self.game_design_system_prompt + "\n\n" + self.code_generation_system_prompt
             
             # Call the LLM with the combined system prompt and user prompt
             if self.verbose:
@@ -89,6 +90,7 @@ Output HTML as the last file based on the template below:
             title = self.extract_title(response)
             game_description = self.extract_game_description(response)
             game_controls = self.extract_game_controls(response)
+            game_plan = self.extract_game_plan(response)
             html_code = self.extract_code_block(response, "html") or ""
             
             # Get JavaScript files
@@ -116,10 +118,12 @@ Output HTML as the last file based on the template below:
                 game_description=game_description,
                 game_controls=game_controls,
                 game_concept=game_concept,
+                game_plan=game_plan,
                 concept_path=concept_path,
                 genre=genre,
                 intermediate_outputs={"full_response": response},
-                conversation_log=conversation_log
+                conversation_log=conversation_log,
+                use_ecs=self.use_ecs,
             )
             
             if self.verbose:
@@ -132,6 +136,7 @@ Output HTML as the last file based on the template below:
                 "game_description": game_description,
                 "game_controls": game_controls,
                 "game_dir": game_dir,
+                "game_plan": game_plan,
             }
             
         except Exception as e:

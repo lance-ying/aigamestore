@@ -27,6 +27,13 @@ class TemplateBasedGenerator(GameGenerator):
         # but implement it to satisfy the abstract base class requirement
         return self.generate_game_design_prompt(game_concept)
 
+    def extract_game_design(self, output: str) -> str:
+        """
+        Extract the game design from the output
+        """
+        pattern = r"<game_design>\s*(.*?)\s*</game_design>"
+        return output
+
     def generate_game_design_prompt(self, game_concept: str) -> str:
         """
         Generate user prompt for the game designer LLM
@@ -41,56 +48,59 @@ class TemplateBasedGenerator(GameGenerator):
 TASK: Design a 2D video game based on the following game concept.
 Game concept: {game_concept}
 
-Please provide a comprehensive game design including:
-- Game title
-- Game narrative and theme
-- Core mechanics and gameplay
-- Entities and their interactions
-- Win/lose conditions
-- Controls and user interface
+OUTPUT INSTRUCTIONS:
+Output the game design in the following format with NO OTHER TEXT:
+
+<game_design>
+... (game design)
+</game_design>
 
 Focus on creating an interesting and playable 2D game design that follows the concept.
 """
-        return prompt
+        output = self.model_api.call(
+            user_prompt=prompt,
+            system_prompt=self.game_design_system_prompt,
+            verbose=self.verbose,
+        )
 
-    def generate_code_generation_prompt(self, game_concept: str, game_design: str) -> str:
+        game_design = self.extract_game_design(output)
+        return game_design
+
+    def generate_code_generation_prompt(self, game_design: str) -> str:
         """
         Generate user prompt for the game developer LLM
         
         Args:
-            game_concept: The original game concept
             game_design: The output from the game designer LLM
             
         Returns:
             User prompt for the game developer LLM
         """
         prompt = f"""
-TASK: Implement a 2D video game based on the following game design.
-Game concept: {game_concept}
-
-Game design:
-{game_design}
+TASK: Implement a 2D video game for the following game design.
+Game design: {game_design}
 
 Output instructions:
-Output the game in the following format with NO OTHER TEXT.
-<game_title>
-... (game title)
-</game_title>
+Output the code plan and game files in this format with NO OTHER TEXT:
+
+<plan>
+... (code plan in maximum 5 sentences)
+</plan>
 
 <game_description>
-... Description: (game description; interesting and clear instructions for playing the game. Keep it short and concise.)
+... (game description to introduce the game to the user in maximum 3 sentences. Keep it short and concise.)
 </game_description>
 
 <game_controls>
-... Controls: (game controls; list of controls for playing the game.)
+... (game controls as a list of key bindings, Key: Action)
 </game_controls>
 
-For the javascript files, you should output the following:
+For the javascript files:
 <code filename="{{name}}.{{extension}}">
 ... (code)
 </code>
 
-Output HTML as the last file based on the template below:
+HTML (output last):
 <code filename="index.html">
 ... (html code)
 </code>
@@ -122,7 +132,7 @@ Output HTML as the last file based on the template below:
             )
             
             # Step 2: Generate the game code using the second LLM call
-            code_generation_prompt = self.generate_code_generation_prompt(game_concept, game_design)
+            code_generation_prompt = self.generate_code_generation_prompt(game_design)
             
             if self.verbose:
                 print(f"Calling game developer LLM with game design...")
@@ -147,6 +157,7 @@ Output HTML as the last file based on the template below:
             title = self.extract_title(response)
             game_description = self.extract_game_description(response)
             game_controls = self.extract_game_controls(response)
+            game_plan = self.extract_game_plan(response)
             html_code = self.extract_code_block(response, "html") or ""
             
             # Get JavaScript files
@@ -174,13 +185,15 @@ Output HTML as the last file based on the template below:
                 game_description=game_description,
                 game_controls=game_controls,
                 game_concept=game_concept,
+                game_plan=game_plan,
                 concept_path=concept_path,
                 genre=genre,
                 intermediate_outputs={
                     "game_design": game_design,
                     "full_response": response
                 },
-                conversation_log=conversation_log
+                conversation_log=conversation_log,
+                use_ecs=self.use_ecs,
             )
             
             if self.verbose:
@@ -193,6 +206,7 @@ Output HTML as the last file based on the template below:
                 "game_description": game_description,
                 "game_controls": game_controls,
                 "game_dir": game_dir,
+                "game_plan": game_plan,
                 "game_design": game_design,
             }
             

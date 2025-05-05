@@ -8,9 +8,9 @@ BLUE = "\033[94m"
 RED = "\033[91m"
 RESET = "\033[0m"
 
-GAME_DESIGN_SYSTEM_PROMPT = open("game_generators/system_prompts/game_design.txt").read()
+# GAME_DESIGN_SYSTEM_PROMPT = open("game_generators/system_prompts/game_design.txt").read()
 
-CODE_GENERATION_SYSTEM_PROMPT = open("game_generators/system_prompts/code_generation.txt").read()
+# CODE_GENERATION_SYSTEM_PROMPT = open("game_generators/system_prompts/code_generation.txt").read()
 
 CANVAS_SIZE = {"width": 600, "height": 400}
 

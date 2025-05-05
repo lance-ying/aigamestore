@@ -5,8 +5,10 @@ import sys
 from pathlib import Path
 from typing import Dict, Any, Optional
 
-from gamegen_methods.simple_prompt_generator import SimplePromptGenerator
 from gamegen_methods.baseline import BaselineGenerator
+from gamegen_methods.simple_prompt_generator import SimplePromptGenerator
+from gamegen_methods.template_based_generator import TemplateBasedGenerator
+from gamegen_methods.template_based_form_generator import TemplateBasedFormGenerator
 from game_check.run_all_tests import run_all_tests
 
 
@@ -32,7 +34,7 @@ def parse_args():
         "--method",
         type=str,
         default="simple_prompt",
-        choices=["baseline", "simple_prompt"], # TODO: "guide_complexity", "template", "template_character_driven", "template_with_critic", "template_with_play"],
+        choices=["baseline", "simple_prompt", "template_based", "template_based_form"], # TODO: "guide_complexity", "template", "template_character_driven", "template_with_critic", "template_with_play"],
         help="Game generation method to use",
     )
     
@@ -45,8 +47,14 @@ def parse_args():
     parser.add_argument(
         "--allow_resample",
         type=int,
-        default=0,
+        default=3,
         help="Number of automatic resamples allowed if tests fail (0 means ask for confirmation)",
+    )
+
+    parser.add_argument(
+        "--no_ecs",
+        action="store_true",
+        help="Use non-ECS architecture for game generation",
     )
     
     return parser.parse_args()
@@ -112,10 +120,21 @@ def main():
             generator = SimplePromptGenerator(
                 model_name=args.model,
                 verbose=args.verbose,
+                use_ecs=not args.no_ecs,
             )
-        elif args.method == "template":
+        elif args.method == "template_based":
             # Will be implemented in the future
-            raise NotImplementedError("Template method not yet implemented")
+            generator = TemplateBasedGenerator(
+                model_name=args.model,
+                verbose=args.verbose,
+                use_ecs=not args.no_ecs,
+            )
+        elif args.method == "template_based_form":
+            generator = TemplateBasedFormGenerator(
+                model_name=args.model,
+                verbose=args.verbose,
+                use_ecs=not args.no_ecs,
+            )
         elif args.method == "template_with_critic":
             # Will be implemented in the future
             raise NotImplementedError("Template with critic method not yet implemented")

@@ -46,25 +46,14 @@ TASK: Implement a 2D video game that follows the game concept.
 Game concept: {game_concept}
 
 Output instructions:
-Output the game in the following format with NO OTHER TEXT.
-<game_title>
-... (game title)
-</game_title>
+Output game files in this format with NO OTHER TEXT:
 
-<game_description>
-... Description: (game description; interesting and clear instructions for playing the game. Keep it short and concise.)
-</game_description>
-
-<game_controls>
-... Controls: (game controls; list of controls for playing the game.)
-</game_controls>
-
-For the javascript files, you should output the following:
+For the javascript files:
 <code filename="{{name}}.{{extension}}">
 ... (code)
 </code>
 
-Output HTML as the last file based on the template below:
+HTML (output last):
 <code filename="index.html">
 ... (html code)
 </code>
@@ -152,6 +141,8 @@ Output HTML as the last file based on the template below:
                 game_concept=game_concept,
                 concept_path=concept_path,
                 genre=genre,
+                game_plan="",
+                use_ecs=False,
                 intermediate_outputs={"full_response": response},
                 conversation_log=conversation_log
             )
