@@ -79,7 +79,7 @@ Output only the game design in the following format with NO OTHER TEXT:
 
 # Game World
 - Environment: [Setting, theme, world structure]
-- Visual Style: [Viewpoint, color palette, animations]
+- Visual Style: [Viewpoint, color palette, animations, spatial layout of objects in the game, etc.]
 </game_design>
 
 Focus on creating an interesting and playable 2D game design that follows the game concept but feel free to add more elements to create a more interesting game going beyond the game concept.
@@ -99,8 +99,10 @@ Focus on creating an interesting and playable 2D game design that follows the ga
             User prompt for the game developer LLM
         """
         prompt = f"""
-TASK: Implement a 2D video game for the following game design.
+TASK: Implement a 2D video game following the specifications of the following game design.
 Game design: {game_design}
+
+Ensure that your implementation is faithful to the game design and implements all the elements of the game design including input handling, game logic, and game mechanics, and aesthetic elements.
 
 Output instructions:
 Output the code plan and game files in this format with NO OTHER TEXT:
@@ -154,7 +156,7 @@ HTML (output last):
             )
             
             # Step 2: Generate the game code using the second LLM call
-            code_generation_prompt = self.generate_code_generation_prompt(game_concept, game_design)
+            code_generation_prompt = self.generate_code_generation_prompt(game_design)
             
             if self.verbose:
                 print(f"Calling game developer LLM with game design...")
