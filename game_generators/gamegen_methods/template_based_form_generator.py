@@ -84,14 +84,8 @@ Output only the game design in the following format with NO OTHER TEXT:
 
 Focus on creating an interesting and playable 2D game design that follows the game concept but feel free to add more elements to create a more interesting game going beyond the game concept.
 """
-        output = self.model_api.call(
-            user_prompt=prompt,
-            system_prompt=self.game_design_system_prompt,
-            verbose=self.verbose,
-        )
 
-        game_design = self.extract_game_design(output)
-        return game_design
+        return prompt
 
     def generate_code_generation_prompt(self, game_design: str) -> str:
         """
