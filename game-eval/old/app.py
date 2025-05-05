@@ -1,883 +1,1023 @@
-import os
-import streamlit as st
-# Must be the first Streamlit command
-st.set_page_config(layout="wide")
-
-import streamlit.components.v1 as components
 from pathlib import Path
-import json
 import random
-import numpy as np
-import math
-from datetime import datetime
+from flask import Flask, render_template_string, request, jsonify
+import os
+import glob
+import json
+import datetime
+from datasets import load_dataset
 import uuid
-from datasets import load_dataset, Dataset
+from flask import session
 from scheduler import ParquetScheduler
 
-from st_bridge import bridge
-
-
+# Hugging Face configuration
 HF_TOKEN = os.environ.get("HF_TOKEN")
+GAMES_DATASET = "generative-games/gen-games-v4"
+PREFERENCES_DATASET = "generative-games/gen-games-v4-preferences-test"  # Dataset to save ratings
+
+PUSH_EVERY_N_RATINGS = 10
+
+RESULTS_DIR = Path(__file__).parent / "results"
+RATINGS_FILE = RESULTS_DIR / "all_ratings.json"
+
+# Create results directory if it doesn't exist
+RESULTS_DIR.mkdir(exist_ok=True)
+
+app = Flask(__name__)
+app.secret_key = os.urandom(24)  # For session management
+
+# Store game events in memory
+game_events = {}
+
+# Initialize HF scheduler
+preferences_scheduler = ParquetScheduler(
+    repo_id=PREFERENCES_DATASET,
+    private=True,
+    every=15,  # TODO: doesn't seem to work when app is deployed (use PUSH_EVERY_N_RATINGS instead)
+    token=HF_TOKEN
+)
+print("Scheduler initialized")
+
+# Counter for ratings
+ratings_counter = 0
+
+def load_games_dataset():
+    """Load the games dataset from Hugging Face"""
+    try:
+        dataset = load_dataset(GAMES_DATASET, split="train", token=HF_TOKEN)
+        print(f"Loaded dataset with {len(dataset)} games")
+        return dataset
+    except Exception as e:
+        print(f"Error loading dataset: {e}")
+        return None
+
+# Load dataset at startup
+GAMES_DATASET = load_games_dataset()
 
 
-# Elo rating parameters
-K_FACTOR = 32
-INITIAL_RATING = 1500
-SCALE = 400
-BASE = 10
-
-PREFERENCE_DATASET = "nacloos/gen-games-preferences-test"
-GAMES_DATASET = "nacloos/gen-games"
-
-
-@st.cache_resource
-def get_scheduler():
-    """Initialize and cache schedulers."""
-    preferences_scheduler = ParquetScheduler(
-        repo_id=PREFERENCE_DATASET,
-        private=True,
-        every=15,  # Upload every 15 minutes
-        token=HF_TOKEN
-    )
-    return preferences_scheduler
+def get_random_games(num_games=2):
+    """Get random games from the dataset"""
+    # 1) sample a game concept
+    # 2) sample two different methods
+    # 3) sample a game for each method
+    concept_ids = GAMES_DATASET.unique("game_concept_id")
+    concept_id = random.choice(concept_ids)
+    games = GAMES_DATASET.filter(lambda x: x["game_concept_id"] == concept_id)
+    methods = games.unique("method")
+    method_a = random.choice(methods)
+    method_b = random.choice(methods)
+    while method_b == method_a:
+        method_b = random.choice(methods)
+    games_a = games.filter(lambda x: x["method"] == method_a)
+    games_b = games.filter(lambda x: x["method"] == method_b)
+    game_a = random.choice(games_a)
+    game_b = random.choice(games_b)
+    return [game_a, game_b]
 
 
-def compute_ratings_from_preferences(preferences):
-    """Compute all Elo ratings from scratch using the preferences dataset."""
-    # Initialize ratings dictionary
-    ratings = {}
-
-    # Sort preferences by timestamp to replay them in order
-    preferences_list = sorted(preferences, key=lambda x: x["timestamp"])
-    
-    # Replay all preferences and update ratings
-    for pref in preferences_list:
-        # Initialize ratings for games if they don't exist
-        if pref["game_a_id"] not in ratings:
-            ratings[pref["game_a_id"]] = INITIAL_RATING
-        if pref["game_b_id"] not in ratings:
-            ratings[pref["game_b_id"]] = INITIAL_RATING
-        
-        # Update ratings based on preference
-        if pref["winner"] != "tie":  # Skip ties as they don't affect Elo
-            winner = "A" if pref["winner"] == "game_a" else "B"
-            new_rating_a, new_rating_b = update_elo(
-                ratings[pref["game_a_id"]],
-                ratings[pref["game_b_id"]],
-                winner
-            )
-            ratings[pref["game_a_id"]] = new_rating_a
-            ratings[pref["game_b_id"]] = new_rating_b
-    
-    return ratings
-
-
-def load_datasets():
-    """Load datasets."""
-    with st.spinner('Loading datasets...'):
-        games_dataset = load_dataset(GAMES_DATASET, split="train", token=HF_TOKEN)
-        preferences = load_dataset(PREFERENCE_DATASET, split="train", token=HF_TOKEN)
-
-        initial_ratings = compute_ratings_from_preferences(preferences)
-        
-        # Get unique game descriptions from dataset
-        game_descriptions = []
-        seen_indices = []
-        for item in games_dataset:
-            idx = item["game_description_index"]
-            if idx not in seen_indices:
-                game_descriptions.append(item["game_description"])
-                seen_indices.append(idx)
-        # Sort game descriptions based on their original indices
-        game_descriptions = [x for _, x in sorted(zip(seen_indices, game_descriptions))]
-        
-        return games_dataset, initial_ratings, game_descriptions
-
-
-def get_game_samples(games_dataset, game_idx):
-    """Get list of available samples for a given game from the dataset."""
-    samples = []
-    for i, item in enumerate(games_dataset):
-        if item["game_description_index"] == game_idx:
-            samples.append(item)
-    return samples
-
-
-def create_game_html(html_content, game_id):    
-    # Add event listener to prevent arrow keys from scrolling
-    # prevent_scroll_js = """
-    # <script>
-    # window.addEventListener("keydown", function(e) {
-    #     if([32, 37, 38, 39, 40].indexOf(e.keyCode) > -1) {
-    #         e.preventDefault();
-    #     }
-    # }, false);
-    # """
-
-    # Add event listener for when the window loses focus
-    focus_event_js = f"""
-    <script>
-    // Add event buffering and focus/blur handling
-    const eventBuffer = [];
-    const focusState = {{
-      isFocused: document.hasFocus(),
-      lastFocusTime: Date.now(),
-      p5Ready: false    // Track whether p5.js sketch is initialized
-    }};
-    
-    // Function to record events to the buffer
-    function recordAction(eventType, data) {{
-        if (focusState.isFocused && focusState.p5Ready) {{
-            eventBuffer.push({{
-                type: eventType,
-                timestamp: Date.now(),
-                framecount: frameCount,
-                ...data
-            }});
-        }}
-    }}
-    
-    // Function to send buffered events
-    function sendBufferedEvents() {{
-        if (eventBuffer.length > 0) {{
-            events = eventBuffer.slice();
-            // Clear the buffer before sending
-            console.log('length of eventBuffer before clearing', eventBuffer.length);
-            eventBuffer.length = 0;
-            console.log('length of eventBuffer after clearing', eventBuffer.length);
-
-            window.parent.stBridges.send('bridge-{game_id}', {{
-                type: 'buffered_events',
-                timestamp: Date.now(),
-                events: events // Send a copy of the buffer
-            }});
-
-            console.log('length of eventBuffer after sending', eventBuffer.length);
-        }}
-    }}
-
-    // Minimal p5.js setup function detection
-    const wrappedSetup = function() {{
-        // Store original setup if it exists
-        const originalSetup = window.setup;
-        
-        // Create new setup wrapper
-        window.setup = function() {{
-            // Call original setup
-            const result = originalSetup.apply(this, arguments);
-            
-            // Mark as ready
-            focusState.p5Ready = true;
-
-            // Clear the buffer
-            eventBuffer.length = 0;
-            
-            // window.parent.stBridges.send('focus-{game_id}', {{
-            //     type: 'p5_ready',
-            //     timestamp: Date.now()
-            // }});
-            recordAction('p5_ready', {{}});
-            return result;
-        }};
-    }};
-    
-    wrappedSetup();
-
-
-    // Focus/blur event handling
-    window.addEventListener('blur', function() {{
-        // Only act if we were previously focused and loaded
-        if (focusState.isFocused && focusState.p5Ready) {{
-            focusState.isFocused = false;
-            const focusTime = Date.now() - focusState.lastFocusTime;
-            
-            // Send focus event
-            // window.parent.stBridges.send('focus-{game_id}', {{
-            //     type: 'blur',
-            //     timestamp: Date.now(),
-            //     timeFocused: focusTime
-            // }});
-
-            recordAction('blur', {{
-                timeFocused: focusTime
-            }});
-            
-            // Send all buffered events when lose focus
-            sendBufferedEvents();
-        }}
-    }});
-
-    window.addEventListener('focus', function() {{
-        // Only act if we were previously blurred and loaded
-        if (!focusState.isFocused && focusState.p5Ready) {{
-            focusState.isFocused = true;
-            focusState.lastFocusTime = Date.now();
-            // window.parent.stBridges.send('focus-{game_id}', {{
-            //    type: 'focus',
-            //    timestamp: Date.now()
-            // }});
-
-            recordAction('focus', {{}});
-        }}
-    }});
-    
-    // Add key event listeners
-    window.addEventListener("keydown", function(e) {{
-        // Record all key presses
-        recordAction('keydown', {{
-            keyCode: e.keyCode,
-            key: e.key
-        }});
-        
-        // Prevent default for navigation keys
-        if([32, 37, 38, 39, 40].indexOf(e.keyCode) > -1) {{
-            e.preventDefault();
-        }}
-    }}, false);
-    
-    // Add keyup event listener
-    window.addEventListener("keyup", function(e) {{
-        // Record all key releases
-        recordAction('keyup', {{
-            keyCode: e.keyCode,
-            key: e.key
-        }});
-    }}, false);
-    
-    // Mouse movement tracking
-    let lastX = null;
-    let lastY = null;
-    let lastMoveTime = 0;
-    
-    document.addEventListener('mousemove', function(e) {{
-        const now = Date.now();
-        // Only record if position changed AND at 60 FPS
-        if ((lastX !== e.clientX || lastY !== e.clientY) && now - lastMoveTime > 16.66) {{
-            recordAction('mousemove', {{
-                x: e.clientX,
-                y: e.clientY
-            }});
-            lastX = e.clientX;
-            lastY = e.clientY;
-            lastMoveTime = now;
-        }}
-    }});
-    
-    // Mouse clicks
-    document.addEventListener('click', function(e) {{
-        recordAction('click', {{
-            x: e.clientX,
-            y: e.clientY,
-            button: e.button
-        }});
-    }});
-    
-    // Mouse down/up
-    document.addEventListener('mousedown', function(e) {{
-        recordAction('mousedown', {{
-            x: e.clientX,
-            y: e.clientY,
-            button: e.button
-        }});
-    }});
-    
-    document.addEventListener('mouseup', function(e) {{
-        recordAction('mouseup', {{
-            x: e.clientX,
-            y: e.clientY,
-            button: e.button
-        }});
-    }});
-    
-    // Track when mouse enters/leaves the game area
-    document.addEventListener('mouseenter', function(e) {{
-        recordAction('mouseenter', {{
-            x: e.clientX,
-            y: e.clientY
-        }});
-    }});
-    
-    document.addEventListener('mouseleave', function(e) {{
-        recordAction('mouseleave', {{
-            x: e.clientX,
-            y: e.clientY
-        }});
-    }});
-    </script>
-    """
-    
-    # Insert event handlers before the closing </body> tag
-    # html_content = html_content.replace("</body>", f"{prevent_scroll_js}{focus_event_js}</body>")
-    html_content = html_content.replace("</body>", f"{focus_event_js}</body>")
-    
-    return html_content
-
-
-def display_game_pair(game_a, game_b):
-    """Display two games side by side."""
-    # Custom CSS for the game containers
-    st.markdown("""
+# HTML template for the main page
+HTML_TEMPLATE = '''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+    <title>Game Evaluation</title>
         <style>
-        .game-title {
-            text-align: center;
-            margin: 5px 0;
-            font-size: 1.2em;
-            font-weight: bold;
+        html, body {
+            overscroll-behavior: none; /* Prevent pull-to-refresh and overscrolling */
+            height: 100%;
+            margin: 0;
+            padding: 0;
         }
-        .stButton button {
-            width: 100%;
-            margin: 5px 0;
-        }
-        div[data-testid="column"] {
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1300px;
+            margin: 0 auto;
+            padding: 10px;
             display: flex;
             flex-direction: column;
-            align-items: center;
+            height: 100vh;
+            background-color: #f8f8f8;
+            box-sizing: border-box;
             justify-content: center;
         }
-        div.element-container {
+        .main-content {
             display: flex;
+            flex-direction: column;
+            flex: 1;
             justify-content: center;
+            max-height: 100vh;
+        }
+        .game-container {
+            display: flex;
+            justify-content: space-between;
+            gap: 15px;
+            margin-bottom: 0px;
+        }
+        .game-box {
+            flex: 1;
+            border: none;
+            padding: 10px;
+            background: transparent;
+            display: flex;
+            flex-direction: column;
+            height: auto;
+        }
+        .game-frame {
+            width: 100%;
+            max-width: 600px;
+            height: 400px;
+            border: none;
+            background: #222;
+            overflow: hidden; /* Prevent scrolling within iframe */
+            margin: 0 auto;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .rating-sliders {
+            margin-top: 10px;
+            background: white;
+            padding: 16px;
+            border-radius: 6px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+        }
+        .rating-item {
+            margin-bottom: 8px;
+        }
+        .rating-item:last-child {
+            margin-bottom: 0;
+        }
+        label {
+            display: block;
+            margin-bottom: 2px;
+            font-weight: bold;
+            font-size: 14px;
+            color: #444;
+        }
+        .actions {
+            text-align: center;
+            padding: 0;
+            margin-top: 10px;
+        }
+        button {
+            padding: 8px 16px;
+            font-size: 14px;
+            cursor: pointer;
+            border: none;
+            border-radius: 4px;
+            margin: 0 5px;
+            transition: background-color 0.2s, transform 0.1s;
+        }
+        button#submit-ratings {
+            background-color: #3498db;
+            color: white;
+        }
+        button#show-instructions {
+            background-color: #f1f1f1;
+            color: #555;
+        }
+        button:hover {
+            opacity: 0.9;
+            transform: translateY(-1px);
+        }
+        button:active {
+            transform: translateY(1px);
+        }
+        .slider-container {
+            display: flex;
+            align-items: center;
+            position: relative;
+        }
+        .slider-value {
+            margin-left: 10px;
+            min-width: 30px;
+            font-size: 15px;
+            color: #3498db;
+            font-weight: bold;
+            text-align: center;
+        }
+        .scale-labels {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 2px;
+            font-size: 10px;
+            color: #888;
+        }
+        .game-label {
+            text-align: center;
+            margin-bottom: 5px;
+            font-weight: bold;
+            font-size: 20px;
+            color: #333;
+        }
+        .rating-description {
+            font-size: 11px;
+            color: #666;
+            margin-bottom: 3px;
+            font-style: italic;
+        }
+        /* Make sliders more compact and minimal */
+        .range__field {
+            border: 0;
+            margin: 0;
+            padding: 0;
             width: 100%;
         }
-        iframe {
-            width: 400px !important;
-            height: 400px !important;
-            border: none !important;
-            margin: 0 !important;
-            padding: 0 !important;
-            display: block !important;
-            background: transparent !important;
+        input.range {
+            -webkit-appearance: none;
+            bottom: -5px;
+            position: relative;
+            width: 100%;
+            margin: 0;
+            padding: 0;
+            border: 0;
+            background: transparent;
         }
-        /* Hide bridge components completely */
-        iframe.stCustomComponentV1[title="st_bridge.bridge.bridge"] {
-            position: absolute !important;
-            width: 0 !important;
-            height: 0 !important;
-            border: 0 !important;
-            padding: 0 !important;
-            margin: 0 !important;
-            overflow: hidden !important;
-            display: block !important;
-            visibility: hidden !important;
+        input.range:focus {
+            outline: 0;
         }
+        input.range::-moz-focus-outer {
+            border: 0;
+        }
+        input.range::-webkit-slider-thumb {
+            box-shadow: 1px 1px 1px black, 0px 0px 1px black;
+            border: 0;
+            height: 16px;
+            width: 16px;
+            border-radius: 50%;
+            background: white;
+            cursor: pointer;
+            -webkit-appearance: none;
+            margin-top: -5.5px;
+        }
+        input.range::-moz-range-thumb {
+            box-shadow: 1px 1px 1px black, 0px 0px 1px black;
+            border: 0;
+            height: 16px;
+            width: 16px;
+            border-radius: 50%;
+            background: white;
+            cursor: pointer;
+        }
+        input.range::-ms-thumb {
+            box-shadow: 1px 1px 1px black, 0px 0px 1px black;
+            border: 0;
+            height: 16px;
+            width: 16px;
+            border-radius: 50%;
+            background: white;
+            cursor: pointer;
+            height: 5px;
+        }
+        input.range::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 4px;
+            cursor: pointer;
+            box-shadow: 1px 1px 1px rgba(0, 0, 0, 0), 0px 0px 1px rgba(13, 13, 13, 0);
+            background: #3498db;
+            border-radius: 20px;
+            border: 0;
+        }
+        input.range::-moz-range-track {
+            width: 100%;
+            height: 4px;
+            cursor: pointer;
+            box-shadow: 1px 1px 1px rgba(0, 0, 0, 0), 0px 0px 1px rgba(13, 13, 13, 0);
+            background: #3498db;
+            border-radius: 20px;
+            border: 0;
+        }
+        input.range::-ms-track {
+            width: 100%;
+            height: 4px;
+            cursor: pointer;
+            background: transparent;
+            border-color: transparent;
+            color: transparent;
+        }
+        input.range::-ms-fill-lower,
+        input.range::-ms-fill-upper {
+            background: #3498db;
+            border: 0;
+            border-radius: 40px;
+            box-shadow: 1px 1px 1px rgba(0, 0, 0, 0), 0px 0px 1px rgba(13, 13, 13, 0);
+        }
+        .range__point {
+            font-size: 11px;
+            fill: #666;
+        }
+        
+        /* Modal styles */
+        .modal {
+            display: none; /* Hidden by default */
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+            justify-content: center;
+            align-items: center;
+        }
+        .modal-content {
+            background-color: #fff;
+            padding: 30px;
+            border: none;
+            border-radius: 8px;
+            width: 80%;
+            max-width: 800px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            position: relative;
+        }
+        .modal-content h2 {
+            margin-top: 0;
+            margin-bottom: 10px;
+        }
+        .modal-content h3 {
+            margin-top: 15px;
+            margin-bottom: 5px;
+        }
+        .modal-content h4 {
+            margin-top: 10px;
+            margin-bottom: 3px;
+        }
+        .modal-content p {
+            margin-top: 0;
+            margin-bottom: 10px;
+        }
+        .modal-content ul {
+            margin-top: 5px;
+            margin-bottom: 10px;
+        }
+        .modal-content li {
+            margin-bottom: 3px;
+        }
+        .close {
+            color: #bbb;
+            position: absolute;
+            right: 20px;
+            top: 15px;
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        .close:hover {
+            color: #555;
+        }
+        #startButton {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 12px 24px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            font-size: 16px;
+            margin-top: 20px;
+        }
+        #startButton:hover {
+            background-color: #2980b9;
+        }
+        .overall-comparison {
+            background: white;
+            padding: 10px;
+            border-radius: 6px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+            text-align: center;
+            max-width: 500px;
+            margin: 2px auto;
+        }
+        .overall-comparison h3 {
+            display: inline-block;
+            margin: 0 10px 0 0;
+            color: #444;
+            font-size: 16px;
+            vertical-align: middle;
+        }
+        .comparison-options {
+            display: inline-block;
+            vertical-align: middle;
+        }
+        .comparison-options label {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 16px;
+            margin: 0 10px;
+        }
+        .comparison-options input[type="radio"] {
+            margin: 0;
+            width: 18px;
+            height: 18px;
+        }
+                
         </style>
-    """, unsafe_allow_html=True)
-    
-    # Create two columns with equal width
-    col1, col2 = st.columns([1, 1])
-    
-    # Display games
-    with col1:
-        st.markdown('<p class="game-title">Game A</p>', unsafe_allow_html=True)
-        html_a = create_game_html(game_a["game_code"], "A")
-        components.html(html_a, height=400, scrolling=False)
-    
-    with col2:
-        st.markdown('<p class="game-title">Game B</p>', unsafe_allow_html=True)
-        html_b = create_game_html(game_b["game_code"], "B")
-        components.html(html_b, height=400, scrolling=False)
-
-    # Store player actions in session state
-    if "game_a_actions" not in st.session_state:
-        st.session_state.game_a_actions = []
-    if "game_b_actions" not in st.session_state:
-        st.session_state.game_b_actions = []
-    # if "game_a_focus_events" not in st.session_state:
-    #     st.session_state.game_a_focus_events = []
-    # if "game_b_focus_events" not in st.session_state:
-    #     st.session_state.game_b_focus_events = []
-    # Store processed timestamps in session state
-    if "processed_timestamps_a" not in st.session_state:
-        st.session_state.processed_timestamps_a = set()
-    if "processed_timestamps_b" not in st.session_state:
-        st.session_state.processed_timestamps_b = set()
-    # if "processed_focus_timestamps_a" not in st.session_state:
-    #     st.session_state.processed_focus_timestamps_a = set()
-    # if "processed_focus_timestamps_b" not in st.session_state:
-    #     st.session_state.processed_focus_timestamps_b = set()
-    
-    # Get latest event data using bridges with height=0
-    event_a = bridge("bridge-A", default=None)
-    event_b = bridge("bridge-B", default=None)
-
-    server_time = datetime.now().isoformat()
-    # Process new events if available
-    if event_a is not None:
-        # Only add events with timestamps we haven't seen before
-        new_events = []
-        for event in event_a["events"]:
-            timestamp = event.get("timestamp")
-            if timestamp and timestamp not in st.session_state.processed_timestamps_a:
-                event["server_timestamp"] = server_time
-                st.session_state.game_a_actions.append(event)
-                st.session_state.processed_timestamps_a.add(timestamp)
-                new_events.append(event)
-        
-        if new_events:
-            st.write(f"Received {len(new_events)} new buffered events from Game A")
-
-    if event_b is not None:
-        # Only add events with timestamps we haven't seen before
-        new_events = []
-        for event in event_b["events"]:
-            timestamp = event.get("timestamp")
-            if timestamp and timestamp not in st.session_state.processed_timestamps_b:
-                event["server_timestamp"] = server_time
-                st.session_state.game_b_actions.append(event)
-                st.session_state.processed_timestamps_b.add(timestamp)
-                new_events.append(event)
-        
-        if new_events:
-            st.write(f"Received {len(new_events)} new buffered events from Game B")
-
-    
-    # Get focus/blur events
-    # focus_event_a = bridge("focus-A", default=None)
-    # focus_event_b = bridge("focus-B", default=None)
-    
-    # Process focus events if available
-    # if focus_event_a is not None:
-    #     timestamp = focus_event_a.get("timestamp")
-    #     if timestamp and timestamp not in st.session_state.processed_focus_timestamps_a:
-    #         focus_event_a["server_timestamp"] = datetime.now().isoformat()
-    #         st.session_state.game_a_focus_events.append(focus_event_a)
-    #         st.session_state.processed_focus_timestamps_a.add(timestamp)
-    
-    # if focus_event_b is not None:
-    #     timestamp = focus_event_b.get("timestamp")
-    #     if timestamp and timestamp not in st.session_state.processed_focus_timestamps_b:
-    #         focus_event_b["server_timestamp"] = datetime.now().isoformat()
-    #         st.session_state.game_b_focus_events.append(focus_event_b)
-    #         st.session_state.processed_focus_timestamps_b.add(timestamp)
-    
-    # Display summary of recorded actions
-    col1, col2 = st.columns(2)
-    
-    def count_events_by_type(actions):
-        event_counts = {}
-        for action in actions:
-            if isinstance(action, dict) and "type" in action:
-                event_type = action["type"]
-                event_counts[event_type] = event_counts.get(event_type, 0) + 1
-        return event_counts
-    
-    # Display event summaries
-    with col1:
-        st.write("### Game A actions")
-        event_counts_a = count_events_by_type(st.session_state.game_a_actions)
-        for event_type, count in event_counts_a.items():
-            st.write(f"- {event_type}: {count}")
-        st.write(f"Total: {len(st.session_state.game_a_actions)} events")
-
-        # Display focus events
-        # st.write("### Game A focus events")
-        # for focus_event in st.session_state.game_a_focus_events:
-        #     event_type = focus_event.get('type', 'unknown')
-        #     if event_type == 'blur' and 'timeFocused' in focus_event:
-        #         focus_time_sec = focus_event['timeFocused'] / 1000
-        #         st.write(f"- {event_type} after {focus_time_sec:.1f} seconds of focus")
-        #     elif event_type in ['p5_ready', 'p5_ready_fallback', 'ready_fallback']:
-        #         st.write(f"- {event_type} at {focus_event.get('timestamp', 'unknown')}")
-        #     else:
-        #         st.write(f"- {event_type} at {focus_event.get('timestamp', 'unknown')}")
-
-    
-    with col2:
-        st.write("### Game B actions")
-        event_counts_b = count_events_by_type(st.session_state.game_b_actions)
-        for event_type, count in event_counts_b.items():
-            st.write(f"- {event_type}: {count}")
-        st.write(f"Total: {len(st.session_state.game_b_actions)} events")
-
-        # Display focus events
-        # st.write("### Game B focus events")
-        # for focus_event in st.session_state.game_b_focus_events:
-        #     event_type = focus_event.get('type', 'unknown')
-        #     if event_type == 'blur' and 'timeFocused' in focus_event:
-        #         focus_time_sec = focus_event['timeFocused'] / 1000
-        #         st.write(f"- {event_type} after {focus_time_sec:.1f} seconds of focus")
-        #     elif event_type in ['p5_ready', 'p5_ready_fallback', 'ready_fallback']:
-        #         st.write(f"- {event_type} at {focus_event.get('timestamp', 'unknown')}")
-        #     else:
-        #         st.write(f"- {event_type} at {focus_event.get('timestamp', 'unknown')}")
-
-
-def get_display_name(sample):
-    """Get formatted display name for a sample."""
-    model_short = sample["model"].split('/')[-1]  # Get last part of model name
-    return f"{model_short} - sample {sample['sample_index']}"
-
-
-def update_elo(rating_a, rating_b, winner):
-    """Update Elo ratings based on game outcome."""
-    expected_a = 1.0 / (1.0 + math.pow(BASE, (rating_b - rating_a) / SCALE))
-    actual_a = 1.0 if winner == "A" else 0.0
-    
-    # Update ratings
-    rating_change = K_FACTOR * (actual_a - expected_a)
-    new_rating_a = rating_a + rating_change
-    new_rating_b = rating_b - rating_change
-    
-    return new_rating_a, new_rating_b
-
-
-def display_leaderboard(samples):
-    """Display the leaderboard in a formatted way."""
-    # Add CSS for leaderboard buttons
-    st.markdown("""
-        <style>
-        /* Make buttons show ellipsis when text overflows */
-        .leaderboard-button {
-            white-space: nowrap !important;
-            overflow: hidden !important;
-            text-overflow: ellipsis !important;
-            max-width: 100% !important;
-        }
-        </style>
-    """, unsafe_allow_html=True)
-    
-    st.write("### Game Rankings")
-    
-    # Sort samples by rating
-    ranked_samples = sorted(
-        [(sample, st.session_state.ratings.get(sample["id"], INITIAL_RATING)) for sample in samples],
-        key=lambda x: x[1],
-        reverse=True
-    )
-    
-    # Create two columns: rankings and game preview
-    col1, col2 = st.columns([1, 1])
-    
-    with col1:
-        # Create table header with adjusted column widths
-        cols = st.columns([0.5, 2.5, 1])
-        with cols[0]:
-            st.write("**#**")
-        with cols[1]:
-            st.write("**Sample**")
-        with cols[2]:
-            st.write("**Rating**")
-        
-        # Add table rows with clickable buttons
-        for i, (sample, rating) in enumerate(ranked_samples, 1):
-            cols = st.columns([0.5, 2.5, 1])
-            with cols[0]:
-                st.write(f"#{i}")
-            with cols[1]:
-                display_name = get_display_name(sample)
-                if st.button(display_name, key=f"game_{i}", use_container_width=True, type="secondary"):
-                    st.session_state.selected_game = sample
-            with cols[2]:
-                st.write(f"{rating:.0f}")
-    
-    with col2:
-        st.write("### Game Preview")
-        # Display selected game if any
-        if "selected_game" in st.session_state:
-            html = create_game_html(st.session_state.selected_game["game_code"], "leaderboard_preview")
-            components.html(html, height=400, scrolling=False)
-            st.write(f"Model: {st.session_state.selected_game['model']}")
-        else:
-            st.write("Click on a game to preview it")
-
-
-# def preprocess_actions_for_storage(actions):
-#     """Convert complex action data to a format suitable for Parquet storage."""
-#     processed_actions = []
-    
-#     for action in actions:
-#         if not isinstance(action, dict):
-#             continue
-
-#         # Create a flat structure with all essential information
-#         processed_action = {
-#             "type": action.get("type", "unknown"),
-#             "client_timestamp": action.get("timestamp"),
-#             "server_timestamp": action.get("server_timestamp"),
-#             "framecount": action.get("framecount")
-#         }
-        
-#         # Add coordinates for mouse/touch events
-#         if "x" in action and "y" in action:
-#             processed_action["x"] = action["x"]
-#             processed_action["y"] = action["y"]
-        
-#         # Add key information for keyboard events
-#         if "key" in action:
-#             processed_action["key"] = action["key"]
-#             processed_action["keyCode"] = action.get("keyCode")
-#             processed_action["isShift"] = action.get("isShift", False)
-#             processed_action["isCtrl"] = action.get("isCtrl", False)
-#             processed_action["isAlt"] = action.get("isAlt", False)
-        
-#         # Add button information for mouse events
-#         if "button" in action:
-#             processed_action["button"] = action["button"]
+    </head>
+    <body>
+    <!-- Instructions Modal -->
+    <div id="instructionsModal" class="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <h2>Game Evaluation Study</h2>
+            <p>Thank you for participating in our game evaluation study! Your feedback will help us understand what makes games engaging and fun.</p>
             
-#         processed_actions.append(processed_action)
-    
-#     return processed_actions
-
-
-def save_preference(preferences_scheduler, game_a, game_b, winner):
-    """Save user preference using ParquetScheduler."""
-    # Process actions for storage
-    # processed_game_a_actions = preprocess_actions_for_storage(st.session_state.game_a_actions)
-    # processed_game_b_actions = preprocess_actions_for_storage(st.session_state.game_b_actions)
-    
-    # # Process focus events for storage
-    # processed_game_a_focus = preprocess_actions_for_storage(st.session_state.game_a_focus_events)
-    # processed_game_b_focus = preprocess_actions_for_storage(st.session_state.game_b_focus_events)
-    
-    # st.write(processed_game_a_focus)
-    # st.write(processed_game_b_focus)
-    # st.write(processed_game_a_actions)
-    # st.write(processed_game_b_actions)
-    # st.stop()
-
-    # Create preference entry
-    preference = {
-        "id": str(uuid.uuid4()),
-        "model_a": game_a["model"],
-        "model_b": game_b["model"],
-        "game_a": game_a["game_code"],
-        "game_b": game_b["game_code"],
-        "game_a_id": game_a["id"],
-        "game_b_id": game_b["id"],
-        "winner": f"game_{winner.lower()}" if winner in ["A", "B"] else "tie",
-        "judge": st.session_state.username,
-        "timestamp": datetime.now().isoformat(),
-        "game_description_index": st.session_state.game_idx,
+            <h3>How to Evaluate the Games</h3>
+            <p >You'll be shown two games side by side. For each game, please:</p>
+            
+            <div>
+                <h4>1. Play for about 1 minute to get a good feel for it. You can stop earlier if the game is broken and is impossible to play.</h4>
+                <h4>2. Rate the game on three aspects:</h4>
+                
+                <div style="margin-left: 15px; ">
+                    <h4>Controls (0-10)</h4>
+                    <p style="margin-left: 10px; ">
+                        - 0: Controls are completely confusing and unresponsive<br>
+                        - 5: Controls are somewhat intuitive but could be improved<br>
+                        - 10: Controls are perfectly intuitive and responsive
+                    </p>
+                    
+                    <h4>Difficulty (0-10)</h4>
+                    <p style="margin-left: 10px; ">
+                        - 0: Game is too easy and has no challenge at all<br>
+                        - 5: Game has a good balance of challenge<br>
+                        - 10: Game is extremely difficult
+                    </p>
+                    
+                    <h4>Fun Factor (0-10)</h4>
+                    <p style="margin-left: 10px; ">
+                        - 0: Game is not enjoyable at all<br>
+                        - 5: Game is somewhat enjoyable (like a basic mobile game you'd play once)<br>
+                        - 10: Game is extremely fun and engaging
+                    </p>
+                </div>
+                
+                <h4>3. Finally, choose which game you think an average person would choose to play</h4>
+            </div>
+            
+            <h3>Important Notes</h3>
+            <ul style="padding-left: 25px;">
+                <li>We record your interactions with the games to understand how people play them</li>
+                <li>Please take this seriously - we use this data for research</li>
+                <li>There are no right or wrong answers - we want your honest opinion</li>
+                <li>If you're not serious about the evaluation, we won't be able to compensate you</li>
+            </ul>
+            
+            <p>Ready to start? Click the button below to begin!</p>
+            
+            <button id="startButton">Start Playing</button>
+        </div>
+    </div>
         
-        # Add processed player action data to the preference entry
-        # "actions_a": json.dumps(processed_game_a_actions),
-        # "actions_b": json.dumps(processed_game_b_actions)
-        "actions_a": json.dumps(st.session_state.game_a_actions),
-        "actions_b": json.dumps(st.session_state.game_b_actions)
+    <div class="main-content">
+        <div class="game-container">
+        {% for game in games %}
+        <div class="game-box">
+            <div class="game-label">Game {% if loop.index == 1 %}A{% else %}B{% endif %}</div>
+            <iframe class="game-frame" src="/game/{{ game.path }}"></iframe>
+            
+            <div class="rating-sliders">
+                <div class="rating-item">
+                    <label>Controls: How intuitive and responsive were the controls?</label>
+                    <fieldset class="range__field">
+                        <input class="range" type="range" min="0" max="10" value="5" id="controls-{{ loop.index }}">
+                        <svg role="presentation" width="100%" height="14" xmlns="http://www.w3.org/2000/svg">
+                            <text class="range__point" x="0%" y="14" text-anchor="start">0</text>
+                            <text class="range__point" x="10%" y="14" text-anchor="middle">1</text>
+                            <text class="range__point" x="20%" y="14" text-anchor="middle">2</text>
+                            <text class="range__point" x="30%" y="14" text-anchor="middle">3</text>
+                            <text class="range__point" x="40%" y="14" text-anchor="middle">4</text>
+                            <text class="range__point" x="50%" y="14" text-anchor="middle">5</text>
+                            <text class="range__point" x="60%" y="14" text-anchor="middle">6</text>
+                            <text class="range__point" x="70%" y="14" text-anchor="middle">7</text>
+                            <text class="range__point" x="80%" y="14" text-anchor="middle">8</text>
+                            <text class="range__point" x="90%" y="14" text-anchor="middle">9</text>
+                            <text class="range__point" x="100%" y="14" text-anchor="end">10</text>
+                        </svg>
+                    </fieldset>
+                    <div class="scale-labels">
+                        <span>Confusing</span>
+                        <span>Intuitive</span>
+                    </div>
+                </div>
+                
+                <div class="rating-item">
+                    <label>Difficulty: How challenging was the game to play?</label>
+                    <fieldset class="range__field">
+                        <input class="range" type="range" min="0" max="10" value="5" id="difficulty-{{ loop.index }}">
+                        <svg role="presentation" width="100%" height="14" xmlns="http://www.w3.org/2000/svg">
+                            <text class="range__point" x="0%" y="14" text-anchor="start">0</text>
+                            <text class="range__point" x="10%" y="14" text-anchor="middle">1</text>
+                            <text class="range__point" x="20%" y="14" text-anchor="middle">2</text>
+                            <text class="range__point" x="30%" y="14" text-anchor="middle">3</text>
+                            <text class="range__point" x="40%" y="14" text-anchor="middle">4</text>
+                            <text class="range__point" x="50%" y="14" text-anchor="middle">5</text>
+                            <text class="range__point" x="60%" y="14" text-anchor="middle">6</text>
+                            <text class="range__point" x="70%" y="14" text-anchor="middle">7</text>
+                            <text class="range__point" x="80%" y="14" text-anchor="middle">8</text>
+                            <text class="range__point" x="90%" y="14" text-anchor="middle">9</text>
+                            <text class="range__point" x="100%" y="14" text-anchor="end">10</text>
+                        </svg>
+                    </fieldset>
+                    <div class="scale-labels">
+                        <span>Too easy</span>
+                        <span>Very challenging</span>
+                    </div>
+                </div>
+                
+                <div class="rating-item">
+                    <label>Fun: How enjoyable was the game to play?</label>
+                    <fieldset class="range__field">
+                        <input class="range" type="range" min="0" max="10" value="5" id="fun-{{ loop.index }}">
+                        <svg role="presentation" width="100%" height="14" xmlns="http://www.w3.org/2000/svg">
+                            <text class="range__point" x="0%" y="14" text-anchor="start">0</text>
+                            <text class="range__point" x="10%" y="14" text-anchor="middle">1</text>
+                            <text class="range__point" x="20%" y="14" text-anchor="middle">2</text>
+                            <text class="range__point" x="30%" y="14" text-anchor="middle">3</text>
+                            <text class="range__point" x="40%" y="14" text-anchor="middle">4</text>
+                            <text class="range__point" x="50%" y="14" text-anchor="middle">5</text>
+                            <text class="range__point" x="60%" y="14" text-anchor="middle">6</text>
+                            <text class="range__point" x="70%" y="14" text-anchor="middle">7</text>
+                            <text class="range__point" x="80%" y="14" text-anchor="middle">8</text>
+                            <text class="range__point" x="90%" y="14" text-anchor="middle">9</text>
+                            <text class="range__point" x="100%" y="14" text-anchor="end">10</text>
+                        </svg>
+                    </fieldset>
+                    <div class="scale-labels">
+                        <span>Not fun</span>
+                        <span>Very fun</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    
+    <div class="overall-comparison">
+        <h3>Which game is better overall?</h3>
+        <div class="comparison-options">
+            <label>
+                <input type="radio" name="better-game" value="1"> Game A
+            </label>
+            <label>
+                <input type="radio" name="better-game" value="2"> Game B
+            </label>
+        </div>
+    </div>
+    
+    <div class="actions">
+        <button id="submit-ratings">Submit Ratings</button>
+        <button id="show-instructions">Instructions</button>
+    </div>
+    </div>
+
+    <script>
+        // Modal functionality
+        const modal = document.getElementById("instructionsModal");
+        const closeBtn = document.getElementsByClassName("close")[0];
+        const startBtn = document.getElementById("startButton");
+        const showInstructionsBtn = document.getElementById("show-instructions");
+        
+        // Check if this is the first visit
+        if (!localStorage.getItem("gameArenaVisited")) {
+            // First visit, show modal
+            modal.style.display = "flex";
+            localStorage.setItem("gameArenaVisited", "true");
+        } else {
+            // Not first visit, hide modal
+            modal.style.display = "none";
+        }
+        
+        // Function to reset all sliders to default value
+        function resetAllSliders() {
+            document.querySelectorAll('input[type="range"]').forEach(slider => {
+                slider.value = 5;
+            });
+            
+            // Also reset the final comparison radio buttons
+            document.querySelectorAll('input[name="better-game"]').forEach(radio => {
+                radio.checked = false;
+            });
+        }
+        
+        // Close modal when clicking close button
+        closeBtn.onclick = function() {
+            modal.style.display = "none";
+        }
+        
+        // Close modal when clicking Start button
+        startBtn.onclick = function() {
+            modal.style.display = "none";
+        }
+        
+        // Show instructions when clicking Instructions button
+        showInstructionsBtn.onclick = function() {
+            modal.style.display = "flex";
+        }
+        
+        // Close modal when clicking outside of it
+        window.onclick = function(event) {
+            if (event.target == modal) {
+                modal.style.display = "none";
+            }
+        }
+        
+        // Prevent scrolling with keyboard
+        window.addEventListener("keydown", function(e) {
+            // Prevent default for navigation keys (space, arrow keys)
+            if([32, 37, 38, 39, 40].indexOf(e.keyCode) > -1) {
+                e.preventDefault();
+            }
+        }, false);
+        
+        // Prevent scrolling with mouse wheel when over iframes
+        document.querySelectorAll('.game-frame').forEach(iframe => {
+            iframe.addEventListener('mouseover', function() {
+                document.body.style.overflow = 'hidden';
+            });
+            
+            iframe.addEventListener('mouseout', function() {
+                document.body.style.overflow = 'auto';
+            });
+        });
+        
+        // Update the displayed values as sliders change
+        document.querySelectorAll('.range').forEach(slider => {
+            slider.addEventListener('input', function() {
+                // Just keep track of the value, without updating display elements
+                const value = this.value;
+                // No need to update non-existent elements
+            });
+        });
+        
+        // Make sure the comparison radio buttons are unchecked when the page loads
+        window.addEventListener('DOMContentLoaded', function() {
+            document.querySelectorAll('input[name="better-game"]').forEach(radio => {
+                radio.checked = false;
+            });
+        });
+        
+        // Submit ratings
+        document.getElementById('submit-ratings').addEventListener('click', function() {
+            // Check if a game has been selected for comparison
+            const selectedGame = document.querySelector('input[name="better-game"]:checked');
+            if (!selectedGame) {
+                alert('Please select which game you think is better overall before submitting');
+                return;
+            }
+            
+            const ratings = {};
+            
+            // Add games with more descriptive keys
+            {% for game in games %}
+            ratings['game_{% if loop.index == 1 %}a{% else %}b{% endif %}'] = {
+                url: '{{ game.path }}',
+                fun: document.getElementById('fun-{{ loop.index }}').value,
+                difficulty: document.getElementById('difficulty-{{ loop.index }}').value,
+                controls: document.getElementById('controls-{{ loop.index }}').value
+            };
+            {% endfor %}
+            
+            // Get which game was selected as better overall
+            const betterGameValue = selectedGame.value;
+            ratings['comparison'] = {
+                better_game: 'game_' + (betterGameValue == 1 ? 'a' : 'b')
+            };
+            
+            fetch('/submit-ratings', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(ratings),
+            })
+            .then(response => response.json())
+            .then(data => {
+                resetAllSliders(); // Reset sliders before reloading
+                
+                // Store that instructions have been seen to prevent showing again after reload
+                localStorage.setItem("gameArenaVisited", "true");
+                
+                window.location.reload(); // Reload page to get new games
+            })
+            .catch((error) => {
+                console.error('Error:', error);
+                alert('Error submitting ratings');
+            });
+        });
+    </script>
+    </body>
+    </html>
+'''
+
+@app.route('/')
+def index():
+    """Main page that displays random games and rating interface"""
+    games = get_random_games(2)
+    
+    # Format games for template
+    formatted_games = []
+    for game in games:
+        formatted_games.append({
+            "path": f"{game['id']}/index.html",  # Use game ID in path
+            "name": game["game_title"],
+            "concept": game["game_concept"],
+            "model": game["model"],
+            "method": game["method"]
+        })
+
+        print(formatted_games)
+    
+    return render_template_string(HTML_TEMPLATE, games=formatted_games)
+
+@app.route('/game/<path:game_path>')
+def serve_game(game_path):
+    """Serve game HTML files and other assets"""
+    # Extract game ID from path
+    game_id = game_path.split('/')[0]
+    
+    # Find game in dataset
+    # game = None
+    # for item in GAMES_DATASET:
+    #     if item["id"] == game_id:
+    #         game = item
+    #         break
+    game = GAMES_DATASET.filter(lambda x: x["id"] == game_id)[0]
+    
+    if game is None:
+        return "Game not found", 404
+    
+    # Handle different file types
+    if game_path.endswith('.js'):
+        # Return JavaScript file
+        # remove game id from path
+        js_file = '/'.join(game_path.split('/')[1:])
+        if js_file in game["game_file_paths"]:
+            js_file_content = game["game_file_contents"][game["game_file_paths"].index(js_file)]
+            return js_file_content, 200, {'Content-Type': 'application/javascript'}
+        return "JavaScript file not found", 404
+    
+    elif game_path.endswith('index.html'):
+        # Return HTML file
+        html = game["game_file_contents"][game["game_file_paths"].index("index.html")]
+        
+        # Anti-scrolling and event tracking JavaScript
+        tracking_js = """
+        <script>
+        // Event tracking
+        const eventBuffer = [];
+        let isFocused = true;
+        let lastFocusTime = Date.now();
+        let lastX = null;
+        let lastY = null;
+        let lastMoveTime = 0;
+
+        // Record action to buffer
+        function recordAction(eventType, data) {
+            if (isFocused) {
+                eventBuffer.push({
+                    type: eventType,
+                    timestamp: Date.now(),
+                    framecount: typeof window.gameInstance !== 'undefined' ? window.gameInstance.frameCount : null,
+                    ...data
+                });
+            }
+        }
+
+        // Send buffered events to server
+        function sendBufferedEvents() {
+            if (eventBuffer.length > 0) {
+                const events = eventBuffer.slice();
+                eventBuffer.length = 0;
+                
+                fetch('/record-events', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        gameId: '""" + game_id + """',
+                        events: events
+                    }),
+                });
+            }
+        }
+
+        // Prevent scrolling with keyboard
+        window.addEventListener("keydown", function(e) {
+            // Record keydown event
+            recordAction('keydown', {
+                keyCode: e.keyCode,
+                key: e.key
+            });
+            
+            // Prevent default for navigation keys
+            if([32, 37, 38, 39, 40].indexOf(e.keyCode) > -1) {
+                e.preventDefault();
+            }
+        }, false);
+        
+        // More event listeners
+        window.addEventListener('keyup', (e) => {
+            recordAction('keyup', {
+                keyCode: e.keyCode,
+                key: e.key
+            });
+        });
+
+        // Mouse movement tracking
+        document.addEventListener('mousemove', (e) => {
+            const now = Date.now();
+            // Only record if position changed AND at 60 FPS
+            if ((lastX !== e.clientX || lastY !== e.clientY) && now - lastMoveTime > 16.66) {
+                recordAction('mousemove', {
+                    x: e.clientX,
+                    y: e.clientY
+                });
+                lastX = e.clientX;
+                lastY = e.clientY;
+                lastMoveTime = now;
+            }
+        });
+        
+        // Mouse clicks
+        document.addEventListener('click', (e) => {
+            recordAction('click', {
+                x: e.clientX,
+                y: e.clientY,
+                button: e.button
+            });
+        });
+        
+        // Mouse down/up
+        document.addEventListener('mousedown', (e) => {
+            recordAction('mousedown', {
+                x: e.clientX,
+                y: e.clientY,
+                button: e.button
+            });
+        });
+        
+        document.addEventListener('mouseup', (e) => {
+            recordAction('mouseup', {
+                x: e.clientX,
+                y: e.clientY,
+                button: e.button
+            });
+        });
+        
+        // Track when mouse enters/leaves the game area
+        document.addEventListener('mouseenter', (e) => {
+            recordAction('mouseenter', {
+                x: e.clientX,
+                y: e.clientY
+            });
+        });
+        
+        document.addEventListener('mouseleave', (e) => {
+            recordAction('mouseleave', {
+                x: e.clientX,
+                y: e.clientY
+            });
+        });
+
+        // Focus/blur events
+        window.addEventListener('blur', () => {
+            isFocused = false;
+            const focusTime = Date.now() - lastFocusTime;
+            recordAction('blur', { timeFocused: focusTime });
+            sendBufferedEvents();
+        });
+
+        window.addEventListener('focus', () => {
+            isFocused = true;
+            lastFocusTime = Date.now();
+            recordAction('focus', {});
+        });
+
+        // Send events periodically and when page unloads
+        setInterval(sendBufferedEvents, 5000);
+        window.addEventListener('beforeunload', sendBufferedEvents);
+        </script>
+        """
+        
+        # Insert the script before the closing </body> tag
+        if "</body>" in html:
+            html = html.replace("</body>", tracking_js + "</body>")
+        else:
+            # If no body tag, append to the end
+            html += tracking_js
+        
+        return html, 200, {'Content-Type': 'text/html'}
+    
+    else:
+        # For other file types, return 404
+        return "File type not supported", 404
+
+@app.route('/record-events', methods=['POST'])
+def record_events():
+    """Handle events from games"""
+    print("Received events")
+    event_data = request.json
+    game_id = event_data.get('gameId')
+    
+    if game_id not in game_events:
+        game_events[game_id] = []
+    
+    game_events[game_id].extend(event_data.get('events', []))
+    return jsonify({"status": "success"})
+
+
+@app.route('/submit-ratings', methods=['POST'])
+def submit_ratings():
+    """Handle game ratings submission"""
+    global ratings_counter
+    ratings = request.json
+    
+    # Print ratings to console for debugging
+    print("Received ratings:", ratings)
+    
+    # Add events data to ratings
+    for key in ['game_a', 'game_b']:
+        game_id = ratings.get(key, {}).get('url', '').split('/')[0]
+        if game_id in game_events:
+            ratings[key]['events'] = game_events[game_id]
+            # Clear events after storing them
+            del game_events[game_id]
+    
+    # Create a timestamp for this pair of ratings
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    # Prepare entry for this pair
+    rating_entry = {
+        "timestamp": timestamp,
+        "ratings": ratings
     }
     
-    # Add to scheduler
-    preferences_scheduler.append(preference)
+    # Load existing ratings or create new file
+    all_ratings = []
+    if RATINGS_FILE.exists():
+        try:
+            with open(RATINGS_FILE, 'r') as f:
+                all_ratings = json.load(f)
+        except json.JSONDecodeError:
+            # If file is corrupted, start fresh
+            all_ratings = []
     
-    # Clear the action lists
-    st.session_state.game_a_actions = []
-    st.session_state.game_b_actions = []
-    # st.session_state.game_a_focus_events = []
-    # st.session_state.game_b_focus_events = []
-    # Don't clear the processed timestamps (used to make sure actions sent from the bridge are not saved twice when the app is rerun)
-
-
-def sample_new_pair():
-    """Sample a new pair of games different from current ones."""
-    current_pair = st.session_state.current_pair
+    # Add new ratings
+    all_ratings.append(rating_entry)
     
-    # Reset action tracking for new pair
-    st.session_state.game_a_actions = []
-    st.session_state.game_b_actions = []
-    # st.session_state.game_a_focus_events = []
-    # st.session_state.game_b_focus_events = []
-
-    # If random game mode is active, potentially select a new game
-    if st.session_state.random_game_mode:
-        # Randomly select a game index
-        new_game_idx = random.randint(0, len(st.session_state.game_descriptions) - 1)
-        if new_game_idx != st.session_state.game_idx:
-            st.session_state.game_idx = new_game_idx
-            new_samples = get_game_samples(st.session_state.games_dataset, st.session_state.game_idx)
-            if len(new_samples) >= 2:
-                return random.sample(new_samples, 2)
+    # Save all ratings back to file
+    with open(RATINGS_FILE, 'w') as f:
+        json.dump(all_ratings, f, indent=4)
     
-    # Original logic for sampling from current game
-    samples = get_game_samples(st.session_state.games_dataset, st.session_state.game_idx)
-    while True:
-        new_pair = random.sample(samples, 2)
-        # Only accept if both games are different from current ones
-        if new_pair[0]["id"] != current_pair[0]["id"] and new_pair[1]["id"] != current_pair[1]["id"]:
-            return new_pair
-
-
-def main():
-    # Initialize cached resources
-    preferences_scheduler = get_scheduler()
-    
-    # Load datasets only if not already in session state
-    if "games_dataset" not in st.session_state:
-        games_dataset, initial_ratings, game_descriptions = load_datasets()
-        st.session_state.games_dataset = games_dataset
-        st.session_state.initial_ratings = initial_ratings
-        st.session_state.game_descriptions = game_descriptions
-    
-    # Initialize ratings in session state if not already present
-    if "ratings" not in st.session_state:
-        st.session_state.ratings = st.session_state.initial_ratings.copy()
-    
-    # Add CSS for sidebar text wrapping
-    st.markdown("""
-        <style>
-        .stSelectbox div div div {
-            white-space: normal !important;
-            line-height: normal !important;
+    # Save to HuggingFace dataset
+    try:
+        # Create preference entry for HF dataset
+        game_a = ratings['game_a']
+        game_b = ratings['game_b']
+        winner = ratings['comparison']['better_game']
+        
+        # Format rating data for HF
+        # TODO: more general game_a_ratings dict field
+        preference = {
+            "id": str(uuid.uuid4()),
+            "game_a_id": game_a['url'].split('/')[0],
+            "game_b_id": game_b['url'].split('/')[0],
+            "winner": winner,
+            "judge": request.remote_addr,  # Use IP as anonymous identifier
+            "timestamp": timestamp,
+            "game_a_rating": {
+                "fun": game_a['fun'],
+                "difficulty": game_a['difficulty'],
+                "controls": game_a['controls']
+            },
+            "game_b_rating": {
+                "fun": game_b['fun'],
+                "difficulty": game_b['difficulty'],
+                "controls": game_b['controls']
+            },
+            "actions_a": json.dumps(game_a.get('events', [])),
+            "actions_b": json.dumps(game_b.get('events', []))
         }
-        div[data-baseweb="select"] > div {
-            min-height: fit-content !important;
-            max-height: none !important;
-        }
-        div[data-baseweb="select"] span {
-            white-space: normal !important;
-            line-height: normal !important;
-        }
-        </style>
-    """, unsafe_allow_html=True)
-    
-    # User authentication
-    if "username" not in st.session_state:
-        st.title("Welcome to Game Evaluation")
         
-        # Add username to session state when submitted
-        def set_username():
-            if st.session_state.username_input:
-                st.session_state.username = st.session_state.username_input
+        # Add to scheduler
+        preferences_scheduler.append(preference)
+        print(f"Added preference to HF dataset queue: {preference['id']}")
         
-        username = st.text_input(
-            "Please enter your username:",
-            key="username_input",
-            on_change=set_username
-        )
-        
-        if st.button("Start"):
-            if username:
-                st.session_state.username = username
-            else:
-                st.error("Please enter a username")
-        return
-    
-    # Rest of the main function
-    st.sidebar.title(f"Welcome, {st.session_state.username}!")
-    
-    # Add logout button in sidebar
-    if st.sidebar.button("Logout"):
-        del st.session_state.username
-        st.rerun()
-    
-    # Sidebar for game selection
-    st.sidebar.title("Game Selection")
-    game_options = [f"Game {i}: {desc}" for i, desc in enumerate(st.session_state.game_descriptions)]
-    
-    # Random game mode checkbox
-    if "random_game_mode" not in st.session_state:
-        st.session_state.random_game_mode = True
-    
-    st.session_state.random_game_mode = st.sidebar.checkbox("Randomly select games", value=st.session_state.random_game_mode)
-    
-    # Initialize or update game index in session state
-    if "game_idx" not in st.session_state:
-        st.session_state.game_idx = 0
-    
-    # Initialize leaderboard game index
-    if "leaderboard_game_idx" not in st.session_state:
-        st.session_state.leaderboard_game_idx = st.session_state.game_idx
-    
-    # Show game selection dropdown (disabled if in random mode)
-    selected_idx = st.sidebar.selectbox(
-        "Select Game to Evaluate" if not st.session_state.random_game_mode else "Current Game (disabled in random mode)",
-        range(len(game_options)),
-        format_func=lambda x: game_options[x],
-        index=st.session_state.game_idx,
-        disabled=st.session_state.random_game_mode
-    )
-    
-    # If game changed through dropdown and not in random mode, update game_idx
-    if selected_idx != st.session_state.game_idx and not st.session_state.random_game_mode:
-        st.session_state.game_idx = selected_idx
-        st.session_state.leaderboard_game_idx = selected_idx
-        if "current_pair" in st.session_state:
-            del st.session_state.current_pair
-        if "selected_game" in st.session_state:
-            del st.session_state.selected_game
-        st.rerun()
-    
-    # Get available samples for current game from dataset
-    samples = get_game_samples(st.session_state.games_dataset, st.session_state.game_idx)
-    if len(samples) < 2:
-        st.error(f"Not enough samples available for Game {st.session_state.game_idx}.")
-        return
-    
-    # Initialize ratings for new samples
-    for sample in samples:
-        if sample["id"] not in st.session_state.ratings:
-            st.session_state.ratings[sample["id"]] = INITIAL_RATING
-    
-    # Create tabs for comparison and leaderboard
-    tab1, tab2 = st.tabs(["Compare Games", "Leaderboard"])
-    
-    with tab1:
-        st.write(st.session_state.game_descriptions[st.session_state.game_idx])
-        st.write("Play both games and choose which one is better.")
-        
-        # Select two random samples
-        if "current_pair" not in st.session_state:
-            st.session_state.current_pair = random.sample(samples, 2)
-        
-        # Display the games
-        display_game_pair(st.session_state.current_pair[0], st.session_state.current_pair[1])
-        
-        # Voting interface with three columns
-        col1, col2, col3 = st.columns([1, 1, 1])
-        
-        with col1:
-            if st.button("Game A is Better", use_container_width=True):
-                new_rating_a, new_rating_b = update_elo(
-                    st.session_state.ratings[st.session_state.current_pair[0]["id"]],
-                    st.session_state.ratings[st.session_state.current_pair[1]["id"]],
-                    "A"
-                )
-                st.session_state.ratings[st.session_state.current_pair[0]["id"]] = new_rating_a
-                st.session_state.ratings[st.session_state.current_pair[1]["id"]] = new_rating_b
-                save_preference(preferences_scheduler, st.session_state.current_pair[0], st.session_state.current_pair[1], "A")
-                st.session_state.current_pair = sample_new_pair()
-                st.rerun()
-        
-        with col2:
-            if st.button("Equal", use_container_width=True):
-                save_preference(preferences_scheduler, st.session_state.current_pair[0], st.session_state.current_pair[1], "tie")
-                st.session_state.current_pair = sample_new_pair()
-                st.rerun()
-        
-        with col3:
-            if st.button("Game B is Better", use_container_width=True):
-                new_rating_a, new_rating_b = update_elo(
-                    st.session_state.ratings[st.session_state.current_pair[0]["id"]],
-                    st.session_state.ratings[st.session_state.current_pair[1]["id"]],
-                    "B"
-                )
-                st.session_state.ratings[st.session_state.current_pair[0]["id"]] = new_rating_a
-                st.session_state.ratings[st.session_state.current_pair[1]["id"]] = new_rating_b
-                save_preference(preferences_scheduler, st.session_state.current_pair[0], st.session_state.current_pair[1], "B")
-                st.session_state.current_pair = sample_new_pair()
-                st.rerun()
-    
-    with tab2:
-        # Add separate game selector for leaderboard when in random mode
-        if st.session_state.random_game_mode:
-            leaderboard_selected_idx = st.selectbox(
-                "Select Game Leaderboard to View",
-                range(len(game_options)),
-                format_func=lambda x: game_options[x],
-                index=st.session_state.leaderboard_game_idx
-            )
+        # Increment counter and check if we should push
+        ratings_counter += 1
+        print(f"Ratings counter: {ratings_counter}")
+        if ratings_counter >= PUSH_EVERY_N_RATINGS:
+            print(f"Reached {PUSH_EVERY_N_RATINGS} ratings, pushing to HuggingFace...")
+            preferences_scheduler.push_to_hub()
+            ratings_counter = 0  # Reset counter
             
-            if leaderboard_selected_idx != st.session_state.leaderboard_game_idx:
-                st.session_state.leaderboard_game_idx = leaderboard_selected_idx
-                if "selected_game" in st.session_state:
-                    del st.session_state.selected_game
-                st.rerun()
-                
-            # Get samples for leaderboard-specific game
-            leaderboard_samples = get_game_samples(st.session_state.games_dataset, st.session_state.leaderboard_game_idx)
-            display_leaderboard(leaderboard_samples)
-        else:
-            # Original behavior - leaderboard matches comparison game
-            display_leaderboard(samples)
+    except Exception as e:
+        print(f"Error saving to HF dataset: {e}")
+    
+    return jsonify({"status": "success"})
 
-if __name__ == "__main__":
-    main() 
+if __name__ == '__main__':
+    app.run(debug=True)
