@@ -90,7 +90,7 @@ Output the code plan and game files in this format with NO OTHER TEXT:
 </game_description>
 
 <game_controls>
-... (game controls in maximum 5 sentences)
+... (game controls as a list of key bindings, Key: Action)
 </game_controls>
 
 For the javascript files:
@@ -190,7 +190,8 @@ HTML (output last):
                     "game_design": game_design,
                     "full_response": response
                 },
-                conversation_log=conversation_log
+                conversation_log=conversation_log,
+                use_ecs=self.use_ecs,
             )
             
             if self.verbose:

@@ -122,7 +122,8 @@ HTML (output last):
                 concept_path=concept_path,
                 genre=genre,
                 intermediate_outputs={"full_response": response},
-                conversation_log=conversation_log
+                conversation_log=conversation_log,
+                use_ecs=self.use_ecs,
             )
             
             if self.verbose:

@@ -34,6 +34,7 @@ class GameGenerator(ABC):
         self.model_name = model_name
         self.verbose = verbose
         self.temperature = temperature
+        self.use_ecs = use_ecs
         # Load system prompts
         with open(game_design_system_prompt_path, "r") as f:
             self.game_design_system_prompt = f.read()
