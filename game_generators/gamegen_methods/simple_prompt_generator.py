@@ -67,12 +67,11 @@ HTML (output last):
             user_prompt = self.generate_user_prompt(game_concept)
             
             # Concatenate system prompts for design and code generation
-            combined_system_prompt = f'''
-            You will be given a game concept and you will first come up with the game design and then implement the game code. Following are the instructions for both roles.
-            {self.game_design_system_prompt}
+            combined_system_prompt = f'''You will be given a game concept and you will first come up with the game design and then implement the game code. Following are the instructions for both roles.
+{self.game_design_system_prompt}
 
-            {self.code_generation_system_prompt}
-            '''
+{self.code_generation_system_prompt}
+'''
             
             # Call the LLM with the combined system prompt and user prompt
             if self.verbose:
