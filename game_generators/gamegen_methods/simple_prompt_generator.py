@@ -27,10 +27,6 @@ Game concept: {game_concept}
 Output instructions:
 Output the code plan and game files in this format with NO OTHER TEXT:
 
-<plan>
-... (code plan in maximum 5 sentences)
-</plan>
-
 <game_description>
 ... (game description to introduce the game to the user in maximum 3 sentences. Keep it short and concise.)
 </game_description>
@@ -38,6 +34,10 @@ Output the code plan and game files in this format with NO OTHER TEXT:
 <game_controls>
 ... (game controls as a list of key bindings, Key: Action)
 </game_controls>
+
+<plan>
+... (code plan in maximum 5 sentences)
+</plan>
 
 For the javascript files:
 <code filename="{{name}}.{{extension}}">
@@ -67,7 +67,12 @@ HTML (output last):
             user_prompt = self.generate_user_prompt(game_concept)
             
             # Concatenate system prompts for design and code generation
-            combined_system_prompt = self.game_design_system_prompt + "\n\n" + self.code_generation_system_prompt
+            combined_system_prompt = f'''
+            You will be given a game concept and you will first come up with the game design and then implement the game code. Following are the instructions for both roles.
+            {self.game_design_system_prompt}
+
+            {self.code_generation_system_prompt}
+            '''
             
             # Call the LLM with the combined system prompt and user prompt
             if self.verbose:

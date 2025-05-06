@@ -18,8 +18,12 @@ class GameGenerator(ABC):
         verbose: bool = False,
         use_ecs: bool = True,
         game_design_system_prompt_path: str = "game_generators/system_prompts/game_design.txt",
+        game_design_withai_system_prompt_path: str = "game_generators/system_prompts/game_design_withai.txt",
         code_generation_system_prompt_path: str = "game_generators/system_prompts/code_generation.txt",
         code_generation_nonecs_system_prompt_path: str = "game_generators/system_prompts/code_generation_nonecs.txt",
+        code_generation_withai_system_prompt_path: str = "game_generators/system_prompts/code_generation_withai.txt",
+        code_generation_withai_nonecs_system_prompt_path: str = "game_generators/system_prompts/code_generation_withai_nonecs.txt",
+        generate_with_ai: Optional[bool] = False,
     ):
         """
         Initialize the game generator
@@ -35,6 +39,7 @@ class GameGenerator(ABC):
         self.verbose = verbose
         self.temperature = temperature
         self.use_ecs = use_ecs
+        self.generate_with_ai = generate_with_ai
         # Load system prompts
         with open(game_design_system_prompt_path, "r") as f:
             self.game_design_system_prompt = f.read()
@@ -45,7 +50,17 @@ class GameGenerator(ABC):
         else:
             with open(code_generation_nonecs_system_prompt_path, "r") as f:
                 self.code_generation_system_prompt = f.read()
-            
+
+        if self.generate_with_ai is True:
+            with open(game_design_withai_system_prompt_path, "r") as f:
+                self.game_design_system_prompt = f.read()
+            if use_ecs:
+                with open(code_generation_withai_system_prompt_path, "r") as f:
+                    self.code_generation_system_prompt = f.read()
+            else:
+                with open(code_generation_withai_nonecs_system_prompt_path, "r") as f:
+                    self.code_generation_system_prompt = f.read()
+
         # Initialize the model API
         self.model_api = ModelAPI(model_name)
 
@@ -229,11 +244,16 @@ class GameGenerator(ABC):
         
         # Determine game directory based on the concept path
         if concept_path:
+            if self.generate_with_ai is True:
+                with_ai = "_WITHAI"
+            else:
+                with_ai = ""
+
             if use_ecs:
                 game_dir = (
                     Path("games")
                     / self.model_name.split(":")[1]
-                    / self.__class__.__name__
+                    / (self.__class__.__name__ + with_ai)
                     / concept_path.split("/")[-1]
                     .replace(".json", "")
                 )
@@ -241,10 +261,11 @@ class GameGenerator(ABC):
                 game_dir = (
                     Path("games")
                     / self.model_name.split(":")[1]
-                    / (self.__class__.__name__ + "_NOECS")
+                    / (self.__class__.__name__ + "_NOECS" + with_ai)
                     / concept_path.split("/")[-1]
                     .replace(".json", "")
                 )
+
         else:
             game_dir = Path("games") / self.model_name.split(":")[1] / self.__class__.__name__
 
