@@ -165,7 +165,7 @@ class GameBrowserController:
             
             try:
                 # Navigate to the page
-                await page.goto(url, wait_until="networkidle", timeout=30000)
+                await page.goto(url, wait_until="networkidle", timeout=3000)
                 logging.info(f"Page loaded: {url}")
                 
                 # Wait for the page to be fully loaded
@@ -328,7 +328,7 @@ class GameBrowserController:
             
             try:
                 # Navigate to the page and wait for network to be idle
-                await page.goto(url, wait_until="networkidle", timeout=30000)
+                await page.goto(url, wait_until="networkidle", timeout=3000)
                 logging.info(f"Page loaded: {url}")
                 
                 # Wait for the page to be fully loaded
