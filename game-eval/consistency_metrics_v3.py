@@ -10,7 +10,7 @@ import pandas as pd
 import seaborn as sns
 
 
-games_version = "v5"
+games_version = "v7"
 
 # run_name = "test"
 # run_name = "test3"
@@ -220,7 +220,7 @@ if __name__ == "__main__":
 
     game_dataset = load_dataset(GAMES_DATASET, split="train")
     rating_dataset = load_dataset(RATING_DATASET, split="train")
-    static_analysis_dataset = load_dataset(STATIC_ANALYSIS_DATASET, split="train")
+    # static_analysis_dataset = load_dataset(STATIC_ANALYSIS_DATASET, split="train")
 
     # TODO: remove users with less than 10 ratings (didn't complete the study)
 
@@ -230,7 +230,7 @@ if __name__ == "__main__":
     # torchvision error
     # video_dataset = load_dataset(VIDEO_DATASET, split="train")
     print(rating_dataset)
-    print(static_analysis_dataset)
+    # print(static_analysis_dataset)
 
     # number of entries in rating dataset for each user
     print("Number of entries in rating dataset for each user:")
@@ -253,7 +253,7 @@ if __name__ == "__main__":
 
         # find matching game 
         game = game_dataset.filter(lambda x: x["id"] == game_id)
-        assert len(game) == 1
+        assert len(game) == 1, f"Found {len(game)} games with id {game_id}"
         game = game[0]
 
         model = game["model"]
@@ -285,6 +285,7 @@ if __name__ == "__main__":
         logs = json.loads(entry["logs"])
         # TODO
         if len(logs) == 0:
+            print(f"No logs for user {entry['user_id']} and game {game_id}")
             res = None
         else:
             res = analyze_logs(logs)
@@ -303,26 +304,29 @@ if __name__ == "__main__":
                 # convert to seconds
                 time_spent = time_spent / 1000
                 results["time_spent"].append(time_spent)
+                print(f"Number of key inputs: {len(key_inputs)}, time spent: {time_spent}")
             else:
                 results["time_spent"].append(0)
         else:
             results["num_key_presses"].append(np.nan)
             results["time_spent"].append(np.nan)
-        print(f"Number of key inputs: {len(key_inputs)}, time spent: {time_spent}")
 
         results["model"].append(model)
         results["method"].append(method)
         # results["gameplay_analysis"].append(res)
-        assert len(entry["ratings"]) == 1, f"Found {len(entry['ratings'])} ratings for game {game_id}"
-        results["rating"].append(int(entry["ratings"]["fun"]))
+        results["rating_fun"].append(int(entry["ratings"]["fun"]))
+        results["rating_playability"].append(int(entry["ratings"]["playability"]))
 
         results["game_id"].append(game_id)
         results["rating_id"].append(rating_id)
-        results["game_concept"].append(game["game_concept"])
+        results["game_concept_id"].append(game["game_concept_id"])
+        results["game_sample_id"].append(game["game_sample_id"])
         results["user_id"].append(entry["user_id"])
         results["video_path"].append(video_path)
         results["events"].append(entry["events"])
         results["log_analysis"].append(json.dumps(res, indent=4))
+
+        results["consistency_score_llm_policy"].append(game["consistency_score_llm_policy"])
 
         # game state statistics (start, fail, reset, win)
         if len(logs) > 0:
@@ -351,13 +355,6 @@ if __name__ == "__main__":
             results["num_game_reset"].append(np.nan)
             results["num_game_start"].append(np.nan)
 
-        # gameplay_results[model][method].update(
-        #     {
-        #         game["game_concept"]: res
-        #     }
-        # )
-
-
         # save results
         with open(_res_dir / "logs.json", "w") as f:
             json.dump(logs, f, indent=4)
@@ -371,7 +368,8 @@ if __name__ == "__main__":
             json.dump({
                 "model": model,
                 "method": method,
-                "game_concept": game["game_concept"],
+                "game_concept_id": game["game_concept_id"],
+                "game_sample_id": game["game_sample_id"],
                 "game_id": game_id,
                 "rating_id": rating_id,
                 "user_id": entry["user_id"]
@@ -383,6 +381,9 @@ if __name__ == "__main__":
             json.dump(events, f, indent=4)
 
     results = pd.DataFrame(results)
+
+
+
 
     # Create a fixed color mapping for users
     unique_users = results["user_id"].unique()
@@ -398,6 +399,9 @@ if __name__ == "__main__":
     plt.savefig(save_dir / "user_color_mapping.png")
     plt.close()
 
+    _save_dir = save_dir / "sanity_checks"
+    _save_dir.mkdir(exist_ok=True, parents=True)
+
     # count the number of ratings for each user
     print("Number of ratings per user:")
     print(results["user_id"].value_counts())
@@ -408,7 +412,7 @@ if __name__ == "__main__":
     plt.xlabel("Number of ratings")
     plt.yticks(rotation=0)
     plt.tight_layout()
-    plt.savefig(save_dir / "ratings_per_user.png")
+    plt.savefig(_save_dir / "ratings_per_user.png")
 
     # count the number of videos for each user (video_path is not None)
     print("Number of videos per user:")
@@ -421,7 +425,7 @@ if __name__ == "__main__":
     plt.xlabel("Number of videos")
     plt.yticks(rotation=0)
     plt.tight_layout()
-    plt.savefig(save_dir / "videos_per_user.png")
+    plt.savefig(_save_dir / "videos_per_user.png")
 
     # number of ratings with logs for each user
     print("Number of ratings with logs for each user:")
@@ -432,7 +436,7 @@ if __name__ == "__main__":
     plt.xlabel("Number of ratings with logs")
     plt.yticks(rotation=0)
     plt.tight_layout()
-    plt.savefig(save_dir / "ratings_with_logs_per_user.png")
+    plt.savefig(_save_dir / "ratings_with_logs_per_user.png")
 
     # plot average number of key presses per user
     plt.figure()
@@ -440,7 +444,7 @@ if __name__ == "__main__":
     plt.ylabel("User ID")
     plt.xlabel("Number of key presses")
     plt.tight_layout()
-    plt.savefig(save_dir / "key_presses_per_user_avg.png")
+    plt.savefig(_save_dir / "key_presses_per_user_avg.png")
 
     # plot average time spent per user
     plt.figure()
@@ -448,14 +452,14 @@ if __name__ == "__main__":
     plt.ylabel("User ID")
     plt.xlabel("Time spent (seconds)")
     plt.tight_layout()
-    plt.savefig(save_dir / "time_spent_per_user_avg.png")
+    plt.savefig(_save_dir / "time_spent_per_user_avg.png")
 
     plt.figure()
     sns.stripplot(y="user_id", x="num_key_presses", data=results, jitter=True, alpha=0.7)
     plt.ylabel("User ID")
     plt.xlabel("Number of key presses")
     plt.tight_layout()
-    plt.savefig(save_dir / "key_presses_per_user.png")
+    plt.savefig(_save_dir / "key_presses_per_user.png")
 
     # plot time spent per user (showing individual points)
     plt.figure()
@@ -463,22 +467,30 @@ if __name__ == "__main__":
     plt.ylabel("User ID")
     plt.xlabel("Time spent (seconds)")
     plt.tight_layout()
-    plt.savefig(save_dir / "time_spent_per_user.png")
+    plt.savefig(_save_dir / "time_spent_per_user.png")
 
     # plot rating vs time spent with fixed color mapping
     plt.figure()
-    sns.scatterplot(data=results, y="rating", x="time_spent", hue="user_id", palette=user_color_mapping)
+    sns.scatterplot(data=results, y="rating_fun", x="time_spent", hue="user_id", palette=user_color_mapping)
     plt.ylabel("Rating")
     plt.xlabel("Time spent (seconds)")
     plt.legend([],[], frameon=False)  # Hide the legend since we have a separate figure
     plt.tight_layout()
-    plt.savefig(save_dir / "rating_vs_time_spent.png")
+    plt.savefig(_save_dir / "rating_fun_vs_time_spent.png")
     
+    plt.figure()
+    sns.scatterplot(data=results, y="rating_playability", x="time_spent", hue="user_id", palette=user_color_mapping)
+    plt.ylabel("Rating")
+    plt.xlabel("Time spent (seconds)")
+    plt.legend([],[], frameon=False)  # Hide the legend since we have a separate figure
+    plt.tight_layout()
+    plt.savefig(_save_dir / "rating_playability_vs_time_spent.png")
+
     # Use lmplot to create regression lines for each user for rating vs time spent
     g = sns.lmplot(
         data=results,
         x="time_spent", 
-        y="rating", 
+        y="rating_fun", 
         hue="user_id",
         palette=user_color_mapping,
         height=6,
@@ -492,13 +504,54 @@ if __name__ == "__main__":
     for ax in g.axes.flat:
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
-    plt.savefig(save_dir / "rating_vs_time_spent_with_regression.png")
+    plt.savefig(_save_dir / "rating_fun_vs_time_spent_with_regression.png")
 
-    # TODO: aggregate ratings across games
-    # results["fun_rating"] = results["rating"].apply(lambda x: x["fun"]).astype(int)
+    g = sns.lmplot(
+        data=results,
+        x="time_spent", 
+        y="rating_playability", 
+        hue="user_id",
+        palette=user_color_mapping,
+        height=6,
+        aspect=1.5,
+        scatter_kws={"alpha": 0.7},
+        legend=False,
+        ci=None  # Remove confidence interval bands
+    )
+    g.set_axis_labels("Time spent (seconds)", "Rating")
+    # Remove top and right spines
+    for ax in g.axes.flat:
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+    plt.savefig(_save_dir / "rating_playability_vs_time_spent_with_regression.png")
+
+
+    # Remove users with low average number of key presses
+    # Define a threshold for "low" average key presses per game (e.g., < 5)
+    keypress_threshold = 5
+
+    # Compute average number of key presses per user
+    avg_keypresses_per_user = results.groupby("user_id")["num_key_presses"].mean()
+
+    # Identify users to keep (those with average keypresses >= threshold)
+    users_to_keep = avg_keypresses_per_user[avg_keypresses_per_user >= keypress_threshold].index
+
+    # Filter results to only include these users
+    results = results[results["user_id"].isin(users_to_keep)].copy()
+    # Print the users removed due to low average key presses
+    users_removed = avg_keypresses_per_user[avg_keypresses_per_user < keypress_threshold].index
+    if len(users_removed) > 0:
+        print("Users removed due to low average key presses per game (< {}):".format(keypress_threshold))
+        for user in users_removed:
+            print(f"  {user}", avg_keypresses_per_user[user])
+    else:
+        print("No users removed due to low average key presses per game.")
+    breakpoint()
+
+
 
     plt.figure()
-    sns.scatterplot(data=results, y="rating", x="game_concept", hue="model")
+    sns.scatterplot(data=results, y="rating_fun", x="game_id", hue="model")
     plt.xticks(rotation=90)
     plt.xlabel('')
     ax = plt.gca()
@@ -506,10 +559,23 @@ if __name__ == "__main__":
     ax.spines['right'].set_visible(False)
     ax.legend(title='')
     plt.tight_layout()
-    plt.savefig(save_dir / "fun_rating_vs_game.png")
+    plt.savefig(save_dir / "fun_rating_vs_game_id.png")
 
     plt.figure()
-    sns.scatterplot(data=results, y="rating", x="game_id", hue="user_id", palette=user_color_mapping)
+    sns.scatterplot(data=results, y="rating_playability", x="game_id", hue="model")
+    plt.xticks(rotation=90)
+    plt.xlabel('')
+    ax = plt.gca()
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.legend(title='')
+    plt.tight_layout()
+    plt.savefig(save_dir / "playability_rating_vs_game_id.png")
+
+
+
+    plt.figure()
+    sns.scatterplot(data=results, y="rating_fun", x="game_id", hue="user_id", palette=user_color_mapping)
     plt.xticks(list(range(len(results["game_id"].unique()))), list(range(len(results["game_id"].unique()))))
     # # remove tick labels (but keep tick marks)
     # ax = plt.gca()
@@ -521,38 +587,172 @@ if __name__ == "__main__":
     ax.spines['right'].set_visible(False)
     plt.legend([],[], frameon=False)  # Hide the legend since we have a separate figure
     plt.tight_layout()
-    plt.savefig(save_dir / "rating_vs_game_by_user.png")
+    plt.savefig(save_dir / "fun_rating_vs_game_by_user.png")
     plt.close('all')
 
-    # plot rating vs ["hasn't won", "has won", "has won and failed"]
+
     plt.figure()
-    # Create a new column for win/fail status
-    def win_fail_status(row):
-        if row["num_game_win"] > 0 and row["num_game_fail"] > 0:
-            return "Has won and failed"
-        elif row["num_game_win"] > 0:
-            return "Has won"
-        else:
-            return "Hasn't won"
-
-    results["win_fail_status"] = results.apply(win_fail_status, axis=1)
-
-    # Create categorical type with proper ordering
-    cat_type = pd.CategoricalDtype(
-        categories=["Hasn't won", "Has won", "Has won and failed"],
-        ordered=True
-    )
-    results["win_fail_status"] = results["win_fail_status"].astype(cat_type)
-    
-    # Use stripplot instead of scatterplot for categorical x-axis with jitter
-    sns.stripplot(x="win_fail_status", y="rating", data=results, 
-                 alpha=0.7, jitter=True)
-    plt.xlabel("Win/Fail Status")
-    plt.ylabel("Rating")
+    sns.scatterplot(data=results, y="rating_playability", x="game_id", hue="user_id", palette=user_color_mapping)
+    plt.xticks(list(range(len(results["game_id"].unique()))), list(range(len(results["game_id"].unique()))))
+    # # remove tick labels (but keep tick marks)
+    # ax = plt.gca()
+    # ax.set_xticklabels([])
+    plt.xlabel('Game')
+    plt.ylabel('Human rating')
+    ax = plt.gca()
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    plt.legend([],[], frameon=False)  # Hide the legend since we have a separate figure
     plt.tight_layout()
-    plt.savefig(save_dir / "rating_vs_win_fail_status.png")
+    plt.savefig(save_dir / "playability_rating_vs_game_by_user.png")
+    plt.close('all')
 
- 
+
+
+
+
+    # Compare ratings without/with consistency resampling
+    # Extract the numeric part from sample_id strings
+    results['sample_number'] = results['game_sample_id'].apply(lambda x: int(str(x).replace('sample_', '')))
+
+    # Print min sample number for each game concept ID
+    min_samples = results.groupby('game_concept_id')['sample_number'].min()
+    print("Minimum sample number for each game concept ID:")
+    for concept_id, min_num in min_samples.items():
+        print(f"Game concept ID: {concept_id}, Min sample number: {min_num}")
+
+    # Keep only rows with minimum sample number for each game concept ID
+    filtered_results = results[results.groupby('game_concept_id')['sample_number'].transform('min') == results['sample_number']]
+
+    # Remove the helper column
+    filtered_results = filtered_results.drop('sample_number', axis=1)
+
+    # First, find the sample with the highest consistency_score_llm_policy for each concept ID
+    print("\nSample with highest consistency_score_llm_policy for each game concept ID:")
+    best_samples = results.groupby('game_concept_id')['consistency_score_llm_policy'].idxmax()
+    
+    # Create a filtered dataframe with only the best samples
+    filtered_best_results = results.loc[best_samples]
+    
+    # Print information about the selected samples
+    for _, row in filtered_results.iterrows():
+        print(f"Game concept ID: {row['game_concept_id']}, Best sample ID: {row['game_sample_id']}, Score: {row['consistency_score_llm_policy']}")
+    
+    # compute average rating for each 
+    print(f"Original results: {len(results)} rows")
+    print(f"Filtered results: {len(filtered_results)} rows")
+    print(f"Filtered results (best consistency): {len(filtered_results)} rows")
+
+    fun_ratings_first_sample = []
+    fun_ratings_best_sample = []
+    playability_ratings_first_sample = []
+    playability_ratings_best_sample = []
+    for game_concept_id in results["game_concept_id"].unique():
+        ratings_first_sample = filtered_results[filtered_results["game_concept_id"] == game_concept_id]
+        ratings_best_sample = filtered_best_results[filtered_best_results["game_concept_id"] == game_concept_id]
+
+        avg_fun_rating_first_sample = ratings_first_sample["rating_fun"].mean()
+        avg_fun_rating_best_sample = ratings_best_sample["rating_fun"].mean()
+        avg_playability_rating_first_sample = ratings_first_sample["rating_playability"].mean()
+        avg_playability_rating_best_sample = ratings_best_sample["rating_playability"].mean()
+
+        print(f"Game concept ID: {game_concept_id}")
+        print(f"Average fun rating (first sample): {avg_fun_rating_first_sample}")
+        print(f"Average fun rating (best sample): {avg_fun_rating_best_sample}")
+        print(f"Average playability rating (first sample): {avg_playability_rating_first_sample}")
+        print(f"Average playability rating (best sample): {avg_playability_rating_best_sample}")
+
+        fun_ratings_first_sample.append(avg_fun_rating_first_sample)
+        fun_ratings_best_sample.append(avg_fun_rating_best_sample)
+        playability_ratings_first_sample.append(avg_playability_rating_first_sample)
+        playability_ratings_best_sample.append(avg_playability_rating_best_sample)
+
+    # bar plot (average of the ratings across concept ids with std)
+    plt.figure(figsize=(6, 4), dpi=300)
+    
+    # Create a DataFrame for plotting
+    comparison_df = pd.DataFrame({
+        'First Sample - Fun': fun_ratings_first_sample,
+        'Best Sample - Fun': fun_ratings_best_sample,
+        'First Sample - Playability': playability_ratings_first_sample,
+        'Best Sample - Playability': playability_ratings_best_sample
+    })
+    
+    # Calculate means and standard errors
+    means = comparison_df.mean()
+    std_errors = comparison_df.std() / np.sqrt(len(comparison_df))
+    
+    bar_width = 0.35
+    r1 = np.arange(2)
+    r2 = [x + bar_width for x in r1]
+    
+    plt.bar(r1, [means['First Sample - Fun'], means['First Sample - Playability']], 
+            width=bar_width, label='First sample', color='skyblue',
+            yerr=[std_errors['First Sample - Fun'], std_errors['First Sample - Playability']], capsize=5)
+    
+    plt.bar(r2, [means['Best Sample - Fun'], means['Best Sample - Playability']], 
+            width=bar_width, label='Best consistency sample', color='lightcoral',
+            yerr=[std_errors['Best Sample - Fun'], std_errors['Best Sample - Playability']], capsize=5)
+    
+    plt.xlabel('Rating criteria')
+    plt.ylabel('Average human rating')
+    plt.xticks([r + bar_width/2 for r in r1], ['Fun', 'Playability'])
+    plt.legend()
+    ax = plt.gca()
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    plt.tight_layout()
+    plt.savefig(save_dir / "first_vs_best_samples_ratings.png")
+
+
+    # Create a minimal figure with individual points and connecting lines
+    plt.figure(figsize=(6, 4))
+    for i in range(len(fun_ratings_first_sample)):
+        plt.plot([0, 1], [fun_ratings_first_sample[i], fun_ratings_best_sample[i]], 
+                 'o-', color='skyblue', alpha=0.7, markersize=8)
+    for i in range(len(playability_ratings_first_sample)):
+        plt.plot([2, 3], [playability_ratings_first_sample[i], playability_ratings_best_sample[i]], 
+                 'o-', color='lightcoral', alpha=0.7, markersize=8)
+    plt.ylabel('Human rating')
+    plt.xticks([0.5, 2.5], ['Fun', 'Playability'])
+    plt.xlabel('Rating criteria')
+    plt.legend()
+    ax = plt.gca()
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    plt.tight_layout()
+    plt.savefig(save_dir / "first_vs_best_samples_individual_points.png")
+
+
+
+    # # plot rating vs ["hasn't won", "has won", "has won and failed"]
+    # plt.figure()
+    # # Create a new column for win/fail status
+    # def win_fail_status(row):
+    #     if row["num_game_win"] > 0 and row["num_game_fail"] > 0:
+    #         return "Has won and failed"
+    #     elif row["num_game_win"] > 0:
+    #         return "Has won"
+    #     else:
+    #         return "Hasn't won"
+
+    # results["win_fail_status"] = results.apply(win_fail_status, axis=1)
+
+    # # Create categorical type with proper ordering
+    # cat_type = pd.CategoricalDtype(
+    #     categories=["Hasn't won", "Has won", "Has won and failed"],
+    #     ordered=True
+    # )
+    # results["win_fail_status"] = results["win_fail_status"].astype(cat_type)
+    
+    # # Use stripplot instead of scatterplot for categorical x-axis with jitter
+    # sns.stripplot(x="win_fail_status", y="rating", data=results, 
+    #              alpha=0.7, jitter=True)
+    # plt.xlabel("Win/Fail Status")
+    # plt.ylabel("Rating")
+    # plt.tight_layout()
+    # plt.savefig(save_dir / "rating_vs_win_fail_status.png")
+
 
     # for each game, plot the number of interactions triggered by each user (to assess variability in gameplay across users)
     interaction_types_by_user_by_game = defaultdict(dict)
@@ -562,23 +762,13 @@ if __name__ == "__main__":
 
         print("Game:", game_id)
         # number of users who played this game
-        num_users = results["user_id"][results["game_id"] == game_id].nunique()
+        num_users = results[results["game_id"] == game_id]["user_id"].nunique()
         print("Number of users who played this game:", num_users)
-
-        # retrieve game static analysis
-        game_concept = results["game_concept"][results["game_id"] == game_id].unique()
-        assert len(game_concept) == 1, f"Found {len(game_concept)} game concepts for game {game_id}"
-        game_concept = game_concept[0]
 
         # get static results for model and method corresponding to game_id
         game = game_dataset.filter(lambda x: x["id"] == game_id)[0]
-        static_res = static_analysis_dataset.filter(lambda x: x["model"] == game["model"] and x["method"] == game["method"])
-        assert len(static_res) == 1, f"Found {len(static_res)} static analysis results for game {game_id}"
-        static_res = static_res[0]
 
-        game_mvt_types = static_res["interaction_types"][game_concept]
-        game_int_types = static_res["movement_types"][game_concept]
-        game_mechanics = game_mvt_types + game_int_types
+        game_mechanics = game["mechanics_implemented"]
 
         gameplay_mechanics_counts = defaultdict(dict)
         for i, res in results[results["game_id"] == game_id].iterrows():
@@ -616,165 +806,23 @@ if __name__ == "__main__":
         plt.close('all')
 
 
-    # game_scores = defaultdict(list)
-    # for model in results["model"].unique():
-    #     for method in results["method"].unique():
-    #         _save_dir = save_dir / f"{model}_{method}"
-
-    #         # res = results[results["model"] == model][results["method"] == method]
-    #         gameplay_res = gameplay_results[model][method]
-
-    #         static_analysis_res = static_analysis_dataset.filter(lambda x: x["model"] == model and x["method"] == method)
-    #         assert len(static_analysis_res) == 1, f"Found {len(static_analysis_res)} static analysis results for {model} {method}"
-    #         static_analysis_res = static_analysis_res[0]
-
-    #         missing_logs = False
-    #         for game_concept in gameplay_res.keys():
-    #             if gameplay_res[game_concept] is None:
-    #                 missing_logs = True
-    #                 break
-
-    #         if missing_logs:
-    #             print(f"Missing logs for {model} {method}")
-    #             continue
-
-    #         _game_scores = analyze_consistency(gameplay_res, static_analysis_res, _save_dir)
-    #         # for game_concept, scores in _game_scores.items():
-    #         #     game_scores["model"].append(model)
-    #         #     game_scores["method"].append(method)
-    #         #     game_scores["game_concept"].append(game_concept)
-    #         #     game_scores["interaction_score"].append(scores["interaction_score"])
-    #         #     game_scores["movement_score"].append(scores["movement_score"])
-    #         #     game_scores["joint_score"].append(scores["joint_score"])
-
-
-    #         #     mask = (
-    #         #         (results["model"] == model) &
-    #         #         (results["method"] == method) &
-    #         #         (results["game_concept"] == game_concept)
-    #         #     )
-    #         #     fun_rating = results[mask]["fun_rating"].values
-    #         #     # TODO: handle multiple ratings for same model, method, game_concept
-    #         #     # assert len(fun_rating) == 1, f"Found {len(fun_rating)} fun ratings for {model} {method} {game_concept}"
-    #         #     # fun_rating = fun_rating[0]
-    #         #     fun_rating = np.mean(fun_rating)
-    #         #     game_scores["fun_rating"].append(fun_rating)
-
-    #         for game_concept, scores in _game_scores.items():
-    #             for user_id in results["user_id"].unique():
-    #                 game_scores["model"].append(model)
-    #                 game_scores["method"].append(method)
-    #                 game_scores["game_concept"].append(game_concept)
-    #                 game_scores["interaction_score"].append(scores["interaction_score"])
-    #                 game_scores["movement_score"].append(scores["movement_score"])
-    #                 game_scores["joint_score"].append(scores["joint_score"])
-    #                 game_scores["user_id"].append(user_id)
-
-
-    #                 mask = (
-    #                     (results["model"] == model) &
-    #                     (results["method"] == method) &
-    #                     (results["game_concept"] == game_concept) &
-    #                     (results["user_id"] == user_id)
-    #                 )
-    #                 fun_rating = results[mask]["fun_rating"].values
-    #                 # TODO: handle multiple ratings for same model, method, game_concept
-    #                 # assert len(fun_rating) == 1, f"Found {len(fun_rating)} fun ratings for {model} {method} {game_concept}"
-    #                 # fun_rating = fun_rating[0]
-    #                 fun_rating = np.mean(fun_rating)
-    #                 game_scores["fun_rating"].append(fun_rating)
-
-    # game_scores = pd.DataFrame(game_scores)
-
-    # # average score
-    # game_scores["average_score"] = (game_scores["interaction_score"] + game_scores["movement_score"]) / 2
-
-    # game_scores.to_csv(save_dir / "game_scores.csv", index=False)
-
-    # # plot average score vs fun rating
-    # # plt.figure()
-    # # sns.scatterplot(data=game_scores, y="fun_rating", x="average_score")
-    # # plt.savefig(save_dir / "fun_rating_vs_average_score.png")
-
-    # # # plot interaction score vs fun rating
-    # # plt.figure()
-    # # sns.scatterplot(data=game_scores, y="fun_rating", x="interaction_score")
-    # # plt.savefig(save_dir / "fun_rating_vs_interaction_score.png")
-
-    # # # plot movement score vs fun rating
-    # # plt.figure()
-    # # sns.scatterplot(data=game_scores, y="fun_rating", x="movement_score")
-    # # plt.savefig(save_dir / "fun_rating_vs_movement_score.png")
-
-    # # plot joint score vs fun rating
-    # plt.figure(figsize=(5, 4), dpi=150)
-    # sns.scatterplot(data=game_scores, y="fun_rating", x="joint_score", hue="model")
-    # # add regression line and compute p-value
-    # import scipy.stats as stats
-
-    # # Fit linear regression
-    # # x = game_scores["joint_score"]
-    # # y = game_scores["fun_rating"]
-    # # slope, intercept, r_value, p_value, std_err = stats.linregress(x, y)
-
-    # # Plot regression line
-    # # x_vals = np.linspace(x.min(), x.max(), 100)
-    # # y_vals = slope * x_vals + intercept
-    # # plt.plot(x_vals, y_vals, color="black", linestyle="--", label=f"Regression line (p={p_value:.3g})")
-
-
-    # # # Annotate p-value on the plot
-    # # plt.text(
-    # #     0.05, 0.95,
-    # #     f"p-value: {p_value:.3g}",
-    # #     transform=plt.gca().transAxes,
-    # #     verticalalignment="top",
-    # #     fontsize=10,
-    # #     bbox=dict(facecolor='white', alpha=0.7, edgecolor='none')
-    # # )
-    # # print(f"p-value: {p_value:.3g}, r-value: {r_value:.3g}")
-
-    # plt.xlabel("Consistency score")
-    # plt.ylabel("Human rating")
-    # plt.legend(title='')
-    # ax = plt.gca()
-    # ax.spines['top'].set_visible(False)
-    # ax.spines['right'].set_visible(False)
-    # plt.tight_layout()
-    # plt.savefig(save_dir / "fun_rating_vs_joint_score.png")
-
-    # plt.figure()
-    # sns.scatterplot(data=game_scores, y="fun_rating", x="joint_score", hue="user_id")
-    # plt.xlabel("Consistency score")
-    # plt.ylabel("Human rating")
-    # plt.legend(title='')
-    # ax = plt.gca()
-    # ax.spines['top'].set_visible(False)
-    # ax.spines['right'].set_visible(False)
-    # plt.tight_layout()
-    # plt.savefig(save_dir / "fun_rating_vs_joint_score_by_user.png")
-
+    _save_dir = save_dir / "consistency_analysis"
+    _save_dir.mkdir(exist_ok=True, parents=True)
 
     # compare ratings with consistency scores
     for game_id in results["game_id"].unique():
         game = game_dataset.filter(lambda x: x["id"] == game_id)[0]
         model = game["model"]
         method = game["method"]
-        game_concept = game["game_concept"]
 
-        # get static results for model and method corresponding to game_id
-        static_res = static_analysis_dataset.filter(lambda x: x["model"] == game["model"] and x["method"] == game["method"])[0]
+        game_mechanics = game["mechanics_implemented"]
 
-        game_mvt_types = static_res["interaction_types"][game_concept]
-        game_int_types = static_res["movement_types"][game_concept]
-        game_mechanics = game_mvt_types + game_int_types
+        consistency_score_llm_policy = game["consistency_score_llm_policy"]
 
         for i, res in results[results["game_id"] == game_id].iterrows():
             user_id = res["user_id"]
-            rating = res["rating"]
             assert res["model"] == model
             assert res["method"] == method
-            assert res["game_concept"] == game_concept
 
             log_analysis = json.loads(res["log_analysis"])
             if log_analysis is None:
@@ -790,24 +838,37 @@ if __name__ == "__main__":
 
             score = len(triggered_mechanics) / len(game_mechanics)
             results.at[i, "code_gameplay_consistency"] = score * 100
+            results.at[i, "consistency_score_llm_policy"] = consistency_score_llm_policy
 
     # plot rating vs code_gameplay_mechanics_consistency with fixed color mapping
     plt.figure()
-    sns.scatterplot(data=results, y="rating", x="code_gameplay_consistency", hue="user_id", palette=user_color_mapping)
-    plt.ylabel("Rating")
+    sns.scatterplot(data=results, y="rating_fun", x="code_gameplay_consistency", hue="user_id", palette=user_color_mapping)
+    plt.ylabel("Fun rating")
     plt.xlabel("Code-gameplay consistency")
     ax = plt.gca()
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
     plt.legend([],[], frameon=False)  # Hide the legend since we have a separate figure
     plt.tight_layout()
-    plt.savefig(save_dir / "rating_vs_code_gameplay_consistency.png")
-    
+    plt.savefig(_save_dir / "fun_rating_vs_code_gameplay_consistency.png")
+
+    plt.figure()
+    sns.scatterplot(data=results, y="rating_playability", x="code_gameplay_consistency", hue="user_id", palette=user_color_mapping)
+    plt.ylabel("Playability rating")
+    plt.xlabel("Code-gameplay consistency")
+    ax = plt.gca()
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    plt.legend([],[], frameon=False)  # Hide the legend since we have a separate figure
+    plt.tight_layout()
+    plt.savefig(_save_dir / "playability_rating_vs_code_gameplay_consistency.png")
+
+
     # Use lmplot to create regression lines for each user
     g = sns.lmplot(
         data=results,
         x="code_gameplay_consistency", 
-        y="rating", 
+        y="rating_fun", 
         hue="user_id",
         palette=user_color_mapping,
         height=6,
@@ -816,31 +877,85 @@ if __name__ == "__main__":
         legend=False,
         ci=None  # Remove confidence interval bands
     )
-    g.set_axis_labels("Code-gameplay consistency", "Rating")
+    g.set_axis_labels("Code-gameplay consistency", "Fun rating")
     # Remove top and right spines
     for ax in g.axes.flat:
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
-    plt.savefig(save_dir / "rating_vs_code_gameplay_consistency_with_regression.png")
+    plt.savefig(_save_dir / "fun_rating_vs_code_gameplay_consistency_with_regression.png")
 
-    # same plot by model
+    # Use lmplot to create regression lines for each user
+    g = sns.lmplot(
+        data=results,
+        x="code_gameplay_consistency", 
+        y="rating_playability", 
+        hue="user_id",
+        palette=user_color_mapping,
+        height=6,
+        aspect=1.5,
+        scatter_kws={"alpha": 0.7},
+        legend=False,
+        ci=None  # Remove confidence interval bands
+    )
+    g.set_axis_labels("Code-gameplay consistency", "Playability rating")
+    # Remove top and right spines
+    for ax in g.axes.flat:
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+    plt.savefig(_save_dir / "playability_rating_vs_code_gameplay_consistency_with_regression.png")
+
+
+
+    # same plots as above but with consistency_score_llm_policy
+
+    # Regression plot: rating_fun vs consistency_score_llm_policy by user
+    g = sns.lmplot(
+        data=results,
+        x="consistency_score_llm_policy", 
+        y="rating_fun", 
+        hue="user_id",
+        palette=user_color_mapping,
+        height=6,
+        aspect=1.5,
+        scatter_kws={"alpha": 0.7},
+        legend=False,
+        ci=None  # Remove confidence interval bands
+    )
+    g.set_axis_labels("LLM Policy Consistency Score", "Fun rating")
+    for ax in g.axes.flat:
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+    plt.savefig(_save_dir / "fun_rating_vs_consistency_score_llm_policy_with_regression.png")
+
+    # Regression plot: rating_playability vs consistency_score_llm_policy by user
+    g = sns.lmplot(
+        data=results,
+        x="consistency_score_llm_policy", 
+        y="rating_playability", 
+        hue="user_id",
+        palette=user_color_mapping,
+        height=6,
+        aspect=1.5,
+        scatter_kws={"alpha": 0.7},
+        legend=False,
+        ci=None  # Remove confidence interval bands
+    )
+    g.set_axis_labels("LLM Policy Consistency Score", "Playability rating")
+    for ax in g.axes.flat:
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+    plt.savefig(_save_dir / "playability_rating_vs_consistency_score_llm_policy_with_regression.png")
+
+
+    # plot human gameplay consistency vs consistency_score_llm_policy
     plt.figure()
-    sns.scatterplot(data=results, y="rating", x="code_gameplay_consistency", hue="model")
-    plt.ylabel("Rating")
-    plt.xlabel("Code-gameplay consistency")
+    sns.scatterplot(data=results, y="code_gameplay_consistency", x="consistency_score_llm_policy", hue="user_id", palette=user_color_mapping)
+    # Add y=x identity line for reference
     ax = plt.gca()
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-    plt.tight_layout()
-    plt.savefig(save_dir / "rating_vs_code_gameplay_consistency_by_model.png")
+    min_val = min(results["code_gameplay_consistency"].min(), results["consistency_score_llm_policy"].min())
+    max_val = max(results["code_gameplay_consistency"].max(), results["consistency_score_llm_policy"].max())
+    ax.plot([min_val, max_val], [min_val, max_val], 'k--', lw=1, label='Identity')
 
-    # Plot average rating by model
-    plt.figure(figsize=(8, 5))
-    sns.barplot(data=results, x="model", y="rating")
-    plt.xlabel("Model")
-    plt.ylabel("Average Rating")
-    ax = plt.gca()
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-    plt.tight_layout()
-    plt.savefig(save_dir / "avg_rating_by_model.png")
+    plt.ylabel("Code-gameplay consistency")
+    plt.xlabel("LLM Policy Consistency Score")
+    plt.savefig(_save_dir / "code_gameplay_consistency_vs_consistency_score_llm_policy.png")

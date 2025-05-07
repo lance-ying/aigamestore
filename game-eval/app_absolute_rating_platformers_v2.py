@@ -16,7 +16,7 @@ from huggingface_hub import HfApi
 HF_TOKEN = os.environ.get("HF_TOKEN")
 
 
-games_version = "v6"
+games_version = "v7"
 run_name = "pilot1"
 
 GAMES_DATASET = f"generative-games/gen-games-{games_version}"
@@ -886,21 +886,39 @@ HTML_TEMPLATE = '''
             } catch (e) {}
             
             function submitRatings() {
-                const data = {
-                    ratings: {
-                        fun: document.getElementById('fun-1').value,
-                        playability: document.getElementById('playability-1').value
-                    },
-                    logs: logs,
-                    rating_id: '{{ rating_id }}',
-                    game_id: '{{ game_id }}'
-                };
+                let dataToSend;
+                try {
+                    const data = {
+                        ratings: {
+                            fun: document.getElementById('fun-1').value,
+                            playability: document.getElementById('playability-1').value
+                        },
+                        logs: logs,
+                        rating_id: '{{ rating_id }}',
+                        game_id: '{{ game_id }}'
+                    };
+                    dataToSend = JSON.stringify(data);
+                } catch (error) {
+                    console.error('Error stringifying data:', error);
+                    // If we hit a circular reference or other JSON error, send a simplified version
+                    const fallbackData = {
+                        ratings: {
+                            fun: document.getElementById('fun-1').value,
+                            playability: document.getElementById('playability-1').value
+                        },
+                        logs: [], // Skip the problematic logs
+                        rating_id: '{{ rating_id }}',
+                        game_id: '{{ game_id }}'
+                    };
+                    dataToSend = JSON.stringify(fallbackData);
+                }
+                
                 fetch('/submit-ratings', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify(data),
+                    body: dataToSend,
                 })
                 .then(response => response.json())
                 .then(data => {
