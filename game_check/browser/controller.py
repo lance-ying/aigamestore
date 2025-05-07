@@ -37,10 +37,7 @@ class GameBrowserController:
             "Arrow": [37, 38, 39, 40],  # Left, Up, Right, Down
             "Space": [32],
             "Shift": [16],
-            "KeyQ": [81],
             "KeyZ": [90],
-            "KeyX": [88],
-            "KeyC": [67],
             "Enter": [13],
             "KeyR": [82]
         }
@@ -51,17 +48,14 @@ class GameBrowserController:
             "ArrowDown": 40,
             " ": 32,
             "Shift": 16,
-            "q": 81,
             "z": 90,
-            "x": 88,
-            "c": 67,
             "Enter": 13,
             "r": 82
         }
         # List of gameplay keys (all allowed keys except 'r' and 'Enter')
         self.gameplay_keys = [
             "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown",
-            " ", "Shift", "q", "z", "x", "c"
+            " ", "Shift", "z"
         ]
         
     async def __aenter__(self):
@@ -357,6 +351,9 @@ class GameBrowserController:
                 start_test = await self._test_key_press(page, "Enter", "start_game", screenshots_dir)
                 result["key_tests"].append(start_test)
                 
+                game_phase_after_enter = None
+                game_phase_check_passed = False
+                
                 # Calculate diff with previous screenshot
                 if prev_screenshot and start_test.get("screenshot"):
                     diff_score = self._compare_screenshots(prev_screenshot, start_test.get("screenshot"))
@@ -365,7 +362,24 @@ class GameBrowserController:
                     # Update game start test results
                     result["game_start_test"]["diff_score"] = diff_score
                     result["game_start_test"]["screenshot"] = start_test.get("screenshot")
-                    result["game_start_test"]["test_result"] = diff_score > 0.001
+                    
+                    # Check gamePhase after pressing Enter
+                    try:
+                        game_state = await page.evaluate("getGameState()")
+                        if game_state and isinstance(game_state, dict):
+                            game_phase_after_enter = game_state.get("gamePhase")
+                            if game_phase_after_enter == "PLAYING":
+                                game_phase_check_passed = True
+                            else:
+                                logging.warning(f"Game phase after Enter is '{game_phase_after_enter}', expected 'PLAYING'")
+                        else:
+                            logging.warning(f"getGameState() did not return a valid dictionary. Returned: {game_state}")
+                    except Exception as e:
+                        logging.error(f"Error evaluating getGameState(): {e}")
+
+                    result["game_start_test"]["game_phase_after_enter"] = game_phase_after_enter
+                    result["game_start_test"]["game_phase_check_passed"] = game_phase_check_passed
+                    result["game_start_test"]["test_result"] = (diff_score > 0.001) and game_phase_check_passed
                     
                     if diff_score > 0.001:
                         result["visual_changes"].append({
@@ -378,7 +392,12 @@ class GameBrowserController:
                 
                 # Check if game started successfully
                 if not result["game_start_test"]["test_result"]:
-                    result["error"] = "Game start test failed: No visual change detected after pressing ENTER"
+                    error_message = "Game start test failed:"
+                    if not (diff_score > 0.001):
+                        error_message += " No visual change detected after pressing ENTER."
+                    if not game_phase_check_passed:
+                        error_message += f" gamePhase was '{game_phase_after_enter}', expected 'PLAYING'."
+                    result["error"] = error_message.strip()
                     result["test_result"] = False
                     return result
                 

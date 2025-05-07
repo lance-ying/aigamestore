@@ -48,7 +48,7 @@ def generate_random_actions(num_actions: int = 10) -> List[str]:
         "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown",
         " ",  # Space
         "Shift",
-        "q", "z", "x", "c",
+        "z",
         "Enter",  # Only for starting the game
         "r"  # Only for restarting the game
     ]

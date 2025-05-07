@@ -25,7 +25,7 @@ You are a creative professional JavaScript game developer with expertise in impl
 
 TASK: You will be given a game concept for a 2D video game from a video game enthusiast. You will implement an interesting and fun 2D video game that is consistent with the game concept.
 The game concept will be a few sentences defining some elements of the game leaving room for your creativity and expertise in making the game more interesting. You should enrich the game adding elements and mechanics beyond the game concept with your creativity and expertise as a game designer. Along with the code, you will also write an AI testing code to test different aspects of the game.
-You are encouraged to write as much code as you can to make the game more interesting and aesthetically pleasing. Your code must be error-free, fully functional, and allow the player to make progress towards the final goal in a beautifully designed game. 
+You are encouraged to write as much code as you can to make the game more interesting and aesthetically pleasing. Your code must be error-free, fully functional, and allow the player to make progress towards the final goal in a beautifully designed game which can be played and enjoyed by a wide audience. 
 
 Game Concept: {game_concept}
 
@@ -135,13 +135,13 @@ Game Concept: {game_concept}
         Get the instructions for the ECS architecture
         """
         instructions = """
-# GAME GENERATION INSTRUCTIONS
+# INSTRUCTIONS
 ## HARD CONSTRAINTS (CRITICAL)
 - **Game Design** must comply with the user's game concept. Add more details to the game design to make it more interesting while balancing the game mechanics which can be implemented in the game.
-- **Game Mechanics & Controls** must be implemented using keyboard keys only. NO MOUSE based controls. Use logic and physics which allows the player to make progress towards the final goal with interesting subgoals and challenges.
+- **Game Mechanics & Controls** must be implemented using keyboard keys only. NO MOUSE based controls. Use logic and physics which allows the player to make progress towards the final goal with interesting subgoals.
 - **Physics** must be plausible and consistent to carry out the game mechanics. Do not have objects pass through each other or any other inconsistencies.
 - **Graphics & Animations** must be implemented using p5.js primitives. NO external images, sprites, or fonts. No audio or sound effects.
-- **AI Testing**: Implement AI control modes for testing different aspects of the game with the knowledge of the game code.
+- **AI Testing** modes will test different aspects of the game with the knowledge of the game code so the game must be playable and follow the mechanics logically.
 
 ## GAME MECHANICS & CONTROLS (CRITICAL)
 - **Canvas Setup**: 600×400px canvas, 60 FPS
@@ -167,7 +167,7 @@ Use Entity-Component-System (ECS) architecture with ES6 modules:
   import { entities, gameState } from './globals.js';
   import { get_ai_action } from './ai_controller.js';
 
-  // Verify EVERY function has access to ALL components it needs
+  // Verify EVERY function has access to ALL components it needs to initialize or use objects
   function createEntity(x, y) {
     const entity = {
       components: {
@@ -178,7 +178,9 @@ Use Entity-Component-System (ECS) architecture with ES6 modules:
     return entity;
   }
   ```
-- **State Management**: Use a single `gameState` object to track the game's current data and status. Implement `function getGameState()`; attach it to `window`. It **must** return the `gameState` object.
+- **State Management**: 
+  - Use a single `gameState` object to track the game's current data and status with all objects required to play the game without any errors.
+  - Implement `function getGameState()`; attach it to `window`. It **must** return the `gameState` object.
   ```javascript
   export const entities = []; // canonical array including player
   export const gameState = {
@@ -191,14 +193,14 @@ Use Entity-Component-System (ECS) architecture with ES6 modules:
   ```
 
 ## P5.JS IMPLEMENTATION DETAILS
-- Use p5.js in instance mode and store the p5 instance in a variable called `gameInstance`. Expose the game instance globally as follows:
+- Use p5.js in instance mode with p. prefix for all functions, set random seed, and store the p5 instance in a variable called `gameInstance`. Expose the game instance globally as follows:
   ```javascript
-  const p5 = window.p5
+  const p5 = window.p5;
   let gameInstance = new p5(p => {
-      ...
+    // Always use p. prefix for all p5 functions
+    p.setup = () => { p.randomSeed(42); /* ... */ }
   });
-  // Expose the game instance globally
-  window.gameInstance = gameInstance;
+  window.gameInstance = gameInstance; // Expose globally
   ```
 - **Useful Functions**:
   - p5: `keyIsDown(key_code)`, `noLoop()/loop()`, `tint()`, `push()/pop()`, `textAlign()`, `textSize()`, `text()`
@@ -206,11 +208,12 @@ Use Entity-Component-System (ECS) architecture with ES6 modules:
     - Note that the specific order of the words in the function name matters. For example, 'collideCircleRect' is not available.
     - Available functions: `collidePointPoint`, `collidePointCircle`, `collidePointEllipse`, `collidePointRect`, `collidePointLine`, `collidePointArc`, `collideRectRect`, `collideCircleCircle`, `collideRectCircle`, `collideLineLine`, `collideLineCircle`, `collideLineRect`, `collidePointPoly`, `collideCirclePoly`, `collideRectPoly`, `collideLinePoly`, `collidePolyPoly`, `collidePointTriangle`.
 - **Rendering**:
-  - Implement smooth and polished animations with beautiful design to express the game environment, objects, and their interactions.
+  - Render all objects and text within the canvas
+  - Implement smooth and professional-looking animations with beautiful design to express the game environment, objects, and their interactions
   - Do not draw elements that are randomly sampled at every frame as this causes flickering
   - Ensure that all objects are rendered in the correct order and there is no random disappearance of objects
   - Use ternary operator to set colors for conditional rendering: Example: `p.fill(...(CONDITION ? [255, 220, 150] : [40, 30, 20]));`
-  - **Control Mode Display**: Never render or display the current controlMode (HUMAN/AI) on the game canvas. This should only be visible through the UI buttons.
+  - **Control Mode Display**: Never render or display the current controlMode (HUMAN/AI) on the game canvas. This should only be visible through the UI buttons
 - **Required Game Screens**:
   - **Start**: Game title, instructions, "PRESS ENTER TO START" prompt
   - **Playing**: Game environment, score HUD, and active gameplay
@@ -219,11 +222,13 @@ Use Entity-Component-System (ECS) architecture with ES6 modules:
 
 ## AI TESTING IMPLEMENTATION
 Given you are an expert game developer who is developing this game, implement AI control modes for testing different aspects of the game. 
-- **AI Behavior Design**:
+- **AI testing modes**:
   - **AI to explore and win the game [AI_WIN]**: Implement a function that plays the game like a professional player to **win the game** using the game code you have implemented.
-  - **Other AI Modes [Maximum 4]**: Design specific AI modes to test different game aspects
-  - Choose actions based on the current `gameState` and other game data guided by AI specific goals and the game code.
-- **AI Controller Structure**: The function `get_ai_action(gameState)` must be implemented to **output an action** based on the current `gameState` and the game code.
+  - **Other AI Modes [Maximum 4]**: Design specific AI modes to test different game aspects such as game mechanics, game controls, game design, etc.
+- **AI Implementation Strategy**:
+  - **Action Selection**: Prioritize actions based on the current `gameState` data and the AI specific goals
+  - **Maintain Progress**: Implement a function that triggers a random action sequence when the player is stuck in repetitive patterns. Use the past player positions to determine if the player is stuck
+- **AI Controller Structure**: The function `get_ai_action(gameState)` must be implemented to **output an action** based on the current `gameState` and the game code
   ```javascript
   export function get_ai_action(gameState) {{
     // Different strategies based on AI mode
@@ -283,8 +288,6 @@ Given you are an expert game developer who is developing this game, implement AI
         <button id="ai_winModeBtn" class="control-button" onclick="window.setControlMode('AI_WIN')">AI (Win)</button>
         <!-- Add more AI mode buttons with correct ID convention -->
       </div>
-      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">{game_description}</p>
-      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">{game_controls}</p>
     </div>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
     <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
@@ -293,7 +296,7 @@ Given you are an expert game developer who is developing this game, implement AI
 </html>
 ```
 
-## OUTPUT INSTRUCTIONS
+# OUTPUT INSTRUCTIONS
 Output the game files in this format with NO OTHER TEXT to output a playable and interesting game:
 
 <game_description>
@@ -301,7 +304,7 @@ Output the game files in this format with NO OTHER TEXT to output a playable and
 </game_description>
 
 <game_controls>
-... (game controls in maximum 5 sentences)
+... (game controls as a list. Key: function)
 </game_controls>
 
 <game_plan>
@@ -328,10 +331,10 @@ For the html file:
 # INSTRUCTIONS
 ## HARD CONSTRAINTS (CRITICAL)
 - **Game Design** must comply with the user's game concept. Add more details to the game design to make it more interesting while balancing the game mechanics which can be implemented in the game.
-- **Game Mechanics & Controls** must be implemented using keyboard keys only. NO MOUSE based controls. Use logic and physics which allows the player to make progress towards the final goal with interesting subgoals and challenges.
+- **Game Mechanics & Controls** must be implemented using keyboard keys only. NO MOUSE based controls. Use logic and physics which allows the player to make progress towards the final goal with interesting subgoals.
 - **Physics** must be plausible and consistent to carry out the game mechanics. Do not have objects pass through each other or any other inconsistencies.
 - **Graphics & Animations** must be implemented using p5.js primitives. NO external images, sprites, or fonts. No audio or sound effects.
-- **AI Testing**: Implement AI control modes for testing different aspects of the game with the knowledge of the game code.
+- **AI Testing** modes will test different aspects of the game with the knowledge of the game code so the game must be playable and follow the mechanics logically.
 
 ## GAME MECHANICS & CONTROLS (CRITICAL)
 - **Canvas Setup**: 600×400px canvas, 60 FPS
@@ -355,7 +358,9 @@ Use object-oriented programming with ES6 modules:
   import { gameState } from './globals.js';
 
   ```
-- **State Management**: Use a single `gameState` object to track the game's current data and status. Implement `function getGameState()`; attach it to `window`. It **must** return the `gameState` object.
+- **State Management**: 
+  - Use a single `gameState` object to track the game's current data and status with all objects required to play the game without any errors.
+  - Implement `function getGameState()`; attach it to `window`. It **must** return the `gameState` object.
   ```javascript
   export const gameState = {
     player: null,
@@ -367,14 +372,14 @@ Use object-oriented programming with ES6 modules:
   ```
 
 ## P5.JS IMPLEMENTATION DETAILS
-- Use p5.js in instance mode and store the p5 instance in a variable called `gameInstance`. Expose the game instance globally as follows:
+- Use p5.js in instance mode with p. prefix for all functions, set random seed, and store the p5 instance in a variable called `gameInstance`. Expose the game instance globally as follows:
   ```javascript
-  const p5 = window.p5
+  const p5 = window.p5;
   let gameInstance = new p5(p => {
-      ...
+    // Always use p. prefix for all p5 functions
+    p.setup = () => { p.randomSeed(42); /* ... */ }
   });
-  // Expose the game instance globally
-  window.gameInstance = gameInstance;
+  window.gameInstance = gameInstance; // Expose globally
   ```
 - **Useful Functions**:
   - p5: `keyIsDown(key_code)`, `noLoop()/loop()`, `tint()`, `push()/pop()`, `textAlign()`, `textSize()`, `text()`
@@ -382,11 +387,12 @@ Use object-oriented programming with ES6 modules:
     - Note that the specific order of the words in the function name matters. For example, 'collideCircleRect' is not available.
     - Available functions: `collidePointPoint`, `collidePointCircle`, `collidePointEllipse`, `collidePointRect`, `collidePointLine`, `collidePointArc`, `collideRectRect`, `collideCircleCircle`, `collideRectCircle`, `collideLineLine`, `collideLineCircle`, `collideLineRect`, `collidePointPoly`, `collideCirclePoly`, `collideRectPoly`, `collideLinePoly`, `collidePolyPoly`, `collidePointTriangle`.    
 - **Rendering**:
-  - Implement smooth and polished animations with beautiful design to express the game environment, objects, and their interactions.
+  - Render all objects and text within the canvas
+  - Implement smooth and professional-looking animations with beautiful design to express the game environment, objects, and their interactions
   - Do not draw elements that are randomly sampled at every frame as this causes flickering
   - Ensure that all objects are rendered in the correct order and there is no random disappearance of objects
   - Use ternary operator to set colors for conditional rendering: Example: `p.fill(...(CONDITION ? [255, 220, 150] : [40, 30, 20]));`
-  - **Control Mode Display**: Never render or display the current controlMode (HUMAN/AI) on the game canvas. This should only be visible through the UI buttons.
+  - **Control Mode Display**: Never render or display the current controlMode (HUMAN/AI) on the game canvas. This should only be visible through the UI buttons
 - **Required Game Screens**:
   - **Start**: Game title, instructions, "PRESS ENTER TO START" prompt
   - **Playing**: Game environment, score HUD, and active gameplay
@@ -394,12 +400,14 @@ Use object-oriented programming with ES6 modules:
   - **Game Over**: Win/lose message, final score, "PRESS R TO RESTART" prompt
 
 ## AI TESTING IMPLEMENTATION
-Given you are an expert game developer who is developing this game, implement AI control modes for testing different aspects of the game. 
-- **AI Behavior Design**:
-  - **AI to explore and win the game [AI_WIN]**: Implement a function that plays the game like a professional player to **win the game** using the game code you have implemented.
-  - **Other AI Modes [Maximum 4]**: Design specific AI modes to test different game aspects
-  - Choose actions based on the current `gameState` and other game data guided by AI specific goals and the game code.
-- **AI Controller Structure**: The function `get_ai_action(gameState)` must be implemented to **output an action** based on the current `gameState` and the game code.
+Given you are an expert game developer who is developing this game, implement AI control modes for testing different aspects of the game
+- **AI testing modes**:
+  - **AI to explore and win the game [AI_WIN]**: Implement a function that plays the game like a professional player to **win the game** using the game code you have implemented
+  - **Other AI Modes [Maximum 4]**: Design specific AI modes to test different game aspects such as game mechanics, game controls, game design, etc.
+- **AI Implementation Strategy**:
+  - **Action Selection**: Prioritize actions based on the current `gameState` data and the AI specific goals
+  - **Maintain Progress**: Implement a function that triggers a random action sequence when the player is stuck in repetitive patterns. Use the past player positions to determine if the player is stuck
+- **AI Controller Structure**: The function `get_ai_action(gameState)` must be implemented to **output an action** based on the current `gameState` and the game code
   ```javascript
   export function get_ai_action(gameState) {{
     // Different strategies based on AI mode
@@ -431,10 +439,8 @@ Given you are an expert game developer who is developing this game, implement AI
     - Does the game have a proper win/lose condition?
   - **Rendering**: Does the game render correctly in the canvas with beautiful design and smooth animations with no flickering?
 - AI Testing:
-  - **AI Mode Selection**: Do all AI mode selection and their functions work correctly to appropriately test different aspects?
-  - **AI Mode Behavior**: Does each AI mode demonstrate distinct and purposeful behavior? 
   - **AI Mode Buttons**: Are AI mode buttons properly labeled and functioning to change the control mode?
-  - **AI Mode Progress**: Do the AI modes avoid getting stuck in repeated patterns and continue to make progress?
+  - **AI Logic**: Does each AI mode demonstrate distinct and purposeful behavior following logic to test the specific game aspect?
 
 ## HTML REFERENCE TEMPLATE
 ```html
@@ -442,6 +448,7 @@ Given you are an expert game developer who is developing this game, implement AI
 <html>
   <head>
     <meta charset="UTF-8" />
+    <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">{game_title}</h1>
     <style>
       html, body { height: 100%; overflow: hidden; background: #222; }
       body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
@@ -474,7 +481,7 @@ Output the game files in this format with NO OTHER TEXT to output a playable and
 </game_description>
 
 <game_controls>
-... (game controls in maximum 5 sentences)
+... (game controls as a list. Key: function)
 </game_controls>
 
 <game_plan>
