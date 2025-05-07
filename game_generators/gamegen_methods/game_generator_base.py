@@ -197,7 +197,9 @@ class GameGenerator(ABC):
         """
         pattern = r"<plan>\s*(.*?)\s*</plan>"
         match = re.search(pattern, text, re.DOTALL)
-        return match.group(1).strip()
+        if match:
+            return match.group(1).strip()
+        return ""
     
     def extract_game_controls(self, text: str) -> str:
         """
