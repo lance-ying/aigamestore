@@ -1,5 +1,6 @@
 from pathlib import Path
 from datetime import datetime
+import shutil
 import tempfile
 import os
 import re
@@ -37,6 +38,7 @@ Task: Implement a platformer game level in p5.js based on the following descript
 {description}
 </description>
 
+Closely follow these guidelines (critical):
 <p5js_guidelines>
 {p5js_guidelines}
 </p5js_guidelines>
@@ -67,14 +69,14 @@ p5js_guidelines = """* Don't use any external assets.
     <script src="https://cdn.jsdelivr.net/gh/bmoren/p5.collide2D/p5.collide2d.min.js"></script>
     ```
 * Use ES6 modules (import/export) for all JavaScript files - do not use Node.js require() statements.
-* Use p5.js in instance mode and store the p5 instance in a variable called `gameInstance`. Make sure all the variables are accessible via the gameInstance object. Expose the game instance globally as follows:
+* Use p5.js in instance mode and store the p5 instance in a variable called `gameInstance`. Make the game variables accessible with a getState() function (but don't use it in your game implementation). Expose the game instance globally as follows:
     ```javascript
     ...
     const p5 = window.p5
     let gameInstance = new p5(p => {
         // Initialize variables
         ...
-        // Expose all the variables to make them accessible via the gameInstance object (before defining the functions)
+        // Expose all the variables (before defining the functions). Don't use getState() in your game implementation.
         p.getState = () => {
             ...
         }
@@ -85,14 +87,15 @@ p5js_guidelines = """* Don't use any external assets.
     window.gameInstance = gameInstance;
     ```
 * IMPORTANT: Make sure to properly pass the object `p` in the game code to access p5js functions. Otherwise you will get a "ReferenceError: p is not defined" error.
-* Use p5.collide2D for ALL collision detection. Available functions: collidePointPoint, collidePointCircle, collidePointEllipse, collidePointRect, collidePointLine, collidePointArc, collideRectRect, collideCircleCircle, collideRectCircle, collideLineLine, collideLineCircle, collideLineRect, collidePointPoly, collideCirclePoly, collideRectPoly, collideLinePoly, collidePolyPoly, collidePointTriangle. These functions are accessible through the `p` object. Note that the specific order of the words in the function name matters. For example, 'collideCircleRect' is not available.
+* Use p5.collide2D for ALL collision detection. Available functions: collidePointPoint, collidePointCircle, collidePointEllipse, collidePointRect, collidePointLine, collidePointArc, collideRectRect, collideCircleCircle, collideRectCircle, collideLineLine, collideLineCircle, collideLineRect, collidePointPoly, collideCirclePoly, collideRectPoly, collideLinePoly, collidePolyPoly, collidePointTriangle. These functions are accessible through the `p` object. 
+* IMPORTANT: The specific order of the words in the p5.collide2D function names matter. For example, 'collideRectCircle' is a function, but 'collideCircleRect' is not available.
 * Set the canvas size to 600x400 pixels.
 * Ensure full reproducibility by setting the random seed to a fixed value.
 * Use a finite state machine for the player character.
 * Make sure the player's controls and parameters are coherent with the gameplay and physics.
 * Make sure the game has a clear goal and win state.
 * Implement professional-looking and polished graphics.
-* Don't draw elements that are randomly sampled at every frame as this causes flickering.
+* IMPORTANT: Don't draw elements that are randomly sampled at every frame as this causes flickering.
 * Start the game with clear instructions on how to play (the player has to press Enter to start the game).
 * Make sure the player can restart the game at any time by pressing 'R'."""
 
@@ -120,6 +123,9 @@ p5js_guidelines = """* Don't use any external assets.
 # </game_implementation>
 # """
 
+# * include strategies with randomness
+# . It must always keep exploring and trying new things
+# * make sure your implementation is robust and never gets stuck in an infinite loop (e.g. stuck on game over screen, cycle the same sequence of positions over and over, etc.)
 prompt_policy = """Task: Implement an AI that can play and fully explore the game.
 
 <instructions>
@@ -129,9 +135,10 @@ prompt_policy = """Task: Implement an AI that can play and fully explore the gam
 * include keyCode/which values (e.g., 37 for left, 39 for right, 38 for up, 13 for enter)
 * manage both keydown and keyup events to control player movement properly
 * add `bubbles: true` to all keyboard events
-* make sure to never get stuck in an infinite loop
-* frequently restart the game with 'R' to try different strategies
-* include strategies with randomness
+* IMPORTANT: hard reset the game with 'R' after 1000 steps! Make sure this works even if the policy gets stuck.
+* always reset the game with 'R' when the game is over!
+* try different exploration strategies
+* make sure your implementation is robust
 
 Example keyboard event handling pseudocode:
 ```javascript
@@ -353,10 +360,11 @@ else:
 
 save_dir = Path(__file__).parent / "results" / Path(__file__).stem
 
-# thinking = True
-thinking = False
+# TODO: games are very buggy when thinking is true
+thinking = True
+# thinking = False
 
-max_samples = 3
+max_samples = 5
 
 run_name = datetime.now().strftime("%Y%m%d_%H%M%S")
 run_name = f"run1_{model}"
@@ -365,7 +373,11 @@ save_dir = save_dir / run_name
 
 
 if thinking:
-    prompt_game_code += "\nThink thoroughly about the game level and in great detail. Don't write code during the planning phase."
+    # prompt_game_code += "\nThink thoroughly about the game level and in great detail. Don't write code during the planning phase."
+    prompt_game_code += "\n<thinking_instructions>Think thoroughly about how to make an interesting and engaging game. Don't write code during the planning phase! Think about the game design in great detail. Refine the game design until it is fully concrete and specific.</thinking_instructions>"
+
+    prompt_policy += "\n<thinking_instructions>Think thoroughly about how to implement the exploration strategies. Don't write code during the planning phase!</thinking_instructions>"
+
 
 # Initialize Anthropic client
 if "claude" in model:
@@ -481,7 +493,7 @@ def get_completion(model, prompt, thinking=False):
         raise ValueError(f"Model {model} not supported")
 
 
-def generate(model, prompt, save_dir, code_dir=None, thinking=False):
+def generate(model, prompt, save_dir, code_dir=None, thinking=False, max_tries=3):
     """
     Generate code for a given prompt.
 
@@ -490,6 +502,7 @@ def generate(model, prompt, save_dir, code_dir=None, thinking=False):
         prompt: The prompt to generate code for
         save_dir: The directory to save the generated code
         code_dir: The directory to save the generated code, if None, the code will be saved in the save_dir
+        max_tries: The maximum number of tries to generate the code
     """
     save_dir.mkdir(parents=True, exist_ok=True)
 
@@ -502,13 +515,25 @@ def generate(model, prompt, save_dir, code_dir=None, thinking=False):
         with open(save_dir / "model.txt", "w") as f:
             f.write(model)
 
-        if thinking:
-            thinking_content, answer = get_completion(model, prompt, thinking=thinking)
+        try_idx = 0
+        while try_idx < max_tries:
+            try:
+                if thinking:
+                    thinking_content, answer = get_completion(model, prompt, thinking=thinking)
 
-            with open(save_dir / "thinking.txt", "w") as f:
-                f.write(thinking_content)
-        else:
-            answer = get_completion(model, prompt, thinking=False)
+                    with open(save_dir / "thinking.txt", "w") as f:
+                        f.write(thinking_content)
+                else:
+                    answer = get_completion(model, prompt, thinking=False)
+
+            except Exception as e:
+                print(f"Error: {e}")
+                try_idx += 1
+                continue
+            break
+
+        if try_idx == max_tries:
+            raise ValueError(f"Failed to generate code after {max_tries} tries")
 
         # Save answer
         with open(save_dir / "answer.txt", "w") as f:
@@ -838,7 +863,8 @@ class P5jsEnv(gym.Env):
         self.page.keyboard.up("Enter")
         
         # Get the initial observation
-        obs = self._get_observation()
+        # obs = self._get_observation()
+        obs = None
         self.iter = 0
 
         info = {}
@@ -894,8 +920,8 @@ class P5jsEnv(gym.Env):
         # obs = self._get_observation()  # TODO: not needed here
         obs = None
         # Calculate reward
-        reward = self._get_reward()
-        
+        # reward = self._get_reward()
+        reward = 0.0
         # Additional info
         info = {
             "frame_count": self._get_framecount(),
@@ -1167,7 +1193,15 @@ def code_from_dir(code_dir: Path) -> dict:
 
 
 if __name__ == "__main__":
-    answer_themes = generate(model, prompt_themes, save_dir / "themes", thinking=thinking)
+    # headless = False
+    headless = True
+
+    if not thinking:
+        score_threshold = 70
+    else:
+        score_threshold = 60
+
+    answer_themes = generate(model, prompt_themes, save_dir / "themes")
 
     if thinking:
         game_dir_name = "thinking"
@@ -1179,7 +1213,7 @@ if __name__ == "__main__":
         game_validated = False
         sample_idx = 0
         while not game_validated and sample_idx < max_samples:
-            _save_dir = save_dir / game_dir_name / f"theme_{idx}" / f"sample_{sample_idx}"
+            _save_dir = save_dir / game_dir_name / "games" / f"theme_{idx}" / f"sample_{sample_idx}"
             # generate code
             game_dir = _save_dir / "code_original"
             print(f"Theme {idx}: {theme}")
@@ -1192,12 +1226,45 @@ if __name__ == "__main__":
             )
             answer_game_code = generate(model, prompt, game_dir, thinking=thinking)
 
+            game_code = code_from_dir(game_dir)
+
+            # make sure the code runs
+            if not (_save_dir / "run_check.json").exists():
+                try:
+                    num_steps = 500
+
+                    env = P5jsEnv(game_code, headless=headless)
+                    env.reset()
+                    for i in range(num_steps):
+                        action = env.action_space.sample()
+                        env.step(action)
+                        print(i)
+                    env.close()
+                    # save success
+                    with open(_save_dir / "run_check.json", "w", encoding="utf-8") as f:
+                        json.dump({"success": True, "num_steps": num_steps}, f, indent=4)
+                except Exception as e:
+                    print(f"Error: {e}")
+                    # breakpoint()
+                    env.close()
+                    # save error
+                    with open(_save_dir / "run_check.json", "w", encoding="utf-8") as f:
+                        json.dump({"error": str(e), "num_steps": num_steps}, f, indent=4)
+                    # resample new game
+                    sample_idx += 1
+                    continue
+            else:
+                with open(_save_dir / "run_check.json", "r", encoding="utf-8") as f:
+                    results = json.load(f)
+                    if "error" in results:
+                        print(f"Error: {results['error']}")
+                        sample_idx += 1
+                        continue
+
 
             # add AI policy to the code
             policy_dir = _save_dir / "code_with_policy"
             print(f"Theme {idx}: {theme}")
-
-            game_code = code_from_dir(game_dir)
 
             game_code_str = ""
             for relative_path, code in game_code.items():
@@ -1216,6 +1283,41 @@ if __name__ == "__main__":
             )
             generate(model, prompt, policy_dir, thinking=thinking)
 
+            # make sure the code with policy runs
+            if not (_save_dir / "run_policy_check.json").exists():
+                try:
+                    num_steps = 5000
+
+                    code_with_policy = code_from_dir(policy_dir)
+                    env = P5jsEnv(code_with_policy, headless=headless)
+                    env.reset()
+                    for i in range(num_steps):
+                        action = np.zeros(env.action_space.shape)
+                        env.step(action)
+                        print(i)
+                    env.close()
+                    # save success
+                    with open(_save_dir / "run_policy_check.json", "w", encoding="utf-8") as f:
+                        json.dump({"success": True, "num_steps": num_steps}, f, indent=4)
+                except Exception as e:
+                    print(f"Error: {e}")
+                    # breakpoint()
+                    env.close()
+                    # save error
+                    with open(_save_dir / "run_policy_check.json", "w", encoding="utf-8") as f:
+                        json.dump({"error": str(e), "num_steps": num_steps}, f, indent=4)
+                    # resample new game
+                    sample_idx += 1
+                    continue
+            else:
+                with open(_save_dir / "run_policy_check.json", "r", encoding="utf-8") as f:
+                    results = json.load(f)
+                    if "error" in results:
+                        print(f"Error: {results['error']}")
+                        sample_idx += 1
+                        continue
+
+
 
             # extract mechanics from code
             mechanics_dir = _save_dir / "list_mechanics"
@@ -1225,7 +1327,7 @@ if __name__ == "__main__":
                 movement_type_library={},
                 interaction_type_library={},
             )
-            answer_list_mechanics = generate(model, prompt, mechanics_dir, thinking=thinking)
+            answer_list_mechanics = generate(model, prompt, mechanics_dir)
 
             mvt_control_list = re.findall(r"<player_movement_list>(.*?)</player_movement_list>", answer_list_mechanics, re.DOTALL)
             mvt_control_list = json.loads(mvt_control_list[0])
@@ -1247,7 +1349,7 @@ if __name__ == "__main__":
                 game_implementation=game_code_str,
                 logging_instructions=answer_list_mechanics,
             )
-            answer_code_with_logs = generate(model, prompt, code_logs_dir, thinking=thinking)
+            answer_code_with_logs = generate(model, prompt, code_logs_dir)
 
             # combine code with logs and policy in a single folder
             code_with_logs_and_policy_dir = _save_dir / "code_with_logs_and_policy"
@@ -1272,8 +1374,7 @@ if __name__ == "__main__":
 
             # calculate consistency score with policy
             if not (_save_dir / "consistency_check.json").exists():
-                num_steps = 5000
-                headless = False
+                num_steps = 10000
 
                 try:
                     env = P5jsEnv(code_with_logs_and_policy, headless=headless)
@@ -1311,30 +1412,30 @@ if __name__ == "__main__":
                     continue
 
                 # save results
-                results = {
+                consistency_check = {
                     "num_steps": num_steps,
-                    "logs": logs,
+                    # "logs": logs,
                     # "logs_random": logs_random,
                     "mechanics_implemented": list(mechanics_implemented),
                     "mechanics_logged": list(mechanics_logged),
                     # "mechanics_logged_random": list(mechanics_logged_random),
                 }
                 with open(_save_dir / "consistency_check.json", "w", encoding="utf-8") as f:
-                    json.dump(results, f, indent=4)
+                    json.dump(consistency_check, f, indent=4)
             else:
                 with open(_save_dir / "consistency_check.json", "r", encoding="utf-8") as f:
-                    results = json.load(f)
-                    if "error" in results:
-                        print(f"Error: {results['error']}")
+                    consistency_check = json.load(f)
+                    if "error" in consistency_check:
+                        print(f"Error: {consistency_check['error']}")
                         sample_idx += 1
                         continue
-                    mechanics_implemented = set(results["mechanics_implemented"])
-                    mechanics_logged = set(results["mechanics_logged"])
-                    mechanics_logged_random = set(results["mechanics_logged_random"])
+                    mechanics_implemented = set(consistency_check["mechanics_implemented"])
+                    mechanics_logged = set(consistency_check["mechanics_logged"])
+                    # mechanics_logged_random = set(results["mechanics_logged_random"])
 
             print(mechanics_implemented)
             print(mechanics_logged)
-            print(mechanics_logged_random)
+            # print(mechanics_logged_random)
 
             # check how many of the implemented mechanics are logged when the game is played
             score = 0
@@ -1344,18 +1445,47 @@ if __name__ == "__main__":
             score = 100 * score / len(mechanics_implemented)
             print(f"Score: {score}")
 
-            score_random = 0
-            for m in mechanics_implemented:
-                if m in mechanics_logged_random:
-                    score_random += 1
-            score_random = 100 * score_random / len(mechanics_implemented)
-            print(f"Score random: {score_random}")
+            # add score to consistency_check.json
+            consistency_check["score"] = score
+            with open(_save_dir / "consistency_check.json", "w", encoding="utf-8") as f:
+                json.dump(consistency_check, f, indent=4)
+
+            # score_random = 0
+            # for m in mechanics_implemented:
+            #     if m in mechanics_logged_random:
+            #         score_random += 1
+            # score_random = 100 * score_random / len(mechanics_implemented)
+            # print(f"Score random: {score_random}")
             
             # TODO: resample policy code if not better than random policy?
             # if no different between policy samples, resample the game
-            breakpoint()
+            # breakpoint()
 
             if score >= 70:
                 game_validated = True
             else:
                 sample_idx += 1
+    
+    
+        # stop after 20 games
+        if idx >= 15:
+            break
+
+
+    # move all the final games (sample with highest index) to a separate folder
+    final_dir = save_dir / game_dir_name / "final_games"
+    final_dir.mkdir(parents=True, exist_ok=True)
+    
+    game_dir = save_dir / game_dir_name / "games"
+    if game_dir.exists():
+        for theme_dir in sorted(game_dir.glob("theme_*")):
+            # Find all sample directories for this theme
+            sample_dirs = sorted(theme_dir.glob("sample_*"), key=lambda d: int(d.name.split("_")[-1]))
+            if sample_dirs:
+                # Pick the sample with the highest index
+                final_sample_dir = sample_dirs[-1] / "code_with_logs"
+                # Copy to final_dir with theme name
+                dest_dir = final_dir / theme_dir.name
+                if dest_dir.exists():
+                    shutil.rmtree(dest_dir)
+                shutil.copytree(final_sample_dir, dest_dir)

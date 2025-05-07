@@ -451,15 +451,20 @@ HTML_TEMPLATE = '''
             background-color: #3498db;
             color: white;
         }
+        button#submit-ratings:disabled {
+            background-color: #cccccc;
+            color: #888888;
+            cursor: not-allowed;
+        }
         button#show-instructions {
             background-color: #f1f1f1;
             color: #555;
         }
-        button:hover {
+        button:hover:not(:disabled) {
             opacity: 0.9;
             transform: translateY(-1px);
         }
-        button:active {
+        button:active:not(:disabled) {
             transform: translateY(1px);
         }
         .slider-container {
@@ -666,6 +671,27 @@ HTML_TEMPLATE = '''
             color: white;
             border-radius: 5px;
         }
+        /* Timer styling */
+        .timer-container {
+            position: fixed;
+            top: 90px;
+            right: 32px;
+            z-index: 1200;
+            background: #f1f1f1;
+            border: 1.5px solid #ddd;
+            color: #555;
+            font-weight: bold;
+            font-size: 16px;
+            padding: 10px 14px;
+            border-radius: 24px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            transition: all 0.3s;
+        }
+        .timer-container.time-complete {
+            background: #4CAF50;
+            color: white;
+            border-color: #388E3C;
+        }
         </style>
     </head>
     <body>
@@ -694,7 +720,7 @@ HTML_TEMPLATE = '''
             <p>Your task is to evaluate a series of basic 2D games. You will be shown a total of ''' + str(NUM_GAMES_TO_RATE) + ''' games to rate. These games may contain issues. You should take these issues into account when rating the games.</p>
             <h3>Please follow these steps to provide your rating:</h3>
             <ol>
-                <li><b>Please play each game for about 1 minute</b> to get a good feel for it. If the game is broken or unplayable, you may stop earlier.</li>
+                <li><b>Please play each game for about 1 minute</b> to get a good feel for it. If the game appears broken or has issues, please still try your best to interact with it for the full minute.</li>
                 <li><b>Rate the playability of the game on a scale from 0 to 10:</b><br>
                     - 0: Completely unplayable or broken<br>
                     - 5: Average controls and interaction<br>
@@ -712,6 +738,7 @@ HTML_TEMPLATE = '''
                 <li>Please take this seriously; we use this data for research.</li>
                 <li>There are no right or wrong answers—please give your honest opinion.</li>
                 <li>If you are not serious about the evaluation, we will not be able to compensate you.</li>
+                <li>The game window may lose focus. If this happens, please click on the game window to focus it.</li>
             </ul>
             <button id="startButton">Play</button>
         </div>
@@ -723,6 +750,9 @@ HTML_TEMPLATE = '''
         <div class="game-box">
             <iframe class="game-frame" src="/game/{{ game_path }}"></iframe>
             <div class="rating-sliders">
+                <div class="timer-container" id="timer-display">
+                    Please play for: 1:00
+                </div>
                 <div class="rating-item">
                     <label>Playability: How easy is it to control and interact with the game?</label>
                     <div class="rating-description">0=Unplayable/broken, 5=Average controls, 10=Excellent/intuitive controls</div>
@@ -786,8 +816,43 @@ HTML_TEMPLATE = '''
         const closeBtn = document.getElementsByClassName("close")[0];
         const startBtn = document.getElementById("startButton");
         const showInstructionsBtn = document.getElementById("show-instructions");
+        const submitBtn = document.getElementById("submit-ratings");
         
-        // Check if this is the first visit
+        // Timer functionality
+        let timeLeft = 60; // 60 seconds = 1 minute
+        let timerInterval;
+        let timerComplete = false;
+        const timerDisplay = document.getElementById("timer-display");
+        
+        // Disable submit button initially
+        submitBtn.disabled = true;
+        
+        // Function to start the timer
+        function startTimer() {
+            timerInterval = setInterval(function() {
+                timeLeft--;
+                
+                if (timeLeft <= 0) {
+                    clearInterval(timerInterval);
+                    timerComplete = true;
+                    timerDisplay.textContent = "Rating enabled!";
+                    timerDisplay.classList.add("time-complete");
+                    submitBtn.disabled = false;
+                } else {
+                    const minutes = Math.floor(timeLeft / 60);
+                    const seconds = timeLeft % 60;
+                    timerDisplay.textContent = `Please play for: ${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
+                }
+            }, 1000);
+        }
+        
+        // Start timer when iframe loads
+        document.querySelector('.game-frame').addEventListener('load', function() {
+            this.focus();
+            startTimer();
+        });
+        
+        // Check for consent first
         if (!localStorage.getItem("gameArenaVisited")) {
             // First visit, show modal
             modal.style.display = "flex";
@@ -863,6 +928,12 @@ HTML_TEMPLATE = '''
         
         // Submit ratings
         document.getElementById('submit-ratings').addEventListener('click', function() {
+            // Only allow submission if timer is complete
+            if (!timerComplete) {
+                alert("Please play the game for at least 1 minute before submitting ratings.");
+                return;
+            }
+            
             // Show loading overlay
             document.getElementById('loading-overlay').style.display = 'flex';
             // Tell all game iframes to stop recording before submitting ratings
@@ -1060,6 +1131,11 @@ HTML_TEMPLATE = '''
         
         // Update counter when page loads and after submitting ratings
         document.addEventListener('DOMContentLoaded', updateGamesLeft);
+        
+        // Focus game iframe when it loads
+        document.querySelector('.game-frame').addEventListener('load', function() {
+            this.focus();
+        });
     </script>
     </body>
     </html>
