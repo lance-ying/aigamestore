@@ -144,6 +144,7 @@ class ModelAPI:
             "google": {
                 "gemini-2.0-flash": 8192,
                 "gemini-2.5-flash-preview-04-17": 65536,
+                "gemini-2.5-pro-exp-03-25": 65536,
             },
         }
 

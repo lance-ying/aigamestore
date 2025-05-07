@@ -57,6 +57,12 @@ def parse_args():
         help="Use non-ECS architecture for game generation",
     )
     
+    parser.add_argument(
+        "--generate_with_ai",
+        action="store_true",
+        help="Generate game with AI",
+    )
+    
     return parser.parse_args()
 
 
@@ -121,6 +127,7 @@ def main():
                 model_name=args.model,
                 verbose=args.verbose,
                 use_ecs=not args.no_ecs,
+                generate_with_ai=args.generate_with_ai,
             )
         elif args.method == "template_based":
             # Will be implemented in the future

@@ -89,7 +89,7 @@ def generate_new_game_concept(
     num_games: int = MAX_CONCEPTS_PER_BATCH,
     game_archive: List[Dict[str, Any]] = None,
     max_retries: int = 10,
-    temperature: float = 0.7,
+    temperature: float = 1.0,
     # num_sentences: int = 3,
 ) -> List[Dict[str, Any]]:
     """
@@ -139,11 +139,8 @@ You are going to create {num_games} original, innovative, and focused game conce
 - You can vary the game elements, the game mechanics, the game setting, visual style or viewpoint - be creative
 - Write in a way that inspires further creative development and expansion to a 2D game. DO NOT write in a way that it defines the entire game.
 
-Here are examples of the style, format, and creativity level expected:
-{example_block}
-
 Please guide your game concepts keeping in mind the hard constraints the game developers will have while expanding on your game concept and implementing it in p5.js:
-- No sound, music, or audio-related mechanics.
+- NO sound, music, or audio-related mechanics.
 - No 3D graphics, rendering, or movement.
 - No use of mouse, touch input, or complex UI. Only keyboard input.
 - No sprites, images, external art, or visual effects beyond p5's shape drawing.
@@ -152,26 +149,33 @@ Please guide your game concepts keeping in mind the hard constraints the game de
 - Use common game elements and objects in real life, make the game unique and interesting by combining them in a new way.
 - Use commonly used terms and common nouns to describe the game concept. Feel free to use the tone and the style of the examples but do not plagiarize.
 
-You should generate your interesting yet feasible game concepts for 2D JavaScript games in the following format:
-```json
-[
-    {{
-        "concept": "...",
-        "genre": "...",
-    }},
-    {{
-        "concept": "...",
-        "genre": "...",
-    }},
-]
-```
 When creating your concepts:
 - Choose 1-3 genres from: {genre_list_str}
-- Write each concept in 1-3 concise sentences. Vary the number of sentences and the length of the sentences for each concept. There should be a third of the concepts in 1 sentence, a third in 2 sentences, and a third in 3 sentences.
+- Write each concept in 1-3 concise sentences. Vary the number of sentences and the length of the sentences for each concept.
 - Keep changing your focus when writing each concept: theme, genre, mechanics, setting, character, rewards, obstacles, etc.
 - Write with a unique personality for each concept varying your writing style across concepts (questions, suggestions, statements)
 - Use casual, approachable language that sparks imagination. Use terms and nouns that most people are familiar with and can be easily understood by a wide audience.
 
+Some examples of game concepts for inspiration:
+{example_block}
+
+OUTPUT FORMAT:
+Output the game concepts in the following format with NO OTHER TEXT:
+<game_concepts>
+    <game_concept id="1">
+        <concept_focus>...</concept_focus>  // What aspect of the game is the concept highlighting or requesting? Focus on 1 or 2 of the [environment, mechanics, character, goal, enemy, or other elements]
+        <number_sentences>...</number_sentences> // Number of sentences in the concept
+        <genre>...</genre>          // The genre of the game
+        <concept>...</concept>        // A short description of the game concept
+    </game_concept>
+    <game_concept id="2">
+        <concept_focus>...</concept_focus>
+        <number_sentences>...</number_sentences>
+        <genre>...</genre>
+        <concept>...</concept>
+    </game_concept>
+    ...
+</game_concepts>
 """
 
     retries = 0
@@ -180,34 +184,58 @@ When creating your concepts:
             response = api.call(
                 user_prompt=prompt,
                 # system_prompt=system_prompt,
-                # temperature=,
+                temperature=temperature,
                 verbose=True,  # Enable streaming to avoid timeouts for long requests
             )
 
             # Extract the JSON part from the response using regex
-            match = re.search(r"```json\n(.*?)\n```", response, re.DOTALL)
+            match = re.search(r"<game_concepts>\n(.*?)\n</game_concepts>", response, re.DOTALL)
             if not match:
                 # Try without the newlines in case the model formats differently
-                match = re.search(r"```json(.*?)```", response, re.DOTALL)
+                match = re.search(r"<game_concepts>(.*?)</game_concepts>", response, re.DOTALL)
 
             if match:
-                json_str = match.group(1).strip()
-                game_descriptions = json.loads(json_str)
-
-                # Return the list of games or wrap a single game in a list
-                if isinstance(game_descriptions, list) and len(game_descriptions) > 0:
-                    return game_descriptions
-                elif isinstance(game_descriptions, dict):
-                    # If the model returned a single game instead of a list
-                    return [game_descriptions]
-                else:
-                    print(f"Unexpected response format from model")
-                    return [
-                        {
-                            "concept": "Error: Unexpected response format from model",
-                            "genre": "Genre of the game",
+                xml_str = match.group(1).strip()
+                # Parse XML to extract game concepts
+                game_descriptions = []
+                
+                # Use regex to find all game_concept blocks
+                game_concepts = re.finditer(r'<game_concept.*?>(.*?)</game_concept>', xml_str, re.DOTALL)
+                
+                for game in game_concepts:
+                    game_content = game.group(1)
+                    
+                    # Extract all fields using regex
+                    concept_focus_match = re.search(r'<concept_focus>(.*?)</concept_focus>', game_content, re.DOTALL)
+                    num_sentences_match = re.search(r'<number_sentences>(.*?)</number_sentences>', game_content, re.DOTALL)
+                    concept_match = re.search(r'<concept>(.*?)</concept>', game_content, re.DOTALL)
+                    genre_match = re.search(r'<genre>(.*?)</genre>', game_content, re.DOTALL)
+                    
+                    if concept_match and genre_match:
+                        game_data = {
+                            "id": game.group(0).split('id="')[1].split('"')[0],
+                            "concept_focus": concept_focus_match.group(1).strip() if concept_focus_match else None,
+                            "number_sentences": int(num_sentences_match.group(1).strip()) if num_sentences_match else None,
+                            "genre": genre_match.group(1).strip(),
+                            "concept": concept_match.group(1).strip(),
                         }
-                    ]
+                        
+                        # Add optional fields if present
+                        if concept_focus_match:
+                            game_data["concept_focus"] = concept_focus_match.group(1).strip()
+                        if num_sentences_match:
+                            game_data["number_sentences"] = int(num_sentences_match.group(1).strip())
+                            
+                        game_descriptions.append(game_data)
+                
+                if len(game_descriptions) > 0:
+                    return game_descriptions
+                else:
+                    print(f"No valid game concepts found in response")
+                    return [{
+                        "concept": "Error: No valid game concepts found in response",
+                        "genre": "Genre of the game"
+                    }]
 
         except Exception as e:
             error_msg = str(e).lower()
@@ -417,7 +445,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--temperature",
         type=float,
-        default=0.0,
+        default=1.0,
         help="Temperature for model generation (0.0-1.0, higher = more creative)",
     )
     # parser.add_argument(
