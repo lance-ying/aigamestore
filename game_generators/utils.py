@@ -484,74 +484,74 @@ class ModelAPI:
                 print(f"{RED}{error_msg}{RESET}")
             raise RuntimeError(error_msg)
 
-    def get_batch_results(
-        self, batch_id: str, verbose: bool = False
-    ) -> List[Dict[str, Any]]:
-        """
-        Get the results of a completed batch request using the official Anthropic client.
-        """
-        if self.model_provider != "anthropic":
-            raise ValueError("Batch processing is only supported for Claude models")
+    # def get_batch_results(
+    #     self, batch_id: str, verbose: bool = False
+    # ) -> List[Dict[str, Any]]:
+    #     """
+    #     Get the results of a completed batch request using the official Anthropic client.
+    #     """
+    #     if self.model_provider != "anthropic":
+    #         raise ValueError("Batch processing is only supported for Claude models")
 
-        try:
-            results = []
-            if verbose:
-                print(f"\n{BLUE}Retrieving batch results...{RESET}")
+    #     try:
+    #         results = []
+    #         if verbose:
+    #             print(f"\n{BLUE}Retrieving batch results...{RESET}")
 
-            # Stream results directly using the client's built-in method
-            for result in self.client.messages.batches.results(batch_id):
-                match result.result.type:
-                    case "succeeded":
-                        if verbose:
-                            print(f"\n{GREEN}Success! {result.custom_id}{RESET}")
-                        results.append(
-                            {
-                                "custom_id": result.custom_id,
-                                "status": "succeeded",
-                                "content": (
-                                    result.result.message.content[0].text
-                                    if result.result.message.content
-                                    else ""
-                                ),
-                            }
-                        )
-                    case "errored":
-                        if result.result.error.type == "invalid_request":
-                            if verbose:
-                                print(
-                                    f"\n{RED}Validation error for {result.custom_id}: {result.result.error}{RESET}"
-                                )
-                        else:
-                            if verbose:
-                                print(
-                                    f"\n{RED}Server error for {result.custom_id}: {result.result.error}{RESET}"
-                                )
-                        results.append(
-                            {
-                                "custom_id": result.custom_id,
-                                "status": "errored",
-                                "error": result.result.error,
-                            }
-                        )
-                    case "expired":
-                        if verbose:
-                            print(
-                                f"\n{YELLOW}Request expired {result.custom_id}{RESET}"
-                            )
-                        results.append(
-                            {
-                                "custom_id": result.custom_id,
-                                "status": "expired",
-                            }
-                        )
+    #         # Stream results directly using the client's built-in method
+    #         for result in self.client.messages.batches.results(batch_id):
+    #             match result.result.type:
+    #                 case "succeeded":
+    #                     if verbose:
+    #                         print(f"\n{GREEN}Success! {result.custom_id}{RESET}")
+    #                     results.append(
+    #                         {
+    #                             "custom_id": result.custom_id,
+    #                             "status": "succeeded",
+    #                             "content": (
+    #                                 result.result.message.content[0].text
+    #                                 if result.result.message.content
+    #                                 else ""
+    #                             ),
+    #                         }
+    #                     )
+    #                 case "errored":
+    #                     if result.result.error.type == "invalid_request":
+    #                         if verbose:
+    #                             print(
+    #                                 f"\n{RED}Validation error for {result.custom_id}: {result.result.error}{RESET}"
+    #                             )
+    #                     else:
+    #                         if verbose:
+    #                             print(
+    #                                 f"\n{RED}Server error for {result.custom_id}: {result.result.error}{RESET}"
+    #                             )
+    #                     results.append(
+    #                         {
+    #                             "custom_id": result.custom_id,
+    #                             "status": "errored",
+    #                             "error": result.result.error,
+    #                         }
+    #                     )
+    #                 case "expired":
+    #                     if verbose:
+    #                         print(
+    #                             f"\n{YELLOW}Request expired {result.custom_id}{RESET}"
+    #                         )
+    #                     results.append(
+    #                         {
+    #                             "custom_id": result.custom_id,
+    #                             "status": "expired",
+    #                         }
+    #                     )
 
-            return results
+    #         return results
 
-        except Exception as e:
-            error_msg = f"Error retrieving batch results: {str(e)}"
-            if verbose:
-                print(f"\n{RED}{error_msg}{RESET}")
-            raise RuntimeError(error_msg)
+    #     except Exception as e:
+    #         error_msg = f"Error retrieving batch results: {str(e)}"
+    #         if verbose:
+    #             print(f"\n{RED}{error_msg}{RESET}")
+    #         raise RuntimeError(error_msg)
 
 
 if __name__ == "__main__":
