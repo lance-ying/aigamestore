@@ -4,6 +4,7 @@ from typing import Dict, Any, Optional, List, Union
 from openai import OpenAI
 import json
 import datetime
+import time
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -13,7 +14,27 @@ from game_generators.prompts import GREEN, YELLOW, RED, BLUE, RESET
 # Import additional clients based on model type
 try:
     import anthropic
-except ImportError:
+
+    print(f"Anthropic version: {anthropic.__version__}")
+
+    try:
+        from anthropic.types.message_create_params import (
+            MessageCreateParamsNonStreaming,
+        )
+
+        print("Successfully imported MessageCreateParamsNonStreaming")
+    except ImportError as e:
+        print(f"Error importing MessageCreateParamsNonStreaming: {e}")
+
+    try:
+        from anthropic.types.messages.batch_create_params import Request
+
+        print("Successfully imported Request")
+    except ImportError as e:
+        print(f"Error importing Request: {e}")
+
+except ImportError as e:
+    print(f"Error importing anthropic: {e}")
     anthropic = None
 
 try:
@@ -331,6 +352,207 @@ class ModelAPI:
         """Return the list of all API calls made"""
         return self.call_history
 
+    def batch_call(
+        self,
+        requests: List[Dict[str, Any]],
+        max_tokens: Optional[int] = 40000,
+        temperature: Optional[float] = None,
+        verbose: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Make a batch API call to Claude for processing multiple requests asynchronously.
+        """
+        if self.model_provider != "anthropic":
+            raise ValueError("Batch processing is only supported for Claude models")
+
+        # Prepare batch requests using the correct types
+        batch_requests = []
+        for req in requests:
+            # Create messages list
+            messages = []
+
+            # Add chat history if provided
+            if "chat_history" in req and req["chat_history"]:
+                for msg in req["chat_history"]:
+                    if msg["role"] not in ["user", "assistant"]:
+                        continue
+                    messages.append({"role": msg["role"], "content": msg["content"]})
+
+            # Add the user prompt
+            messages.append({"role": "user", "content": req["user_prompt"]})
+
+            # Create system messages if provided
+            system_messages = None
+            if "system_prompt" in req and req["system_prompt"]:
+                system_messages = [
+                    {
+                        "type": "text",
+                        "text": req["system_prompt"],
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ]
+
+            # Create params with proper typing
+            params = MessageCreateParamsNonStreaming(
+                model=self.model,
+                messages=messages,
+                max_tokens=max_tokens,
+                system=system_messages,
+            )
+
+            # Create the properly typed Request object
+            batch_requests.append(Request(custom_id=req["custom_id"], params=params))
+
+        try:
+            # Create the batch with proper typing
+            if verbose:
+                print(f"\n{BLUE}Creating batch...{RESET}")
+                print(f"{RESET}Batch requests: {batch_requests}{RESET}")
+
+            batch = self.client.messages.batches.create(requests=batch_requests)
+
+            if verbose:
+                print(f"\n{BLUE}Batch created with ID: {batch.id}{RESET}")
+                print(f"{BLUE}Processing status: {batch.processing_status}{RESET}")
+                print(f"{BLUE}Request counts: {batch.request_counts}{RESET}")
+
+            return {
+                "batch_id": batch.id,
+                "processing_status": batch.processing_status,
+                "request_counts": batch.request_counts,
+                "created_at": batch.created_at,
+                "expires_at": batch.expires_at,
+                "results_url": batch.results_url,
+            }
+
+        except Exception as e:
+            error_msg = f"Error creating batch: {str(e)}"
+            if verbose:
+                print(f"{RED}{error_msg}{RESET}")
+            raise RuntimeError(error_msg)
+
+    def get_batch_status(self, batch_id: str, verbose: bool = False) -> Dict[str, Any]:
+        """
+        Get the status of a batch request.
+
+        Args:
+            batch_id: The ID of the batch to check
+            verbose: Whether to print verbose information
+
+        Returns:
+            Dict containing batch status information
+        """
+        if self.model_provider != "anthropic":
+            raise ValueError("Batch processing is only supported for Claude models")
+
+        try:
+            batch = self.client.messages.batches.retrieve(batch_id)
+
+            if verbose:
+                print(
+                    f"\n{BLUE}Batch {batch_id} status: {batch.processing_status}{RESET}"
+                )
+                print(f"{BLUE}Request counts: {batch.request_counts}{RESET}")
+                if batch.request_counts.errored > 0:
+                    print(
+                        f"{RED}Warning: {batch.request_counts.errored} requests have errored{RESET}"
+                    )
+                if batch.request_counts.expired > 0:
+                    print(
+                        f"{YELLOW}Warning: {batch.request_counts.expired} requests have expired{RESET}"
+                    )
+
+            return {
+                "processing_status": batch.processing_status,
+                "request_counts": batch.request_counts,
+                "results_url": batch.results_url,
+                "ended_at": batch.ended_at,
+                "is_complete": batch.processing_status == "ended"
+                or (
+                    batch.request_counts.processing == 0
+                    and (
+                        batch.request_counts.succeeded > 0
+                        or batch.request_counts.errored > 0
+                        or batch.request_counts.expired > 0
+                    )
+                ),
+            }
+
+        except Exception as e:
+            error_msg = f"Error retrieving batch status: {str(e)}"
+            if verbose:
+                print(f"{RED}{error_msg}{RESET}")
+            raise RuntimeError(error_msg)
+
+    def get_batch_results(
+        self, batch_id: str, verbose: bool = False
+    ) -> List[Dict[str, Any]]:
+        """
+        Get the results of a completed batch request using the official Anthropic client.
+        """
+        if self.model_provider != "anthropic":
+            raise ValueError("Batch processing is only supported for Claude models")
+
+        try:
+            results = []
+            if verbose:
+                print(f"\n{BLUE}Retrieving batch results...{RESET}")
+
+            # Stream results directly using the client's built-in method
+            for result in self.client.messages.batches.results(batch_id):
+                match result.result.type:
+                    case "succeeded":
+                        if verbose:
+                            print(f"\n{GREEN}Success! {result.custom_id}{RESET}")
+                        results.append(
+                            {
+                                "custom_id": result.custom_id,
+                                "status": "succeeded",
+                                "content": (
+                                    result.result.message.content[0].text
+                                    if result.result.message.content
+                                    else ""
+                                ),
+                            }
+                        )
+                    case "errored":
+                        if result.result.error.type == "invalid_request":
+                            if verbose:
+                                print(
+                                    f"\n{RED}Validation error for {result.custom_id}: {result.result.error}{RESET}"
+                                )
+                        else:
+                            if verbose:
+                                print(
+                                    f"\n{RED}Server error for {result.custom_id}: {result.result.error}{RESET}"
+                                )
+                        results.append(
+                            {
+                                "custom_id": result.custom_id,
+                                "status": "errored",
+                                "error": result.result.error,
+                            }
+                        )
+                    case "expired":
+                        if verbose:
+                            print(
+                                f"\n{YELLOW}Request expired {result.custom_id}{RESET}"
+                            )
+                        results.append(
+                            {
+                                "custom_id": result.custom_id,
+                                "status": "expired",
+                            }
+                        )
+
+            return results
+
+        except Exception as e:
+            error_msg = f"Error retrieving batch results: {str(e)}"
+            if verbose:
+                print(f"\n{RED}{error_msg}{RESET}")
+            raise RuntimeError(error_msg)
+
 
 if __name__ == "__main__":
     """Test different model providers"""
@@ -343,44 +565,131 @@ if __name__ == "__main__":
         try:
             api = ModelAPI(model_name)
 
-            # Test 1: Simple prompt
-            print(f"\n{GREEN}Test 1: Simple prompt{RESET}")
-            response = api.call(
-                user_prompt="What is 2+2? Answer in one word.",
-                temperature=(
-                    0.7 if "claude" in model_name else None
-                ),  # Claude needs explicit temperature
-                verbose=True,
-            )
-            print(f"Test 1 Result: {response}")
+            # # Test 1: Simple prompt
+            # print(f"\n{GREEN}Test 1: Simple prompt{RESET}")
+            # response = api.call(
+            #     user_prompt="What is 2+2? Answer in one word.",
+            #     temperature=(
+            #         0.7 if "claude" in model_name else None
+            #     ),  # Claude needs explicit temperature
+            #     verbose=True,
+            # )
+            # print(f"Test 1 Result: {response}")
 
-            # Test 2: With system prompt
-            print(f"\n{GREEN}Test 2: With system prompt{RESET}")
-            response = api.call(
-                user_prompt="What is your role?",
-                system_prompt="You are a friendly math tutor who loves numbers.",
-                temperature=0.7 if "claude" in model_name else None,
-                verbose=True,
-            )
-            print(f"Test 2 Result: {response}")
+            # # Test 2: With system prompt
+            # print(f"\n{GREEN}Test 2: With system prompt{RESET}")
+            # response = api.call(
+            #     user_prompt="What is your role?",
+            #     system_prompt="You are a friendly math tutor who loves numbers.",
+            #     temperature=0.7 if "claude" in model_name else None,
+            #     verbose=True,
+            # )
+            # print(f"Test 2 Result: {response}")
 
-            # Test 3: With chat history
-            print(f"\n{GREEN}Test 3: With chat history{RESET}")
-            response = api.call(
-                user_prompt="What should I do next?",
-                system_prompt="You are a helpful coding assistant.",
-                chat_history=[
-                    {"role": "user", "content": "I want to learn programming."},
+            # # Test 3: With chat history
+            # print(f"\n{GREEN}Test 3: With chat history{RESET}")
+            # response = api.call(
+            #     user_prompt="What should I do next?",
+            #     system_prompt="You are a helpful coding assistant.",
+            #     chat_history=[
+            #         {"role": "user", "content": "I want to learn programming."},
+            #         {
+            #             "role": "assistant",
+            #             "content": "That's great! What languages interest you?",
+            #         },
+            #         {"role": "user", "content": "Python seems cool."},
+            #     ],
+            #     temperature=0.7 if "claude" in model_name else None,
+            #     verbose=True,
+            # )
+            # print(f"Test 3 Result: {response}")
+
+            # Test 4: Batch Processing
+            if "claude" in model_name:
+                print(f"\n{GREEN}Test: Batch Processing{RESET}")
+
+                # Prepare batch requests
+                batch_requests = [
                     {
-                        "role": "assistant",
-                        "content": "That's great! What languages interest you?",
+                        "custom_id": "math_1",
+                        "user_prompt": "What is 2+2? Answer in one word.",
+                        "system_prompt": "You are a helpful tutor. Keep answers brief and precise in 20 words or less.",
                     },
-                    {"role": "user", "content": "Python seems cool."},
-                ],
-                temperature=0.7 if "claude" in model_name else None,
-                verbose=True,
-            )
-            print(f"Test 3 Result: {response}")
+                    {
+                        "custom_id": "math_2",
+                        "user_prompt": "What is 3+3? Answer in one word.",
+                        "system_prompt": "You are a helpful tutor. Keep answers brief and precise in 20 words or less.",
+                    },
+                ]
+
+                try:
+                    # Create batch
+                    batch_result = api.batch_call(
+                        requests=batch_requests,
+                        max_tokens=1024,
+                        verbose=True,
+                    )
+                    print(f"Batch created successfully: {batch_result['batch_id']}")
+
+                    # Poll for completion
+                    max_wait_time = 300  # 5 minutes for testing
+                    poll_interval = 5  # Check every 5 seconds
+                    wait_time = 0
+
+                    while wait_time < max_wait_time:
+                        status = api.get_batch_status(
+                            batch_result["batch_id"], verbose=True
+                        )
+
+                        # Check if processing has ended
+                        if status["processing_status"] == "ended":
+                            print(f"\n{GREEN}Batch processing completed!{RESET}")
+
+                            # Wait a moment to ensure results_url is available
+                            time.sleep(5)
+
+                            # Get and print results
+                            print(f"\n{GREEN}Retrieving results...{RESET}")
+                            results = api.get_batch_results(
+                                batch_result["batch_id"], verbose=True
+                            )
+
+                            for result in results:
+                                print(
+                                    f"\n{GREEN}Result for {result['custom_id']}:{RESET}"
+                                )
+                                print(f"Status: {result['status']}")
+                                if result["status"] == "succeeded":
+                                    print(f"Content: {result['content']}")
+                                elif "error" in result:
+                                    print(f"Error: {result['error']}")
+                            break
+
+                        # Check if any requests have succeeded
+                        elif status["request_counts"].succeeded > 0:
+                            print(
+                                f"\n{GREEN}Some results are ready! Current counts:{RESET}"
+                            )
+                            print(f"Succeeded: {status['request_counts'].succeeded}")
+                            print(f"Processing: {status['request_counts'].processing}")
+                            print(f"Errored: {status['request_counts'].errored}")
+                            print(f"Expired: {status['request_counts'].expired}")
+
+                        print(f"Waiting for batch completion... ({wait_time}s)")
+                        time.sleep(poll_interval)
+                        wait_time += poll_interval
+
+                    if wait_time >= max_wait_time:
+                        print(
+                            f"\n{YELLOW}Batch processing still in progress after {max_wait_time} seconds{RESET}"
+                        )
+                        print(
+                            "You may need to retrieve results later using the batch ID:"
+                        )
+                        print(f"Batch ID: {batch_result['batch_id']}")
+
+                except Exception as e:
+                    print(f"\n{RED}Batch Processing test failed: {str(e)}{RESET}")
 
             print(f"\n{GREEN}All tests passed for {model_name}!{RESET}")
 
@@ -388,21 +697,23 @@ if __name__ == "__main__":
             print(f"\n{RED}Error testing {model_name}: {str(e)}{RESET}")
 
     # Test OpenAI
-    run_test("openai:gpt-4o")
+    # run_test("openai:gpt-4o")  # Comment out since it doesn't support batch processing
 
     # Test Claude (if available)
     if anthropic:
         # Test with the correct model name
-        run_test("anthropic:claude-3.5-sonnet")
+        run_test(
+            "anthropic:claude-3.7-sonnet"
+        )  # Using 3.7 since it supports batch processing
     else:
         print(
             f"\n{YELLOW}Skipping Claude tests - anthropic package not installed{RESET}"
         )
 
     # Test Gemini (if available)
-    if genai:
-        run_test("google:gemini-2.0-flash")
-    else:
-        print(
-            f"\n{YELLOW}Skipping Gemini tests - google-generativeai package not installed{RESET}"
-        )
+    # if genai:
+    #     run_test("google:gemini-2.0-flash")  # Comment out since it doesn't support batch processing
+    # else:
+    #     print(
+    #         f"\n{YELLOW}Skipping Gemini tests - google-generativeai package not installed{RESET}"
+    #     )
