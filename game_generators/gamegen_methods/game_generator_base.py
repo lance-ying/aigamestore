@@ -103,6 +103,16 @@ class GameGenerator(ABC):
         """
         # Default implementation - subclasses can override this
         return outputs
+    
+    def extract_game_design(self, text: str) -> str:
+        """
+        Extract game design from text
+        """
+        pattern = r"<game_design>\s*(.*?)\s*</game_design>"
+        match = re.search(pattern, text, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+        return ""
 
     def extract_code_block(self, text: str, language: str = "javascript") -> Union[str, Dict[str, str]]:
         """

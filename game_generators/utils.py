@@ -130,6 +130,7 @@ class ModelAPI:
         chat_history: Optional[List[Dict[str, str]]] = None,
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
         verbose: bool = False,
         max_retries: int = 3,
         image: Optional[Dict[str, Any]] = None,
@@ -230,6 +231,9 @@ class ModelAPI:
                 # Only add temperature if it's provided and valid
                 if temperature is not None:
                     claude_params["temperature"] = temperature
+
+                if top_p is not None:
+                    claude_params["top_p"] = top_p
 
                 # Add system prompt if provided
                 if system_prompt:

@@ -4,13 +4,16 @@ import json
 from gamegen_methods.game_generator_base import GameGenerator
 
 
-class SimplePromptXMLGenerator(GameGenerator):
+class TwoStepXMLGenerator(GameGenerator):
     """
-    Simple prompt game generator that uses a single LLM call with concatenated system prompts
-    to generate both the game design and code implementation.
+    Two step game generator that uses two LLM calls with concatenated system prompts
+    to generate the game design and code implementation.
     """
 
     def generate_user_prompt(self, game_concept: str) -> str:
+        pass
+
+    def generate_game_design_prompt(self, game_concept: str) -> str:
         """
         Generate user prompt from game concept for the simple prompt method
         
@@ -20,17 +23,33 @@ class SimplePromptXMLGenerator(GameGenerator):
         Returns:
             User prompt for the LLM
         """        
-        if self.use_ecs:
-            instructions = self.get_ecs_instructions()
-        else:
-            instructions = self.get_non_ecs_instructions()
 
-        output_format = self.get_output_format()
+        instructions = self.get_gdd_instructions()
+
+        output_format = self.get_game_design_output_format()
         task = f"""
-Here is the input from the user:
+Here is the game concept from the user:
 <task>
 <game_concept>{game_concept}</game_concept>
 </task>"""
+        prompt = instructions + task + output_format
+        return prompt
+
+    def generate_code_prompt(self, game_design: str) -> str:
+        """
+        Generate user prompt from game design for the simple prompt method
+        """
+        if self.use_ecs:
+            instructions = self.get_ecs_code_instructions()
+        else:
+            instructions = self.get_non_ecs_code_instructions()
+        output_format = self.get_code_output_format()
+        task = f"""
+Generate the game code for the following game design:
+<task>
+<game_design>{game_design}</game_design>
+</task>
+"""
         prompt = instructions + task + output_format
         return prompt
 
@@ -47,24 +66,39 @@ Here is the input from the user:
         """
         try:
             # Generate user prompt
-            user_prompt = self.generate_user_prompt(game_concept)
-            system_prompt = self.get_system_prompt()
+            system_prompt_game_design = self.get_system_prompt_game_design()
+            system_prompt_game_code = self.get_system_prompt_game_code()
+            game_design_prompt = self.generate_game_design_prompt(game_concept)
             # Call the LLM with the combined system prompt and user prompt
             if self.verbose:
                 print(f"Calling LLM with game concept: {game_concept[:100]}...")
                 
-            response = self.model_api.call(
-                user_prompt=user_prompt,
-                system_prompt=system_prompt,
+            response_game_design = self.model_api.call(
+                user_prompt=game_design_prompt,
+                system_prompt=system_prompt_game_design,
                 verbose=self.verbose,
-                temperature=0.5,
+                temperature=1.0,
                 top_p=0.9,
             )
+
+            game_design = self.extract_game_design(response_game_design)
+
+            game_code_prompt = self.generate_code_prompt(game_design)
             
+            response = self.model_api.call(
+                user_prompt=game_code_prompt,
+                system_prompt=system_prompt_game_code,
+                verbose=self.verbose,
+                temperature=0.25,
+                top_p=0.9,
+            )
             # Prepare conversation log for saving
             conversation_log = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
+                {"role": "system", "content": system_prompt_game_design},
+                {"role": "user", "content": game_design_prompt},
+                {"role": "assistant", "content": response_game_design},
+                {"role": "system", "content": system_prompt_game_code},
+                {"role": "user", "content": game_code_prompt},
                 {"role": "assistant", "content": response}
             ]
             
@@ -128,40 +162,57 @@ Here is the input from the user:
                 print(f"Error in game generation: {type(e).__name__}: {str(e)}")
                 import traceback
                 traceback.print_exc()
-            raise 
-    
-    def extract_ai_testing(self, response: str) -> List[Dict[str, str]]:
+            raise
+
+    def get_gdd_instructions(self) -> str:
         """
-        Extract the ai testing from the response
+        Get the instructions for the game design document
         """
-        ai_testing_output = self.extract_code_block(response, "ai_testing")
-        if ai_testing_output:
-            return ai_testing_output
-        else:
-            return []
+        instructions = open("game_generators/system_prompts/two_step_gdd_instructions.txt", "r").read()
+        return instructions
     
-    def get_ecs_instructions(self) -> str:
+    def get_ecs_code_instructions(self) -> str:
         """
         Get the instructions for the ECS architecture
         """
-        instructions = open("game_generators/system_prompts/single_prompt_instructions_ecs.txt", "r").read()
+        instructions = open("game_generators/system_prompts/two_step_code_instructions_ecs.txt", "r").read()
         return instructions
 
-    def get_non_ecs_instructions(self) -> str:
+    def get_non_ecs_code_instructions(self) -> str:
         """
         Get the instructions for the non-ECS architecture
         """
-        instructions = open("game_generators/system_prompts/single_prompt_instructions_noecs.txt", "r").read()
+        instructions = open("game_generators/system_prompts/two_step_code_instructions_noecs.txt", "r").read()
         return instructions
     
-    def get_system_prompt(self) -> str:
+    def get_system_prompt_game_design(self) -> str:
         """
         Get the system prompt
         """
-        system_prompt = open("game_generators/system_prompts/single_prompt_sysprompt_withai.txt", "r").read()
+        system_prompt = open("game_generators/system_prompts/two_step_sysprompt_gdd.txt", "r").read()
         return system_prompt
+    
+    def get_system_prompt_game_code(self) -> str:
+        """
+        Get the system prompt
+        """
+        system_prompt = open("game_generators/system_prompts/two_step_sysprompt_code.txt", "r").read()
+        return system_prompt
+    
+    def get_game_design_output_format(self) -> str:
+        """
+        Get the output format
+        """
+        output_format = """
+Output format:
 
-    def get_output_format(self) -> str:
+<game_design>
+... (game design <= 2000 words)
+</game_design>
+        """
+        return output_format
+    
+    def get_code_output_format(self) -> str:
         """
         Get the output format
         """
@@ -202,7 +253,7 @@ Here is the input from the user:
 </example_html>
 
 Output instructions:
-Output the code plan and game files in this format with NO OTHER TEXT:
+Output game information and game code in this format with NO OTHER TEXT:
 
 <game_description>
 ... (game description to introduce the game to the user in maximum 3 sentences. Keep it short and concise.)
