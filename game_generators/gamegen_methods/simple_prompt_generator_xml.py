@@ -149,7 +149,7 @@ Here is the input from the user:
         """
         Get the instructions for the non-ECS architecture
         """
-        instructions = open("game_generators/system_prompts/single_prompt_instructions_nonecs.txt", "r").read()
+        instructions = open("game_generators/system_prompts/single_prompt_instructions_noecs.txt", "r").read()
         return instructions
     
     def get_system_prompt(self) -> str:
