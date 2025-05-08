@@ -49,6 +49,9 @@ def collect_samples(existing_games=None):
                 if "error" in consistency_check:
                     continue
 
+                consistency_check_rdm_policy = json.load(open(sample_dir / "consistency_check_rdm_policy.json", "r", encoding="utf-8"))
+                assert set(consistency_check["mechanics_implemented"]) == set(consistency_check_rdm_policy["mechanics_implemented"])
+
                 # Create a key for this game
                 game_key = get_game_key(genre_name, method_name, model_name, theme_name, sample_id)
                 
@@ -86,6 +89,9 @@ def collect_samples(existing_games=None):
                     "consistency_score_llm_policy": consistency_check["score"],
                     "mechanics_implemented": consistency_check["mechanics_implemented"],
                     "mechanics_logged_llm_policy": consistency_check["mechanics_logged"],
+
+                    "consistency_score_rdm_policy": consistency_check_rdm_policy["score_rdm_policy"],
+                    "mechanics_logged_rdm_policy": consistency_check_rdm_policy["mechanics_logged_rdm_policy"],
                 }
                 
                 samples.append(sample)

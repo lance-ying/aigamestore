@@ -331,6 +331,7 @@ if __name__ == "__main__":
 
             results["consistency_score_llm_policy"].append(game["consistency_score_llm_policy"])
 
+            results["consistency_score_rdm_policy"].append(game["consistency_score_rdm_policy"])
 
             mechanics_implemented = game["mechanics_implemented"]
             if res is not None:
@@ -770,7 +771,7 @@ if __name__ == "__main__":
         # make sure arrays are aligned
         game_info_list.append(game_info_dict[_game['id']])
 
-    breakpoint()
+    # breakpoint()
     data_dir = save_dir / "data_for_analysis"
     data_dir.mkdir(exist_ok=True)
 
@@ -809,16 +810,23 @@ if __name__ == "__main__":
                 avg_fun_rating = game_ratings["rating_fun"].mean()
                 avg_playability_rating = game_ratings["rating_playability"].mean()
                 consistency_score_llm_policy = game_ratings["consistency_score_llm_policy"].mean()
+                consistency_score_rdm_policy = game_ratings["consistency_score_rdm_policy"].mean()
+
+                # TODO
                 avg_consistency_score = game_ratings["code_gameplay_consistency"].mean()
+                max_consistency_score = game_ratings["code_gameplay_consistency"].max()
+
+
 
                 print("Fun ratings:", game_ratings["rating_fun"].to_list())
                 print("Playability ratings:", game_ratings["rating_playability"].to_list())
                 print("Consistency scores (LLM policy):", game_ratings["consistency_score_llm_policy"].to_list())
+                print("Consistency scores (random policy):", game_ratings["consistency_score_rdm_policy"].to_list())
                 print("Consistency scores (human gameplay):", game_ratings["code_gameplay_consistency"].to_list())
                 print("Average fun rating:", avg_fun_rating)
                 print("Average playability rating:", avg_playability_rating)
                 print("Consistency score (LLM policy):", consistency_score_llm_policy)
-
+                print("Consistency score (random policy):", consistency_score_rdm_policy)
                 # if consistency_score_llm_policy < 30:
                 #     breakpoint()
 
@@ -832,7 +840,9 @@ if __name__ == "__main__":
                 avg_results["avg_fun_rating"].append(avg_fun_rating)
                 avg_results["avg_playability_rating"].append(avg_playability_rating)
                 avg_results["consistency_score_llm_policy"].append(consistency_score_llm_policy)
+                avg_results["consistency_score_rdm_policy"].append(consistency_score_rdm_policy)
                 avg_results["avg_consistency_score"].append(avg_consistency_score)
+                avg_results["max_consistency_score"].append(max_consistency_score)
 
                 # add std
                 avg_results["std_fun_rating"].append(game_ratings["rating_fun"].std())
@@ -897,6 +907,9 @@ if __name__ == "__main__":
     plt.scatter(avg_results["consistency_score_llm_policy"], avg_results["avg_fun_rating"], alpha=0.2)
     plt.xlabel("Consistency score (LLM policy)")
     plt.ylabel("Average fun rating")
+    ax = plt.gca()
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
     plt.tight_layout()
     plt.savefig(save_dir / "avg_fun_rating_vs_consistency_score_llm.png")
     plt.close()
@@ -906,6 +919,9 @@ if __name__ == "__main__":
     plt.scatter(avg_results["consistency_score_llm_policy"], avg_results["avg_playability_rating"], alpha=0.2, color='orange')
     plt.xlabel("Consistency score (LLM policy)")
     plt.ylabel("Average playability rating")
+    ax = plt.gca()
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
     plt.tight_layout()
     plt.savefig(save_dir / "avg_playability_rating_vs_consistency_score_llm.png")
     plt.close()
@@ -913,18 +929,50 @@ if __name__ == "__main__":
 
     # Plot avg fun rating vs consistency score llm policy
     plt.figure(figsize=(6, 4))
-    plt.scatter(avg_results["avg_consistency_score"], avg_results["avg_fun_rating"], alpha=0.2)
+    slope, intercept, r_value, p_value, std_err = stats.linregress(avg_results["avg_consistency_score"], avg_results["avg_fun_rating"])
+    r2 = r_value**2
+    
+    plt.scatter(avg_results["avg_consistency_score"], avg_results["avg_fun_rating"], alpha=0.6, color="mediumseagreen")
+    
+    # Add regression line
+    x = np.array([avg_results["avg_consistency_score"].min(), avg_results["avg_consistency_score"].max()])
+    y = slope * x + intercept
+    plt.plot(x, y, color='mediumseagreen', linewidth=2)
+    
     plt.xlabel("Consistency score (human gameplay)")
     plt.ylabel("Average fun rating")
+    # Move R² from title to top left corner
+    plt.text(0.05, 0.95, f'R² = {r2:.3f}', transform=plt.gca().transAxes, 
+             fontsize=10, verticalalignment='top')
+    ax = plt.gca()
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
     plt.tight_layout()
     plt.savefig(save_dir / "avg_fun_rating_vs_consistency_score_human.png")
     plt.close()
 
     # Plot avg playability rating vs consistency score llm policy
     plt.figure(figsize=(6, 4))
-    plt.scatter(avg_results["avg_consistency_score"], avg_results["avg_playability_rating"], alpha=0.2, color='orange')
+    # Compute r2
+    slope, intercept, r_value, p_value, std_err = stats.linregress(avg_results["avg_consistency_score"], avg_results["avg_playability_rating"])
+    r2 = r_value**2
+    
+    # Create scatter plot
+    plt.scatter(avg_results["avg_consistency_score"], avg_results["avg_playability_rating"], alpha=0.6, color="mediumpurple")
+    
+    # Add regression line
+    x = np.array([avg_results["avg_consistency_score"].min(), avg_results["avg_consistency_score"].max()])
+    y = slope * x + intercept
+    plt.plot(x, y, color="mediumpurple", linewidth=2)
+    
     plt.xlabel("Consistency score (human gameplay)")
     plt.ylabel("Average playability rating")
+    # Move R² from title to top left corner
+    plt.text(0.05, 0.95, f'R² = {r2:.3f}', transform=plt.gca().transAxes, 
+             fontsize=10, verticalalignment='top')
+    ax = plt.gca()
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
     plt.tight_layout()
     plt.savefig(save_dir / "avg_playability_rating_vs_consistency_score_human.png")
     plt.close()
@@ -950,6 +998,12 @@ if __name__ == "__main__":
     best_human_samples = avg_results.loc[avg_results.groupby(['game_concept_id', 'game_genre'])['avg_consistency_score'].idxmax()]
     print("Sample with highest consistency score (human gameplay) for each game concept id and genre:")
     print(best_human_samples)
+
+    # D. select sample with highest consistency score (random policy) for each game concept id and genre
+    # For each (game_concept_id, game_genre), select the row with the maximum consistency_score_rdm_policy
+    best_rdm_samples = avg_results.loc[avg_results.groupby(['game_concept_id', 'game_genre'])['consistency_score_rdm_policy'].idxmax()]
+    print("Sample with highest consistency score (random policy) for each game concept id and genre:")
+    print(best_rdm_samples)
 
     # TODO: can also compare with the other samples (not just the first and best)
 
@@ -1009,7 +1063,7 @@ if __name__ == "__main__":
     ax.spines['right'].set_visible(False)
     plt.tight_layout()
     plt.savefig(save_dir / "first_vs_best_samples_consistency_score_plot.png")
-
+    plt.close()
 
 
 
@@ -1021,7 +1075,9 @@ if __name__ == "__main__":
         'First Sample - Playability': first_samples["avg_playability_rating"],
         'Best Sample - Playability': best_samples["avg_playability_rating"],
         'Best Sample - Fun (human gameplay)': best_human_samples["avg_fun_rating"],
-        'Best Sample - Playability (human gameplay)': best_human_samples["avg_playability_rating"]
+        'Best Sample - Playability (human gameplay)': best_human_samples["avg_playability_rating"],
+        'Best Sample - Fun (random policy)': best_rdm_samples["avg_fun_rating"],
+        'Best Sample - Playability (random policy)': best_rdm_samples["avg_playability_rating"]
     })
     
     # Calculate means and standard errors
@@ -1049,22 +1105,26 @@ if __name__ == "__main__":
     ax.spines['right'].set_visible(False)
     plt.tight_layout()
     plt.savefig(save_dir / "first_vs_best_samples_ratings.png")
+    plt.close()
 
 
-    bar_width = 0.25
+    bar_width = 0.20
     r1 = np.arange(2)
     r2 = [x + bar_width for x in r1]
     r3 = [x + bar_width for x in r2]
-
-    plt.figure(figsize=(6, 4))
+    r4 = [x + bar_width for x in r3]
+    plt.figure(figsize=(5, 4), dpi=150)
     plt.bar(r1, [means['First Sample - Fun'], means['First Sample - Playability']], 
-            width=bar_width, label='First sample', color='skyblue',
+            width=bar_width, label='First sample', color='lightblue',
             yerr=[std_errors['First Sample - Fun'], std_errors['First Sample - Playability']], capsize=5)
-    plt.bar(r2, [means['Best Sample - Fun'], means['Best Sample - Playability']], 
-            width=bar_width, label='Best consistency sample', color='lightcoral',
+    plt.bar(r2, [means['Best Sample - Fun (random policy)'], means['Best Sample - Playability (random policy)']],
+            width=bar_width, label='Best sample (random policy)', color='thistle',
+            yerr=[std_errors['Best Sample - Fun (random policy)'], std_errors['Best Sample - Playability (random policy)']], capsize=5)
+    plt.bar(r3, [means['Best Sample - Fun'], means['Best Sample - Playability']], 
+            width=bar_width, label='Best sample (LLM-code policy)', color='lightcoral',
             yerr=[std_errors['Best Sample - Fun'], std_errors['Best Sample - Playability']], capsize=5)
-    plt.bar(r3, [means['Best Sample - Fun (human gameplay)'], means['Best Sample - Playability (human gameplay)']],
-            width=bar_width, label='Best sample (human gameplay)', color='mediumseagreen',
+    plt.bar(r4, [means['Best Sample - Fun (human gameplay)'], means['Best Sample - Playability (human gameplay)']],
+            width=bar_width, label='Best sample (human)', color='lightgreen',
             yerr=[std_errors['Best Sample - Fun (human gameplay)'], std_errors['Best Sample - Playability (human gameplay)']], capsize=5)
 
     plt.xlabel('Rating criteria')
@@ -1078,6 +1138,108 @@ if __name__ == "__main__":
     plt.savefig(save_dir / "first_vs_best_samples_ratings_all.png")
     plt.close()
 
+
+    # plot average consistency scores for random policy, llm-code policy, and human
+    random_policy_scores = avg_results["consistency_score_rdm_policy"]
+    llm_code_policy_scores = avg_results["consistency_score_llm_policy"]
+    human_gameplay_scores = avg_results["avg_consistency_score"]
+    max_consistency_scores = avg_results["max_consistency_score"]
+
+    # remove entries where human_gameplay_scores is 0
+    # Convert to numpy arrays first
+    random_policy_scores = np.array(random_policy_scores)
+    llm_code_policy_scores = np.array(llm_code_policy_scores)
+    human_gameplay_scores = np.array(human_gameplay_scores)
+    max_consistency_scores = np.array(max_consistency_scores)
+
+    mask = human_gameplay_scores > 0
+    random_policy_scores = random_policy_scores[mask]
+    llm_code_policy_scores = llm_code_policy_scores[mask]
+    human_gameplay_scores = human_gameplay_scores[mask]
+    max_consistency_scores = max_consistency_scores[mask]
+
+    rdm_policy_scores_normalized = random_policy_scores / human_gameplay_scores
+    llm_code_policy_scores_normalized = llm_code_policy_scores / human_gameplay_scores
+    max_consistency_scores_normalized = max_consistency_scores / human_gameplay_scores
+
+    plt.figure(figsize=(6, 4))
+    # Sort human gameplay scores in ascending order for plotting
+    sorted_human_scores = np.sort(avg_results["avg_consistency_score"])
+    plt.bar(range(len(sorted_human_scores)), sorted_human_scores, color='lightgreen', alpha=0.8)
+    plt.xlabel('Game (ordered by human gameplay consistency score)')
+    plt.ylabel('Human gameplay consistency score')
+    plt.tight_layout()
+    plt.savefig(save_dir / "human_gameplay_consistency_scores_ordered.png")
+    plt.close()
+
+    # Make a lineplot of normalized scores ordered by random policy scores
+    plt.figure(figsize=(6, 4))
+    # Sort human gameplay scores in ascending order for plotting
+    sorted_human_scores = np.sort(avg_results["avg_consistency_score"])
+    plt.bar(range(len(sorted_human_scores)), sorted_human_scores, color='lightgreen', alpha=0.8)
+    plt.xlabel('Game (ordered by human gameplay consistency score)')
+    plt.ylabel('Human gameplay consistency score')
+    plt.tight_layout()
+    plt.savefig(save_dir / "human_gameplay_consistency_scores_ordered.png")
+    plt.close()
+
+    # Make a lineplot of normalized scores ordered by random policy scores
+    plt.figure(figsize=(6, 4))
+    sorted_indices = np.argsort(rdm_policy_scores_normalized)[::-1]
+    plt.plot(range(len(sorted_indices)), rdm_policy_scores_normalized[sorted_indices], 
+             label='Random policy', color='thistle', marker='o', markersize=4)
+    plt.plot(range(len(sorted_indices)), llm_code_policy_scores_normalized[sorted_indices], 
+             label='LLM-code policy', color='lightcoral', marker='o', markersize=4)    
+    plt.xlabel('Game')
+    plt.ylabel('Human-normalized consistency score')
+    plt.legend()
+    ax = plt.gca()
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    plt.tight_layout()
+    plt.savefig(save_dir / "normalized_consistency_scores_lineplot.png")
+    plt.close()
+
+    plt.figure(figsize=(5.5, 4))
+    sorted_indices = np.argsort(llm_code_policy_scores_normalized)[::-1]
+    plt.plot(range(len(sorted_indices)), rdm_policy_scores_normalized[sorted_indices], 
+             label='Random policy', color='thistle', marker='o', markersize=4)
+    plt.plot(range(len(sorted_indices)), llm_code_policy_scores_normalized[sorted_indices], 
+             label='LLM-code policy', color='lightcoral', marker='o', markersize=4)  
+    plt.plot(range(len(sorted_indices)), max_consistency_scores_normalized[sorted_indices], 
+             label='Human (max)', color='black', marker='o', markersize=4)
+    plt.xlabel('Game')
+    plt.ylabel('Human-normalized consistency score')
+    plt.axhline(y=1, color='gray', linestyle='--', label='Human (mean)')
+    plt.legend()
+    # horizontal line at y=1
+    ax = plt.gca()
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    plt.tight_layout()
+    plt.savefig(save_dir / "normalized_consistency_scores_lineplot_llm_code.png")
+    plt.close()
+
+
+
+    plt.figure(figsize=(6, 4))
+    plt.bar(0, rdm_policy_scores_normalized.mean(), yerr=rdm_policy_scores_normalized.std() / np.sqrt(len(rdm_policy_scores_normalized)), color='thistle')
+    plt.bar(1, llm_code_policy_scores_normalized.mean(), yerr=llm_code_policy_scores_normalized.std() / np.sqrt(len(llm_code_policy_scores_normalized)), color='lightcoral')
+    plt.ylabel('Human-normalized consistency score')
+    plt.xticks([0, 1], ['Random policy', 'LLM-code policy'])
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(save_dir / "consistency_scores_all.png")
+    plt.close()
+
+
+    plt.figure()
+    plt.scatter(random_policy_scores, llm_code_policy_scores, alpha=0.5)
+    plt.xlabel('Random policy')
+    plt.ylabel('LLM-code policy')
+    plt.tight_layout()
+    plt.savefig(save_dir / "consistency_scores_random_vs_llm.png")
+    plt.close()
 
     # TODO: doesn't take genre into account
     # # Compare ratings without/with consistency resampling

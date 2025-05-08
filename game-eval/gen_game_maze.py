@@ -11,6 +11,7 @@ import io
 import numpy as np
 from typing import Dict, Tuple, Union
 from PIL import Image
+import matplotlib.pyplot as plt
 
 import gymnasium as gym
 from gymnasium import spaces
@@ -22,23 +23,33 @@ from google import genai
 from google.genai import types
 
 
-perspective = "top-down"
-# perspective = "side-scrolling"
+"""
+Only changes to the prompt: 
+* changed the game description to ask to make a maze game
+* asked to expose the grid so that can access it from outside the game
+* asked to make sure one of the mechanics is called "reach_goal"
 
-prompt_themes = """Task: list 100 themes for 2D game level ideas with a """ + perspective + """ perspective.
+Changes to game gen code:
+* test that the maze is solvable with A*
+"""
+
+# perspective = "top-down"
+# perspective = "side-scrolling"
+perspective = "grid-based maze"
+
+
+prompt_themes = """Task: list 100 one-word themes for 2D game level ideas with a """ + perspective + """ game.
 
 Structure your answer as follows:
-<theme>
-category: ...
-description: ...
-</theme>
+<theme>...</theme>
 """
 
 
-prompt_game_code = """
-Task: Implement a 2D game level with a """ + perspective + """ perspective in p5.js based on the following description:
+prompt_game_code = """Task: Implement a discrete grid maze in p5.js based on the following description:
 <description>
-{description}
+* Cells can only contain entities of type: agent, wall, enemy, goal, empty.
+* Only the agent can move. Other entities like the enemies are static.
+* The grid must be fixed. Always the same layout even when the game is reset.
 </description>
 
 <p5js_guidelines>
@@ -82,12 +93,18 @@ p5js_guidelines = """* Don't use any external assets.
         p.getState = () => {
             ...
         }
+        // Expose the grid as array of arrays
+        p.getGrid = () => {
+            ...
+        }
         // Functions
         ...
     });
     // Expose the game instance globally
     window.gameInstance = gameInstance;
     ```
+* IMPORTANT: Expose the grid as a function `p.getGrid()` returning an array of arrays with the type of entity in each cell (string: "agent", "wall", "enemy", "goal", "empty").
+    * Make sure to include all the entities in the returned grid, including the agent.
 * IMPORTANT: Make sure to properly pass the object `p` in the game code to access p5js functions. Otherwise you will get a "ReferenceError: p is not defined" error.
 * Use p5.collide2D for ALL collision detection. Available functions: collidePointPoint, collidePointCircle, collidePointEllipse, collidePointRect, collidePointLine, collidePointArc, collideRectRect, collideCircleCircle, collideRectCircle, collideLineLine, collideLineCircle, collideLineRect, collidePointPoly, collideCirclePoly, collideRectPoly, collideLinePoly, collidePolyPoly, collidePointTriangle. These functions are accessible through the `p` object. Note that the specific order of the words in the function name matters. For example, 'collideCircleRect' is not available.
 * IMPORTANT: The specific order of the words in the p5.collide2D function names matter. For example, 'collideRectCircle' is a function, but 'collideCircleRect' is not available.
@@ -213,7 +230,8 @@ List all the types of player movement types and interactions between the player 
     * You will find a list of possible movement and interaction types in <movement_type_library> and <interaction_type_library> (ignore if empty). 
     * If the movement or interaction type you are looking for is already in the list, use it. Otherwise, create a new one.
     * Do not include a movement or interaction type if it is not present in the game provided in <game_implementation>.
-
+* Make sure to include the "reach_goal" interaction type.
+    
 Output json lists of dictionaries with the following information:
 * Player movement types (in <player_movement_list>):
     * "movement_type": An identifier for the movement type (snake_case convention).
@@ -367,10 +385,11 @@ save_dir = Path(__file__).parent / "results" / Path(__file__).stem / perspective
 # thinking = True
 thinking = False
 
-max_samples = 5
+max_samples = 10
+# max_samples = 5
 
 run_name = datetime.now().strftime("%Y%m%d_%H%M%S")
-run_name = f"run1_{model}"
+run_name = f"run2_{model}"
 
 save_dir = save_dir / run_name
 
@@ -1195,6 +1214,139 @@ def code_from_dir(code_dir: Path) -> dict:
 
 
 
+def a_star_search(grid, start, goal):
+    """
+    Implements A* search algorithm to find a path from start to goal in a grid.
+    
+    Args:
+        grid: 2D array where each cell contains a string ("agent", "wall", "enemy", "goal", "empty")
+        start: Tuple (row, col) representing start position
+        goal: Tuple (row, col) representing goal position
+        
+    Returns:
+        List of (row, col) tuples representing the path from start to goal, or empty list if no path.
+    """
+    import heapq
+    from collections import defaultdict
+    
+    # Calculate heuristic (Manhattan distance)
+    def heuristic(a, b):
+        return abs(a[0] - b[0]) + abs(a[1] - b[1])
+    
+    # Get valid neighbors for a position
+    def get_neighbors(pos):
+        row, col = pos
+        neighbors = []
+        for dr, dc in [(0, 1), (1, 0), (0, -1), (-1, 0)]:  # right, down, left, up
+            r, c = row + dr, col + dc
+            if (0 <= r < len(grid) and 0 <= c < len(grid[0]) and 
+                grid[r][c] != "wall" and grid[r][c] != "enemy"):
+                neighbors.append((r, c))
+        return neighbors
+    
+    # Priority queue for open set
+    open_set = [(0, start)]  # (f_score, position)
+    
+    # For path reconstruction
+    came_from = {}
+    
+    # g_score[n] is the cost from start to n
+    g_score = defaultdict(lambda: float('inf'))
+    g_score[start] = 0
+    
+    # f_score[n] = g_score[n] + heuristic(n, goal)
+    f_score = defaultdict(lambda: float('inf'))
+    f_score[start] = heuristic(start, goal)
+    
+    # To keep track of nodes in the open set
+    open_set_hash = {start}
+    
+    while open_set:
+        # Get node with lowest f_score
+        _, current = heapq.heappop(open_set)
+        open_set_hash.remove(current)
+        
+        # If we've reached the goal, reconstruct path
+        if current == goal:
+            path = []
+            while current in came_from:
+                path.append(current)
+                current = came_from[current]
+            path.append(start)
+            return path[::-1]  # Reverse to get path from start to goal
+        
+        # Check neighbors
+        for neighbor in get_neighbors(current):
+            # Tentative g_score
+            tentative_g_score = g_score[current] + 1
+            
+            if tentative_g_score < g_score[neighbor]:
+                # This path is better than any previous one
+                came_from[neighbor] = current
+                g_score[neighbor] = tentative_g_score
+                f_score[neighbor] = tentative_g_score + heuristic(neighbor, goal)
+                
+                if neighbor not in open_set_hash:
+                    heapq.heappush(open_set, (f_score[neighbor], neighbor))
+                    open_set_hash.add(neighbor)
+    
+    # No path found
+    return []
+
+
+def find_and_plot_path(grid, _save_dir):
+    # Find agent and goal positions
+    start_pos = None
+    goal_pos = None
+    for r_idx, row in enumerate(grid):
+        for c_idx, cell in enumerate(row):
+            if cell == "agent":
+                start_pos = (r_idx, c_idx)
+            elif cell == "goal":
+                goal_pos = (r_idx, c_idx)
+    
+    if start_pos and goal_pos:
+        print(f"Agent at: {start_pos}, Goal at: {goal_pos}")
+        path = a_star_search(grid, start_pos, goal_pos)
+        print(f"Path found: {path}")
+
+        # Plotting the grid and path
+        if path:
+            fig, ax = plt.subplots()
+            ax.matshow([[0 if cell == "wall" else 1 for cell in row] for row in grid], cmap=plt.cm.gray_r)
+
+            # Mark start and goal
+            if start_pos:
+                ax.plot(start_pos[1], start_pos[0], 'bo', markersize=10)  # Blue circle for start
+            if goal_pos:
+                ax.plot(goal_pos[1], goal_pos[0], 'go', markersize=10)  # Green circle for goal
+
+            # Plot path
+            path_rows = [p[0] for p in path]
+            path_cols = [p[1] for p in path]
+            ax.plot(path_cols, path_rows, 'r-', linewidth=2) # Red line for path
+
+            ax.set_xticks(range(len(grid[0])))
+            ax.set_yticks(range(len(grid)))
+            ax.set_xticklabels([])
+            ax.set_yticklabels([])
+            ax.grid(True)
+            plt.title("Maze with A* Path")
+            
+            plot_save_path = _save_dir / "maze_path.png"
+            plt.savefig(plot_save_path)
+            print(f"Plot saved to {plot_save_path}")
+            # plt.show() # Comment out if running in a headless environment or saving automatically
+            return path
+        else:
+            print("No path found to plot.")
+            return None
+    else:
+        raise Exception("Could not find agent or goal in the grid.")
+        # print("Could not find agent or goal in the grid.")
+        # return None
+
+
 if __name__ == "__main__":
     # headless = False
     headless = True
@@ -1221,6 +1373,9 @@ if __name__ == "__main__":
             game_dir = _save_dir / "code_original"
             print(f"Theme {idx}: {theme}")
 
+            if idx == 10:
+                break
+
             description = theme
             prompt = prompt_game_code.format(
                 description=description,
@@ -1228,7 +1383,6 @@ if __name__ == "__main__":
                 prompt_format=prompt_format
             )
             answer_game_code = generate(model, prompt, game_dir, thinking=thinking)
-
             game_code = code_from_dir(game_dir)
 
             # make sure the code runs
@@ -1238,6 +1392,16 @@ if __name__ == "__main__":
 
                     env = P5jsEnv(game_code, headless=headless)
                     env.reset()
+
+                    # Note: maze specific code
+                    grid = env.page.evaluate("window.gameInstance.getGrid()")
+                    # raise an exception if can't find agent or goal (will resample new game)
+                    path = find_and_plot_path(grid, _save_dir)
+                    # save the path
+                    with open(_save_dir / "path.json", "w", encoding="utf-8") as f:
+                        json.dump({"path": path}, f, indent=4)
+
+                    
                     for i in range(num_steps):
                         action = env.action_space.sample()
                         env.step(action)
@@ -1299,9 +1463,16 @@ if __name__ == "__main__":
                         env.step(action)
                         print(i)
                     env.close()
+
+                    # TODO: sometimes code above doesn't catch errors
+                    errors = run_game(policy_dir)
+                    if errors:
+                        raise Exception(errors)
+
                     # save success
                     with open(_save_dir / "run_policy_check.json", "w", encoding="utf-8") as f:
                         json.dump({"success": True, "num_steps": num_steps}, f, indent=4)
+
                 except Exception as e:
                     print(f"Error: {e}")
                     # breakpoint()
@@ -1319,7 +1490,6 @@ if __name__ == "__main__":
                         print(f"Error: {results['error']}")
                         sample_idx += 1
                         continue
-
 
 
             # extract mechanics from code
@@ -1414,6 +1584,11 @@ if __name__ == "__main__":
                     sample_idx += 1
                     continue
 
+                # TODO: sometimes code above doesn't catch errors
+                errors = run_game(code_with_logs_and_policy_dir)
+                if errors:
+                    raise Exception(errors)
+
                 # save results
                 consistency_check = {
                     "num_steps": num_steps,
@@ -1432,6 +1607,7 @@ if __name__ == "__main__":
                         print(f"Error: {consistency_check['error']}")
                         sample_idx += 1
                         continue
+                    print(consistency_check)
                     mechanics_implemented = set(consistency_check["mechanics_implemented"])
                     mechanics_logged = set(consistency_check["mechanics_logged"])
                     # mechanics_logged_random = set(results["mechanics_logged_random"])
@@ -1445,22 +1621,13 @@ if __name__ == "__main__":
                     env = P5jsEnv(code_with_logs, headless=headless)
                     env.reset()
                     prev_action = np.zeros(env.action_space.shape)
-                    L = 5
                     for i in range(num_steps):
-                        if i % 1000 == 0:
-                            # reset the game
-                            key = env.KEY_TO_INDEX["r"]
+                        if i % 10 == 0:
+                            # sample new key to press
+                            key = np.random.randint(0, env.action_space.shape[0])
                             action = np.zeros(env.action_space.shape)
                             action[key] = 1
                             prev_action = action.copy()
-                        elif i % L == 0:
-                            # sample new key to press (except 'r')
-                            key = np.random.randint(0, env.action_space.shape[0]-1)
-                            action = np.zeros(env.action_space.shape)
-                            action[key] = 1
-                            prev_action = action.copy()
-                            # sample new L
-                            L = np.random.randint(5, 50)
                         else:
                             action = prev_action
 
@@ -1473,7 +1640,6 @@ if __name__ == "__main__":
                         set([event["movement_type"] for event in logs["movements"]])
 
                 except Exception as e:
-                    breakpoint()
                     print(f"Error: {e}")
                     env.close()
                     # save error
@@ -1483,36 +1649,34 @@ if __name__ == "__main__":
                     sample_idx += 1
                     continue
 
-
-                score_rdm_policy = 0
-                for m in mechanics_implemented:
-                    if m in mechanics_logged_rdm_policy:
-                        score_rdm_policy += 1
-                score_rdm_policy = 100 * score_rdm_policy / len(mechanics_implemented)
-                print(f"Score: {score_rdm_policy}")
-
                 # save results
                 consistency_check_rdm_policy = {
                     "num_steps": num_steps,
                     "mechanics_implemented": list(mechanics_implemented),
                     "mechanics_logged_rdm_policy": list(mechanics_logged_rdm_policy),
-                    "score_rdm_policy": score_rdm_policy,
                 }
                 with open(_save_dir / "consistency_check_rdm_policy.json", "w", encoding="utf-8") as f:
                     json.dump(consistency_check_rdm_policy, f, indent=4)
             else:
                 with open(_save_dir / "consistency_check_rdm_policy.json", "r", encoding="utf-8") as f:
                     consistency_check_rdm_policy = json.load(f)
-                    if "error" in consistency_check_rdm_policy:
-                        breakpoint()
-                        print(f"Error: {consistency_check_rdm_policy['error']}")
+                    if "error" in consistency_check:
+                        print(f"Error: {consistency_check['error']}")
                         sample_idx += 1
                         continue
 
 
             print(mechanics_implemented)
             print(mechanics_logged)
-            # print(mechanics_logged_random)
+            # breakpoint()
+
+            # TODO: changed the condition to maze solvable
+            if "reach_goal" in mechanics_logged:
+                game_validated = True
+            else:
+                sample_idx += 1
+                continue
+
 
             # check how many of the implemented mechanics are logged when the game is played
             score = 0
@@ -1543,9 +1707,7 @@ if __name__ == "__main__":
             else:
                 sample_idx += 1
     
-    
-        # stop after 20 games
-        if idx >= 15:
+        if idx >= 9:
             break
 
 
@@ -1554,15 +1716,177 @@ if __name__ == "__main__":
     final_dir.mkdir(parents=True, exist_ok=True)
     
     game_dir = save_dir / game_dir_name / "games"
-    if game_dir.exists():
-        for theme_dir in sorted(game_dir.glob("theme_*")):
-            # Find all sample directories for this theme
-            sample_dirs = sorted(theme_dir.glob("sample_*"), key=lambda d: int(d.name.split("_")[-1]))
-            if sample_dirs:
-                # Pick the sample with the highest index
-                final_sample_dir = sample_dirs[-1] / "code_with_logs"
-                # Copy to final_dir with theme name
-                dest_dir = final_dir / theme_dir.name
-                if dest_dir.exists():
-                    shutil.rmtree(dest_dir)
-                shutil.copytree(final_sample_dir, dest_dir)
+
+    theme_dirs = sorted(game_dir.glob("theme_*"), key=lambda d: int(d.name.split("_")[-1]))
+
+    sample_indices = [[] for _ in range(len(theme_dirs))]
+    scores = [[] for _ in range(len(theme_dirs))]
+    scores_rdm_policy = [[] for _ in range(len(theme_dirs))]
+    goal_reached_results = [[] for _ in range(len(theme_dirs))]
+    goal_reached_rdm_policy_results = [[] for _ in range(len(theme_dirs))]
+    solvable_results = [[] for _ in range(len(theme_dirs))]
+
+    first_samples_solvable = []
+    best_samples_solvable = []
+
+    for theme_idx, theme_dir in enumerate(theme_dirs):
+        # Find all sample directories for this theme
+        sample_dirs = sorted(theme_dir.glob("sample_*"), key=lambda d: int(d.name.split("_")[-1]))
+
+        for sample_dir in sample_dirs:
+            sample_idx = int(sample_dir.name.split("_")[-1])
+            if not (sample_dir / "consistency_check.json").exists():
+                # happens when game doesn't run
+                continue
+
+            # load consistency_check.json
+            with open(sample_dir / "consistency_check.json", "r", encoding="utf-8") as f:
+                consistency_check = json.load(f)
+
+            if "error" in consistency_check:
+                # happens when game doesn't run
+                continue
+
+            # load consistency_check_rdm_policy.json
+            with open(sample_dir / "consistency_check_rdm_policy.json", "r", encoding="utf-8") as f:
+                consistency_check_rdm_policy = json.load(f)
+
+            # Find path.json file
+            with open(sample_dir / "path.json", "r", encoding="utf-8") as f:
+                path = json.load(f)
+
+
+            is_solvable = path["path"] is not None
+
+            score = 0
+            for m in consistency_check["mechanics_implemented"]:
+                if m in consistency_check["mechanics_logged"]:
+                    score += 1
+            score = 100 * score / len(consistency_check["mechanics_implemented"])
+            print(f"Score: {score}")
+
+            score_rdm_policy = 0
+            for m in consistency_check_rdm_policy["mechanics_implemented"]:
+                if m in consistency_check_rdm_policy["mechanics_logged_rdm_policy"]:
+                    score_rdm_policy += 1
+            score_rdm_policy = 100 * score_rdm_policy / len(consistency_check_rdm_policy["mechanics_implemented"])
+            print(f"Score random: {score_rdm_policy}")
+
+            goal_reached = "reach_goal" in consistency_check["mechanics_logged"]
+            goal_reached_rdm_policy = "reach_goal" in consistency_check_rdm_policy["mechanics_logged_rdm_policy"]
+
+            sample_indices[theme_idx].append(sample_idx)
+            scores[theme_idx].append(score)
+            scores_rdm_policy[theme_idx].append(score_rdm_policy)
+            goal_reached_results[theme_idx].append(goal_reached)
+            goal_reached_rdm_policy_results[theme_idx].append(goal_reached_rdm_policy)
+            solvable_results[theme_idx].append(is_solvable)
+
+            print(is_solvable, goal_reached, goal_reached_rdm_policy)
+
+        # assume best sample is the last one
+        first_samples_solvable.append(solvable_results[theme_idx][0])
+        best_samples_solvable.append(solvable_results[theme_idx][-1])
+
+
+    # Calculate solvable ratios for first and best samples
+    first_samples_solvable_ratio = np.count_nonzero(first_samples_solvable) / len(theme_dirs)
+    best_samples_solvable_ratio = np.count_nonzero(best_samples_solvable) / len(theme_dirs)
+
+    # Calculate proportions for goal reached/not reached
+    categories = {'Solvable': {'Goal reached': 0, 'Goal not reached': 0}, 
+                 'Unsolvable': {'Goal reached': 0, 'Goal not reached': 0}}
+    categories_rdm = {'Solvable': {'Goal reached': 0, 'Goal not reached': 0}, 
+                 'Unsolvable': {'Goal reached': 0, 'Goal not reached': 0}}
+    total_samples = {'Solvable': 0, 'Unsolvable': 0}
+    
+    for theme_idx in range(len(theme_dirs)):
+        for sample_idx in range(len(solvable_results[theme_idx])):
+            is_solvable = solvable_results[theme_idx][sample_idx]
+            goal_reached = goal_reached_results[theme_idx][sample_idx]
+            maze_type = 'Solvable' if is_solvable else 'Unsolvable'
+            outcome = 'Goal reached' if goal_reached else 'Goal not reached'
+            categories[maze_type][outcome] += 1
+            total_samples[maze_type] += 1
+
+            goal_reached_rdm = goal_reached_rdm_policy_results[theme_idx][sample_idx]
+            outcome_rdm = 'Goal reached' if goal_reached_rdm else 'Goal not reached'
+            categories_rdm[maze_type][outcome_rdm] += 1
+
+    # Calculate proportions
+    proportions = {
+        maze_type: {outcome: count / total_samples[maze_type] if total_samples[maze_type] > 0 else 0 
+                   for outcome, count in results.items()}
+        for maze_type, results in categories.items()
+    }
+    proportions_rdm = {
+        maze_type: {outcome: count / total_samples[maze_type] if total_samples[maze_type] > 0 else 0 
+                   for outcome, count in results.items()}
+        for maze_type, results in categories_rdm.items()
+    }
+
+     
+    plt.figure(figsize=(3, 3))
+    # Plot solvable ratios
+    plt.bar([0, 1], [first_samples_solvable_ratio, best_samples_solvable_ratio], 
+            color=["skyblue", "lightcoral"])
+    plt.xticks([0, 1], ['First sample', 'Best sample'])
+    plt.ylabel("Proportion of solvable games")
+    ax = plt.gca()
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    plt.tight_layout()
+    plt.savefig(save_dir / game_dir_name / "solvable_ratios.png")
+    
+    # Plot goal reached/not reached
+    plt.figure(figsize=(3, 3))
+    x = np.arange(2)
+    width = 0.35
+    plt.bar(x - width/2, [proportions['Solvable']['Goal reached'], proportions['Unsolvable']['Goal reached']],
+            width, label='Goal reached')
+    plt.bar(x + width/2, [proportions['Solvable']['Goal not reached'], proportions['Unsolvable']['Goal not reached']],
+            width, label='Goal not reached')
+    plt.xticks(x, ['Solvable', 'Unsolvable'])
+    plt.ylabel('Proportion')
+    plt.legend()
+    plt.ylim(0, 1)
+    ax = plt.gca()
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    
+    plt.tight_layout()
+    plt.savefig(save_dir / game_dir_name / "goal_reached_not_reached.png")
+
+
+    plt.figure(figsize=(3, 3))
+    x = np.arange(2)
+    width = 0.35
+    plt.bar(x - width/2, [proportions_rdm['Solvable']['Goal reached'], proportions_rdm['Unsolvable']['Goal reached']],
+            width, label='Goal reached')
+    plt.bar(x + width/2, [proportions_rdm['Solvable']['Goal not reached'], proportions_rdm['Unsolvable']['Goal not reached']],
+            width, label='Goal not reached')
+    plt.xticks(x, ['Solvable', 'Unsolvable'])
+    plt.ylabel('Proportion')
+    plt.legend()
+    plt.ylim(0, 1)
+    ax = plt.gca()
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    
+    plt.tight_layout()
+    plt.savefig(save_dir / game_dir_name / "goal_reached_not_reached_rdm_policy.png")
+    
+
+    # consistency score vs solvability
+    plt.figure(figsize=(5, 4), dpi=150)
+    scores_flat = [score for sublist in scores for score in sublist]
+    solvable_flat = [solvable for sublist in solvable_results for solvable in sublist]
+    goal_reached_flat = [goal_reached for sublist in goal_reached_results for goal_reached in sublist]
+    plt.scatter(scores_flat, solvable_flat, c=goal_reached_flat, cmap='viridis', alpha=0.2)
+    plt.xlabel('Consistency score')
+    plt.ylabel('Solvability')
+    ax = plt.gca()
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    plt.tight_layout()
+    plt.savefig(save_dir / game_dir_name / "consistency_score_vs_solvability.png")
