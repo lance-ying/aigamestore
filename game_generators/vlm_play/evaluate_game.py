@@ -40,13 +40,18 @@ except ImportError:
     )
     PLAYWRIGHT_ENABLED = False
 
+FFMPEG_TIMEOUT = 60  # 60 seconds timeout for ffmpeg conversion
+
 
 class GameEvaluator:
     """Class to manage browser interactions and game evaluation."""
 
-    def __init__(self, game_path: str, api_key: Optional[str] = None):
+    def __init__(
+        self, game_path: str, api_key: Optional[str] = None, verbose: bool = True
+    ):
         self.game_path = os.path.abspath(game_path)
         self.api_key = api_key or os.environ.get("GOOGLE_API_KEY")
+        self.verbose = verbose
 
         if not self.api_key:
             raise ValueError(
@@ -374,14 +379,58 @@ class GameEvaluator:
                     """
                     )
 
-                    # Click the button
+                    # Then modify the button clicking code:
                     try:
+                        logging.info(f"Attempting to click button: {button_id}")
+
                         if button_id.startswith("button_"):
+                            # Handle indexed buttons
                             await page.evaluate(
                                 f"document.querySelectorAll('button, input[type=\"button\"]')[{button_info['index']}].click()"
                             )
                         else:
-                            await page.click(f"#{button_id}")
+                            # Try multiple ways to click the button
+                            try:
+                                # First try by ID
+                                await page.click(f"#{button_id}")
+                            except Exception as e:
+                                logging.warning(
+                                    f"Failed to click by ID, trying alternative methods: {e}"
+                                )
+
+                                # Try finding button by text content
+                                button_text = (
+                                    button_id.replace("ModeBtn", " Mode")
+                                    .replace("_", " ")
+                                    .title()
+                                )
+                                try:
+                                    await page.click(f"text={button_text}")
+                                except Exception as e2:
+                                    logging.warning(
+                                        f"Failed to click by text, trying JavaScript: {e2}"
+                                    )
+
+                                    # Try JavaScript click
+                                    await page.evaluate(
+                                        f"""
+                                        (() => {{
+                                            const btn = document.getElementById('{button_id}') || 
+                                                      Array.from(document.querySelectorAll('button')).find(b => 
+                                                          b.textContent.includes('{button_text}'));
+                                            if (btn) btn.click();
+                                            else console.error('Button not found');
+                                        }})()
+                                    """
+                                    )
+
+                        # Verify mode change
+                        if not await self._verify_mode_change(page, button_id):
+                            logging.warning(
+                                f"Mode change verification failed for {button_id}"
+                            )
+                        else:
+                            logging.info(f"Successfully changed to mode: {button_id}")
 
                         # Press ENTER to start the game
                         await page.keyboard.press("Enter")
@@ -471,32 +520,34 @@ class GameEvaluator:
                         # Close context to finalize the recording
                         await context.close()
 
-                        # Find the video file that was just created
+                        # Find the most recently created video file
                         video_files = list(Path(self.output_dir).glob("*.webm"))
                         if video_files:
                             latest_video = max(
                                 video_files, key=lambda f: f.stat().st_mtime
                             )
 
-                            # Rename the video file to include the button ID
+                            # Rename to our standard format
                             new_video_path = os.path.join(
                                 self.output_dir, f"{button_id}.webm"
                             )
                             if os.path.exists(new_video_path):
-                                os.remove(
-                                    new_video_path
-                                )  # Remove existing file if present
+                                os.remove(new_video_path)
                             os.rename(latest_video, new_video_path)
                             logging.info(f"Renamed video to: {new_video_path}")
 
                             # Convert to MP4
-                            mp4_path = os.path.join(self.output_dir, f"{button_id}.mp4")
                             try:
                                 start_time = time.time()
+                                mp4_path = os.path.join(
+                                    self.output_dir, f"{button_id}.mp4"
+                                )
                                 logging.info(
                                     f"Converting video to MP4: {new_video_path}"
                                 )
-                                process = await asyncio.create_subprocess_exec(
+
+                                # Create ffmpeg command with optimized settings
+                                ffmpeg_cmd = [
                                     "ffmpeg",
                                     "-i",
                                     new_video_path,
@@ -505,30 +556,61 @@ class GameEvaluator:
                                     "-preset",
                                     "ultrafast",
                                     "-crf",
-                                    "23",
+                                    "24",
                                     "-tune",
                                     "zerolatency",
                                     "-movflags",
                                     "+faststart",
+                                    "-y",
                                     mp4_path,
+                                ]
+
+                                # Run ffmpeg with timeout
+                                process = await asyncio.create_subprocess_exec(
+                                    *ffmpeg_cmd,
                                     stdout=asyncio.subprocess.PIPE,
                                     stderr=asyncio.subprocess.PIPE,
                                 )
-                                stdout, stderr = await process.communicate()
 
-                                if process.returncode == 0 and os.path.exists(mp4_path):
-                                    video_path = mp4_path
-                                    logging.info(
-                                        f"Converted video to MP4: {mp4_path} in {time.time() - start_time:.2f} seconds"
+                                try:
+                                    stdout, stderr = await asyncio.wait_for(
+                                        process.communicate(), timeout=FFMPEG_TIMEOUT
                                     )
-                                else:
+
+                                    if process.returncode == 0 and os.path.exists(
+                                        mp4_path
+                                    ):
+                                        video_path = mp4_path
+                                        logging.info(
+                                            f"Converted video to MP4: {mp4_path} in {time.time() - start_time:.2f} seconds"
+                                        )
+                                        # Remove the original webm file
+                                        try:
+                                            os.remove(new_video_path)
+                                            logging.info(
+                                                f"Removed original webm file: {new_video_path}"
+                                            )
+                                        except Exception as e:
+                                            logging.warning(
+                                                f"Failed to remove webm file: {e}"
+                                            )
+                                    else:
+                                        video_path = new_video_path
+                                        logging.warning(
+                                            f"Failed to convert video: {stderr.decode() if stderr else 'Unknown error'}"
+                                        )
+                                except asyncio.TimeoutError:
+                                    logging.error(
+                                        f"Video conversion timed out after {FFMPEG_TIMEOUT} seconds"
+                                    )
                                     video_path = new_video_path
-                                    logging.warning(
-                                        f"Failed to convert video: {stderr.decode()}"
-                                    )
+
                             except Exception as e:
                                 video_path = new_video_path
                                 logging.warning(f"Error converting video to MP4: {e}")
+
+                            # Clean up any temporary video files
+                            await self._cleanup_video_files(button_id)
 
                             # Add to results
                             results["video_paths"].append(video_path)
@@ -797,21 +879,81 @@ class GameEvaluator:
             logging.error(f"Error evaluating video with Gemini: {e}")
             return None
 
-    # Add this helper function to parse feedbacks
-    def _parse_feedbacks(self, response_text: str) -> List[str]:
-        """Extract feedbacks from response text using regex."""
+    def _parse_ai_testing_response(self, response_text: str) -> Dict[str, Any]:
+        """
+        Parse nested XML content recursively, handling any tag structure.
+
+        Args:
+            response_text: The raw response text from Gemini
+
+        Returns:
+            Dictionary containing parsed nested structure
+        """
         import re
 
-        feedbacks = []
-        pattern = r"<feedback:\s*feedback_\d+>\s*(.*?)\s*</feedback:\s*feedback_\d+>"
-        matches = re.finditer(pattern, response_text, re.DOTALL)
+        def parse_xml_content(content: str) -> Dict[str, Any]:
+            """
+            Recursively parse XML content, handling nested tags.
 
-        for match in matches:
-            feedbacks.append(match.group(1).strip())
+            Args:
+                content: XML content to parse
 
-        return feedbacks
+            Returns:
+                Dictionary with parsed content
+            """
+            result = {}
 
-    # Modify the _evaluate_game_mode method to save feedbacks
+            # Find all XML tags at current level
+            tag_pattern = r"<([A-Za-z_][A-Za-z0-9_]*)>(.*?)</\1>"
+            matches = list(re.finditer(tag_pattern, content, re.DOTALL))
+
+            if not matches:
+                # No XML tags found, check if there's a key-value format
+                kv_pattern = r"([A-Za-z_][A-Za-z0-9_ ]*?):\s*(.*?)(?=(?:[A-Za-z_][A-Za-z0-9_ ]*?:|$))"
+                kv_matches = list(re.finditer(kv_pattern, content, re.DOTALL))
+
+                if kv_matches:
+                    # Handle key-value pairs
+                    for kv_match in kv_matches:
+                        key = kv_match.group(1).strip().lower().replace(" ", "_")
+                        value = kv_match.group(2).strip()
+                        result[key] = value
+                else:
+                    # Just return the cleaned content
+                    return content.strip()
+
+            # Process each tag and its content
+            for match in matches:
+                tag = match.group(1)
+                inner_content = match.group(2)
+
+                # Recursively parse inner content
+                parsed_content = parse_xml_content(inner_content)
+
+                # Convert tag name to lowercase for consistency
+                tag = tag.lower()
+
+                # Handle multiple instances of the same tag
+                if tag in result:
+                    if not isinstance(result[tag], list):
+                        result[tag] = [result[tag]]
+                    result[tag].append(parsed_content)
+                else:
+                    result[tag] = parsed_content
+
+            return result
+
+        # Start with the ai_testing section
+        ai_testing_match = re.search(
+            r"<ai_testing>(.*?)</ai_testing>", response_text, re.DOTALL
+        )
+        if ai_testing_match:
+            ai_testing_content = ai_testing_match.group(1)
+            return parse_xml_content(ai_testing_content)
+        else:
+            # If no ai_testing tags found, parse the entire response
+            return parse_xml_content(response_text)
+
     async def _evaluate_game_mode(
         self, video_path: str, game_path: str, button_id: str
     ) -> Optional[str]:
@@ -823,7 +965,6 @@ class GameEvaluator:
 
             # Get game description and files
             game_description = metadata["game_info"]["description"]
-            game_concept = metadata["game_info"]["concept"]
             game_files = metadata["game_files"]
 
             # Read all game code files
@@ -905,21 +1046,16 @@ Based on the video and the answers to the questions above, what feedback or impr
    - Bug fixes or improvements needed
    - Overall gameplay experience
 
-Please be specific about the feedbacks on game mechanics, game aesthetics, and the AI game play strategy. Respond in the following format:
+Please respond in the following format:
 
-<feedback: feedback_1>
-...[Your first feedback]
-</feedback: feedback_1>
-
-<feedback: feedback_2>
-...[Your second feedback]
-</feedback: feedback_2>
-
-<feedback: feedback_3>
-...[Your third feedback]
-</feedback: feedback_3>
-
-...[Your other feedbacks]
+<ai_testing>
+<{mode_name}>
+Testing: ...
+Strategy: ...
+Expected outcome: ...
+Observed outcome: ...
+</{mode_name}>
+</ai_testing>
 """
 
             # Read video file
@@ -935,42 +1071,67 @@ Please be specific about the feedbacks on game mechanics, game aesthetics, and t
             # Call the API using ModelAPI
             response = self.model_api.call(
                 user_prompt=prompt,
-                image=image_part, 
+                image=image_part,
                 temperature=0.7,
-                verbose=True,
+                verbose=self.verbose,
             )
 
             if response:
-                # Parse feedbacks from response
-                feedbacks = self._parse_feedbacks(response)
+                # Parse the structured AI testing response
+                test_results = self._parse_ai_testing_response(response)
 
                 # Create or load existing feedback JSON
                 feedback_dir = os.path.join(game_path, "evaluation_results")
                 os.makedirs(feedback_dir, exist_ok=True)
                 feedback_json_path = os.path.join(feedback_dir, "feedbacks.json")
 
-                if os.path.exists(feedback_json_path):
-                    with open(feedback_json_path, "r") as f:
-                        all_feedbacks = json.load(f)
-                else:
-                    all_feedbacks = {}
+                # Initialize all_feedbacks
+                all_feedbacks = {}
 
-                # Update feedbacks for this mode
-                all_feedbacks[button_id] = {
+                # Read existing feedbacks if file exists
+                if os.path.exists(feedback_json_path):
+                    try:
+                        with open(feedback_json_path, "r") as f:
+                            all_feedbacks = json.load(f)
+                            logging.info(
+                                f"Loaded existing feedbacks from {feedback_json_path}"
+                            )
+                    except json.JSONDecodeError as e:
+                        logging.warning(
+                            f"Error reading existing feedbacks, creating new file: {e}"
+                        )
+
+                # Create new feedback entry with structured test results
+                new_feedback = {
                     "mode_name": mode_name,
-                    "feedbacks": feedbacks,
                     "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "parsed_response": test_results,  # This now contains all sections
+                    "raw_response": response,
                 }
 
+                # If this mode already has feedbacks, append to history
+                if button_id in all_feedbacks:
+                    if not isinstance(all_feedbacks[button_id], list):
+                        all_feedbacks[button_id] = [all_feedbacks[button_id]]
+                    all_feedbacks[button_id].append(new_feedback)
+                else:
+                    all_feedbacks[button_id] = [new_feedback]
+
                 # Save updated feedbacks
-                with open(feedback_json_path, "w") as f:
-                    json.dump(all_feedbacks, f, indent=2)
+                try:
+                    with open(feedback_json_path, "w") as f:
+                        json.dump(all_feedbacks, f, indent=2)
+                    logging.info(
+                        f"Saved feedbacks for mode {button_id} to {feedback_json_path}"
+                    )
+                except Exception as e:
+                    logging.error(
+                        f"Error saving feedbacks to {feedback_json_path}: {e}"
+                    )
 
-                logging.info(
-                    f"Saved feedbacks for mode {button_id} to {feedback_json_path}"
-                )
+                return response
 
-            return response
+            return None
 
         except Exception as e:
             logging.error(f"Error evaluating game mode: {e}")
@@ -1031,6 +1192,131 @@ Please be specific about the feedbacks on game mechanics, game aesthetics, and t
             results["error"] = str(e)
 
         return results
+
+    async def _verify_mode_change(self, page: Page, button_id: str) -> bool:
+        """
+        Verify that the game mode has been changed correctly.
+
+        Args:
+            page: Playwright page object
+            button_id: ID of the button that was clicked
+
+        Returns:
+            bool: True if mode change was successful, False otherwise
+        """
+        logging.info(f"Verifying mode change for button: {button_id}")
+
+        try:
+            # Wait for mode to update
+            await page.wait_for_timeout(1000)
+
+            # Check if the clicked button has the 'active' class and other buttons don't
+            button_states = await page.evaluate(
+                """
+                (buttonId) => {
+                    const clickedButton = document.getElementById(buttonId);
+                    const allButtons = document.querySelectorAll('.control-button');
+                    
+                    return {
+                        clickedActive: clickedButton ? clickedButton.classList.contains('active') : false,
+                        otherButtonsInactive: Array.from(allButtons).every(btn => 
+                            btn.id === buttonId || !btn.classList.contains('active')
+                        )
+                    };
+                }
+                """,
+                button_id,  # Pass button_id as an argument
+            )
+
+            if button_states["clickedActive"] and button_states["otherButtonsInactive"]:
+                logging.info(f"Mode change verified - button {button_id} is active")
+                return True
+            else:
+                logging.warning(
+                    f"Mode change verification failed - button states: {button_states}"
+                )
+
+                # Try clicking the button again and re-verify
+                logging.info("Attempting to click button again...")
+                await page.evaluate(
+                    """
+                    (buttonId) => {
+                        const button = document.getElementById(buttonId);
+                        if (button) {
+                            button.click();
+                            // Also try calling setControlMode directly
+                            const mode = buttonId.replace('ModeBtn', '').toUpperCase();
+                            if (window.setControlMode) {
+                                window.setControlMode(mode);
+                            }
+                        }
+                    }
+                    """,
+                    button_id,
+                )
+
+                # Wait and check again
+                await page.wait_for_timeout(1000)
+                button_states = await page.evaluate(
+                    """
+                    (buttonId) => {
+                        const clickedButton = document.getElementById(buttonId);
+                        const allButtons = document.querySelectorAll('.control-button');
+                        
+                        return {
+                            clickedActive: clickedButton ? clickedButton.classList.contains('active') : false,
+                            otherButtonsInactive: Array.from(allButtons).every(btn => 
+                                btn.id === buttonId || !btn.classList.contains('active')
+                            )
+                        };
+                    }
+                    """,
+                    button_id,
+                )
+
+                logging.info(f"Button states after retry: {button_states}")
+
+                if (
+                    button_states["clickedActive"]
+                    and button_states["otherButtonsInactive"]
+                ):
+                    logging.info(
+                        f"Mode change verified after retry - button {button_id} is active"
+                    )
+                    return True
+                else:
+                    logging.warning("Mode change verification failed after retry")
+                    return False
+
+        except Exception as e:
+            logging.error(f"Error during mode verification: {e}")
+            return False
+
+    async def _cleanup_video_files(self, button_id: str) -> None:
+        """
+        Clean up temporary webm files, keeping only the properly named ones.
+        Do not touch mp4 files.
+
+        Args:
+            button_id: ID of the button/mode being processed
+        """
+        try:
+            # Only get webm files
+            webm_files = list(Path(self.output_dir).glob("*.webm"))
+
+            # Keep only the properly named webm file
+            for webm_file in webm_files:
+                # Delete if it's not our target file (button_id.webm)
+                if webm_file.stem != button_id:
+                    try:
+                        os.remove(webm_file)
+                        logging.info(f"Removed temporary webm file: {webm_file}")
+                    except Exception as e:
+                        logging.warning(
+                            f"Failed to remove temporary webm file {webm_file}: {e}"
+                        )
+        except Exception as e:
+            logging.error(f"Error cleaning up webm files: {e}")
 
 
 async def evaluate_game_async(
