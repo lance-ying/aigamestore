@@ -25,7 +25,7 @@ You are a creative professional JavaScript game developer with expertise in impl
 
 TASK: You will be given a game concept for a 2D video game from a video game enthusiast. You will implement an interesting and fun 2D video game that is consistent with the game concept to be played and enjoyed by players with different skill levels.
 The game concept will be a few sentences defining some elements of the game leaving room for your creativity and expertise in making the game more interesting. You should enrich the game adding elements and mechanics beyond the game concept with your creativity and expertise as a game designer. 
-The game must be fully playable with clear win/lose conditions that players can achieve through skill and strategy. The game should provide multiple paths to victory while maintaining an appropriate level of challenge. You will also implement AI testing code that can verify different aspects of gameplay, including win conditions, mechanics, and edge cases.
+The game must be fully playable with clear win/lose conditions that players can achieve. The game should provide multiple paths to victory while maintaining an appropriate level of challenge, preventing it from being frustrating or boring for the player. You will also implement AI testing code that can verify different aspects of gameplay, including win conditions, mechanics, and edge cases.
 You are encouraged to write as much code as you can to make the game more interesting and aesthetically pleasing. Your code must be error-free, fully functional, and allow the player to make progress towards the final goal in a beautifully designed game.
 
 Game Concept: {game_concept}
@@ -143,6 +143,7 @@ Game Concept: {game_concept}
 - **Physics** must be plausible and consistent to carry out the game mechanics. Do not have objects pass through each other or any other inconsistencies.
 - **Graphics & Animations** must be implemented using p5.js primitives. NO external images, sprites, or fonts. No audio or sound effects.
 - **AI Testing** modes will test different aspects of the game with the knowledge of the game code so the game must be playable and follow the mechanics logically.
+- **Random Seed**: Use p.randomSeed(42) in the setup function to ensure reproducibility of the game.
 
 ## GAME MECHANICS & CONTROLS (CRITICAL)
 - **Canvas Setup**: 600×400px canvas, 60 FPS
@@ -202,12 +203,11 @@ Use Entity-Component-System (ECS) architecture with ES6 modules:
   let gameInstance = new p5(p => {
     // Always use p. prefix for all p5 functions
     p.setup = () => { 
-      p.randomSeed(42); // Ensure reproducibility by setting the random seed to 42
+      p.randomSeed(42);
       // other setup code
     }
   });
-  window.gameInstance = gameInstance; // Expose globally
-  ```
+  window.
 - **Useful Functions**:
   - p5: `keyIsDown(key_code)`, `noLoop()/loop()`, `tint()`, `push()/pop()`, `textAlign()`, `textSize()`, `text()`
   - p5.collide2d for collision detection
@@ -218,7 +218,7 @@ Use Entity-Component-System (ECS) architecture with ES6 modules:
   - Use parameters, equations, and functions for game mechanics to allow for smooth gameplay and animations, should be playable and enjoyable by players with different skill levels.
   - Ensure consistent interaction between objects (no unexpected behavior like passing through objects or sudden teleportation)
 - **Graphics & Rendering**:
-  - Ensure that all objects are rendered in the correct order and there is NO unexpected disappearance of objects
+  - Ensure that all objects are rendered in the correct order to have objects visible as intended and there is NO unexpected disappearance of objects
   - All graphics and text must be within the canvas with good design and formatting
   - Implement smooth and professional-looking animations with beautiful design to express the game environment, objects, and their interactions
   - Do not draw elements that are randomly sampled at every frame as this causes flickering
@@ -236,11 +236,11 @@ Given you are an expert game developer who is developing this game, implement AI
   - **AI to win the game [AI_WIN]**: Implement a function that plays the game like a professional player to **win the game** using the game code you have implemented
   - **Other AI Modes [Maximum 4]**: Create specific AI modes with intent to test different game aspects such as game mechanics, object interactions, subgoal completion, random actions, etc.
 - **Logic Implementation Strategy**:
-  - **Action Selection**: Select actions based on the current `gameState` data and the test specific goals
+  - **Action Selection**: Implement logic to select actions based on the game code you have implemented and the `gameState` data (get it from window.getGameState())
   - **Maintain Progress**: Implement a function that triggers a random action sequence when the player is stuck in repetitive patterns. Use the past player positions to determine if the player is stuck
   - **Game phase transitions**: Implement a function that triggers the next game phase when the player has completed the current phase automatically by checking the game state
 - **AI Controller Structure**:
-  - The function `get_ai_action(gameState)` must be implemented to **output an action** based on the current `gameState` and the game code
+  - The function `get_ai_action(gameState)` must be implemented to **output an action** based on the current `gameState` and the controlMode
   ```javascript
   export function get_ai_action(gameState) {{
     // Different strategies based on AI mode
@@ -344,6 +344,7 @@ For the html file:
 - **Physics** must be plausible and consistent to carry out the game mechanics. Do not have objects pass through each other or any other inconsistencies.
 - **Graphics & Animations** must be implemented using p5.js primitives. NO external images, sprites, or fonts. No audio or sound effects.
 - **AI Testing** modes will test different aspects of the game with the knowledge of the game code so the game must be playable and follow the mechanics logically.
+- **Random Seed**: Use p.randomSeed(42) in the setup function to ensure reproducibility of the game.
 
 ## GAME MECHANICS & CONTROLS (CRITICAL)
 - **Canvas Setup**: 600×400px canvas, 60 FPS
@@ -383,13 +384,13 @@ Use object-oriented programming with ES6 modules:
   ```
 
 ## P5.JS IMPLEMENTATION DETAILS
-- Use p5.js in instance mode with p. prefix for all functions, set random seed, and store the p5 instance in a variable called `gameInstance`. Expose the game instance globally as follows:
+- Use p5.js in instance mode with p. prefix for all functions and store the p5 instance in a variable called `gameInstance`. Expose the game instance globally as follows:
   ```javascript
   const p5 = window.p5;
   let gameInstance = new p5(p => {
     // Always use p. prefix for all p5 functions
     p.setup = () => { 
-      p.randomSeed(42); // Ensure reproducibility by setting the random seed to 42
+      p.randomSeed(42);
       // other setup code
     }
   });
@@ -405,7 +406,7 @@ Use object-oriented programming with ES6 modules:
   - Use parameters, equations, and functions for game mechanics to allow for smooth gameplay and animations, should be playable and enjoyable by players with different skill levels.
   - Ensure consistent interaction between objects (no unexpected behavior like passing through objects or sudden teleportation)
 - **Graphics & Rendering**:
-  - Ensure that all objects are rendered in the correct order and there is NO unexpected disappearance of objects
+  - Ensure that all objects are rendered in the correct order to have objects visible as intended and there is NO unexpected disappearance of objects
   - All graphics and text must be within the canvas with good design and formatting
   - Implement smooth and professional-looking animations with beautiful design to express the game environment, objects, and their interactions
   - Do not draw elements that are randomly sampled at every frame as this causes flickering
@@ -423,11 +424,11 @@ Given you are an expert game developer who is developing this game, implement AI
   - **AI to win the game [AI_WIN]**: Implement a function that plays the game like a professional player to **win the game** using the game code you have implemented
   - **Other AI Modes [Maximum 4]**: Create specific AI modes with intent to test different game aspects such as game mechanics, object interactions, subgoal completion, random actions, etc.
 - **Logic Implementation Strategy**:
-  - **Action Selection**: Select actions based on the current `gameState` data and the test specific goals
+  - **Action Selection**: Implement logic to select actions based on the game code you have implemented and the `gameState` data (get it from window.getGameState())
   - **Maintain Progress**: Implement a function that triggers a random action sequence when the player is stuck in repetitive patterns. Use the past player positions to determine if the player is stuck
   - **Game phase transitions**: Implement a function that triggers the next game phase when the player has completed the current phase automatically by checking the game state
 - **AI Controller Structure**:
-  - The function `get_ai_action(gameState)` must be implemented to **output an action** based on the current `gameState` and the game code
+  - The function `get_ai_action(gameState)` must be implemented to **output an action** based on the current `gameState` and the controlMode
   ```javascript
   export function get_ai_action(gameState) {{
     // Different strategies based on AI mode
