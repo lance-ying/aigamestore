@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
+from scipy import stats
 
 
 games_version = "v7"
@@ -413,7 +414,6 @@ if __name__ == "__main__":
     else:
         results = pd.read_csv(save_dir / "results.csv")
 
-
     # Create a fixed color mapping for users
     unique_users = results["user_id"].unique()
     color_palette = sns.color_palette("muted", len(unique_users))
@@ -691,10 +691,107 @@ if __name__ == "__main__":
     plt.savefig(save_dir / "playability_rating_vs_game_by_user.png")
     plt.close('all')
 
+    # Compute r2 for the relationship
+    slope, intercept, r_value, p_value, std_err = stats.linregress(results["rating_playability"], results["rating_fun"])
+    r2 = r_value**2
+    
+    plt.figure()
+    sns.scatterplot(data=results, y="rating_fun", x="rating_playability", alpha=0.2)
+    
+    # Add regression line
+    x = np.array([results["rating_playability"].min(), results["rating_playability"].max()])
+    y = slope * x + intercept
+    plt.plot(x, y, color='black', linewidth=2)
+    
+    plt.xlabel('Playability rating')
+    plt.ylabel('Fun rating')
+    # Move R² from title to top left corner
+    plt.text(0.05, 0.95, f'R² = {r2:.3f}', transform=plt.gca().transAxes, 
+             fontsize=10, verticalalignment='top')
+    ax = plt.gca()
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    plt.tight_layout()
+    plt.savefig(save_dir / "fun_rating_vs_playability_rating.png")
+    plt.close('all')
+
+    plt.figure()
+    sns.barplot(data=results, y="rating_fun", x="rating_playability")
+    plt.xlabel('Playability rating')
+    plt.ylabel('Fun rating')
+    ax = plt.gca()
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    plt.tight_layout()
+    plt.savefig(save_dir / "fun_rating_vs_playability_rating_barplot.png")
+    plt.close('all')
+
+
+    # first vs best sample analysis without averaging across participants
+    # user x game matrix with ratings
+    users_unique = results["user_id"].unique()
+    games_unique = results["game_id"].unique()
+    fun_rating_matrix = np.full((len(users_unique), len(games_unique)), np.nan)
+    playability_rating_matrix = np.full((len(users_unique), len(games_unique)), np.nan)
+    for i, user in enumerate(users_unique):
+        for j, game in enumerate(games_unique):
+            _rating = results[(results["user_id"] == user) & (results["game_id"] == game)]
+            if len(_rating) == 0:
+                continue
+            assert len(_rating) == 1, f"Expected 1 rating for user {user} and game {game}, got {len(_rating)}"
+            _rating = _rating.iloc[0]
+            fun_rating_matrix[i, j] = _rating["rating_fun"]
+            playability_rating_matrix[i, j] = _rating["rating_playability"]
+
+    game_info_dict = {}
+    idx = 0
+    # combine game_genre and game_concept_id (=theme) into a single id
+    for game_genre in np.unique(game_dataset["game_genre"]):
+        _games = game_dataset.filter(lambda x: x["game_genre"] == game_genre)
+        for game_concept_id in np.unique(_games["game_concept_id"]):
+            __games = _games.filter(lambda x: x["game_concept_id"] == game_concept_id)
+            for sample_id in np.unique(__games["game_sample_id"]):
+                game = __games.filter(lambda x: x["game_sample_id"] == sample_id)
+                assert len(game) == 1, f"Expected 1 game for game genre {game_genre} and game concept id {game_concept_id} and game sample id {sample_id}, got {len(game)}"
+                game = game[0]
+                game_info_dict[game['id']] = {
+                    "prompt": idx,
+                    "sample": int(sample_id.split("_")[-1]),
+                }
+            idx += 1
+
+    game_info_list = []
+    consistency_score_llm_policy = np.full(len(games_unique), np.nan)
+    for i, game in enumerate(games_unique):
+        _game = game_dataset.filter(lambda x: x["id"] == game)
+        assert len(_game) == 1, f"Expected 1 game for game {game}, got {len(_game)}"
+        _game = _game[0]
+        consistency_score_llm_policy[i] = _game["consistency_score_llm_policy"]
+        # make sure arrays are aligned
+        game_info_list.append(game_info_dict[_game['id']])
+
+    breakpoint()
+    data_dir = save_dir / "data_for_analysis"
+    data_dir.mkdir(exist_ok=True)
+
+    with open(data_dir / "game_info.json", "w") as f:
+        json.dump(game_info_list, f, indent=4)
+
+    with open(data_dir / "fun_ratings.npy", "wb") as f:
+        np.save(f, fun_rating_matrix)
+
+    with open(data_dir / "playability_ratings.npy", "wb") as f:
+        np.save(f, playability_rating_matrix)
+
+    with open(data_dir / "consistency_scores_policy.npy", "wb") as f:
+        np.save(f, consistency_score_llm_policy)
+
 
     # theme_8, sample_0: llm policy got stuck
 
     # average ratings across participants for each game sample
+    num_ratings_per_game = {}
+
     avg_results = defaultdict(list)
     for game_genre in results["game_genre"].unique():
         for game_concept_id in results["game_concept_id"].unique():
@@ -742,7 +839,20 @@ if __name__ == "__main__":
                 avg_results["std_playability_rating"].append(game_ratings["rating_playability"].std())
                 avg_results["std_avg_consistency_score"].append(game_ratings["code_gameplay_consistency"].std())
 
+                num_ratings_per_game[game_id] = len(game_ratings)
+
     avg_results = pd.DataFrame(avg_results)
+
+
+    # plot number of ratings per game
+    plt.figure(figsize=(6, 4))
+    plt.bar(range(len(num_ratings_per_game)), list(num_ratings_per_game.values()))
+    plt.xlabel("Game")
+    plt.ylabel("Number of ratings")
+    plt.tight_layout()
+    plt.savefig(save_dir / "num_ratings_per_game.png")
+    plt.close()
+
 
     # bar plot of avg rating for each game (with std) ordered by avg rating
     plt.figure(figsize=(6, 4))
@@ -870,7 +980,6 @@ if __name__ == "__main__":
     ax.spines['right'].set_visible(False)
     plt.tight_layout()
     plt.savefig(save_dir / "first_vs_best_samples_ratings_plot.png")
-    plt.close()
 
 
 
@@ -900,7 +1009,6 @@ if __name__ == "__main__":
     ax.spines['right'].set_visible(False)
     plt.tight_layout()
     plt.savefig(save_dir / "first_vs_best_samples_consistency_score_plot.png")
-    plt.close()
 
 
 
@@ -941,7 +1049,6 @@ if __name__ == "__main__":
     ax.spines['right'].set_visible(False)
     plt.tight_layout()
     plt.savefig(save_dir / "first_vs_best_samples_ratings.png")
-    plt.close()
 
 
     bar_width = 0.25
@@ -1246,26 +1353,52 @@ if __name__ == "__main__":
 
     # plot rating vs code_gameplay_mechanics_consistency with fixed color mapping
     plt.figure()
-    sns.scatterplot(data=results, y="rating_fun", x="code_gameplay_consistency", hue="user_id", palette=user_color_mapping)
+    # Compute r2
+    slope, intercept, r_value, p_value, std_err = stats.linregress(results["code_gameplay_consistency"], results["rating_fun"])
+    r2 = r_value**2
+    
+    # Create scatter plot
+    sns.scatterplot(data=results, y="rating_fun", x="code_gameplay_consistency", alpha=0.7, color="tab:blue")
+    
+    # Add regression line
+    x = np.array([results["code_gameplay_consistency"].min(), results["code_gameplay_consistency"].max()])
+    y = slope * x + intercept
+    plt.plot(x, y, color='red', linewidth=2)
+    
     plt.ylabel("Fun rating")
-    plt.xlabel("Code-gameplay consistency")
+    plt.xlabel("Consistency score (human gameplay)")
+    # Move R² from title to top left corner
+    plt.text(0.05, 0.95, f'R² = {r2:.3f}', transform=plt.gca().transAxes, 
+             fontsize=10, verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.5))
     ax = plt.gca()
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
-    plt.legend([],[], frameon=False)  # Hide the legend since we have a separate figure
     plt.tight_layout()
-    plt.savefig(_save_dir / "fun_rating_vs_code_gameplay_consistency.png")
+    plt.savefig(_save_dir / "consistency_score_human_vs_fun_rating.png")
 
     plt.figure()
-    sns.scatterplot(data=results, y="rating_playability", x="code_gameplay_consistency", hue="user_id", palette=user_color_mapping)
+    # Compute r2
+    slope, intercept, r_value, p_value, std_err = stats.linregress(results["code_gameplay_consistency"], results["rating_playability"])
+    r2 = r_value**2
+    
+    # Create scatter plot
+    sns.scatterplot(data=results, y="rating_playability", x="code_gameplay_consistency", alpha=0.7, color="tab:blue")
+    
+    # Add regression line
+    x = np.array([results["code_gameplay_consistency"].min(), results["code_gameplay_consistency"].max()])
+    y = slope * x + intercept
+    plt.plot(x, y, color='red', linewidth=2)
+    
     plt.ylabel("Playability rating")
-    plt.xlabel("Code-gameplay consistency")
+    plt.xlabel("Consistency score (human gameplay)")
+    # Move R² from title to top left corner
+    plt.text(0.05, 0.95, f'R² = {r2:.3f}', transform=plt.gca().transAxes, 
+             fontsize=10, verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.5))
     ax = plt.gca()
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
-    plt.legend([],[], frameon=False)  # Hide the legend since we have a separate figure
     plt.tight_layout()
-    plt.savefig(_save_dir / "playability_rating_vs_code_gameplay_consistency.png")
+    plt.savefig(_save_dir / "consistency_score_human_vs_playability_rating.png")
 
 
     # Use lmplot to create regression lines for each user
@@ -1368,9 +1501,23 @@ if __name__ == "__main__":
 
     # plot rating vs code_gameplay_mechanics_consistency with fixed color mapping
     plt.figure()
+    # Compute r2
+    slope, intercept, r_value, p_value, std_err = stats.linregress(results["code_gameplay_consistency"], results["rating_fun"])
+    r2 = r_value**2
+    
+    # Create scatter plot
     sns.scatterplot(data=results, y="rating_fun", x="code_gameplay_consistency", alpha=0.7, color="tab:blue")
+    
+    # Add regression line
+    x = np.array([results["code_gameplay_consistency"].min(), results["code_gameplay_consistency"].max()])
+    y = slope * x + intercept
+    plt.plot(x, y, color='red', linewidth=2)
+    
     plt.ylabel("Fun rating")
     plt.xlabel("Consistency score (human gameplay)")
+    # Move R² from title to top left corner
+    plt.text(0.05, 0.95, f'R² = {r2:.3f}', transform=plt.gca().transAxes, 
+             fontsize=10, verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.5))
     ax = plt.gca()
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
@@ -1378,9 +1525,23 @@ if __name__ == "__main__":
     plt.savefig(_save_dir / "consistency_score_human_vs_fun_rating.png")
 
     plt.figure()
+    # Compute r2
+    slope, intercept, r_value, p_value, std_err = stats.linregress(results["code_gameplay_consistency"], results["rating_playability"])
+    r2 = r_value**2
+    
+    # Create scatter plot
     sns.scatterplot(data=results, y="rating_playability", x="code_gameplay_consistency", alpha=0.7, color="tab:blue")
+    
+    # Add regression line
+    x = np.array([results["code_gameplay_consistency"].min(), results["code_gameplay_consistency"].max()])
+    y = slope * x + intercept
+    plt.plot(x, y, color='red', linewidth=2)
+    
     plt.ylabel("Playability rating")
     plt.xlabel("Consistency score (human gameplay)")
+    # Move R² from title to top left corner
+    plt.text(0.05, 0.95, f'R² = {r2:.3f}', transform=plt.gca().transAxes, 
+             fontsize=10, verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.5))
     ax = plt.gca()
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
@@ -1389,9 +1550,23 @@ if __name__ == "__main__":
 
 
     plt.figure()
+    # Compute r2
+    slope, intercept, r_value, p_value, std_err = stats.linregress(results["consistency_score_llm_policy"], results["rating_fun"])
+    r2 = r_value**2
+    
+    # Create scatter plot
     sns.scatterplot(data=results, y="rating_fun", x="consistency_score_llm_policy", alpha=0.7, color="tab:orange")
+    
+    # Add regression line
+    x = np.array([results["consistency_score_llm_policy"].min(), results["consistency_score_llm_policy"].max()])
+    y = slope * x + intercept
+    plt.plot(x, y, color='red', linewidth=2)
+    
     plt.ylabel("Fun rating")
     plt.xlabel("Consistency score (LLM policy)")
+    # Move R² from title to top left corner
+    plt.text(0.05, 0.95, f'R² = {r2:.3f}', transform=plt.gca().transAxes, 
+             fontsize=10, verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.5))
     ax = plt.gca()
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
@@ -1399,12 +1574,25 @@ if __name__ == "__main__":
     plt.savefig(_save_dir / "consistency_score_llm_policy_vs_fun_rating.png")
 
     plt.figure()
+    # Compute r2
+    slope, intercept, r_value, p_value, std_err = stats.linregress(results["consistency_score_llm_policy"], results["rating_playability"])
+    r2 = r_value**2
+    
+    # Create scatter plot
     sns.scatterplot(data=results, y="rating_playability", x="consistency_score_llm_policy", alpha=0.7, color="tab:orange")
+    
+    # Add regression line
+    x = np.array([results["consistency_score_llm_policy"].min(), results["consistency_score_llm_policy"].max()])
+    y = slope * x + intercept
+    plt.plot(x, y, color='red', linewidth=2)
+    
     plt.ylabel("Playability rating")
     plt.xlabel("Consistency score (LLM policy)")
+    # Move R² from title to top left corner
+    plt.text(0.05, 0.95, f'R² = {r2:.3f}', transform=plt.gca().transAxes, 
+             fontsize=10, verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.5))
     ax = plt.gca()
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
-    plt.legend([],[], frameon=False)  # Hide the legend since we have a separate figure
     plt.tight_layout()
     plt.savefig(_save_dir / "consistency_score_llm_policy_vs_playability_rating.png")
