@@ -132,6 +132,7 @@ class ModelAPI:
         temperature: Optional[float] = None,
         verbose: bool = False,
         max_retries: int = 3,
+        image: Optional[Dict[str, Any]] = None,
         **kwargs,
     ) -> str:
         """
@@ -297,16 +298,36 @@ class ModelAPI:
 
             elif self.model_provider == "google":
                 model = self.client.GenerativeModel(model_name=self.model)
-                # Convert messages to Gemini format
-                prompt = self._format_messages_for_gemini(messages)
-                response = model.generate_content(
-                    prompt,
-                    generation_config={
-                        "max_output_tokens": max_tokens,
-                        "temperature": temperature,
-                        **kwargs,
-                    },
-                )
+
+                if image:  # Handle video/image content
+                    response = model.generate_content(
+                        [
+                            {"text": user_prompt},
+                            {
+                                "inline_data": {
+                                    "mime_type": image["mime_type"],
+                                    "data": image["data"],
+                                }
+                            },
+                        ],
+                        generation_config={
+                            "max_output_tokens": max_tokens,
+                            "temperature": temperature,
+                            **kwargs,
+                        },
+                    )
+                else:
+                    # Regular text-only content
+                    prompt = self._format_messages_for_gemini(messages)
+                    response = model.generate_content(
+                        prompt,
+                        generation_config={
+                            "max_output_tokens": max_tokens,
+                            "temperature": temperature,
+                            **kwargs,
+                        },
+                    )
+
                 result = response.text
 
             # Record the call with cleaner formatting

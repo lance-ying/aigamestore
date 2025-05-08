@@ -10,11 +10,19 @@ import logging
 import asyncio
 import argparse
 import tempfile
+import json
 from pathlib import Path
 from typing import Dict, Any, Optional, List
+import datetime
 
 import google.generativeai as genai
 from google.generativeai.types import content_types as types
+
+sys.path.append(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+)
+
+from game_generators.utils import ModelAPI
 
 # Configure logging
 logging.basicConfig(
@@ -47,6 +55,9 @@ class GameEvaluator:
 
         # Setup Gemini API
         genai.configure(api_key=self.api_key)
+
+        # Initialize ModelAPI
+        self.model_api = ModelAPI("google:gemini-2.0-flash")
 
         # Check if game_path is valid
         if not os.path.exists(self.game_path):
@@ -213,7 +224,41 @@ class GameEvaluator:
                     button_id = button_info["id"]
                     logging.info(f"Processing button with ID: {button_id}")
 
-                    # Create a new context for each button to get a fresh recording
+                    # Check if MP4 already exists for this mode
+                    mp4_path = os.path.join(self.output_dir, f"{button_id}.mp4")
+                    if os.path.exists(mp4_path):
+                        logging.info(
+                            f"Found existing MP4 for {button_id}, skipping video generation"
+                        )
+                        video_path = mp4_path
+
+                        # Add to results
+                        results["video_paths"].append(video_path)
+
+                        # Evaluate existing video
+                        evaluation = await self._evaluate_game_mode(
+                            video_path=video_path,
+                            game_path=os.path.dirname(self.game_path),
+                            button_id=button_id,
+                        )
+                        if evaluation:
+                            # Save mode-specific evaluation
+                            eval_path = os.path.join(
+                                self.output_dir, f"{button_id}_evaluation.txt"
+                            )
+                            with open(eval_path, "w") as f:
+                                f.write(evaluation)
+
+                            results["evaluations"].append(
+                                {
+                                    "button_id": button_id,
+                                    "video_path": video_path,
+                                    "evaluation": evaluation,
+                                }
+                            )
+                        continue  # Skip to next button
+
+                    # If no existing MP4, proceed with video recording
                     video_path = os.path.join(self.output_dir, f"{button_id}.webm")
 
                     # Get canvas dimensions first
@@ -447,12 +492,24 @@ class GameEvaluator:
                             # Convert to MP4
                             mp4_path = os.path.join(self.output_dir, f"{button_id}.mp4")
                             try:
+                                start_time = time.time()
+                                logging.info(
+                                    f"Converting video to MP4: {new_video_path}"
+                                )
                                 process = await asyncio.create_subprocess_exec(
                                     "ffmpeg",
                                     "-i",
                                     new_video_path,
                                     "-c:v",
                                     "libx264",
+                                    "-preset",
+                                    "ultrafast",
+                                    "-crf",
+                                    "23",
+                                    "-tune",
+                                    "zerolatency",
+                                    "-movflags",
+                                    "+faststart",
                                     mp4_path,
                                     stdout=asyncio.subprocess.PIPE,
                                     stderr=asyncio.subprocess.PIPE,
@@ -461,7 +518,9 @@ class GameEvaluator:
 
                                 if process.returncode == 0 and os.path.exists(mp4_path):
                                     video_path = mp4_path
-                                    logging.info(f"Converted video to MP4: {mp4_path}")
+                                    logging.info(
+                                        f"Converted video to MP4: {mp4_path} in {time.time() - start_time:.2f} seconds"
+                                    )
                                 else:
                                     video_path = new_video_path
                                     logging.warning(
@@ -475,11 +534,13 @@ class GameEvaluator:
                             results["video_paths"].append(video_path)
 
                             # Evaluate each video
-                            evaluation = await self._evaluate_video_with_gemini(
-                                video_path
+                            evaluation = await self._evaluate_game_mode(
+                                video_path=video_path,
+                                game_path=os.path.dirname(self.game_path),
+                                button_id=button_id,
                             )
                             if evaluation:
-                                # Save button-specific evaluation
+                                # Save mode-specific evaluation
                                 eval_path = os.path.join(
                                     self.output_dir, f"{button_id}_evaluation.txt"
                                 )
@@ -600,6 +661,7 @@ class GameEvaluator:
         Returns:
             Evaluation text or None if failed
         """
+        logging.info(f"Evaluating video with Gemini: {video_path}")
         try:
             # Check if file exists and is not too large
             if not os.path.exists(video_path):
@@ -735,6 +797,241 @@ class GameEvaluator:
             logging.error(f"Error evaluating video with Gemini: {e}")
             return None
 
+    # Add this helper function to parse feedbacks
+    def _parse_feedbacks(self, response_text: str) -> List[str]:
+        """Extract feedbacks from response text using regex."""
+        import re
+
+        feedbacks = []
+        pattern = r"<feedback:\s*feedback_\d+>\s*(.*?)\s*</feedback:\s*feedback_\d+>"
+        matches = re.finditer(pattern, response_text, re.DOTALL)
+
+        for match in matches:
+            feedbacks.append(match.group(1).strip())
+
+        return feedbacks
+
+    # Modify the _evaluate_game_mode method to save feedbacks
+    async def _evaluate_game_mode(
+        self, video_path: str, game_path: str, button_id: str
+    ) -> Optional[str]:
+        try:
+            # Read metadata.json
+            metadata_path = os.path.join(game_path, "metadata.json")
+            with open(metadata_path, "r") as f:
+                metadata = json.load(f)
+
+            # Get game description and files
+            game_description = metadata["game_info"]["description"]
+            game_concept = metadata["game_info"]["concept"]
+            game_files = metadata["game_files"]
+
+            # Read all game code files
+            code_contents = {}
+
+            # Read HTML file
+            html_path = os.path.join(game_path, game_files["html"])
+            with open(html_path, "r") as f:
+                code_contents["index.html"] = f.read()
+
+            # Read all JavaScript files
+            for js_file in game_files["javascript"]:
+                js_path = os.path.join(game_path, js_file)
+                with open(js_path, "r") as f:
+                    code_contents[js_file] = f.read()
+
+            # Format mode name
+            mode_name = (
+                button_id.replace("ai_", "")
+                .replace("ModeBtn", "")
+                .replace("_", " ")
+                .title()
+            )
+
+            # First check if ai_controller.js exists
+            ai_controller_section = """
+<ai_controller>
+Note: The AI policy is implemented within the game files provided above, specifically in the AI-related functions in the JavaScript code.
+</ai_controller>
+"""
+
+            if "ai_controller.js" in code_contents:
+                ai_controller_section = f"""
+<ai_controller>
+{code_contents["ai_controller.js"]}
+</ai_controller>
+"""
+
+            # Then use it in the prompt
+            prompt = f"""
+<title>
+{metadata["game_info"]["title"]}
+</title>
+
+<description>
+{game_description}
+</description>
+
+<test_mode>
+    <name>{mode_name}</name>
+    <button_id>{button_id}</button_id>
+</test_mode>
+
+<game_files>
+<structure>
+    {json.dumps(game_files, indent=2)}
+</structure>
+    
+<code: index.html>
+{code_contents["index.html"]}
+</code: index.html>
+
+{' '.join([f'''
+<code: {js_file}>
+{code_contents[js_file]}
+</code: {js_file}>
+''' for js_file in game_files["javascript"]])}
+</game_files>
+
+{ai_controller_section}
+
+Considering the following questions:
+1. What is the specific task/goal for this test mode?
+2. Based on the gameplay video, was the task successfully achieved?
+
+Based on the video and the answers to the questions above, what feedback or improvements would you suggest based on:
+   - Game mechanics implementation
+   - AI behavior and strategy
+   - Bug fixes or improvements needed
+   - Overall gameplay experience
+
+Please be specific about the feedbacks on game mechanics, game aesthetics, and the AI game play strategy. Respond in the following format:
+
+<feedback: feedback_1>
+...[Your first feedback]
+</feedback: feedback_1>
+
+<feedback: feedback_2>
+...[Your second feedback]
+</feedback: feedback_2>
+
+<feedback: feedback_3>
+...[Your third feedback]
+</feedback: feedback_3>
+
+...[Your other feedbacks]
+"""
+
+            # Read video file
+            with open(video_path, "rb") as f:
+                video_bytes = f.read()
+
+            # Determine MIME type
+            mime_type = "video/mp4" if video_path.endswith(".mp4") else "video/webm"
+
+            # Create image part for the video
+            image_part = {"mime_type": mime_type, "data": video_bytes}
+
+            # Call the API using ModelAPI
+            response = self.model_api.call(
+                user_prompt=prompt,
+                image=image_part, 
+                temperature=0.7,
+                verbose=True,
+            )
+
+            if response:
+                # Parse feedbacks from response
+                feedbacks = self._parse_feedbacks(response)
+
+                # Create or load existing feedback JSON
+                feedback_dir = os.path.join(game_path, "evaluation_results")
+                os.makedirs(feedback_dir, exist_ok=True)
+                feedback_json_path = os.path.join(feedback_dir, "feedbacks.json")
+
+                if os.path.exists(feedback_json_path):
+                    with open(feedback_json_path, "r") as f:
+                        all_feedbacks = json.load(f)
+                else:
+                    all_feedbacks = {}
+
+                # Update feedbacks for this mode
+                all_feedbacks[button_id] = {
+                    "mode_name": mode_name,
+                    "feedbacks": feedbacks,
+                    "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                }
+
+                # Save updated feedbacks
+                with open(feedback_json_path, "w") as f:
+                    json.dump(all_feedbacks, f, indent=2)
+
+                logging.info(
+                    f"Saved feedbacks for mode {button_id} to {feedback_json_path}"
+                )
+
+            return response
+
+        except Exception as e:
+            logging.error(f"Error evaluating game mode: {e}")
+            return None
+
+    async def evaluate_all_modes(self) -> Dict[str, Any]:
+        """
+        Evaluate all existing mode videos in the output directory.
+        """
+        results = {
+            "success": False,
+            "video_paths": [],
+            "evaluations": [],
+            "error": None,
+        }
+
+        try:
+            # Get all MP4 files in the output directory
+            video_files = list(Path(self.output_dir).glob("*.mp4"))
+            if not video_files:
+                logging.warning("No MP4 files found in output directory")
+                return results
+
+            # Process each video file
+            for video_path in video_files:
+                button_id = video_path.stem  # Get filename without extension
+                logging.info(f"Evaluating existing video for mode: {button_id}")
+
+                # Evaluate video
+                evaluation = await self._evaluate_game_mode(
+                    video_path=str(video_path),
+                    game_path=os.path.dirname(self.game_path),
+                    button_id=button_id,
+                )
+
+                if evaluation:
+                    # Save mode-specific evaluation
+                    eval_path = os.path.join(
+                        self.output_dir, f"{button_id}_evaluation.txt"
+                    )
+                    with open(eval_path, "w") as f:
+                        f.write(evaluation)
+
+                    results["video_paths"].append(str(video_path))
+                    results["evaluations"].append(
+                        {
+                            "button_id": button_id,
+                            "video_path": str(video_path),
+                            "evaluation": evaluation,
+                        }
+                    )
+
+            # Set success if we have at least one evaluation
+            results["success"] = len(results["evaluations"]) > 0
+
+        except Exception as e:
+            logging.error(f"Error evaluating modes: {e}")
+            results["error"] = str(e)
+
+        return results
+
 
 async def evaluate_game_async(
     game_path: str, api_key: Optional[str] = None
@@ -783,27 +1080,41 @@ def main():
     parser.add_argument(
         "--api-key", help="Google API key (or use GOOGLE_API_KEY env var)"
     )
+    parser.add_argument(
+        "--evaluate-only",
+        action="store_true",
+        help="Only evaluate existing videos without recording new ones",
+    )
 
     args = parser.parse_args()
+    evaluator = GameEvaluator(args.game_path, args.api_key)
 
-    # Evaluate the game
-    results = evaluate_game(args.game_path, args.api_key)
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+    if args.evaluate_only:
+        # Only evaluate existing videos
+        results = loop.run_until_complete(evaluator.evaluate_all_modes())
+    else:
+        # Record and evaluate
+        results = loop.run_until_complete(evaluator.record_and_evaluate_game())
 
     # Print results
     if results["success"]:
         print("\n" + "=" * 50)
         print("GAME EVALUATION RESULTS")
         print("=" * 50)
-        print(f"Game path: {results['game_path']}")
-        print(f"Videos recorded: {len(results['video_paths'])}")
+        print(f"Game path: {evaluator.game_path}")
+        print(f"Videos evaluated: {len(results['video_paths'])}")
         for i, eval_data in enumerate(results["evaluations"]):
-            print(f"\n--- Button: {eval_data['button_id']} ---")
+            print(f"\n--- Mode: {eval_data['button_id']} ---")
             print(f"Video: {eval_data['video_path']}")
             print("Evaluation summary: " + eval_data["evaluation"][:100] + "...")
         print("=" * 50)
-        print(
-            f"Full evaluations saved in: {os.path.join(os.path.dirname(results['game_path']), 'evaluation_results')}"
-        )
+        print(f"Full evaluations saved in: {evaluator.output_dir}")
         print("=" * 50)
     else:
         print("\n" + "=" * 50)
@@ -812,7 +1123,6 @@ def main():
         print(f"Error: {results['error']}")
         print("=" * 50)
 
-    # Return success status
     return 0 if results["success"] else 1
 
 
