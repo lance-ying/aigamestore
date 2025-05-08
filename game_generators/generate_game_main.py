@@ -8,6 +8,7 @@ from typing import Dict, Any, Optional
 from gamegen_methods.baseline import BaselineGenerator
 from gamegen_methods.simple_prompt_generator import SimplePromptGenerator
 from gamegen_methods.simple_prompt_generator_exp import SimplePromptEXPGenerator
+from gamegen_methods.simple_prompt_generator_xml import SimplePromptXMLGenerator
 from gamegen_methods.template_based_generator import TemplateBasedGenerator
 from gamegen_methods.template_based_form_generator import TemplateBasedFormGenerator
 from game_check.run_all_tests import run_all_tests
@@ -35,7 +36,7 @@ def parse_args():
         "--method",
         type=str,
         default="simple_prompt",
-        choices=["baseline", "simple_prompt", "simple_prompt_exp", "template_based", "template_based_form"], # TODO: "guide_complexity", "template", "template_character_driven", "template_with_critic", "template_with_play"],
+        choices=["baseline", "simple_prompt", "simple_prompt_exp", "simple_prompt_xml", "template_based", "template_based_form"], # TODO: "guide_complexity", "template", "template_character_driven", "template_with_critic", "template_with_play"],
         help="Game generation method to use",
     )
     
@@ -132,6 +133,12 @@ def main():
             )
         elif args.method == "simple_prompt_exp":
             generator = SimplePromptEXPGenerator(
+                model_name=args.model,
+                verbose=args.verbose,
+                use_ecs=not args.no_ecs,
+            )
+        elif args.method == "simple_prompt_xml":
+            generator = SimplePromptXMLGenerator(
                 model_name=args.model,
                 verbose=args.verbose,
                 use_ecs=not args.no_ecs,

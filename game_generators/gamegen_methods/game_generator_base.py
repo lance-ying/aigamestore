@@ -207,7 +207,20 @@ class GameGenerator(ABC):
         """
         pattern = r"<game_controls>\s*(.*?)\s*</game_controls>"
         match = re.search(pattern, text, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+        return ""
     
+    def extract_ai_testing(self, text: str) -> str:
+        """
+        Extract ai testing from text
+        """
+        pattern = r"<ai_testing>\s*(.*?)\s*</ai_testing>"
+        match = re.search(pattern, text, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+        return ""
+
     def save_games(
         self,
         title: str,
@@ -217,6 +230,7 @@ class GameGenerator(ABC):
         game_controls: str,
         game_concept: str,
         game_plan: str,
+        ai_testing: Optional[str] = None,
         concept_path: Optional[str] = None,
         genre: Optional[str] = None,
         intermediate_outputs: Optional[Dict[str, Any]] = None,
@@ -312,6 +326,7 @@ class GameGenerator(ABC):
                 "controls": game_controls,
                 "playability": False,
                 "plan": game_plan,
+                "ai_testing": ai_testing,
             },
             "generation_info": {
                 "method": self.__class__.__name__,

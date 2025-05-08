@@ -4,7 +4,7 @@ import json
 from gamegen_methods.game_generator_base import GameGenerator
 
 
-class SimplePromptEXPGenerator(GameGenerator):
+class SimplePromptXMLGenerator(GameGenerator):
     """
     Simple prompt game generator that uses a single LLM call with concatenated system prompts
     to generate both the game design and code implementation.
@@ -19,25 +19,19 @@ class SimplePromptEXPGenerator(GameGenerator):
             
         Returns:
             User prompt for the LLM
-        """
-        prompt = """
-You are a creative professional JavaScript game developer with expertise in implementing 2D video games with consistent gameplay and aesthetic design using p5.js. 
-
-TASK: You will be given a game concept for a 2D video game from a video game enthusiast. You will implement an interesting and fun 2D video game that is consistent with the game concept to be played and enjoyed by players with different skill levels.
-The game concept will be a few sentences defining some elements of the game leaving room for your creativity and expertise in making the game more interesting. You should enrich the game adding elements and mechanics beyond the game concept with your creativity and expertise as a game designer. 
-The game must be fully playable with clear win/lose conditions that players can achieve. The game should provide multiple paths to victory while maintaining an appropriate level of challenge, preventing it from being frustrating or boring for the player. You will also implement AI testing code that can verify different aspects of gameplay, including win conditions, mechanics, and edge cases.
-You are encouraged to write as much code as you can to make the game more interesting and aesthetically pleasing. Your code must be error-free, fully functional, and allow the player to make progress towards the final goal in a beautifully designed game.
-
-Game Concept: {game_concept}
-
-"""
-        
+        """        
         if self.use_ecs:
             instructions = self.get_ecs_instructions()
         else:
             instructions = self.get_non_ecs_instructions()
-        
-        prompt = prompt + instructions
+
+        output_format = self.get_output_format()
+        task = f"""
+Here is the input from the user:
+<task>
+<game_concept>{game_concept}</game_concept>
+</task>"""
+        prompt = instructions + task + output_format
         return prompt
 
     def generate_game(self, game_concept: str, concept_path: Optional[str] = None) -> Dict[str, Any]:
@@ -54,19 +48,20 @@ Game Concept: {game_concept}
         try:
             # Generate user prompt
             user_prompt = self.generate_user_prompt(game_concept)
-            
+            system_prompt = self.get_system_prompt()
             # Call the LLM with the combined system prompt and user prompt
             if self.verbose:
                 print(f"Calling LLM with game concept: {game_concept[:100]}...")
                 
             response = self.model_api.call(
                 user_prompt=user_prompt,
+                system_prompt=system_prompt,
                 verbose=self.verbose,
             )
             
             # Prepare conversation log for saving
             conversation_log = [
-                {"role": "system", "content": self.get_system_prompt()},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
                 {"role": "assistant", "content": response}
             ]
@@ -78,6 +73,7 @@ Game Concept: {game_concept}
             game_plan =  self.extract_game_plan(response)
             html_code = self.extract_code_block(response, "html") or ""
             
+            ai_testing_list = self.extract_ai_testing(response)
             # Get JavaScript files
             js_code_dict = self.extract_code_block(response, "javascript")
             js_files = []
@@ -122,6 +118,7 @@ Game Concept: {game_concept}
                 "game_controls": game_controls,
                 "game_dir": game_dir,
                 "game_plan": game_plan,
+                "ai_testing": ai_testing_list,
             }
             
         except Exception as e:
@@ -130,24 +127,110 @@ Game Concept: {game_concept}
                 import traceback
                 traceback.print_exc()
             raise 
-
+    
+    def extract_ai_testing(self, response: str) -> List[Dict[str, str]]:
+        """
+        Extract the ai testing from the response
+        """
+        ai_testing_output = self.extract_code_block(response, "ai_testing")
+        if ai_testing_output:
+            return ai_testing_output
+        else:
+            return []
+    
     def get_ecs_instructions(self) -> str:
         """
         Get the instructions for the ECS architecture
         """
-        instructions = open("system_prompts/single_prompt_instructions_ecs.txt", "r").read()
+        instructions = open("game_generators/system_prompts/single_prompt_instructions_ecs.txt", "r").read()
         return instructions
 
     def get_non_ecs_instructions(self) -> str:
         """
         Get the instructions for the non-ECS architecture
         """
-        instructions = open("system_prompts/single_prompt_instructions_nonecs.txt", "r").read()
+        instructions = open("game_generators/system_prompts/single_prompt_instructions_nonecs.txt", "r").read()
         return instructions
     
     def get_system_prompt(self) -> str:
         """
         Get the system prompt
         """
-        system_prompt = open("system_prompts/single_prompt_sysprompt_withai.txt", "r").read()
+        system_prompt = open("game_generators/system_prompts/single_prompt_sysprompt_withai.txt", "r").read()
         return system_prompt
+
+    def get_output_format(self) -> str:
+        """
+        Get the output format
+        """
+        output_format = """
+
+# HTML REFERENCE TEMPLATE
+<example_html>
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; } /* active button for current control mode */
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">{game_title}</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="ai_winModeBtn" class="control-button" onclick="window.setControlMode('AI_WIN')">AI (Win)</button>
+        <button id="ai_test_mechanicsModeBtn" class="control-button" onclick="window.setControlMode('AI_TEST_MECHANICS')">AI (Test Mechanics)</button>
+        <!-- Add more AI mode buttons with correct ID convention -->
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">{game_description}</p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">{game_controls}</p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</example_html>
+
+Output instructions:
+Output the code plan and game files in this format with NO OTHER TEXT:
+
+<game_description>
+... (game description to introduce the game to the user in maximum 3 sentences. Keep it short and concise.)
+</game_description>
+
+<game_controls>
+... (game controls as a list of key bindings, Key: Action)
+</game_controls>
+
+<code_plan>
+... (code plan in maximum 5 sentences)
+</code_plan>
+
+<ai_testing>
+<{ai_test_name_WIN}>
+... (write in 1 sentence "What are you testing?" , start with "Testing:")
+... (write in 1 sentence "How are you testing it?" , start with "Strategy:")
+... (write in 1 sentence "What is the expected outcome?" , start with "Expected outcome:")
+</{ai_test_name_WIN}>
+// Add more ai_test_TESTNAME as needed where TESTNAME is the name of the test (WIN, MECHANICS, etc.)
+</ai_testing>
+
+For the javascript files:
+<code filename="{{name}}.{{extension}}">
+... (code)
+</code>
+
+HTML following the <example_html> template (output last):
+<code filename="index.html">
+... (html code)
+</code>
+"""
+        return output_format
