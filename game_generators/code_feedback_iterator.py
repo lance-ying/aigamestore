@@ -2,9 +2,10 @@ from typing import Dict, Any, Optional, List, Tuple
 import json
 import os
 import glob
+import datetime
+from pathlib import Path
 
 from gamegen_methods.game_generator_base import GameGenerator
-
 
 class CodeFeedbackIterator(GameGenerator):
     """
@@ -154,6 +155,122 @@ Output the code with the same filenames in the following format without any addi
         if self.verbose:
             print(f"Updated {len(updated_files)} files in {game_dir}")
 
+    def save_file(
+        self,
+        game_dir: str,
+        updated_files: Dict[str, str],
+        feedback: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        conversation_log: Optional[List[Dict[str, str]]] = None,
+    ) -> str:
+        """
+        Save the updated game files and metadata in a new folder structure
+        
+        Args:
+            game_dir: Path to the original game directory
+            updated_files: Dictionary of updated files (filename -> content)
+            feedback: The feedback used for improvement
+            metadata: Original game metadata if available
+            conversation_log: Conversation log of the iteration
+            
+        Returns:
+            Path to the saved game directory
+        """
+        # Parse the game directory path
+        game_dir_path = Path(game_dir)
+        input_game_folder_name = game_dir_path.name
+        
+        # Create the MODE_updates directory
+        updates_dir = game_dir_path.parent / f"{self.mode}_updates"
+        updates_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Determine the next iteration number
+        existing_iterations = [
+            int(d.name.split('_')[-1])
+            for d in updates_dir.iterdir()
+            if d.is_dir() and d.name.startswith(f"{input_game_folder_name}_{self.mode}_")
+        ]
+        next_iteration = max(existing_iterations, default=0) + 1
+        
+        # Create the new directory for this iteration
+        iteration_dir = updates_dir / f"{input_game_folder_name}_{self.mode}_{next_iteration}"
+        iteration_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Copy any needed files from the original directory
+        if not metadata:
+            metadata_path = game_dir_path / "metadata.json"
+            if os.path.exists(metadata_path):
+                with open(metadata_path, 'r') as f:
+                    metadata = json.load(f)
+        
+        # Read the original index.html if it exists
+        html_code = ""
+        html_path = game_dir_path / "index.html"
+        if os.path.exists(html_path):
+            with open(html_path, 'r') as f:
+                html_code = f.read()
+        
+        # Save the updated JavaScript files
+        js_filenames = []
+        for filename, content in updated_files.items():
+            file_path = iteration_dir / filename
+            # Ensure the parent directory exists
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+            js_filenames.append(filename)
+        
+        # Save the HTML file
+        with open(iteration_dir / "index.html", 'w', encoding='utf-8') as f:
+            f.write(html_code)
+        
+        # Create or update metadata
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        if metadata:
+            # Update the existing metadata
+            updated_metadata = metadata.copy()
+            # Add feedback information
+            updated_metadata["iteration_info"] = {
+                "iteration_number": next_iteration,
+                "mode": self.mode,
+                "feedback": feedback,
+                "timestamp": timestamp
+            }
+            # Update file list if needed
+            if "game_files" in updated_metadata:
+                updated_metadata["game_files"]["javascript"] = js_filenames
+                
+        else:
+            # Create new basic metadata
+            updated_metadata = {
+                "iteration_info": {
+                    "iteration_number": next_iteration,
+                    "mode": self.mode,
+                    "feedback": feedback,
+                    "timestamp": timestamp
+                },
+                "game_files": {
+                    "html": "index.html",
+                    "javascript": js_filenames,
+                    "log": "iteration_log.json",
+                }
+            }
+        
+        # Save the updated metadata
+        with open(iteration_dir / "metadata.json", 'w', encoding='utf-8') as f:
+            json.dump(updated_metadata, f, indent=2)
+        
+        # Save conversation log if provided
+        if conversation_log:
+            with open(iteration_dir / "iteration_log.json", 'w', encoding='utf-8') as f:
+                json.dump(conversation_log, f, indent=2)
+        
+        if self.verbose:
+            print(f"Updated game saved to: {iteration_dir}")
+        
+        return str(iteration_dir)
+
     def iterate_code(self, game_dir: str, feedback: Optional[str] = None) -> Dict[str, Any]:
         """
         Iterate on game code based on feedback
@@ -195,10 +312,26 @@ Output the code with the same filenames in the following format without any addi
             # Extract updated code from response
             updated_files = self.extract_updated_code(response)
             
-            # Save the updated code
+            # Save the updated code in both the original location and the iteration directory
             self.save_updated_code(game_dir, updated_files)
             
-            # Save the conversation log
+            # Read metadata from the original game directory
+            metadata_path = os.path.join(game_dir, "metadata.json")
+            metadata = None
+            if os.path.exists(metadata_path):
+                with open(metadata_path, 'r') as f:
+                    metadata = json.load(f)
+            
+            # Save files in the new structure
+            iteration_dir = self.save_file(
+                game_dir,
+                updated_files,
+                feedback or self.get_vibe_coding_feedback(),
+                metadata,
+                conversation_log
+            )
+            
+            # Save the conversation log in the original directory too
             log_path = os.path.join(game_dir, f"code_iteration_{self.mode}.json")
             with open(log_path, 'w') as f:
                 json.dump(conversation_log, f, indent=2)
@@ -208,6 +341,7 @@ Output the code with the same filenames in the following format without any addi
             
             return {
                 "game_dir": game_dir,
+                "iteration_dir": iteration_dir,
                 "updated_files": list(updated_files.keys()),
                 "conversation_log": conversation_log,
                 "mode": self.mode
