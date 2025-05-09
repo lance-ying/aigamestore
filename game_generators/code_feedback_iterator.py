@@ -178,22 +178,44 @@ Output the code with the same filenames in the following format without any addi
         """
         # Parse the game directory path
         game_dir_path = Path(game_dir)
-        input_game_folder_name = game_dir_path.name
+        input_folder_name = game_dir_path.name
         
-        # Create the MODE_updates directory
-        updates_dir = game_dir_path.parent / f"{self.mode}_updates"
-        updates_dir.mkdir(parents=True, exist_ok=True)
+        # Check if the input folder is already an iteration with format sample_0000_vibe_coding_1
+        # where the mode matches the current mode
+        base_folder_name = input_folder_name
+        current_iteration = 0
+        
+        # Pattern to look for: _mode_number at the end of the folder name
+        pattern = f"_{self.mode}_"
+        if pattern in input_folder_name:
+            parts = input_folder_name.split(pattern)
+            if len(parts) == 2 and parts[1].isdigit():
+                base_folder_name = parts[0]
+                current_iteration = int(parts[1])
+        
+        # Create the MODE_updates directory in the parent folder
+        parent_dir = game_dir_path.parent
+        # If already in a MODE_updates directory, use the same directory
+        if parent_dir.name == f"{self.mode}_updates":
+            updates_dir = parent_dir
+        else:
+            updates_dir = parent_dir / f"{self.mode}_updates"
+            updates_dir.mkdir(parents=True, exist_ok=True)
         
         # Determine the next iteration number
         existing_iterations = [
-            int(d.name.split('_')[-1])
+            int(d.name.split(f"_{self.mode}_")[1])
             for d in updates_dir.iterdir()
-            if d.is_dir() and d.name.startswith(f"{input_game_folder_name}_{self.mode}_")
+            if d.is_dir() and f"_{self.mode}_" in d.name and d.name.split(f"_{self.mode}_")[0] == base_folder_name
         ]
+        # Include current iteration if found
+        if current_iteration > 0:
+            existing_iterations.append(current_iteration)
+            
         next_iteration = max(existing_iterations, default=0) + 1
         
         # Create the new directory for this iteration
-        iteration_dir = updates_dir / f"{input_game_folder_name}_{self.mode}_{next_iteration}"
+        iteration_dir = updates_dir / f"{base_folder_name}_{self.mode}_{next_iteration}"
         iteration_dir.mkdir(parents=True, exist_ok=True)
         
         # Copy any needed files from the original directory
@@ -203,7 +225,7 @@ Output the code with the same filenames in the following format without any addi
                 with open(metadata_path, 'r') as f:
                     metadata = json.load(f)
         
-        # Read the original index.html if it exists
+        # Read the original index.html if it exists and copy it without modification
         html_code = ""
         html_path = game_dir_path / "index.html"
         if os.path.exists(html_path):
@@ -220,7 +242,7 @@ Output the code with the same filenames in the following format without any addi
                 f.write(content)
             js_filenames.append(filename)
         
-        # Save the HTML file
+        # Save the HTML file (copy it without modification)
         with open(iteration_dir / "index.html", 'w', encoding='utf-8') as f:
             f.write(html_code)
         
@@ -230,13 +252,24 @@ Output the code with the same filenames in the following format without any addi
         if metadata:
             # Update the existing metadata
             updated_metadata = metadata.copy()
-            # Add feedback information
+            
+            # Check if there's already iteration info and preserve previous iterations
+            if "iteration_info" in updated_metadata:
+                # If there's already an iterations list, append to it
+                if "iterations" not in updated_metadata:
+                    updated_metadata["iterations"] = []
+                # Move the existing iteration info to the iterations list
+                if updated_metadata["iteration_info"] not in updated_metadata["iterations"]:
+                    updated_metadata["iterations"].append(updated_metadata["iteration_info"])
+            
+            # Add new iteration info
             updated_metadata["iteration_info"] = {
                 "iteration_number": next_iteration,
                 "mode": self.mode,
                 "feedback": feedback,
                 "timestamp": timestamp
             }
+            
             # Update file list if needed
             if "game_files" in updated_metadata:
                 updated_metadata["game_files"]["javascript"] = js_filenames
@@ -250,6 +283,7 @@ Output the code with the same filenames in the following format without any addi
                     "feedback": feedback,
                     "timestamp": timestamp
                 },
+                "iterations": [],
                 "game_files": {
                     "html": "index.html",
                     "javascript": js_filenames,
@@ -298,7 +332,7 @@ Output the code with the same filenames in the following format without any addi
                 user_prompt=user_prompt,
                 system_prompt=system_prompt,
                 verbose=self.verbose,
-                temperature=0.2,  # Lower temperature for more consistent code fixes
+                temperature=0.3,  # Lower temperature for more consistent code fixes
                 top_p=0.9,
             )
             
@@ -372,7 +406,7 @@ Output the code with the same filenames in the following format without any addi
         """
         Get the vibe coding feedback
         """
-        vibe_coding_feedback = "Please improve the game while being consistent with the game description and controls. Do not add new game elements or change the game objective and design. It should still be following the same game description, characters, controls, action mappings, and have the same aesthetic design. Fix any bugs in the code. Output the code with the same filenames."
+        vibe_coding_feedback = "Please improve the game while being consistent with the game description and controls. Do not add new game elements or change the game objective and design. It should still be following the same game description, characters, controls, action mappings, and have the same aesthetic vibe. Output the code with the same filenames."
         return vibe_coding_feedback
 
     def get_output_instructions(self) -> str:
