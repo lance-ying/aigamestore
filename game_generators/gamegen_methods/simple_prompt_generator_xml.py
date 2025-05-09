@@ -203,7 +203,7 @@ Here is the input from the user:
 </html>
 </example_html>
 
-Output instructions:
+<output_instructions>
 Output the code plan and game files in this format with NO OTHER TEXT:
 
 <game_design>
@@ -241,5 +241,6 @@ HTML following the <example_html> template (output last):
 <code filename="index.html">
 ... (html code)
 </code>
+</output_instructions>
 """
         return output_format
