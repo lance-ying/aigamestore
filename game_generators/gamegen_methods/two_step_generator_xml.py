@@ -93,7 +93,7 @@ Implement an interesting game based on this game design:
                 user_prompt=game_code_prompt,
                 system_prompt=system_prompt_game_code,
                 verbose=self.verbose,
-                temperature=0.6,
+                temperature=0.8,
                 top_p=0.9,
             )
             # Prepare conversation log for saving
@@ -211,7 +211,7 @@ Implement an interesting game based on this game design:
 Output format:
 
 <game_design>
-... (game design <= 2000 words)
+... (game design in <= 1000 words)
 </game_design>
         """
         return output_format
@@ -223,7 +223,8 @@ Output format:
         output_format = """
 # HTML REFERENCE TEMPLATE
 <example_html>
-<!DOCTYPE html>
+
+<!doctype html>
 <html>
   <head>
     <meta charset="UTF-8" />
