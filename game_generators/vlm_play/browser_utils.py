@@ -54,7 +54,7 @@ class BrowserManager:
             
         # Setup browser
         playwright = await async_playwright().start()
-        browser = await playwright.firefox.launch(headless=True)
+        browser = await playwright.firefox.launch(headless=False)
         
         # Determine URL based on game path
         if os.path.isdir(self.game_path):
