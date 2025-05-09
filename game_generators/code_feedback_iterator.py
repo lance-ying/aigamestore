@@ -224,7 +224,7 @@ Output the code with the same filenames in the following format without any addi
         """
         Get the system prompt for code fixing
         """
-        system_prompt = open("system_prompts/code_feedback_iterator_instructions.txt", "r").read()
+        system_prompt = open("system_prompts/code_feedback_iterator_sysprompt.txt", "r").read()
         return system_prompt
     
     def get_user_instructions(self) -> str:
