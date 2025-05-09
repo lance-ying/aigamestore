@@ -332,7 +332,7 @@ Output the code with the same filenames in the following format without any addi
                 user_prompt=user_prompt,
                 system_prompt=system_prompt,
                 verbose=self.verbose,
-                temperature=0.3,  # Lower temperature for more consistent code fixes
+                temperature=0.25,  # Lower temperature for more consistent code fixes
                 top_p=0.9,
             )
             
