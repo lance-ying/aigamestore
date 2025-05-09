@@ -3,6 +3,7 @@ import json
 import os
 import glob
 import datetime
+import shutil
 from pathlib import Path
 
 from gamegen_methods.game_generator_base import GameGenerator
@@ -12,9 +13,10 @@ class CodeFeedbackIterator(GameGenerator):
     A class that iterates on game code based on feedback using LLM calls.
     """
 
-    def __init__(self, *args, mode: str = "guided_iteration", **kwargs):
+    def __init__(self, *args, mode: str = "guided_iteration", temperature: float = 0.25, **kwargs):
         super().__init__(*args, **kwargs)
         self.mode = mode
+        self.temperature = temperature
 
     def read_js_files(self, game_dir: str) -> List[Tuple[str, str]]:
         """
@@ -91,7 +93,11 @@ class CodeFeedbackIterator(GameGenerator):
         
         if self.mode == "vibe_coding":
             feedback = self.get_vibe_coding_feedback()
-
+        elif self.mode == "basic_test_fix":
+            # For basic_test_fix mode, use the provided feedback directly
+            # The feedback string is expected to come from another program
+            pass  # No need to modify the feedback
+        
         prompt = f"""
 <task>
 {feedback}
@@ -311,14 +317,14 @@ Output the code with the same filenames in the following format without any addi
         
         Args:
             game_dir: Path to the game directory
-            feedback: Feedback to improve the code (required for guided_iteration mode)
+            feedback: Feedback to improve the code (required for guided_iteration and basic_test_fix modes)
             
         Returns:
             Dictionary containing updated files and any intermediate outputs
         """
         try:
-            if self.mode == "guided_iteration" and not feedback:
-                raise ValueError("Feedback is required for guided_iteration mode")
+            if (self.mode == "guided_iteration" or self.mode == "basic_test_fix") and not feedback:
+                raise ValueError(f"Feedback is required for {self.mode} mode")
                 
             # Generate user prompt
             user_prompt = self.generate_user_prompt(game_dir, feedback)
@@ -327,12 +333,17 @@ Output the code with the same filenames in the following format without any addi
             # Call the LLM
             if self.verbose:
                 print(f"Calling LLM to improve code using {self.mode} mode...")
+            
+            # Determine temperature based on mode
+            temperature = self.temperature
+            if self.mode == "basic_test_fix":
+                temperature = 0.1  # Fixed lower temperature for basic_test_fix mode
                 
             response = self.model_api.call(
                 user_prompt=user_prompt,
                 system_prompt=system_prompt,
                 verbose=self.verbose,
-                temperature=0.25,  # Lower temperature for more consistent code fixes
+                temperature=temperature,
                 top_p=0.9,
             )
             
@@ -346,7 +357,40 @@ Output the code with the same filenames in the following format without any addi
             # Extract updated code from response
             updated_files = self.extract_updated_code(response)
             
-            # Save the updated code in both the original location and the iteration directory
+            # Special handling for basic_test_fix mode: backup original files before replacing
+            backup_folder = None
+            if self.mode == "basic_test_fix":
+                # Get the input folder name
+                game_dir_path = Path(game_dir)
+                input_folder_name = game_dir_path.name
+                
+                # Create backup folder for original code
+                backup_folder = os.path.join(game_dir, f"{input_folder_name}_original_code")
+                
+                # Remove the backup folder if it already exists
+                if os.path.exists(backup_folder):
+                    shutil.rmtree(backup_folder)
+                
+                # Create the backup folder
+                os.makedirs(backup_folder, exist_ok=True)
+                
+                if self.verbose:
+                    print(f"Backing up all original files and folders to {backup_folder}")
+                
+                # Copy all files and folders from the original directory to the backup folder
+                for item in os.listdir(game_dir):
+                    source = os.path.join(game_dir, item)
+                    # Skip the backup folder itself to avoid recursive copying
+                    if os.path.abspath(source) == os.path.abspath(backup_folder):
+                        continue
+                    destination = os.path.join(backup_folder, item)
+                    
+                    if os.path.isdir(source):
+                        shutil.copytree(source, destination, dirs_exist_ok=True)
+                    else:
+                        shutil.copy2(source, destination)
+            
+            # Save the updated code in the original location
             self.save_updated_code(game_dir, updated_files)
             
             # Read metadata from the original game directory
@@ -356,7 +400,7 @@ Output the code with the same filenames in the following format without any addi
                 with open(metadata_path, 'r') as f:
                     metadata = json.load(f)
             
-            # Save files in the new structure
+            # Save files in the new structure (for all modes)
             iteration_dir = self.save_file(
                 game_dir,
                 updated_files,
@@ -378,7 +422,8 @@ Output the code with the same filenames in the following format without any addi
                 "iteration_dir": iteration_dir,
                 "updated_files": list(updated_files.keys()),
                 "conversation_log": conversation_log,
-                "mode": self.mode
+                "mode": self.mode,
+                "backup_folder": backup_folder
             }
             
         except Exception as e:
@@ -406,7 +451,7 @@ Output the code with the same filenames in the following format without any addi
         """
         Get the vibe coding feedback
         """
-        vibe_coding_feedback = "Please improve the game while being consistent with the game description and controls. Do not add new game elements or change the game objective and design. It should still be following the same game description, characters, controls, action mappings, and have the same aesthetic vibe. Output the code with the same filenames."
+        vibe_coding_feedback = "Improve the game while being consistent with the game description and controls. Do not add new game elements or change the game objective and design. It should still be following the same game description, characters, controls, action mappings, and have the same aesthetic vibe. Ensure the game loads, start on pressing ENTER, and is still playable. Output the code with the same filenames."
         return vibe_coding_feedback
 
     def get_output_instructions(self) -> str:
