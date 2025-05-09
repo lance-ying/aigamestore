@@ -28,6 +28,7 @@ async def setup_browser(game_path):
         raise ImportError("Playwright is not installed or properly configured")
         
     game_path = os.path.abspath(game_path)
+    logging.info(f"Using absolute game path: {game_path}")
     
     # Setup browser
     playwright = await async_playwright().start()
@@ -37,6 +38,8 @@ async def setup_browser(game_path):
     if os.path.isdir(game_path):
         # Find HTML file
         html_files = list(Path(game_path).glob("*.html"))
+        logging.info(f"Found HTML files in directory: {[f.name for f in html_files]}")
+        
         if not html_files:
             raise FileNotFoundError(f"No HTML file found in {game_path}")
             
@@ -45,13 +48,16 @@ async def setup_browser(game_path):
             (f for f in html_files if f.name.lower() == "index.html"),
             html_files[0],
         )
+        logging.info(f"Selected HTML file: {html_file.name}")
         
         # Use local HTTP server to serve the directory
+        port = 8000
+        logging.info(f"Starting HTTP server on port {port} in directory {game_path}")
         server_process = await asyncio.create_subprocess_exec(
             "python",
             "-m",
             "http.server",
-            "8000",
+            str(port),
             cwd=game_path,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -59,12 +65,25 @@ async def setup_browser(game_path):
         
         # Wait for server to start
         await asyncio.sleep(1)
-        url = f"http://localhost:8000/{html_file.name}"
+        url = f"http://localhost:{port}/{html_file.name}"
+        logging.info(f"Game URL: {url}")
     else:
         # Direct file path
+        if not os.path.exists(game_path):
+            raise FileNotFoundError(f"File does not exist: {game_path}")
+            
+        if not game_path.lower().endswith('.html'):
+            raise ValueError(f"File is not an HTML file: {game_path}")
+
+        # Ensure the URL format is correct for local files
+        # Need to use 'file://' protocol correctly
         url = f"file://{game_path}"
-        server_process = None
+        if not url.startswith("file:///"):
+            url = "file:///" + game_path.lstrip('/')
         
+        logging.info(f"Game URL: {url}")
+        server_process = None
+    
     return browser, url, server_process
 
 async def record_gameplay(page, button_id, output_dir, duration=30):
@@ -183,12 +202,48 @@ async def main_async():
     
     args = parser.parse_args()
     
+    # Normalize the game path
+    game_path = args.game_path
+    if not os.path.isabs(game_path):
+        # Make relative paths absolute
+        game_path = os.path.abspath(game_path)
+    
+    logging.info(f"Using game path: {game_path}")
+    
+    # Check if the path exists
+    if not os.path.exists(game_path):
+        logging.error(f"Game path does not exist: {game_path}")
+        print(f"ERROR: The specified game path does not exist: {game_path}")
+        print(f"Current working directory is: {os.getcwd()}")
+        print("Please check the path and try again.")
+        return 1
+        
+    # If it's a directory, check that it has at least one HTML file
+    if os.path.isdir(game_path):
+        html_files = list(Path(game_path).glob("*.html"))
+        if not html_files:
+            logging.error(f"No HTML files found in directory: {game_path}")
+            print(f"ERROR: No HTML files found in: {game_path}")
+            print("Contents of the directory:")
+            for item in os.listdir(game_path):
+                print(f"  {item}")
+            return 1
+    elif not game_path.lower().endswith('.html'):
+        logging.error(f"File is not an HTML file: {game_path}")
+        print(f"ERROR: The specified file is not an HTML file: {game_path}")
+        return 1
+    
     # Setup output directory
     if args.output_dir:
         output_dir = args.output_dir
     else:
-        output_dir = os.path.join(args.game_path, "vlm_eval")
+        if os.path.isdir(game_path):
+            output_dir = os.path.join(game_path, "vlm_eval")
+        else:
+            output_dir = os.path.join(os.path.dirname(game_path), "vlm_eval")
+    
     os.makedirs(output_dir, exist_ok=True)
+    logging.info(f"Output directory: {output_dir}")
     
     results = {
         "success": False,
@@ -201,7 +256,7 @@ async def main_async():
     
     try:
         # Setup browser
-        browser, url, server_process = await setup_browser(args.game_path)
+        browser, url, server_process = await setup_browser(game_path)
         
         try:
             # Create page
@@ -209,11 +264,47 @@ async def main_async():
             page = await context.new_page()
             
             # Navigate to the page
-            await page.goto(url, wait_until="networkidle", timeout=15000)
-            logging.info(f"Page loaded: {args.game_path}")
+            try:
+                logging.info(f"Navigating to URL: {url}")
+                response = await page.goto(url, timeout=30000)
+                if not response:
+                    logging.error("No response received from the page navigation")
+                elif response.status >= 400:
+                    logging.error(f"Error loading page: HTTP {response.status}")
+                
+                logging.info(f"Page loaded with status: {response.status if response else 'Unknown'}")
+            except Exception as e:
+                logging.error(f"Error navigating to URL: {str(e)}")
+                # Try an alternative approach for local files
+                if url.startswith("file://"):
+                    try:
+                        # For local files, try with a different method
+                        logging.info("Trying alternative approach for local file...")
+                        await page.goto("about:blank")
+                        html_content = open(game_path.replace("file://", ""), "r").read()
+                        await page.set_content(html_content)
+                        logging.info("Successfully loaded page with alternative method")
+                    except Exception as alt_e:
+                        logging.error(f"Alternative approach also failed: {str(alt_e)}")
+                        raise
+                else:
+                    raise
+            
+            # Check if page has content
+            content = await page.content()
+            if not content or len(content) < 100:  # Arbitrary small size threshold
+                logging.warning("Page content seems empty or too small")
+            else:
+                logging.info(f"Page loaded with content length: {len(content)} characters")
+            
+            # Check for canvas
+            canvas_count = await page.evaluate("document.querySelectorAll('canvas').length")
+            logging.info(f"Found {canvas_count} canvas elements on the page")
+            if not canvas_count:
+                logging.warning("No canvas element found on the page, game might not be loaded properly")
             
             # Wait for page to stabilize
-            await page.wait_for_timeout(2000)
+            await page.wait_for_timeout(3000)  # Increased wait time
             
             # Press Enter to start the game
             logging.info("Pressing Enter to start the game")
@@ -296,7 +387,7 @@ async def main_async():
     
     # Print summary
     print("\n===== Game Recording Summary =====")
-    print(f"Game: {args.game_path}")
+    print(f"Game: {game_path}")
     if results["success"]:
         print(f"Status: Success - Recorded {len(results['video_paths'])} gameplay videos")
         

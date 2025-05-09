@@ -316,12 +316,12 @@ def main():
         results = run_verification(args.game_path, args.output)
         
         # Print stack traces if available and requested
-        if args.show_stack_traces and "feedback" in results:
-            for test_type in ["load_test", "interaction_test"]:
-                if test_type in results["feedback"] and "stack_traces" in results["feedback"][test_type] and results["feedback"][test_type]["stack_traces"]:
-                    print(f"\n--- Stack traces from {test_type} ---")
-                    for trace in results["feedback"][test_type]["stack_traces"]:
-                        print(f"{trace}\n")
+        # if args.show_stack_traces and "feedback" in results:
+        #     for test_type in ["load_test", "interaction_test"]:
+        #         if test_type in results["feedback"] and "stack_traces" in results["feedback"][test_type] and results["feedback"][test_type]["stack_traces"]:
+        #             # print(f"\n--- Stack traces from {test_type} ---")
+        #             for trace in results["feedback"][test_type]["stack_traces"]:
+        #                 print(f"{trace}\n")
         
         if not results["overall_result"]:
             # Generate feedback based on the verification results

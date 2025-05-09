@@ -16,12 +16,10 @@ import logging
 import re
 from typing import Dict, Any, List, Optional, Tuple
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 # Import game_check functions
 from game_check.tests.load_test import check_game_loads, report_load_test
 from game_check.tests.interaction_test import test_game_interaction, report_interaction_test
-from game_check.utils.helpers import save_test_results, find_html_file
+from game_check.utils.helpers import save_test_results
 
 
 class BasicTesting:
@@ -52,33 +50,17 @@ class BasicTesting:
         # Don't clean stack traces to preserve useful information
         if "    at " in msg or "\n    at " in msg:
             return msg
-        
-        # Preserve file paths for module imports and ES6 module errors
-        if any(pattern in msg.lower() for pattern in [
-            "import", "export", "module", "moduleevaluation", "node_modules"
-        ]):
-            return msg
             
         # Preserve error messages for undefined variables and other critical runtime errors
         if any(pattern.lower() in msg.lower() for pattern in [
             "is not defined", 
             "is undefined", 
             "cannot read property",
-            "cannot read properties of undefined",
-            "null is not an object",
-            "is not a function",
-            "undefined is not a function",
-            "cannot set property",
-            "cannot access",
-            "referenceerror",
-            "typeerror"
+            "cannot read properties of undefined"
         ]):
             # Don't clean file paths for runtime errors
             return msg
             
-        # For other messages, still preserve important file path information
-        # but clean up redundant or noisy parts
-        
         # Clean up extra spaces, tabs, etc.
         cleaned = re.sub(r'\s+', ' ', msg).strip()
         
@@ -86,84 +68,6 @@ class BasicTesting:
         cleaned = re.sub(r'\(\s*\)', '', cleaned).strip()
         
         return cleaned
-    
-    def extract_stack_trace(self, message: str) -> Optional[str]:
-        """
-        Extract stack trace from an error message.
-        
-        Args:
-            message: The error message that may contain a stack trace
-            
-        Returns:
-            The stack trace if present, otherwise None
-        """
-        if not isinstance(message, str):
-            return None
-            
-        # Check for common JavaScript runtime errors that might have stack traces
-        runtime_error_patterns = [
-            "is not defined",
-            "is undefined",
-            "cannot read property",
-            "cannot read properties of undefined",
-            "null is not an object",
-            "is not a function",
-            "undefined is not a function",
-            "cannot set property",
-            "cannot access",
-            "ReferenceError",
-            "TypeError",
-            "SyntaxError",
-            "URIError",
-            "EvalError",
-            "RangeError"
-        ]
-        
-        # If it's a runtime error, treat the entire message as potentially having a stack trace
-        for pattern in runtime_error_patterns:
-            if pattern.lower() in message.lower():
-                return message
-            
-        # Check for common stack trace patterns
-        if "    at " in message or "at " in message:
-            # Handle different stack trace formats
-            
-            # Handle ES6 module imports (which often have different stack trace formats)
-            # Look for patterns like "at ModuleEvaluation" or references to import/export
-            if any(pattern in message for pattern in [
-                "ModuleEvaluation", 
-                "import", 
-                "export", 
-                "module", 
-                "ModuleNamespaceObject",
-                "node_modules",
-                ".js:",
-                ".mjs:",
-                ".jsx:",
-                ".ts:",
-                ".tsx:",
-                "import(",
-                "import.",
-                "imported from",
-                "Failed to load module from",
-                "Dynamic import",
-                "Uncaught SyntaxError"
-            ]):
-                # Make sure we keep the full stack trace including ES6 module information
-                return message
-            
-            # Standard stack trace format
-            return message
-            
-        # Look for error locations that might indicate a stack trace
-        if re.search(r'at .+\.js:[0-9]+:[0-9]+', message) or re.search(r'[a-zA-Z0-9_\-./]+\.(js|mjs|jsx|ts|tsx):[0-9]+', message):
-            return message
-        
-        # Look for module import errors
-        if re.search(r'(Failed to|Error|Cannot) (load|resolve|find|import) (module|file|dependency) [\'"]([^\'"])+[\'"]', message, re.IGNORECASE):
-            return message
-                    
-        return None
     
     def get_logs(self, logs_dict: Dict[str, List[str]], test_name: str) -> Tuple[Dict[str, List[str]], bool]:
         """
@@ -194,207 +98,65 @@ class BasicTesting:
             "undefined_vars": []  # New category for undefined variable errors
         }
         
-        # First, process all error messages to ensure we capture their stack traces
-        if "error" in logs_dict and logs_dict["error"]:
-            error_with_traces = []
-            
-            for msg in logs_dict["error"]:
-                # Check if this is a JavaScript runtime error
-                error_msg = str(msg)
-                
-                # Look for common runtime error patterns
-                is_runtime_error = any(pattern in error_msg.lower() for pattern in [
-                    "is not defined",
-                    "is undefined",
-                    "cannot read property",
-                    "cannot read properties of undefined",
-                    "null is not an object",
-                    "is not a function",
-                    "undefined is not a function",
-                    "cannot set property",
-                    "cannot access",
-                    "referenceerror",
-                    "typeerror"
-                ])
-                
-                # Check specifically for undefined variable errors
-                is_undefined_var = any(pattern in error_msg.lower() for pattern in [
-                    "is not defined",
-                    "is undefined",
-                ])
-                
-                # Check for module import errors
-                is_module_error = any(pattern in error_msg.lower() for pattern in [
-                    "import",
-                    "export",
-                    "module",
-                    "cannot find module",
-                    "failed to load module",
-                    "error loading module",
-                    "cannot resolve module",
-                    "import(",
-                    "dynamic import"
-                ])
-                
-                # For runtime errors, add the full message as both an error and a stack trace
-                if is_runtime_error:
-                    # Keep the original message intact for stack traces
-                    feedback["errors"].append(error_msg)
-                    feedback["stack_traces"].append(error_msg)
-                    error_with_traces.append(error_msg)
-                    
-                    # Also add to specific error categories for better feedback
-                    if is_undefined_var:
-                        feedback["undefined_vars"].append(error_msg)
-                    if is_module_error:
-                        feedback["module_errors"].append(error_msg)
-        
-        # First, specifically check for syntax errors since they're often critical
-        syntax_errors = []
-        for log_type, messages in logs_dict.items():
-            for msg in messages:
-                lower_msg = str(msg).lower()
-                
-                # Check for module import errors first (to categorize separately)
-                is_module_error = any(pattern in lower_msg for pattern in [
-                    "import",
-                    "export",
-                    "module",
-                    "cannot find module",
-                    "failed to load module",
-                    "error loading module",
-                    "cannot resolve module"
-                ])
-                
-                if is_module_error:
-                    feedback["module_errors"].append(msg)
-                    # Also add to stack traces to preserve full information
-                    feedback["stack_traces"].append(msg)
-                    
-                # Check for various syntax error patterns
-                if any(pattern in lower_msg for pattern in [
-                    "syntaxerror", 
-                    "syntax error", 
-                    "unexpected token", 
-                    "is an invalid identifier",
-                    "invalid identifier", 
-                    "unexpected identifier", 
-                    "unexpected end of input"
-                ]):
-                    # Keep the full message for syntax errors
-                    syntax_errors.append(msg)
-                    feedback["syntax_errors"].append(msg)
-                    feedback["errors"].append(msg)
-                    
-                    # Extract and preserve stack trace
-                    stack_trace = self.extract_stack_trace(msg)
-                    if stack_trace:
-                        feedback["stack_traces"].append(stack_trace)
-                    
-        # If we found syntax errors, print them first and prominently
-        if syntax_errors:
-            print(f"\n{test_name} SYNTAX ERRORS (critical):")
-            for msg in syntax_errors:
-                print(f"  - 🚫 {msg}")
-            has_logs = True
-        
-        # Process regular errors
+        # Process errors
         if "error" in logs_dict and logs_dict["error"]:
             print(f"\n{test_name} ERRORS:")
             for msg in logs_dict["error"]:
-                # Skip errors we've already logged as syntax errors or runtime errors
-                if msg in error_with_traces:
-                    continue
-                    
-                lower_msg = str(msg).lower()
-                is_syntax_error = any(pattern in lower_msg for pattern in [
-                    "syntaxerror", 
-                    "syntax error", 
-                    "unexpected token", 
-                    "is an invalid identifier",
-                    "invalid identifier"
-                ])
-                
-                if not is_syntax_error:
-                    # Keep the full message for better debugging
-                    print(f"  - {msg}")
+                # For undefined variable errors, format them concisely
+                if any(pattern in str(msg).lower() for pattern in ["is not defined", "is undefined"]):
+                    # Try to extract variable name
+                    var_match = re.search(r'([a-zA-Z0-9_$]+) is (not defined|undefined)', str(msg).lower())
+                    if var_match:
+                        var_name = var_match.group(1)
+                        # Try to extract source file
+                        source_file = None
+                        if "[source:" in str(msg).lower():
+                            source_match = re.search(r'\[source: (.*?)\]', str(msg).lower())
+                            if source_match:
+                                source_file = source_match.group(1)
+                        
+                        # Format concise error message
+                        concise_msg = f"Page error: {var_name} is undefined"
+                        if source_file:
+                            concise_msg += f" [Source: {source_file}]"
+                        
+                        feedback["errors"].append(concise_msg)
+                        feedback["undefined_vars"].append(concise_msg)
+                        print(f"  - {concise_msg}")
+                    else:
+                        # Fallback to original message
+                        feedback["errors"].append(msg)
+                        print(f"  - {msg}")
+                else:
+                    # For other errors, use original message
                     feedback["errors"].append(msg)
-                    
-                    # Extract and preserve stack trace
-                    stack_trace = self.extract_stack_trace(msg)
-                    if stack_trace:
-                        feedback["stack_traces"].append(stack_trace)
-                        print(f"    Stack trace: {stack_trace}")
+                    print(f"  - {msg}")
             has_logs = True
             
         # Process warnings
         if "warning" in logs_dict and logs_dict["warning"]:
             print(f"\n{test_name} WARNINGS:")
             for msg in logs_dict["warning"]:
-                # Keep the full message for warnings
-                print(f"  - {msg}")
                 feedback["warnings"].append(msg)
-                
-                # Extract and preserve stack trace for warnings too
-                stack_trace = self.extract_stack_trace(msg)
-                if stack_trace:
-                    feedback["stack_traces"].append(stack_trace)
-                    print(f"    Stack trace: {stack_trace}")
+                print(f"  - {msg}")
             has_logs = True
             
         # Process info logs
         if "info" in logs_dict and logs_dict["info"]:
             print(f"\n{test_name} INFO:")
             for msg in logs_dict["info"]:
-                # For info logs, we can clean the message
                 cleaned_msg = self.clean_message(msg)
-                print(f"  - {cleaned_msg}")
                 feedback["info"].append(cleaned_msg)
-                
-                # Check if the info message contains useful stack trace info
-                stack_trace = self.extract_stack_trace(msg)
-                if stack_trace:
-                    feedback["stack_traces"].append(stack_trace)
+                print(f"  - {cleaned_msg}")
             has_logs = True
             
         # Process regular logs
         if "log" in logs_dict and logs_dict["log"]:
             print(f"\n{test_name} LOGS:")
             for msg in logs_dict["log"]:
-                # For regular logs, check if they contain error information
-                has_error = "error" in str(msg).lower()
-                
-                if has_error:
-                    # If log contains error info, preserve the full message
-                    print(f"  - {msg}")
-                    feedback["logs"].append(msg)
-                    feedback["errors"].append(msg)
-                    
-                    # Extract and preserve stack trace from logs
-                    stack_trace = self.extract_stack_trace(msg)
-                    if stack_trace:
-                        feedback["stack_traces"].append(stack_trace)
-                        print(f"    Stack trace: {stack_trace}")
-                else:
-                    # Clean non-error logs
-                    cleaned_msg = self.clean_message(msg)
-                    print(f"  - {cleaned_msg}")
-                    feedback["logs"].append(cleaned_msg)
-            has_logs = True
-            
-        # Process other logs if present
-        if "other" in logs_dict and logs_dict["other"]:
-            print(f"\n{test_name} OTHER:")
-            for msg in logs_dict["other"]:
-                # Keep other logs intact in case they have useful debugging info
-                print(f"  - {msg}")
-                feedback["other"].append(msg)
-                
-                # Check for stack traces in other logs too
-                stack_trace = self.extract_stack_trace(msg)
-                if stack_trace:
-                    feedback["stack_traces"].append(stack_trace)
-                    print(f"    Stack trace: {stack_trace}")
+                cleaned_msg = self.clean_message(msg)
+                feedback["logs"].append(cleaned_msg)
+                print(f"  - {cleaned_msg}")
             has_logs = True
             
         return feedback, has_logs
@@ -500,15 +262,6 @@ class BasicTesting:
         interaction_logs = results["interaction_test"].get("console_logs", {})
         interaction_feedback, interaction_logs_printed = self.get_logs(interaction_logs, "INTERACTION TEST")
         results["feedback"]["interaction_test"] = interaction_feedback
-        
-        # Combine all feedback for easy access
-        results["feedback"]["all_errors"] = load_feedback.get("errors", []) + interaction_feedback.get("errors", [])
-        results["feedback"]["all_warnings"] = load_feedback.get("warnings", []) + interaction_feedback.get("warnings", [])
-        results["feedback"]["all_logs"] = (
-            load_feedback.get("logs", []) + interaction_feedback.get("logs", []) +
-            load_feedback.get("info", []) + interaction_feedback.get("info", []) +
-            load_feedback.get("other", []) + interaction_feedback.get("other", [])
-        )
         
         # If no logs were printed, inform the user
         if not load_logs_printed and not interaction_logs_printed:

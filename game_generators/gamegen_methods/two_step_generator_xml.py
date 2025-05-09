@@ -81,10 +81,9 @@ Implement an interesting game based on this game design:
                 user_prompt=game_design_prompt,
                 system_prompt=system_prompt_game_design,
                 verbose=self.verbose,
-                temperature=1.0,
+                temperature=0.9,
                 top_p=0.9,
             )
-
             game_design = self.extract_game_design(response_game_design)
 
             game_code_prompt = self.generate_code_prompt(game_design)

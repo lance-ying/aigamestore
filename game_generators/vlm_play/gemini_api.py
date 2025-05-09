@@ -2,6 +2,8 @@ import os
 import logging
 import json
 from typing import Dict, Any, Optional, List
+import sys
+sys.path.append("../")
 
 import google.generativeai as genai
 from google.generativeai.types import content_types as types
