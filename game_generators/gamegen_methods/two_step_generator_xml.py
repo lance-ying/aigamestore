@@ -28,9 +28,11 @@ class TwoStepXMLGenerator(GameGenerator):
 
         output_format = self.get_game_design_output_format()
         task = f"""
-Here is the game concept from the user:
 <task>
-<game_concept>{game_concept}</game_concept>
+Write an interesting game design based on the game concept input from the user. Describe it well enough for the game developer to implement it.
+<game_concept>
+{game_concept}
+</game_concept>
 </task>"""
         prompt = instructions + task + output_format
         return prompt
@@ -45,9 +47,11 @@ Here is the game concept from the user:
             instructions = self.get_non_ecs_code_instructions()
         output_format = self.get_code_output_format()
         task = f"""
-Generate the game code for the following game design:
 <task>
-<game_design>{game_design}</game_design>
+Implement an interesting game based on this game design:
+<game_design>
+{game_design}
+</game_design>
 </task>
 """
         prompt = instructions + task + output_format

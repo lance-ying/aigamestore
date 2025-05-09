@@ -23,19 +23,21 @@ class SimplePromptXMLGenerator(GameGenerator):
             
         Returns:
             User prompt for the LLM
-        """        
+        """
+        output_format = self.get_output_format()
         if self.use_baseline:
             instructions = self.get_baseline_instructions()
+            output_format = self.get_baseline_output_format()
         elif self.use_ecs:
             instructions = self.get_ecs_instructions()
         else:
             instructions = self.get_non_ecs_instructions()
-
-        output_format = self.get_output_format()
         task = f"""
-Here is the input from the user:
 <task>
-<game_concept>{game_concept}</game_concept>
+Implement an interesting game based on the game concept input from the user.
+<game_concept>
+{game_concept}
+</game_concept>
 </task>"""
         prompt = instructions + task + output_format
         return prompt
@@ -252,6 +254,51 @@ Output the code plan and game files in this format with NO OTHER TEXT:
 </AI_TEST_1>
 // Add tests (<=5) as needed along with the expected outcome, strategy, and testing
 </ai_testing>
+
+For the javascript files:
+<code filename="{{name}}.{{extension}}">
+... (code)
+</code>
+
+HTML following the <example_html> template (output last):
+<code filename="index.html">
+... (html code)
+</code>
+</output_instructions>
+"""
+        return output_format
+    
+    def get_baseline_output_format(self) -> str:
+        """
+        Get the output format for the baseline architecture
+        """
+        output_format = """
+
+# HTML REFERENCE TEMPLATE
+<example_html>
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; } /* active button for current control mode */
+    </style>
+  </head>
+  <body>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</example_html>
+
+<output_instructions>
+Output the game files in this format with NO OTHER TEXT:
 
 For the javascript files:
 <code filename="{{name}}.{{extension}}">
