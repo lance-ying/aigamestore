@@ -89,7 +89,7 @@ Generate the game code for the following game design:
                 user_prompt=game_code_prompt,
                 system_prompt=system_prompt_game_code,
                 verbose=self.verbose,
-                temperature=0.25,
+                temperature=0.2,
                 top_p=0.9,
             )
             # Prepare conversation log for saving

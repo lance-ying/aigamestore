@@ -57,8 +57,7 @@ Here is the input from the user:
                 user_prompt=user_prompt,
                 system_prompt=system_prompt,
                 verbose=self.verbose,
-                temperature=0.5,
-                top_p=0.9,
+                temperature=0.9,
             )
             
             # Prepare conversation log for saving
@@ -74,7 +73,9 @@ Here is the input from the user:
             game_controls = self.extract_game_controls(response)
             game_plan =  self.extract_game_plan(response)
             html_code = self.extract_code_block(response, "html") or ""
-            
+            game_design = self.extract_game_design(response)
+
+
             ai_testing_list = self.extract_ai_testing(response)
             # Get JavaScript files
             js_code_dict = self.extract_code_block(response, "javascript")
@@ -102,6 +103,7 @@ Here is the input from the user:
                 game_controls=game_controls,
                 game_concept=game_concept,
                 game_plan=game_plan,
+                game_design=game_design,
                 concept_path=concept_path,
                 genre=genre,
                 intermediate_outputs={"full_response": response},
@@ -204,6 +206,15 @@ Here is the input from the user:
 Output instructions:
 Output the code plan and game files in this format with NO OTHER TEXT:
 
+<game_design>
+<game_elements_from_game_concept>
+... (List of game elements like characters, objects, mechanics, etc. from the game concept)
+</game_elements_from_game_concept>
+<game_elements_beyond_game_concept>
+... (List of game elements like characters, objects, mechanics, etc. beyond the concept. Make it interesting, consistent with the concept, and feasible to implement in code.)
+</game_elements_beyond_game_concept>
+</game_design>
+
 <game_description>
 ... (game description to introduce the game to the user in maximum 3 sentences. Keep it short and concise.)
 </game_description>
@@ -212,17 +223,13 @@ Output the code plan and game files in this format with NO OTHER TEXT:
 ... (game controls as a list of key bindings, Key: Action)
 </game_controls>
 
-<code_plan>
-... (code plan in maximum 5 sentences)
-</code_plan>
-
 <ai_testing>
-<{ai_test_name_WIN}>
-... (write in 1 sentence "What are you testing?" , start with "Testing:")
-... (write in 1 sentence "How are you testing it?" , start with "Strategy:")
-... (write in 1 sentence "What is the expected outcome?" , start with "Expected outcome:")
-</{ai_test_name_WIN}>
-// Add more ai_test_TESTNAME as needed where TESTNAME is the name of the test (WIN, MECHANICS, etc.)
+<{AI_TEST_NAME}>
+<testing>(write in 1-2 sentences "What are you testing?")</testing>
+<strategy>(write in 1-2 sentences "How are you testing it?" )</strategy>
+<expected_outcome>(write in 1-2 sentences "What is the expected outcome?")</expected_outcome>
+</{AI_TEST_NAME}>
+// Add more ai_testname as needed where TEST_NAME is the name of the test (WIN, TEST_MECHANICS, etc.)
 </ai_testing>
 
 For the javascript files:

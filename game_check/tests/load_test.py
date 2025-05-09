@@ -35,6 +35,24 @@ async def check_game_loads_async(game_path: str) -> Dict[str, Any]:
     async with GameBrowserController(game_path) as browser:
         results = await browser.check_game_loads()
     
+    # Add console error message if test failed and not already present
+    if not results.get("test_result", False) and not "console_error_message" in results:
+        # Check all console logs for error messages
+        error_messages = []
+        if "console_logs" in results:
+            for msg_type, messages in results["console_logs"].items():
+                for msg in messages:
+                    if "error" in msg.lower():
+                        error_messages.append(msg)
+        elif "console_errors" in results:
+            # Fallback to legacy field
+            for err in results["console_errors"]:
+                if "error" in err.lower():
+                    error_messages.append(err)
+                    
+        if error_messages:
+            results["console_error_message"] = "\n".join(error_messages)
+    
     # Save results
     save_test_results(results, game_path, "load_test")
     

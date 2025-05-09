@@ -14,7 +14,7 @@ logging.basicConfig(
 
 # Try importing playwright for headless browser analysis
 try:
-    from playwright.async_api import async_playwright, Page
+    from playwright.async_api import async_playwright, Page, ConsoleMessage
 
     HEADLESS_BROWSER_ENABLED = True
 except ImportError:
@@ -124,8 +124,29 @@ class GameBrowserController:
             url = f"http://localhost:{self.port}"
             logging.info(f"Using HTTP server URL: {url}")
             
-        return await self._run_load_check(url)
-    
+        load_results = await self._run_load_check(url)
+        
+        # Format the results to be more consistent with interaction test
+        final_results = {
+            "test_result": load_results["test_result"],
+            "load_test": {
+                "test_result": load_results["test_result"],
+                "canvas_found": load_results["canvas_found"],
+                "canvas_count": load_results.get("canvas_count", 0),
+                "page_title": load_results.get("page_title", "")
+            },
+            "console_logs": load_results["console_logs"],
+            "console_errors": load_results["console_errors"],  # For backwards compatibility
+            "screenshots": load_results["screenshots"],
+            "error": load_results.get("error", None)
+        }
+        
+        # Add console error message if present
+        if "console_error_message" in load_results:
+            final_results["console_error_message"] = load_results["console_error_message"]
+            
+        return final_results
+            
     async def _run_load_check(self, url: str) -> Dict[str, Any]:
         """
         Loads the game and checks for console errors.
@@ -138,7 +159,15 @@ class GameBrowserController:
         """
         result = {
             "test_result": False,
-            "console_errors": [],
+            "console_logs": {
+                "error": [],
+                "warning": [],
+                "info": [],
+                "log": [],
+                "debug": [],
+                "other": []
+            },
+            "console_errors": [],  # Keep for backwards compatibility
             "canvas_found": False,
             "screenshots": []
         }
@@ -154,8 +183,26 @@ class GameBrowserController:
             # Capture console logs and errors
             page = await context.new_page()
             
-            # Listen for console messages
-            page.on("console", lambda msg: result["console_errors"].append(f"{msg.type}: {msg.text}") if msg.type == "error" else None)
+            # Listen for all console messages
+            async def handle_console(msg: ConsoleMessage):
+                msg_type = msg.type.lower()
+                msg_text = f"{msg.text}"
+                
+                # Store in the appropriate category
+                if msg_type in result["console_logs"]:
+                    result["console_logs"][msg_type].append(msg_text)
+                else:
+                    result["console_logs"]["other"].append(f"{msg_type}: {msg_text}")
+                
+                # Also store errors in the legacy field for backwards compatibility
+                if msg_type == "error":
+                    result["console_errors"].append(f"error: {msg_text}")
+                
+                # Log to Python console for debugging
+                log_level = logging.INFO if msg_type != "error" else logging.ERROR
+                logging.log(log_level, f"Browser console {msg_type}: {msg_text}")
+            
+            page.on("console", handle_console)
             
             try:
                 # Navigate to the page
@@ -175,8 +222,30 @@ class GameBrowserController:
                 result["canvas_found"] = canvas_count > 0
                 result["canvas_count"] = canvas_count
                 
-                # Test is successful if there are no console errors and at least one canvas is found
-                result["test_result"] = len([err for err in result["console_errors"] if "error" in err.lower()]) == 0 and result["canvas_found"]
+                # Look for "error" in any console message type
+                has_error_messages = False
+                error_messages = []
+                
+                for msg_type, messages in result["console_logs"].items():
+                    for msg in messages:
+                        if "error" in msg.lower():
+                            has_error_messages = True
+                            error_messages.append(msg)
+                
+                # Test passes if there are no errors and at least one canvas is found
+                result["test_result"] = not has_error_messages and result["canvas_found"]
+                
+                # If test failed due to console errors, include them in a dedicated field
+                if not result["test_result"] and has_error_messages:
+                    result["console_error_message"] = "\n".join(error_messages)
+                    result["error"] = f"Game load test failed: {len(error_messages)} error messages detected in console."
+                    
+                    # Log the errors
+                    logging.error("Console errors during game load:")
+                    for err in error_messages:
+                        logging.error(f"  - {err}")
+                elif not result["test_result"] and not result["canvas_found"]:
+                    result["error"] = "Game load test failed: No canvas element found."
                 
                 # Add additional information
                 result["page_title"] = await page.title()
@@ -269,10 +338,24 @@ class GameBrowserController:
                     "max_diff_score": max(interaction_results["gameplay_test"]["diff_scores"]) if interaction_results["gameplay_test"]["diff_scores"] else 0
                 }
             },
-            "console_errors": interaction_results["console_errors"],
+            "console_logs": interaction_results["console_logs"],
+            "console_errors": interaction_results["console_errors"],  # For backwards compatibility
             "screenshots": interaction_results["screenshots"],
             "error": interaction_results.get("error", None)
         }
+        
+        # Add console error message if present
+        if "console_error_message" in interaction_results:
+            final_results["console_error_message"] = interaction_results["console_error_message"]
+        
+        # Add key presses with errors information if available
+        if "key_presses_with_errors" in interaction_results:
+            final_results["key_presses_with_errors"] = interaction_results["key_presses_with_errors"]
+        
+        # Add game phase information to game_start_test results if available
+        if "game_phase_after_enter" in interaction_results["game_start_test"]:
+            final_results["interaction_test"]["game_start_test"]["game_phase_after_enter"] = interaction_results["game_start_test"]["game_phase_after_enter"]
+            final_results["interaction_test"]["game_start_test"]["game_phase_check_passed"] = interaction_results["game_start_test"]["game_phase_check_passed"]
         
         # Add the detailed results if available
         if "random_actions" in interaction_results:
@@ -292,7 +375,15 @@ class GameBrowserController:
         """
         result = {
             "test_result": False,
-            "console_errors": [],
+            "console_logs": {
+                "error": [],
+                "warning": [],
+                "info": [],
+                "log": [],
+                "debug": [],
+                "other": []
+            },
+            "console_errors": [],  # Keep for backwards compatibility
             "visual_changes": [],
             "key_tests": [],
             "screenshots": [],
@@ -317,8 +408,26 @@ class GameBrowserController:
             context = await browser.new_context()
             page = await context.new_page()
             
-            # Listen for console messages
-            page.on("console", lambda msg: result["console_errors"].append(f"{msg.type}: {msg.text}") if msg.type == "error" else None)
+            # Listen for all console messages
+            async def handle_console(msg: ConsoleMessage):
+                msg_type = msg.type.lower()
+                msg_text = f"{msg.text}"
+                
+                # Store in the appropriate category
+                if msg_type in result["console_logs"]:
+                    result["console_logs"][msg_type].append(msg_text)
+                else:
+                    result["console_logs"]["other"].append(f"{msg_type}: {msg_text}")
+                
+                # Also store errors in the legacy field for backwards compatibility
+                if msg_type == "error":
+                    result["console_errors"].append(f"error: {msg_text}")
+                
+                # Log to Python console for debugging
+                log_level = logging.INFO if msg_type != "error" else logging.ERROR
+                logging.log(log_level, f"Browser console {msg_type}: {msg_text}")
+            
+            page.on("console", handle_console)
             
             try:
                 # Navigate to the page and wait for network to be idle
@@ -347,9 +456,44 @@ class GameBrowserController:
                 # --- GAME START TEST ---
                 logging.info("Running game start test (pressing Enter)")
                 
+                # Store logs count before Enter press to check for new ones
+                errors_before_enter = len(result["console_logs"]["error"])
+                
                 # Start game with ENTER key
                 start_test = await self._test_key_press(page, "Enter", "start_game", screenshots_dir)
                 result["key_tests"].append(start_test)
+                
+                # Capture new console errors that occurred during Enter press
+                enter_console_errors = result["console_logs"]["error"][errors_before_enter:]
+                
+                # Check for error messages during game start
+                enter_error_messages = []
+                for msg in enter_console_errors:
+                    if "error" in msg.lower():
+                        enter_error_messages.append(msg)
+                
+                # Check for error messages in any console logs (not just error type)
+                for msg_type, messages in result["console_logs"].items():
+                    # Skip the error type as we already processed it above
+                    if msg_type == "error":
+                        continue
+                    # Get only messages added after pressing Enter
+                    new_messages = messages[errors_before_enter:] if len(messages) > errors_before_enter else []
+                    for msg in new_messages:
+                        if "error" in msg.lower():
+                            enter_error_messages.append(msg)
+                
+                # If we found any errors during Enter press, fail the test immediately
+                if enter_error_messages:
+                    result["game_start_test"]["test_result"] = False
+                    result["game_start_test"]["no_error_messages"] = False
+                    result["error"] = f"Game start test failed: {len(enter_error_messages)} error messages detected in console after pressing ENTER."
+                    result["console_error_message"] = "\n".join(enter_error_messages)
+                    logging.error("Console errors during game start:")
+                    for err in enter_error_messages:
+                        logging.error(f"  - {err}")
+                    result["test_result"] = False
+                    return result
                 
                 game_phase_after_enter = None
                 game_phase_check_passed = False
@@ -365,21 +509,42 @@ class GameBrowserController:
                     
                     # Check gamePhase after pressing Enter
                     try:
-                        game_state = await page.evaluate("getGameState()")
-                        if game_state and isinstance(game_state, dict):
-                            game_phase_after_enter = game_state.get("gamePhase")
-                            if game_phase_after_enter == "PLAYING":
-                                game_phase_check_passed = True
-                            else:
-                                logging.warning(f"Game phase after Enter is '{game_phase_after_enter}', expected 'PLAYING'")
+                        # First check if getGameState function exists
+                        has_game_state_function = await page.evaluate("""() => {
+                            return typeof getGameState === 'function';
+                        }""")
+                        
+                        if not has_game_state_function:
+                            logging.error("getGameState function not found in the game")
+                            game_phase_check_passed = False
+                            game_phase_after_enter = "ERROR: getGameState function not found"
                         else:
-                            logging.warning(f"getGameState() did not return a valid dictionary. Returned: {game_state}")
+                            game_state = await page.evaluate("getGameState()")
+                            if game_state and isinstance(game_state, dict):
+                                game_phase_after_enter = game_state.get("gamePhase")
+                                if game_phase_after_enter == "PLAYING":
+                                    game_phase_check_passed = True
+                                else:
+                                    logging.warning(f"Game phase after Enter is '{game_phase_after_enter}', expected 'PLAYING'")
+                            else:
+                                logging.warning(f"getGameState() did not return a valid dictionary. Returned: {game_state}")
+                                game_phase_after_enter = f"ERROR: Invalid gameState: {game_state}"
                     except Exception as e:
                         logging.error(f"Error evaluating getGameState(): {e}")
+                        game_phase_after_enter = f"ERROR: {str(e)}"
 
                     result["game_start_test"]["game_phase_after_enter"] = game_phase_after_enter
                     result["game_start_test"]["game_phase_check_passed"] = game_phase_check_passed
-                    result["game_start_test"]["test_result"] = (diff_score > 0.001) and game_phase_check_passed
+                    
+                    # Game start test passes if:
+                    # 1. Visual changes were detected (diff_score > 0.001)
+                    # 2. Game phase is correct 
+                    # 3. No error messages appeared (already checked above)
+                    result["game_start_test"]["no_error_messages"] = True  # We already checked for errors earlier
+                    result["game_start_test"]["test_result"] = (
+                        (diff_score > 0.001) and 
+                        game_phase_check_passed
+                    )
                     
                     if diff_score > 0.001:
                         result["visual_changes"].append({
@@ -390,7 +555,7 @@ class GameBrowserController:
                     # Update previous screenshot for next comparison
                     prev_screenshot = start_test.get("screenshot")
                 
-                # Check if game started successfully
+                # Update the conditional that checks if game started successfully
                 if not result["game_start_test"]["test_result"]:
                     error_message = "Game start test failed:"
                     if not (diff_score > 0.001):
@@ -398,6 +563,7 @@ class GameBrowserController:
                     if not game_phase_check_passed:
                         error_message += f" gamePhase was '{game_phase_after_enter}', expected 'PLAYING'."
                     result["error"] = error_message.strip()
+                    
                     result["test_result"] = False
                     return result
                 
@@ -414,7 +580,7 @@ class GameBrowserController:
                     logging.info(f"Random action {i+1}/16: Pressing key {random_key}")
                     
                     # Store previous errors count to check for new ones
-                    errors_before = len(result["console_errors"])
+                    errors_before = len(result["console_logs"]["error"])
                     
                     # Test key press
                     key_test = await self._test_key_press(page, random_key, f"random_{i}_{random_key}", screenshots_dir)
@@ -438,7 +604,7 @@ class GameBrowserController:
                         prev_screenshot = key_test.get("screenshot")
                     
                     # Check for new console errors
-                    new_errors = result["console_errors"][errors_before:]
+                    new_errors = result["console_logs"]["error"][errors_before:]
                     has_new_errors = len(new_errors) > 0
                     
                     # Add to action results
@@ -450,6 +616,20 @@ class GameBrowserController:
                         "new_errors": new_errors,
                         "has_errors": has_new_errors
                     }
+                    
+                    # If this key press generated console errors, mark it as failed and log the errors
+                    if has_new_errors:
+                        error_messages = []
+                        for msg in new_errors:
+                            if "error" in msg.lower():
+                                error_messages.append(msg)
+                        
+                        if error_messages:
+                            random_action_info["test_result"] = False
+                            random_action_info["console_error_message"] = "\n".join(error_messages)
+                            logging.error(f"Console errors detected during key press '{random_key}':")
+                            for err in error_messages:
+                                logging.error(f"  - {err}")
                     
                     random_action_results.append(random_action_info)
                     
@@ -466,17 +646,48 @@ class GameBrowserController:
                 if not result["gameplay_test"]["test_result"]:
                     result["error"] = "Gameplay test failed: No key presses produced visual changes during gameplay"
                     result["test_result"] = False
-                    return result
+                    
+                    # Include console error messages if available
+                    if result["console_logs"]["error"]:
+                        result["console_error_message"] = "\n".join(result["console_logs"]["error"])
                 
-                # Check for console errors
-                no_console_errors = len([err for err in result["console_errors"] if "error" in err.lower()]) == 0
+                # Check for console errors in the entire test
+                console_errors = []
+                for msg_type, messages in result["console_logs"].items():
+                    for msg in messages:
+                        if "error" in msg.lower():
+                            console_errors.append(msg)
                 
-                # Overall test passes if both game start and gameplay tests pass and there are no console errors
-                result["test_result"] = (
-                    no_console_errors and 
-                    result["game_start_test"]["test_result"] and 
-                    result["gameplay_test"]["test_result"]
-                )
+                no_console_errors = len(console_errors) == 0
+                
+                # Find key presses that generated errors
+                key_presses_with_errors = [action for action in random_action_results if action.get("has_errors", False)]
+                
+                # If there were any console errors during key presses, mark the test as failed
+                if key_presses_with_errors:
+                    result["error"] = f"Console errors detected during {len(key_presses_with_errors)} key press(es)"
+                    result["test_result"] = False
+                    
+                    # Include all console error messages
+                    if console_errors:
+                        result["console_error_message"] = "\n".join(console_errors)
+                    
+                    # Add information about key presses that caused errors
+                    result["key_presses_with_errors"] = [
+                        {"key": action["key"], "index": action["action_index"]} 
+                        for action in key_presses_with_errors
+                    ]
+                else:
+                    # Overall test passes if both game start and gameplay tests pass and there are no console errors
+                    result["test_result"] = (
+                        no_console_errors and 
+                        result["game_start_test"]["test_result"] and 
+                        result["gameplay_test"]["test_result"]
+                    )
+                
+                    # If test failed due to console errors, include them in dedicated field
+                    if not result["test_result"] and not no_console_errors:
+                        result["console_error_message"] = "\n".join(console_errors)
                 
                 # Add summary information
                 result["summary"] = {
