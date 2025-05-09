@@ -10,6 +10,10 @@ class SimplePromptXMLGenerator(GameGenerator):
     to generate both the game design and code implementation.
     """
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.use_baseline = kwargs.get('use_baseline', False)
+
     def generate_user_prompt(self, game_concept: str) -> str:
         """
         Generate user prompt from game concept for the simple prompt method
@@ -20,7 +24,9 @@ class SimplePromptXMLGenerator(GameGenerator):
         Returns:
             User prompt for the LLM
         """        
-        if self.use_ecs:
+        if self.use_baseline:
+            instructions = self.get_baseline_instructions()
+        elif self.use_ecs:
             instructions = self.get_ecs_instructions()
         else:
             instructions = self.get_non_ecs_instructions()
@@ -53,12 +59,19 @@ Here is the input from the user:
             if self.verbose:
                 print(f"Calling LLM with game concept: {game_concept[:100]}...")
                 
-            response = self.model_api.call(
-                user_prompt=user_prompt,
-                system_prompt=system_prompt,
-                verbose=self.verbose,
-                temperature=0.9,
-            )
+            if self.use_baseline:
+                response = self.model_api.call(
+                    user_prompt=user_prompt,
+                    verbose=self.verbose,
+                    temperature=0.9,
+                )
+            else:
+                response = self.model_api.call(
+                    user_prompt=user_prompt,
+                    system_prompt=system_prompt,
+                    verbose=self.verbose,
+                    temperature=0.9,
+                )
             
             # Prepare conversation log for saving
             conversation_log = [
@@ -109,6 +122,7 @@ Here is the input from the user:
                 intermediate_outputs={"full_response": response},
                 conversation_log=conversation_log,
                 use_ecs=self.use_ecs,
+                use_baseline=self.use_baseline,
             )
             
             if self.verbose:
@@ -154,6 +168,13 @@ Here is the input from the user:
         Get the instructions for the non-ECS architecture
         """
         instructions = open("game_generators/system_prompts/single_prompt_instructions_noecs.txt", "r").read()
+        return instructions
+    
+    def get_baseline_instructions(self) -> str:
+        """
+        Get the instructions for the baseline architecture
+        """
+        instructions = open("game_generators/system_prompts/baseline_sysprompt.txt", "r").read()
         return instructions
     
     def get_system_prompt(self) -> str:

@@ -17,6 +17,7 @@ class GameGenerator(ABC):
         temperature: float = 0.7,
         verbose: bool = False,
         use_ecs: bool = True,
+        use_baseline: bool = False,
         game_design_system_prompt_path: str = "game_generators/system_prompts/game_design.txt",
         game_design_withai_system_prompt_path: str = "game_generators/system_prompts/game_design_withai.txt",
         code_generation_system_prompt_path: str = "game_generators/system_prompts/code_generation.txt",
@@ -31,6 +32,8 @@ class GameGenerator(ABC):
         Args:
             model_name: Name of the LLM model to use
             verbose: Whether to print verbose output
+            use_ecs: Whether to use ECS architecture for game generation
+            use_baseline: Whether to use baseline architecture for game generation
             game_design_system_prompt_path: Path to the game design system prompt
             code_generation_system_prompt_path: Path to the code generation system prompt
             code_generation_nonecs_system_prompt_path: Path to the code generation system prompt for non-ECS games
@@ -39,6 +42,7 @@ class GameGenerator(ABC):
         self.verbose = verbose
         self.temperature = temperature
         self.use_ecs = use_ecs
+        self.use_baseline = use_baseline
         self.generate_with_ai = generate_with_ai
         # Load system prompts
         with open(game_design_system_prompt_path, "r") as f:
@@ -247,6 +251,7 @@ class GameGenerator(ABC):
         intermediate_outputs: Optional[Dict[str, Any]] = None,
         conversation_log: Optional[List[Dict[str, str]]] = None,
         use_ecs: bool = True,
+        use_baseline: bool = False,
     ) -> Path:
         """
         Save generated game files and metadata
@@ -262,6 +267,7 @@ class GameGenerator(ABC):
             intermediate_outputs: Intermediate outputs to save as logs
             conversation_log: Log of prompts and responses
             use_ecs: Whether to use ECS architecture for game generation
+            use_baseline: Whether to use baseline architecture for game generation
 
         Returns:
             Path to the saved game directory
@@ -276,7 +282,15 @@ class GameGenerator(ABC):
             else:
                 with_ai = ""
 
-            if use_ecs:
+            if use_baseline:
+                game_dir = (
+                    Path("games")
+                    / self.model_name.split(":")[1]
+                    / "Baseline"
+                    / concept_path.split("/")[-1]
+                    .replace(".json", "")
+                )
+            elif use_ecs:
                 game_dir = (
                     Path("games")
                     / self.model_name.split(":")[1]

@@ -66,6 +66,12 @@ def parse_args():
         help="Generate game with AI",
     )
     
+    parser.add_argument(
+        "--baseline",
+        action="store_true",
+        help="Use baseline architecture for game generation",
+    )
+    
     return parser.parse_args()
 
 
@@ -143,6 +149,7 @@ def main():
                 model_name=args.model,
                 verbose=args.verbose,
                 use_ecs=not args.no_ecs,
+                use_baseline=args.baseline,
             )
         elif args.method == "template_based":
             # Will be implemented in the future
