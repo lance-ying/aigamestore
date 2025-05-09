@@ -100,6 +100,7 @@ class CodeFeedbackIterator(GameGenerator):
         
         prompt = f"""
 <task>
+The task is to improve the game code based on the feedback.
 {feedback}
 </task>
 
@@ -116,7 +117,7 @@ class CodeFeedbackIterator(GameGenerator):
 </current_code>
 
 <output_instructions>
-Output the code with the same filenames in the following format without any additional text:
+Output the code with the same filenames in the following format with NO :
 
 <code filename="filename.js">
 // Improved code here
@@ -432,7 +433,14 @@ Output the code with the same filenames in the following format without any addi
                 import traceback
                 traceback.print_exc()
             raise
-    
+
+    def get_input_instructions(self) -> str:
+        """
+        Get the input instructions for code fixing
+        """
+        input_instructions = open("system_prompts/code_feedback_iterator_input_instructions.txt", "r").read()
+        return input_instructions
+
     def get_system_prompt(self) -> str:
         """
         Get the system prompt for code fixing
@@ -453,10 +461,3 @@ Output the code with the same filenames in the following format without any addi
         """
         vibe_coding_feedback = "Improve the game while being consistent with the game description and controls. Do not add new game elements or change the game objective and design. It should still be following the same game description, characters, controls, action mappings, and have the same aesthetic vibe. Ensure the game loads, start on pressing ENTER, and is still playable. Output the code with the same filenames."
         return vibe_coding_feedback
-
-    def get_output_instructions(self) -> str:
-        """
-        Get the output instructions for code fixing
-        """
-        output_instructions = open("system_prompts/code_feedback_iterator_output_instructions.txt", "r").read()
-        return output_instructions

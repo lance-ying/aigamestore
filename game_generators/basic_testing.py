@@ -85,16 +85,55 @@ class BasicTesting:
             "warnings": [],
             "info": [],
             "logs": [],
-            "other": []
+            "other": [],
+            "syntax_errors": []  # Special category for syntax errors
         }
         
-        # Process errors first as they're most important
+        # First, specifically check for syntax errors since they're often critical
+        syntax_errors = []
+        for log_type, messages in logs_dict.items():
+            for msg in messages:
+                lower_msg = str(msg).lower()
+                # Check for various syntax error patterns
+                if any(pattern in lower_msg for pattern in [
+                    "syntaxerror", 
+                    "syntax error", 
+                    "unexpected token", 
+                    "is an invalid identifier",
+                    "invalid identifier", 
+                    "unexpected identifier", 
+                    "unexpected end of input"
+                ]):
+                    cleaned_msg = self.clean_message(msg)
+                    syntax_errors.append(cleaned_msg)
+                    feedback["syntax_errors"].append(cleaned_msg)
+                    feedback["errors"].append(cleaned_msg)  # Also add to general errors
+                    
+        # If we found syntax errors, print them first and prominently
+        if syntax_errors:
+            print(f"\n{test_name} SYNTAX ERRORS (critical):")
+            for msg in syntax_errors:
+                print(f"  - 🚫 {msg}")
+            has_logs = True
+        
+        # Process regular errors
         if "error" in logs_dict and logs_dict["error"]:
             print(f"\n{test_name} ERRORS:")
             for msg in logs_dict["error"]:
-                cleaned_msg = self.clean_message(msg)
-                print(f"  - {cleaned_msg}")
-                feedback["errors"].append(cleaned_msg)
+                # Skip errors we've already logged as syntax errors
+                lower_msg = str(msg).lower()
+                is_syntax_error = any(pattern in lower_msg for pattern in [
+                    "syntaxerror", 
+                    "syntax error", 
+                    "unexpected token", 
+                    "is an invalid identifier",
+                    "invalid identifier"
+                ])
+                
+                if not is_syntax_error:
+                    cleaned_msg = self.clean_message(msg)
+                    print(f"  - {cleaned_msg}")
+                    feedback["errors"].append(cleaned_msg)
             has_logs = True
             
         # Process warnings
@@ -278,7 +317,7 @@ class BasicTesting:
             Dictionary with aggregated feedback by category
         """
         # Define the categories to aggregate
-        categories = ["errors", "warnings", "info", "logs", "other"]
+        categories = ["errors", "warnings", "info", "logs", "other", "syntax_errors"]
         
         # Create a dictionary to store unique messages by category
         aggregated_feedback = {category: set() for category in categories}
@@ -286,7 +325,7 @@ class BasicTesting:
         # Collect unique messages from both tests
         for test_type in ["load_test", "interaction_test"]:
             for category in categories:
-                if category in results["feedback"][test_type]:
+                if test_type in results["feedback"] and category in results["feedback"][test_type]:
                     for item in results["feedback"][test_type][category]:
                         if item:  # Skip empty messages
                             aggregated_feedback[category].add(item)
@@ -303,8 +342,17 @@ class BasicTesting:
         """
         print("\nAggregated Test Feedback:")
         
-        for category, items in aggregated_feedback.items():
-            if items:
-                print(f"\n{category.upper()}:")
-                for item in items:
-                    print(f"- {item}") 
+        # Print syntax errors first since they're critical
+        if "syntax_errors" in aggregated_feedback and aggregated_feedback["syntax_errors"]:
+            print("\n🚫 SYNTAX ERRORS (critical):")
+            for item in aggregated_feedback["syntax_errors"]:
+                print(f"- {item}")
+        
+        # Print other categories
+        categories_order = ["errors", "warnings", "info", "logs", "other"]
+        for category in categories_order:
+            if category in aggregated_feedback and aggregated_feedback[category]:
+                if category != "syntax_errors":  # Skip syntax errors as they're already printed
+                    print(f"\n{category.upper()}:")
+                    for item in aggregated_feedback[category]:
+                        print(f"- {item}") 

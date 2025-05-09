@@ -168,6 +168,10 @@ class GameBrowserController:
                 "other": []
             },
             "console_errors": [],  # Keep for backwards compatibility
+            "js_exceptions": [],   # For JS syntax errors and exceptions
+            "network_errors": [],  # For tracking network request failures
+            "resource_errors": [], # For tracking resource loading failures
+            "parse_errors": [],    # For syntax/parse errors in scripts
             "canvas_found": False,
             "screenshots": []
         }
@@ -180,8 +184,78 @@ class GameBrowserController:
             browser = await p.firefox.launch(headless=True)
             context = await browser.new_context()
             
+            # Special script to detect syntax errors early
+            detect_script = """
+            // Log any existing errors
+            window.onload = function() {
+                if (window.syntaxErrors) {
+                    console.error('Syntax errors detected:', window.syntaxErrors);
+                }
+            };
+            
+            // Track all script elements to check for syntax errors
+            const originalCreateElement = document.createElement;
+            document.createElement = function() {
+                const element = originalCreateElement.apply(document, arguments);
+                if (arguments[0].toLowerCase() === 'script') {
+                    // Monitor script elements
+                    element.addEventListener('error', function(e) {
+                        console.error('Script error:', e);
+                    });
+                }
+                return element;
+            };
+            
+            // Global error handler for syntax errors
+            window.syntaxErrors = [];
+            window.addEventListener('error', function(event) {
+                if (event.error instanceof SyntaxError) {
+                    console.error('SyntaxError intercepted:', event.message);
+                    window.syntaxErrors.push(event.message);
+                }
+            }, true);
+            """
+            
+            # Add a special route to intercept HTML and inject early error detection
+            async def intercept_html(route, request):
+                response = await route.fetch()
+                content_type = response.headers.get('content-type', '')
+                
+                if 'text/html' in content_type:
+                    # Get original HTML content
+                    html = await response.text()
+                    
+                    # Insert our script as early as possible to detect syntax errors
+                    head_pos = html.find('<head>')
+                    if head_pos >= 0:
+                        html = html[:head_pos+6] + f'<script>{detect_script}</script>' + html[head_pos+6:]
+                    else:
+                        # If no head tag, try to insert at the start of body or html
+                        body_pos = html.find('<body>')
+                        if body_pos >= 0:
+                            html = html[:body_pos+6] + f'<script>{detect_script}</script>' + html[body_pos+6:]
+                        else:
+                            html_pos = html.find('<html>')
+                            if html_pos >= 0:
+                                html = html[:html_pos+6] + f'<script>{detect_script}</script>' + html[html_pos+6:]
+                    
+                    await route.fulfill(
+                        status=response.status,
+                        headers={**response.headers, 'content-length': str(len(html))},
+                        body=html
+                    )
+                else:
+                    await route.continue_()
+            
+            # Apply the interception to all HTML pages
+            await context.route('**/*.html', intercept_html)
+            await context.route(url, intercept_html)
+            
             # Capture console logs and errors
             page = await context.new_page()
+            
+            # Enable verbose logging for all browser operations
+            page.on("console", lambda msg: logging.info(f"CONSOLE: {msg.type} - {msg.text}"))
             
             # Listen for all console messages
             async def handle_console(msg: ConsoleMessage):
@@ -198,19 +272,227 @@ class GameBrowserController:
                 if msg_type == "error":
                     result["console_errors"].append(f"error: {msg_text}")
                 
+                # Check for specific error patterns
+                lower_text = msg_text.lower()
+                
+                # Debug log for all error messages to ensure we're seeing them
+                if msg_type == "error" or "error" in lower_text:
+                    logging.error(f"RAW BROWSER ERROR: {msg_text}")
+                
+                # Check for network errors
+                if "failed to load resource" in lower_text or "net::" in lower_text:
+                    result["network_errors"].append(msg_text)
+                    
+                # Improved syntax error detection with more patterns
+                syntax_error_patterns = [
+                    "parseerror", 
+                    "syntax error", 
+                    "syntaxerror", 
+                    "unexpected token", 
+                    "is an invalid identifier",
+                    "invalid identifier", 
+                    "unexpected identifier", 
+                    "unexpected end of input", 
+                    "missing )", 
+                    "missing }", 
+                    "missing ]"
+                ]
+                
+                if any(pattern in lower_text for pattern in syntax_error_patterns):
+                    result["parse_errors"].append(msg_text)
+                    logging.error(f"Syntax error detected: {msg_text}")
+                    
+                # Explicit check for "false is an invalid identifier" error
+                if "false is an invalid identifier" in msg_text:
+                    error_msg = "Uncaught SyntaxError: false is an invalid identifier"
+                    result["parse_errors"].append(error_msg)
+                    result["js_exceptions"].append(error_msg)
+                    result["console_errors"].append(error_msg)
+                    result["console_logs"]["error"].append(error_msg)
+                    logging.error(f"Special syntax error detected: {error_msg}")
+                    
+                # Source map errors
+                if "source map" in lower_text and "error" in lower_text:
+                    result["parse_errors"].append(msg_text)
+                
                 # Log to Python console for debugging
                 log_level = logging.INFO if msg_type != "error" else logging.ERROR
                 logging.log(log_level, f"Browser console {msg_type}: {msg_text}")
             
+            # Listen for page errors (including syntax errors)
+            async def handle_page_error(error):
+                error_msg = f"Page error: {error}"
+                result["js_exceptions"].append(error_msg)
+                logging.error(f"RAW PAGE ERROR: {error}")
+                
+                # Add to console_errors for backwards compatibility
+                result["console_errors"].append(error_msg)
+                
+                # Add to console_logs error category
+                result["console_logs"]["error"].append(error_msg)
+                
+                # Check if it's a parse/syntax error
+                error_text = str(error).lower()
+                syntax_error_patterns = [
+                    "syntaxerror", 
+                    "parseerror", 
+                    "syntax error", 
+                    "parse error", 
+                    "unexpected token", 
+                    "is an invalid identifier",
+                    "invalid identifier", 
+                    "unexpected identifier", 
+                    "unexpected end of input"
+                ]
+                
+                if any(pattern in error_text for pattern in syntax_error_patterns):
+                    result["parse_errors"].append(error_msg)
+                    logging.error(f"Syntax error detected in page: {error}")
+                    
+                    # For SyntaxError, add a cleaner message to parse_errors
+                    if "syntaxerror" in error_text:
+                        # Try to extract just the syntax error message without stack trace
+                        error_str = str(error)
+                        if ": " in error_str:
+                            error_message = error_str.split(": ", 1)[1].split("\n")[0].strip()
+                            result["parse_errors"].append(f"Uncaught SyntaxError: {error_message}")
+                            logging.error(f"Uncaught SyntaxError: {error_message}")
+                
+                # Explicit check for "false is an invalid identifier" error
+                error_str = str(error)
+                if "false is an invalid identifier" in error_str:
+                    error_msg = "Uncaught SyntaxError: false is an invalid identifier"
+                    result["parse_errors"].append(error_msg)
+                    logging.error(f"Special syntax error detected in page: {error_msg}")
+            
+            # Listen for uncaught exceptions
+            async def handle_exception(exception):
+                error_msg = f"Uncaught exception: {exception}"
+                result["js_exceptions"].append(error_msg)
+                logging.error(error_msg)
+                
+                # Add to console_errors for backwards compatibility
+                result["console_errors"].append(error_msg)
+                
+                # Add to console_logs error category
+                result["console_logs"]["error"].append(error_msg)
+                
+                # Check if it's our target syntax error
+                if "false is an invalid identifier" in str(exception):
+                    error_msg = "Uncaught SyntaxError: false is an invalid identifier"
+                    result["parse_errors"].append(error_msg)
+                    logging.error(f"Found syntax error in exception: {error_msg}")
+            
+            # Listen for failed network requests
+            async def handle_request_failed(request):
+                url = request.url
+                error_msg = f"Network request failed: {url}"
+                result["network_errors"].append(error_msg)
+                logging.error(error_msg)
+                
+                # Add to console_errors for backwards compatibility
+                result["console_errors"].append(error_msg)
+                
+                # Also add to console logs for consistency
+                result["console_logs"]["error"].append(error_msg)
+            
+            # Listen for resource loading errors (CSS, images, etc.)
+            async def handle_response(response):
+                if response.status >= 400:  # HTTP error codes
+                    url = response.url
+                    status = response.status
+                    error_msg = f"Resource loading error: {url} (Status: {status})"
+                    result["resource_errors"].append(error_msg)
+                    logging.error(error_msg)
+                    
+                    # Add to console errors
+                    result["console_errors"].append(error_msg)
+                    result["console_logs"]["error"].append(error_msg)
+            
+            # Set up all event listeners
             page.on("console", handle_console)
+            page.on("pageerror", handle_page_error)
+            page.on("crash", lambda: logging.error("Page crashed"))
+            page.on("requestfailed", handle_request_failed)
+            page.on("response", handle_response)
+            
+            # Custom error extraction function
+            await page.evaluate("""() => {
+                // Report all syntax errors immediately
+                window.checkForSyntaxErrors = function() {
+                    try {
+                        // Try to find any syntax errors in inline scripts
+                        const scripts = document.querySelectorAll('script:not([src])');
+                        scripts.forEach((script, index) => {
+                            try {
+                                // Try to compile the script content to check for syntax errors
+                                new Function(script.textContent);
+                            } catch (e) {
+                                if (e instanceof SyntaxError) {
+                                    console.error(`Syntax error in inline script #${index}: ${e.message}`);
+                                    // Check specifically for "false is an invalid identifier"
+                                    if (e.message.includes("false is an invalid identifier")) {
+                                        console.error("Detected critical syntax error: false is an invalid identifier");
+                                    }
+                                }
+                            }
+                        });
+                    } catch (e) {
+                        console.error("Error checking for syntax errors:", e);
+                    }
+                };
+                
+                // Run syntax check after a short delay
+                setTimeout(window.checkForSyntaxErrors, 500);
+                
+                // Add additional error listeners
+                window.addEventListener('error', (event) => {
+                    console.error('JS Error:', event.message, 'at', event.filename, 'line', event.lineno);
+                    
+                    // Special handling for syntax errors
+                    if (event.error instanceof SyntaxError) {
+                        console.error('SyntaxError details:', event.error.message);
+                        
+                        // Special check for our target error
+                        if (event.error.message.includes("false is an invalid identifier")) {
+                            console.error("Detected 'false is an invalid identifier' error");
+                        }
+                    }
+                });
+            }""")
             
             try:
                 # Navigate to the page
                 await page.goto(url, wait_until="networkidle", timeout=3000)
                 logging.info(f"Page loaded: {url}")
                 
-                # Wait for the page to be fully loaded
+                # Wait for the page to be fully loaded and run our custom error checker
                 await page.wait_for_timeout(2000)
+                
+                # Direct evaluation to check for specific syntax error
+                try:
+                    await page.evaluate("""() => {
+                        // Run syntax check again
+                        if (window.checkForSyntaxErrors) {
+                            window.checkForSyntaxErrors();
+                        }
+                        
+                        // Check page source for specific error patterns
+                        const pageSource = document.documentElement.outerHTML;
+                        if (pageSource.includes("false is an invalid identifier")) {
+                            console.error("Found 'false is an invalid identifier' in page source");
+                        }
+                    }""")
+                except Exception as e:
+                    logging.error(f"Error running syntax check script: {e}")
+                    # If we got a syntax error here, it's likely what we're looking for
+                    if "false is an invalid identifier" in str(e):
+                        error_msg = "Uncaught SyntaxError: false is an invalid identifier"
+                        result["parse_errors"].append(error_msg)
+                        result["js_exceptions"].append(error_msg)
+                        result["console_errors"].append(error_msg)
+                        result["console_logs"]["error"].append(error_msg)
+                        logging.error(f"Syntax error confirmed: {error_msg}")
                 
                 # Take initial screenshot
                 screenshot_path = await self._save_screenshot(page, screenshots_dir, "state_initial_load.png")
@@ -222,23 +504,68 @@ class GameBrowserController:
                 result["canvas_found"] = canvas_count > 0
                 result["canvas_count"] = canvas_count
                 
+                # Get page content and manually check for syntax errors
+                page_content = await page.content()
+                if "false is an invalid identifier" in page_content:
+                    error_msg = "Uncaught SyntaxError: false is an invalid identifier"
+                    result["parse_errors"].append(error_msg)
+                    result["js_exceptions"].append(error_msg)
+                    result["console_errors"].append(error_msg)
+                    result["console_logs"]["error"].append(error_msg)
+                    logging.error(f"Found syntax error in page content: {error_msg}")
+                
                 # Look for "error" in any console message type
                 has_error_messages = False
                 error_messages = []
                 
+                # Log all console messages to make debugging easier
+                logging.info("All console messages during game load:")
                 for msg_type, messages in result["console_logs"].items():
                     for msg in messages:
+                        logging.info(f"  - [{msg_type}] {msg}")
                         if "error" in msg.lower():
                             has_error_messages = True
                             error_messages.append(msg)
                 
+                # Log JavaScript exceptions separately
+                if result["js_exceptions"]:
+                    logging.error("JavaScript syntax errors and exceptions:")
+                    for exception in result["js_exceptions"]:
+                        logging.error(f"  - {exception}")
+                        has_error_messages = True
+                        error_messages.append(exception)
+                
+                # Log network errors separately
+                if result["network_errors"]:
+                    logging.error("Network request errors:")
+                    for error in result["network_errors"]:
+                        logging.error(f"  - {error}")
+                        has_error_messages = True
+                        error_messages.append(error)
+                
+                # Log resource errors separately
+                if result["resource_errors"]:
+                    logging.error("Resource loading errors:")
+                    for error in result["resource_errors"]:
+                        logging.error(f"  - {error}")
+                        has_error_messages = True
+                        error_messages.append(error)
+                
+                # Log parse errors separately
+                if result["parse_errors"]:
+                    logging.error("JavaScript parse/syntax errors:")
+                    for error in result["parse_errors"]:
+                        logging.error(f"  - {error}")
+                        has_error_messages = True
+                        error_messages.append(error)
+                
                 # Test passes if there are no errors and at least one canvas is found
                 result["test_result"] = not has_error_messages and result["canvas_found"]
                 
-                # If test failed due to console errors, include them in a dedicated field
+                # If test failed due to console errors or JS exceptions, include them in a dedicated field
                 if not result["test_result"] and has_error_messages:
                     result["console_error_message"] = "\n".join(error_messages)
-                    result["error"] = f"Game load test failed: {len(error_messages)} error messages detected in console."
+                    result["error"] = f"Game did not load on the webpage: {len(error_messages)} error messages detected in console."
                     
                     # Log the errors
                     logging.error("Console errors during game load:")
@@ -253,6 +580,15 @@ class GameBrowserController:
             except Exception as e:
                 logging.error(f"Error in browser interaction: {e}")
                 result["error"] = f"Browser interaction error: {e}"
+                
+                # Check if the exception is related to our target syntax error
+                if "false is an invalid identifier" in str(e):
+                    error_msg = "Uncaught SyntaxError: false is an invalid identifier"
+                    result["parse_errors"].append(error_msg)
+                    result["js_exceptions"].append(error_msg)
+                    result["console_errors"].append(error_msg)
+                    result["console_logs"]["error"].append(error_msg)
+                    logging.error(f"Syntax error found in exception: {error_msg}")
             finally:
                 await browser.close()
                 
@@ -384,6 +720,10 @@ class GameBrowserController:
                 "other": []
             },
             "console_errors": [],  # Keep for backwards compatibility
+            "js_exceptions": [],   # For JS syntax errors and exceptions
+            "network_errors": [],  # For tracking network request failures
+            "resource_errors": [], # For tracking resource loading failures
+            "parse_errors": [],    # For syntax/parse errors in scripts
             "visual_changes": [],
             "key_tests": [],
             "screenshots": [],
@@ -423,14 +763,143 @@ class GameBrowserController:
                 if msg_type == "error":
                     result["console_errors"].append(f"error: {msg_text}")
                 
+                # Check for specific error patterns
+                lower_text = msg_text.lower()
+                
+                # Check for network errors
+                if "failed to load resource" in lower_text or "net::" in lower_text:
+                    result["network_errors"].append(msg_text)
+                
+                # Improved syntax error detection with more patterns
+                syntax_error_patterns = [
+                    "parseerror", 
+                    "syntax error", 
+                    "syntaxerror", 
+                    "unexpected token", 
+                    "is an invalid identifier",
+                    "invalid identifier", 
+                    "unexpected identifier", 
+                    "unexpected end of input", 
+                    "missing )", 
+                    "missing }", 
+                    "missing ]"
+                ]
+                
+                if any(pattern in lower_text for pattern in syntax_error_patterns):
+                    result["parse_errors"].append(msg_text)
+                    logging.error(f"Syntax error detected: {msg_text}")
+                
+                # Source map errors
+                if "source map" in lower_text and "error" in lower_text:
+                    result["parse_errors"].append(msg_text)
+                
                 # Log to Python console for debugging
                 log_level = logging.INFO if msg_type != "error" else logging.ERROR
                 logging.log(log_level, f"Browser console {msg_type}: {msg_text}")
             
+            # Listen for page errors (including syntax errors)
+            async def handle_page_error(error):
+                error_msg = f"Page error: {error}"
+                result["js_exceptions"].append(error_msg)
+                logging.error(error_msg)
+                
+                # Add to console_errors for backwards compatibility
+                result["console_errors"].append(error_msg)
+                
+                # Add to console_logs error category
+                result["console_logs"]["error"].append(error_msg)
+            
+            # Listen for uncaught exceptions
+            async def handle_exception(exception):
+                error_msg = f"Uncaught exception: {exception}"
+                result["js_exceptions"].append(error_msg)
+                logging.error(error_msg)
+                
+                # Add to console_errors for backwards compatibility
+                result["console_errors"].append(error_msg)
+                
+                # Add to console_logs error category
+                result["console_logs"]["error"].append(error_msg)
+            
+            # Listen for failed network requests
+            async def handle_request_failed(request):
+                url = request.url
+                error_msg = f"Network request failed: {url}"
+                result["network_errors"].append(error_msg)
+                logging.error(error_msg)
+                
+                # Add to console_errors for backwards compatibility
+                result["console_errors"].append(error_msg)
+                
+                # Also add to console logs for consistency
+                result["console_logs"]["error"].append(error_msg)
+            
+            # Listen for resource loading errors (CSS, images, etc.)
+            async def handle_response(response):
+                if response.status >= 400:  # HTTP error codes
+                    url = response.url
+                    status = response.status
+                    error_msg = f"Resource loading error: {url} (Status: {status})"
+                    result["resource_errors"].append(error_msg)
+                    logging.error(error_msg)
+                    
+                    # Add to console errors
+                    result["console_errors"].append(error_msg)
+                    result["console_logs"]["error"].append(error_msg)
+            
+            # Set up all event listeners
             page.on("console", handle_console)
+            page.on("pageerror", handle_page_error)
+            page.on("crash", lambda: logging.error("Page crashed"))
+            page.on("requestfailed", handle_request_failed)
+            page.on("response", handle_response)
+            
+            # Add handler for uncaught exceptions via page.evaluate
+            await page.evaluate("""() => {
+                window.addEventListener('error', (event) => {
+                    // Specifically handle syntax errors with more details
+                    if (event.error instanceof SyntaxError) {
+                        console.error('JS SyntaxError:', event.message, 'at', event.filename, 'line', event.lineno);
+                    } else {
+                        // General error handling
+                        console.error('JS Error:', event.message, 'at', event.filename, 'line', event.lineno);
+                    }
+                });
+                
+                // Add handler for unhandled promise rejections
+                window.addEventListener('unhandledrejection', (event) => {
+                    console.error('Unhandled Promise Rejection:', event.reason);
+                });
+                
+                // Track resource loading errors
+                const originalCreateElement = document.createElement;
+                document.createElement = function() {
+                    const element = originalCreateElement.apply(document, arguments);
+                    
+                    if (arguments[0].toLowerCase() === 'script') {
+                        element.addEventListener('error', (e) => {
+                            console.error('Script load error:', e.target.src);
+                        });
+                    }
+                    
+                    if (arguments[0].toLowerCase() === 'link' && element.rel === 'stylesheet') {
+                        element.addEventListener('error', (e) => {
+                            console.error('Stylesheet load error:', e.target.href);
+                        });
+                    }
+                    
+                    if (arguments[0].toLowerCase() === 'img') {
+                        element.addEventListener('error', (e) => {
+                            console.error('Image load error:', e.target.src);
+                        });
+                    }
+                    
+                    return element;
+                };
+            }""")
             
             try:
-                # Navigate to the page and wait for network to be idle
+                # Navigate to the page
                 await page.goto(url, wait_until="networkidle", timeout=3000)
                 logging.info(f"Page loaded: {url}")
                 
@@ -458,19 +927,62 @@ class GameBrowserController:
                 
                 # Store logs count before Enter press to check for new ones
                 errors_before_enter = len(result["console_logs"]["error"])
+                exceptions_before_enter = len(result["js_exceptions"])
+                network_errors_before = len(result["network_errors"])
+                resource_errors_before = len(result["resource_errors"])
+                parse_errors_before = len(result["parse_errors"])
                 
                 # Start game with ENTER key
                 start_test = await self._test_key_press(page, "Enter", "start_game", screenshots_dir)
                 result["key_tests"].append(start_test)
                 
-                # Capture new console errors that occurred during Enter press
+                # Capture new errors that occurred during Enter press
                 enter_console_errors = result["console_logs"]["error"][errors_before_enter:]
+                enter_js_exceptions = result["js_exceptions"][exceptions_before_enter:]
+                enter_network_errors = result["network_errors"][network_errors_before:]
+                enter_resource_errors = result["resource_errors"][resource_errors_before:]
+                enter_parse_errors = result["parse_errors"][parse_errors_before:]
+                
+                # Log all console messages during game start
+                logging.info("All console messages during game start (Enter press):")
+                for msg_type, messages in result["console_logs"].items():
+                    # Get only messages added after pressing Enter
+                    new_messages = messages[errors_before_enter:] if len(messages) > errors_before_enter else []
+                    for msg in new_messages:
+                        logging.info(f"  - [{msg_type}] {msg}")
+                
+                # Log all error types separately
+                if enter_js_exceptions:
+                    logging.error("JavaScript errors during game start (Enter press):")
+                    for exception in enter_js_exceptions:
+                        logging.error(f"  - {exception}")
+                
+                if enter_network_errors:
+                    logging.error("Network errors during game start (Enter press):")
+                    for error in enter_network_errors:
+                        logging.error(f"  - {error}")
+                        
+                if enter_resource_errors:
+                    logging.error("Resource errors during game start (Enter press):")
+                    for error in enter_resource_errors:
+                        logging.error(f"  - {error}")
+                        
+                if enter_parse_errors:
+                    logging.error("Parse errors during game start (Enter press):")
+                    for error in enter_parse_errors:
+                        logging.error(f"  - {error}")
                 
                 # Check for error messages during game start
                 enter_error_messages = []
                 for msg in enter_console_errors:
                     if "error" in msg.lower():
                         enter_error_messages.append(msg)
+                
+                # Also add all specialized error types to error messages
+                enter_error_messages.extend(enter_js_exceptions)
+                enter_error_messages.extend(enter_network_errors)
+                enter_error_messages.extend(enter_resource_errors)
+                enter_error_messages.extend(enter_parse_errors)
                 
                 # Check for error messages in any console logs (not just error type)
                 for msg_type, messages in result["console_logs"].items():
@@ -557,7 +1069,7 @@ class GameBrowserController:
                 
                 # Update the conditional that checks if game started successfully
                 if not result["game_start_test"]["test_result"]:
-                    error_message = "Game start test failed:"
+                    error_message = "Game did not start on pressing ENTER."
                     if not (diff_score > 0.001):
                         error_message += " No visual change detected after pressing ENTER."
                     if not game_phase_check_passed:
@@ -581,6 +1093,10 @@ class GameBrowserController:
                     
                     # Store previous errors count to check for new ones
                     errors_before = len(result["console_logs"]["error"])
+                    exceptions_before = len(result["js_exceptions"])
+                    network_errors_before = len(result["network_errors"])
+                    resource_errors_before = len(result["resource_errors"])
+                    parse_errors_before = len(result["parse_errors"])
                     
                     # Test key press
                     key_test = await self._test_key_press(page, random_key, f"random_{i}_{random_key}", screenshots_dir)
@@ -603,9 +1119,43 @@ class GameBrowserController:
                         # Update previous screenshot for next comparison
                         prev_screenshot = key_test.get("screenshot")
                     
-                    # Check for new console errors
+                    # Check for new errors of all types
                     new_errors = result["console_logs"]["error"][errors_before:]
-                    has_new_errors = len(new_errors) > 0
+                    new_exceptions = result["js_exceptions"][exceptions_before:]
+                    new_network_errors = result["network_errors"][network_errors_before:]
+                    new_resource_errors = result["resource_errors"][resource_errors_before:]
+                    new_parse_errors = result["parse_errors"][parse_errors_before:]
+                    
+                    has_new_errors = (
+                        len(new_errors) > 0 or 
+                        len(new_exceptions) > 0 or
+                        len(new_network_errors) > 0 or
+                        len(new_resource_errors) > 0 or
+                        len(new_parse_errors) > 0
+                    )
+                    
+                    # Log new errors for debugging
+                    if has_new_errors:
+                        logging.info(f"Console messages and errors during key press '{random_key}':")
+                        for msg in new_errors:
+                            logging.info(f"  - [error] {msg}")
+                        for msg in new_exceptions:
+                            logging.error(f"  - [exception] {msg}")
+                        for msg in new_network_errors:
+                            logging.error(f"  - [network] {msg}")
+                        for msg in new_resource_errors:
+                            logging.error(f"  - [resource] {msg}")
+                        for msg in new_parse_errors:
+                            logging.error(f"  - [parse] {msg}")
+                    
+                    # Combine all errors for this action
+                    all_new_errors = (
+                        new_errors + 
+                        new_exceptions + 
+                        new_network_errors + 
+                        new_resource_errors + 
+                        new_parse_errors
+                    )
                     
                     # Add to action results
                     random_action_info = {
@@ -613,21 +1163,26 @@ class GameBrowserController:
                         "key": random_key,
                         "screenshot": key_test.get("screenshot"),
                         "diff_score": key_test.get("diff_score", 0),
-                        "new_errors": new_errors,
+                        "new_errors": all_new_errors,
                         "has_errors": has_new_errors
                     }
                     
-                    # If this key press generated console errors, mark it as failed and log the errors
+                    # If this key press generated errors, mark it as failed and log the errors
                     if has_new_errors:
                         error_messages = []
                         for msg in new_errors:
                             if "error" in msg.lower():
                                 error_messages.append(msg)
+                        # Add all specialized error types
+                        error_messages.extend(new_exceptions)
+                        error_messages.extend(new_network_errors)
+                        error_messages.extend(new_resource_errors)
+                        error_messages.extend(new_parse_errors)
                         
                         if error_messages:
                             random_action_info["test_result"] = False
                             random_action_info["console_error_message"] = "\n".join(error_messages)
-                            logging.error(f"Console errors detected during key press '{random_key}':")
+                            logging.error(f"Errors detected during key press '{random_key}':")
                             for err in error_messages:
                                 logging.error(f"  - {err}")
                     
@@ -647,28 +1202,42 @@ class GameBrowserController:
                     result["error"] = "Gameplay test failed: No key presses produced visual changes during gameplay"
                     result["test_result"] = False
                     
-                    # Include console error messages if available
-                    if result["console_logs"]["error"]:
-                        result["console_error_message"] = "\n".join(result["console_logs"]["error"])
+                    # Include all error types if available
+                    all_errors = (
+                        result["console_logs"]["error"] + 
+                        result["js_exceptions"] + 
+                        result["network_errors"] + 
+                        result["resource_errors"] + 
+                        result["parse_errors"]
+                    )
+                    
+                    if all_errors:
+                        result["console_error_message"] = "\n".join(all_errors)
                 
-                # Check for console errors in the entire test
+                # Check for errors in the entire test
                 console_errors = []
                 for msg_type, messages in result["console_logs"].items():
                     for msg in messages:
                         if "error" in msg.lower():
                             console_errors.append(msg)
                 
+                # Add all specialized error types
+                console_errors.extend(result["js_exceptions"])
+                console_errors.extend(result["network_errors"])
+                console_errors.extend(result["resource_errors"])
+                console_errors.extend(result["parse_errors"])
+                
                 no_console_errors = len(console_errors) == 0
                 
                 # Find key presses that generated errors
                 key_presses_with_errors = [action for action in random_action_results if action.get("has_errors", False)]
                 
-                # If there were any console errors during key presses, mark the test as failed
+                # If there were any errors during key presses, mark the test as failed
                 if key_presses_with_errors:
-                    result["error"] = f"Console errors detected during {len(key_presses_with_errors)} key press(es)"
+                    result["error"] = f"Errors detected during {len(key_presses_with_errors)} key press(es)"
                     result["test_result"] = False
                     
-                    # Include all console error messages
+                    # Include all error messages
                     if console_errors:
                         result["console_error_message"] = "\n".join(console_errors)
                     
@@ -678,14 +1247,14 @@ class GameBrowserController:
                         for action in key_presses_with_errors
                     ]
                 else:
-                    # Overall test passes if both game start and gameplay tests pass and there are no console errors
+                    # Overall test passes if both game start and gameplay tests pass and there are no errors
                     result["test_result"] = (
                         no_console_errors and 
                         result["game_start_test"]["test_result"] and 
                         result["gameplay_test"]["test_result"]
                     )
                 
-                    # If test failed due to console errors, include them in dedicated field
+                    # If test failed due to errors, include them in dedicated field
                     if not result["test_result"] and not no_console_errors:
                         result["console_error_message"] = "\n".join(console_errors)
                 
@@ -696,6 +1265,16 @@ class GameBrowserController:
                     "no_console_errors": no_console_errors,
                     "overall_result": result["test_result"]
                 }
+                
+                # Log summary of all error types
+                if result["js_exceptions"]:
+                    logging.error(f"Total JavaScript exceptions: {len(result['js_exceptions'])}")
+                if result["network_errors"]:
+                    logging.error(f"Total network errors: {len(result['network_errors'])}")
+                if result["resource_errors"]:
+                    logging.error(f"Total resource errors: {len(result['resource_errors'])}")
+                if result["parse_errors"]:
+                    logging.error(f"Total parse/syntax errors: {len(result['parse_errors'])}")
                 
             except Exception as e:
                 logging.error(f"Error in game interaction test: {e}")
