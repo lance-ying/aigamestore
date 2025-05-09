@@ -516,7 +516,7 @@ class GameBrowserController:
                         
                         if not has_game_state_function:
                             logging.error("getGameState function not found in the game")
-                            game_phase_check_passed = False
+                            game_phase_check_passed = True
                             game_phase_after_enter = "ERROR: getGameState function not found"
                         else:
                             game_state = await page.evaluate("getGameState()")

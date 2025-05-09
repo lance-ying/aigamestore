@@ -127,9 +127,11 @@ def main():
         
         # Initialize the appropriate generator based on the method
         if args.method == "baseline":
-            generator = BaselineGenerator(
+            generator = SimplePromptXMLGenerator(
                 model_name=args.model,
                 verbose=args.verbose,
+                use_ecs=not args.no_ecs,
+                use_baseline=True,
             )
         elif args.method == "simple_prompt":
             generator = SimplePromptGenerator(

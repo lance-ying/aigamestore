@@ -65,14 +65,16 @@ Implement an interesting game based on the game concept input from the user.
                 response = self.model_api.call(
                     user_prompt=user_prompt,
                     verbose=self.verbose,
-                    temperature=0.9,
+                    temperature=0.8,
+                    top_p=0.9,
                 )
             else:
                 response = self.model_api.call(
                     user_prompt=user_prompt,
                     system_prompt=system_prompt,
                     verbose=self.verbose,
-                    temperature=0.9,
+                    temperature=0.8,
+                    top_p=0.9,
                 )
             
             # Prepare conversation log for saving
@@ -176,7 +178,7 @@ Implement an interesting game based on the game concept input from the user.
         """
         Get the instructions for the baseline architecture
         """
-        instructions = open("game_generators/system_prompts/baseline_sysprompt.txt", "r").read()
+        instructions = open("game_generators/system_prompts/baseline_instructions.txt", "r").read()
         return instructions
     
     def get_system_prompt(self) -> str:
