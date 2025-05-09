@@ -38,25 +38,52 @@ class BasicTesting:
     
     def clean_message(self, msg: str) -> str:
         """
-        Clean messages by removing file path patterns.
+        Clean messages while preserving error format with source information.
         
         Args:
             msg: The message to clean
             
         Returns:
-            The cleaned message
+            The cleaned message with ERROR TYPE: message [Source: filename.js:line] format preserved
         """
         if not isinstance(msg, str):
             return msg
             
-        # Remove common file paths like /path/to/file.js:123
-        cleaned = re.sub(r'/?([a-zA-Z0-9_\-./]+\.(js|html|css|json)):[0-9]+', '', msg)
-        
-        # Remove error locations like "at line 123, column 45"
-        cleaned = re.sub(r'at line [0-9]+,? column [0-9]+', '', cleaned)
-        
+        # IMPORTANT: Preserve the [Source: filename.js:line] format from controller.py
+        # Check if we already have the formatted error with source 
+        if '[Source:' in msg:
+            # Message already has our desired format, keep it as is
+            return msg
+            
+        # Keep any "ERROR TYPE: message" patterns
+        if any(err_type in msg for err_type in ['TypeError:', 'SyntaxError:', 'ReferenceError:', 'Error:']):
+            # Remove line break markers and excessive spaces
+            cleaned = re.sub(r'\s+', ' ', msg).strip()
+            # Keep important source information if available but not already in [Source: format]
+            if '.js:' in msg and '[Source:' not in msg:
+                # Try to extract filename and line
+                file_match = re.search(r'([a-zA-Z0-9_\-./]+\.js):(\d+)', msg)
+                if file_match:
+                    file_name = file_match.group(1).split('/')[-1]  # Just the filename
+                    line_num = file_match.group(2)
+                    # If we don't have [Source: format already, add it
+                    if '[Source:' not in cleaned:
+                        # Check if we have any content before the first occurrence of file_name
+                        parts = cleaned.split(file_name)
+                        if len(parts) > 1:
+                            # Keep the error message part and add source at the end
+                            message_part = parts[0].split('.js')[0].strip()
+                            if message_part.endswith(':'):
+                                message_part = message_part[:-1].strip()
+                            cleaned = f"{message_part} [Source: {file_name}:{line_num}]"
+                        else:
+                            # Just add source to the end
+                            cleaned = f"{cleaned} [Source: {file_name}:{line_num}]"
+            return cleaned
+            
+        # For other messages (not error type format)
         # Clean up extra spaces, tabs, etc.
-        cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+        cleaned = re.sub(r'\s+', ' ', msg).strip()
         
         # Remove empty parentheses that might be left after stripping
         cleaned = re.sub(r'\(\s*\)', '', cleaned).strip()

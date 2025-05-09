@@ -257,10 +257,144 @@ class GameBrowserController:
             # Enable verbose logging for all browser operations
             page.on("console", lambda msg: logging.info(f"CONSOLE: {msg.type} - {msg.text}"))
             
-            # Listen for all console messages
+            # Listen for console logs and errors
             async def handle_console(msg: ConsoleMessage):
                 msg_type = msg.type.lower()
                 msg_text = f"{msg.text}"
+                
+                # Extract error type and message in a cleaner format
+                error_type = ""
+                error_message = msg_text
+                source_info = ""
+                
+                # Try to parse error type and message for error messages
+                if msg_type == "error":
+                    # Extract error type (like TypeError, SyntaxError, etc.)
+                    import re
+                    type_match = re.search(r'(Type|Syntax|Reference|Range|URI|Eval|Internal|Aggregate)?Error', msg_text)
+                    if type_match:
+                        error_type = type_match.group(0)
+                        # Extract just the message part without the stack trace
+                        if ": " in msg_text:
+                            error_message = msg_text.split(": ", 1)[1].split("\n")[0].strip()
+                    
+                    # Try to extract the source information in different formats:
+                    source_info = ""
+                    
+                    # 1. First, try to access the location object directly from the message
+                    try:
+                        location = msg.location
+                        if location and hasattr(location, 'url') and hasattr(location, 'lineNumber'):
+                            if location.url and location.lineNumber:
+                                url_parts = location.url.split('/')
+                                file_name = url_parts[-1].split('?')[0]  # Get filename without query params
+                                source_info = f" [Source: {file_name}:{location.lineNumber}]"
+                                logging.info(f"Extracted location from msg object: {file_name}:{location.lineNumber}")
+                    except Exception as loc_err:
+                        # Log but don't fail if location extraction fails
+                        logging.debug(f"Could not extract location from console message: {loc_err}")
+                    
+                    # 2. Look for ES6 module format like "entities.js:82:29" at the top level
+                    if not source_info:
+                        module_match = re.search(r'([a-zA-Z0-9_\-./]+\.(js|html|mjs)):(\d+)(?::(\d+))?', msg_text)
+                        if module_match:
+                            file_name = module_match.group(1).split('/')[-1]  # Just the filename
+                            line_num = module_match.group(3)
+                            source_info = f" [Source: {file_name}:{line_num}]"
+                            logging.info(f"Extracted location from ES6 module pattern: {file_name}:{line_num}")
+                    
+                    # 3. Special handling for stack trace with format "at ModuleName (entities.js:82)"
+                    if not source_info and "at " in msg_text:
+                        stack_match = re.search(r'at\s+[^(]*\(([^:]+):(\d+)[^)]*\)', msg_text)
+                        if stack_match:
+                            file_name = stack_match.group(1).split('/')[-1]  # Just the filename
+                            line_num = stack_match.group(2)
+                            source_info = f" [Source: {file_name}:{line_num}]"
+                            logging.info(f"Extracted location from stack trace: {file_name}:{line_num}")
+                    
+                    # 4. Look for direct filename:line format anywhere in the message
+                    if not source_info:
+                        file_line_match = re.findall(r'([a-zA-Z0-9_\-./]+\.(js|html|mjs)):(\d+)', msg_text)
+                        if file_line_match:
+                            # Use the first match
+                            file_path = file_line_match[0][0]
+                            file_name = file_path.split('/')[-1]  # Get just the filename
+                            line_num = file_line_match[0][2]
+                            source_info = f" [Source: {file_name}:{line_num}]"
+                            logging.info(f"Extracted location from general pattern: {file_name}:{line_num}")
+                    
+                    # 5. Look for "in" patterns like "in entities.js:82"
+                    if not source_info and " in " in msg_text:
+                        in_match = re.search(r'in\s+([a-zA-Z0-9_\-./]+\.(js|html|mjs)):(\d+)', msg_text)
+                        if in_match:
+                            file_name = in_match.group(1).split('/')[-1]
+                            line_num = in_match.group(3)
+                            source_info = f" [Source: {file_name}:{line_num}]"
+                            logging.info(f"Extracted location from 'in' pattern: {file_name}:{line_num}")
+                    
+                    # Add Stack URL as a last resort - useful for ES modules
+                    if not source_info and getattr(msg, "stack_url", None):
+                        try:
+                            url = msg.stack_url
+                            if url and ".js:" in url:
+                                url_parts = url.split('/')
+                                last_part = url_parts[-1]
+                                file_match = re.search(r'([^/]+\.js):(\d+)', last_part)
+                                if file_match:
+                                    file_name = file_match.group(1)
+                                    line_num = file_match.group(2)
+                                    source_info = f" [Source: {file_name}:{line_num}]"
+                                    logging.info(f"Extracted location from stack URL: {file_name}:{line_num}")
+                        except Exception as e:
+                            logging.debug(f"Failed to extract location from stack_url: {e}")
+                    
+                    # If we still don't have source info, extract it from raw stack trace
+                    if not source_info and hasattr(msg, "args") and len(msg.args) > 0:
+                        try:
+                            # Often the stack trace is in the first argument
+                            stack = str(msg.args[0])
+                            if ".js:" in stack:
+                                # Find the first JS file reference
+                                match = re.search(r'([a-zA-Z0-9_\-./]+\.js):(\d+)', stack)
+                                if match:
+                                    file_name = match.group(1).split('/')[-1]
+                                    line_num = match.group(2)
+                                    source_info = f" [Source: {file_name}:{line_num}]"
+                                    logging.info(f"Extracted location from args stack: {file_name}:{line_num}")
+                        except Exception as e:
+                            logging.debug(f"Failed to extract location from args: {e}")
+                    
+                    # Create the formatted error message - Add "Uncaught" prefix for browser errors
+                    if error_type:
+                        formatted_error = f"Uncaught {error_type}: {error_message}{source_info}"
+                    else:
+                        formatted_error = f"Uncaught Error: {error_message}{source_info}"
+                    
+                    # Replace the original error text with our formatted version
+                    error_message = formatted_error
+                    msg_text = formatted_error
+                    
+                    # Extract full stack trace if available
+                    stack_trace = ""
+                    if "\n" in str(msg.text):
+                        # Split by newline and skip the first line (which is the message)
+                        stack_lines = str(msg.text).split("\n")[1:]
+                        if stack_lines:
+                            stack_trace = "\n".join(stack_lines)
+                    
+                    # Try to get stack trace from args if available
+                    if not stack_trace and hasattr(msg, "args") and len(msg.args) > 0:
+                        arg_text = str(msg.args[0])
+                        if "\n" in arg_text:
+                            stack_lines = arg_text.split("\n")[1:]  # Skip first line which is likely the message
+                            if stack_lines:
+                                stack_trace = "\n".join(stack_lines)
+                    
+                    # Log raw message and formatted result for debugging
+                    logging.debug(f"Original console message: {msg.text}")
+                    logging.debug(f"Formatted error message: {msg_text}")
+                    if stack_trace:
+                        logging.debug(f"Stack trace: {stack_trace}")
                 
                 # Store in the appropriate category
                 if msg_type in result["console_logs"]:
@@ -271,6 +405,19 @@ class GameBrowserController:
                 # Also store errors in the legacy field for backwards compatibility
                 if msg_type == "error":
                     result["console_errors"].append(f"error: {msg_text}")
+                    
+                    # Store stack trace if available
+                    if 'stack_traces' not in result:
+                        result['stack_traces'] = []
+                    
+                    if stack_trace:
+                        # Store the error message and stack trace together
+                        full_error = {
+                            'message': msg_text,
+                            'stack': stack_trace,
+                            'combined': f"{msg_text}\n{stack_trace}"
+                        }
+                        result['stack_traces'].append(full_error)
                 
                 # Check for specific error patterns
                 lower_text = msg_text.lower()
@@ -304,7 +451,7 @@ class GameBrowserController:
                     
                 # Explicit check for "false is an invalid identifier" error
                 if "false is an invalid identifier" in msg_text:
-                    error_msg = "Uncaught SyntaxError: false is an invalid identifier"
+                    error_msg = f"SyntaxError: false is an invalid identifier{source_info}"
                     result["parse_errors"].append(error_msg)
                     result["js_exceptions"].append(error_msg)
                     result["console_errors"].append(error_msg)
@@ -321,18 +468,67 @@ class GameBrowserController:
             
             # Listen for page errors (including syntax errors)
             async def handle_page_error(error):
-                error_msg = f"Page error: {error}"
-                result["js_exceptions"].append(error_msg)
-                logging.error(f"RAW PAGE ERROR: {error}")
+                # Format: ERROR TYPE: message [Source: filename.js:line]
+                error_text = str(error)
+                
+                # Extract error type
+                import re
+                error_type = "Error"  # Default if no specific type found
+                type_match = re.search(r'(Type|Syntax|Reference|Range|URI|Eval|Internal|Aggregate)?Error', error_text)
+                if type_match:
+                    error_type = type_match.group(0)
+                
+                # Extract error message (first line, before stack trace)
+                error_message = error_text.split("\n")[0].strip()
+                if ": " in error_message:
+                    error_message = error_message.split(": ", 1)[1].strip()
+                
+                # Extract source information - find the first JS file reference
+                source_info = ""
+                file_line_match = re.search(r'([a-zA-Z0-9_\-./]+\.(js|html|mjs))(?::(\d+))?', error_text)
+                if file_line_match:
+                    file_path = file_line_match.group(1)
+                    # Get just the filename, not the full path
+                    file_name = file_path.split('/')[-1]
+                    line_num = file_line_match.group(3) if file_line_match.group(3) else ""
+                    source_info = f" [Source: {file_name}:{line_num}]" if line_num else f" [Source: {file_name}]"
+                
+                # Create the clean error format - Add "Uncaught" prefix for browser errors
+                formatted_error = f"Uncaught {error_type}: {error_message}{source_info}"
+                
+                # Extract stack trace
+                stack_trace = ""
+                if "\n" in error_text:
+                    # Get all lines after the first one
+                    stack_lines = error_text.split("\n")[1:]
+                    if stack_lines:
+                        stack_trace = "\n".join(stack_lines)
+                
+                # Add to the appropriate error categories
+                result["js_exceptions"].append(formatted_error)
+                logging.error(formatted_error)
                 
                 # Add to console_errors for backwards compatibility
-                result["console_errors"].append(error_msg)
+                result["console_errors"].append(formatted_error)
                 
                 # Add to console_logs error category
-                result["console_logs"]["error"].append(error_msg)
+                result["console_logs"]["error"].append(formatted_error)
+                
+                # Store stack trace if available
+                if 'stack_traces' not in result:
+                    result['stack_traces'] = []
+                
+                if stack_trace:
+                    # Store the error message and stack trace together
+                    full_error = {
+                        'message': formatted_error,
+                        'stack': stack_trace,
+                        'combined': f"{formatted_error}\n{stack_trace}"
+                    }
+                    result['stack_traces'].append(full_error)
                 
                 # Check if it's a parse/syntax error
-                error_text = str(error).lower()
+                lower_text = error_text.lower()
                 syntax_error_patterns = [
                     "syntaxerror", 
                     "parseerror", 
@@ -345,48 +541,96 @@ class GameBrowserController:
                     "unexpected end of input"
                 ]
                 
-                if any(pattern in error_text for pattern in syntax_error_patterns):
-                    result["parse_errors"].append(error_msg)
-                    logging.error(f"Syntax error detected in page: {error}")
-                    
-                    # For SyntaxError, add a cleaner message to parse_errors
-                    if "syntaxerror" in error_text:
-                        # Try to extract just the syntax error message without stack trace
-                        error_str = str(error)
-                        if ": " in error_str:
-                            error_message = error_str.split(": ", 1)[1].split("\n")[0].strip()
-                            result["parse_errors"].append(f"Uncaught SyntaxError: {error_message}")
-                            logging.error(f"Uncaught SyntaxError: {error_message}")
+                if any(pattern in lower_text for pattern in syntax_error_patterns):
+                    result["parse_errors"].append(formatted_error)
+                    logging.error(f"Syntax error detected in page: {formatted_error}")
                 
                 # Explicit check for "false is an invalid identifier" error
-                error_str = str(error)
-                if "false is an invalid identifier" in error_str:
-                    error_msg = "Uncaught SyntaxError: false is an invalid identifier"
+                if "false is an invalid identifier" in error_text:
+                    error_msg = f"SyntaxError: false is an invalid identifier{source_info}"
                     result["parse_errors"].append(error_msg)
                     logging.error(f"Special syntax error detected in page: {error_msg}")
             
             # Listen for uncaught exceptions
             async def handle_exception(exception):
-                error_msg = f"Uncaught exception: {exception}"
-                result["js_exceptions"].append(error_msg)
-                logging.error(error_msg)
+                # Format: ERROR TYPE: message [Source: filename.js:line]
+                exception_text = str(exception)
+                
+                # Extract error type
+                import re
+                error_type = "Error"  # Default if no specific type found
+                type_match = re.search(r'(Type|Syntax|Reference|Range|URI|Eval|Internal|Aggregate)?Error', exception_text)
+                if type_match:
+                    error_type = type_match.group(0)
+                
+                # Extract error message (first line, before stack trace)
+                error_message = exception_text.split("\n")[0].strip()
+                if ": " in error_message:
+                    error_message = error_message.split(": ", 1)[1].strip()
+                
+                # Extract source information - find the first JS file reference
+                source_info = ""
+                file_line_match = re.search(r'([a-zA-Z0-9_\-./]+\.(js|html|mjs))(?::(\d+))?', exception_text)
+                if file_line_match:
+                    file_path = file_line_match.group(1)
+                    # Get just the filename, not the full path
+                    file_name = file_path.split('/')[-1]
+                    line_num = file_line_match.group(3) if file_line_match.group(3) else ""
+                    source_info = f" [Source: {file_name}:{line_num}]" if line_num else f" [Source: {file_name}]"
+                
+                # Create the clean error format - Add "Uncaught" prefix for browser errors
+                formatted_error = f"Uncaught {error_type}: {error_message}{source_info}"
+                
+                # Extract stack trace
+                stack_trace = ""
+                if "\n" in exception_text:
+                    # Get all lines after the first one
+                    stack_lines = exception_text.split("\n")[1:]
+                    if stack_lines:
+                        stack_trace = "\n".join(stack_lines)
+                
+                # Add to the appropriate error categories
+                result["js_exceptions"].append(formatted_error)
+                logging.error(formatted_error)
                 
                 # Add to console_errors for backwards compatibility
-                result["console_errors"].append(error_msg)
+                result["console_errors"].append(formatted_error)
                 
                 # Add to console_logs error category
-                result["console_logs"]["error"].append(error_msg)
+                result["console_logs"]["error"].append(formatted_error)
+                
+                # Store stack trace if available
+                if 'stack_traces' not in result:
+                    result['stack_traces'] = []
+                
+                if stack_trace:
+                    # Store the error message and stack trace together
+                    full_error = {
+                        'message': formatted_error,
+                        'stack': stack_trace,
+                        'combined': f"{formatted_error}\n{stack_trace}"
+                    }
+                    result['stack_traces'].append(full_error)
                 
                 # Check if it's our target syntax error
-                if "false is an invalid identifier" in str(exception):
-                    error_msg = "Uncaught SyntaxError: false is an invalid identifier"
+                if "false is an invalid identifier" in exception_text:
+                    error_msg = f"SyntaxError: false is an invalid identifier{source_info}"
                     result["parse_errors"].append(error_msg)
                     logging.error(f"Found syntax error in exception: {error_msg}")
             
             # Listen for failed network requests
             async def handle_request_failed(request):
                 url = request.url
-                error_msg = f"Network request failed: {url}"
+                # Extract file name from URL if possible
+                file_name = url.split("/")[-1] if "/" in url else url
+                
+                # Check for module formats (like ES6 imports often have query parameters)
+                if "?" in file_name:
+                    file_name = file_name.split("?")[0]
+                
+                # Format: ERROR TYPE: message [Source: filename]
+                error_msg = f"NetworkError: Failed to load resource [Source: {file_name}]"
+                
                 result["network_errors"].append(error_msg)
                 logging.error(error_msg)
                 
@@ -401,445 +645,17 @@ class GameBrowserController:
                 if response.status >= 400:  # HTTP error codes
                     url = response.url
                     status = response.status
-                    error_msg = f"Resource loading error: {url} (Status: {status})"
-                    result["resource_errors"].append(error_msg)
-                    logging.error(error_msg)
                     
-                    # Add to console errors
-                    result["console_errors"].append(error_msg)
-                    result["console_logs"]["error"].append(error_msg)
-            
-            # Set up all event listeners
-            page.on("console", handle_console)
-            page.on("pageerror", handle_page_error)
-            page.on("crash", lambda: logging.error("Page crashed"))
-            page.on("requestfailed", handle_request_failed)
-            page.on("response", handle_response)
-            
-            # Custom error extraction function
-            await page.evaluate("""() => {
-                // Report all syntax errors immediately
-                window.checkForSyntaxErrors = function() {
-                    try {
-                        // Try to find any syntax errors in inline scripts
-                        const scripts = document.querySelectorAll('script:not([src])');
-                        scripts.forEach((script, index) => {
-                            try {
-                                // Try to compile the script content to check for syntax errors
-                                new Function(script.textContent);
-                            } catch (e) {
-                                if (e instanceof SyntaxError) {
-                                    console.error(`Syntax error in inline script #${index}: ${e.message}`);
-                                    // Check specifically for "false is an invalid identifier"
-                                    if (e.message.includes("false is an invalid identifier")) {
-                                        console.error("Detected critical syntax error: false is an invalid identifier");
-                                    }
-                                }
-                            }
-                        });
-                    } catch (e) {
-                        console.error("Error checking for syntax errors:", e);
-                    }
-                };
-                
-                // Run syntax check after a short delay
-                setTimeout(window.checkForSyntaxErrors, 500);
-                
-                // Add additional error listeners
-                window.addEventListener('error', (event) => {
-                    console.error('JS Error:', event.message, 'at', event.filename, 'line', event.lineno);
+                    # Extract file name from URL if possible
+                    file_name = url.split("/")[-1] if "/" in url else url
                     
-                    // Special handling for syntax errors
-                    if (event.error instanceof SyntaxError) {
-                        console.error('SyntaxError details:', event.error.message);
-                        
-                        // Special check for our target error
-                        if (event.error.message.includes("false is an invalid identifier")) {
-                            console.error("Detected 'false is an invalid identifier' error");
-                        }
-                    }
-                });
-            }""")
-            
-            try:
-                # Navigate to the page
-                await page.goto(url, wait_until="networkidle", timeout=3000)
-                logging.info(f"Page loaded: {url}")
-                
-                # Wait for the page to be fully loaded and run our custom error checker
-                await page.wait_for_timeout(2000)
-                
-                # Direct evaluation to check for specific syntax error
-                try:
-                    await page.evaluate("""() => {
-                        // Run syntax check again
-                        if (window.checkForSyntaxErrors) {
-                            window.checkForSyntaxErrors();
-                        }
-                        
-                        // Check page source for specific error patterns
-                        const pageSource = document.documentElement.outerHTML;
-                        if (pageSource.includes("false is an invalid identifier")) {
-                            console.error("Found 'false is an invalid identifier' in page source");
-                        }
-                    }""")
-                except Exception as e:
-                    logging.error(f"Error running syntax check script: {e}")
-                    # If we got a syntax error here, it's likely what we're looking for
-                    if "false is an invalid identifier" in str(e):
-                        error_msg = "Uncaught SyntaxError: false is an invalid identifier"
-                        result["parse_errors"].append(error_msg)
-                        result["js_exceptions"].append(error_msg)
-                        result["console_errors"].append(error_msg)
-                        result["console_logs"]["error"].append(error_msg)
-                        logging.error(f"Syntax error confirmed: {error_msg}")
-                
-                # Take initial screenshot
-                screenshot_path = await self._save_screenshot(page, screenshots_dir, "state_initial_load.png")
-                if screenshot_path:
-                    result["screenshots"].append(screenshot_path)
-                
-                # Check for canvas elements
-                canvas_count = await page.evaluate("document.querySelectorAll('canvas').length")
-                result["canvas_found"] = canvas_count > 0
-                result["canvas_count"] = canvas_count
-                
-                # Get page content and manually check for syntax errors
-                page_content = await page.content()
-                if "false is an invalid identifier" in page_content:
-                    error_msg = "Uncaught SyntaxError: false is an invalid identifier"
-                    result["parse_errors"].append(error_msg)
-                    result["js_exceptions"].append(error_msg)
-                    result["console_errors"].append(error_msg)
-                    result["console_logs"]["error"].append(error_msg)
-                    logging.error(f"Found syntax error in page content: {error_msg}")
-                
-                # Look for "error" in any console message type
-                has_error_messages = False
-                error_messages = []
-                
-                # Log all console messages to make debugging easier
-                logging.info("All console messages during game load:")
-                for msg_type, messages in result["console_logs"].items():
-                    for msg in messages:
-                        logging.info(f"  - [{msg_type}] {msg}")
-                        if "error" in msg.lower():
-                            has_error_messages = True
-                            error_messages.append(msg)
-                
-                # Log JavaScript exceptions separately
-                if result["js_exceptions"]:
-                    logging.error("JavaScript syntax errors and exceptions:")
-                    for exception in result["js_exceptions"]:
-                        logging.error(f"  - {exception}")
-                        has_error_messages = True
-                        error_messages.append(exception)
-                
-                # Log network errors separately
-                if result["network_errors"]:
-                    logging.error("Network request errors:")
-                    for error in result["network_errors"]:
-                        logging.error(f"  - {error}")
-                        has_error_messages = True
-                        error_messages.append(error)
-                
-                # Log resource errors separately
-                if result["resource_errors"]:
-                    logging.error("Resource loading errors:")
-                    for error in result["resource_errors"]:
-                        logging.error(f"  - {error}")
-                        has_error_messages = True
-                        error_messages.append(error)
-                
-                # Log parse errors separately
-                if result["parse_errors"]:
-                    logging.error("JavaScript parse/syntax errors:")
-                    for error in result["parse_errors"]:
-                        logging.error(f"  - {error}")
-                        has_error_messages = True
-                        error_messages.append(error)
-                
-                # Test passes if there are no errors and at least one canvas is found
-                result["test_result"] = not has_error_messages and result["canvas_found"]
-                
-                # If test failed due to console errors or JS exceptions, include them in a dedicated field
-                if not result["test_result"] and has_error_messages:
-                    result["console_error_message"] = "\n".join(error_messages)
-                    result["error"] = f"Game did not load on the webpage: {len(error_messages)} error messages detected in console."
+                    # Check for module formats (like ES6 imports often have query parameters)
+                    if "?" in file_name:
+                        file_name = file_name.split("?")[0]
                     
-                    # Log the errors
-                    logging.error("Console errors during game load:")
-                    for err in error_messages:
-                        logging.error(f"  - {err}")
-                elif not result["test_result"] and not result["canvas_found"]:
-                    result["error"] = "Game load test failed: No canvas element found."
-                
-                # Add additional information
-                result["page_title"] = await page.title()
-                
-            except Exception as e:
-                logging.error(f"Error in browser interaction: {e}")
-                result["error"] = f"Browser interaction error: {e}"
-                
-                # Check if the exception is related to our target syntax error
-                if "false is an invalid identifier" in str(e):
-                    error_msg = "Uncaught SyntaxError: false is an invalid identifier"
-                    result["parse_errors"].append(error_msg)
-                    result["js_exceptions"].append(error_msg)
-                    result["console_errors"].append(error_msg)
-                    result["console_logs"]["error"].append(error_msg)
-                    logging.error(f"Syntax error found in exception: {error_msg}")
-            finally:
-                await browser.close()
-                
-        return result
-    
-    async def _save_screenshot(self, page: Page, directory: str, filename: str) -> str:
-        """Save a screenshot and return the path."""
-        try:
-            # Add frame prefix to filename
-            prefixed_filename = filename
-            self.frame_counter += 1  # Increment frame counter
-            
-            # Capture full page screenshot to a temporary file
-            temp_path = os.path.join(directory, "temp_screenshot.png")
-            await page.screenshot(path=temp_path, full_page=True)
-            
-            # Resize the image to save space (by a factor of 4)
-            full_path = os.path.join(directory, prefixed_filename)
-            with Image.open(temp_path) as img:
-                # Calculate new size (1/4 of original)
-                new_width = img.width // 4
-                new_height = img.height // 4
-                # Resize the image
-                resized_img = img.resize((new_width, new_height), Image.LANCZOS)
-                # Save resized image
-                resized_img.save(full_path)
-                
-            # Remove temporary file
-            os.remove(temp_path)
-            
-            logging.info(f"Screenshot saved to {full_path} (resized by factor of 4)")
-            return full_path
-        except Exception as e:
-            logging.error(f"Error saving screenshot: {e}")
-            return ""
-    
-    async def test_game_interaction(self) -> Dict[str, Any]:
-        """
-        Tests game interaction by starting the game and performing random actions.
-        
-        Returns:
-            Dictionary with test results
-        """
-        if not self.enabled:
-            return {
-                "test_result": False,
-                "error": "Headless browser not enabled. Install playwright."
-            }
-            
-        if not self.is_html_file and not self.server_process:
-            return {
-                "test_result": False,
-                "error": "Server not running. Use within 'async with' context."
-            }
-            
-        # Determine the URL based on whether it's a file or served via HTTP
-        if self.is_html_file:
-            # Use file:// protocol for direct HTML files
-            abs_path = os.path.abspath(self.game_path)
-            url = f"file://{abs_path}"
-            logging.info(f"Using direct file URL: {url}")
-        else:
-            # Use HTTP for served directories
-            url = f"http://localhost:{self.port}"
-            logging.info(f"Using HTTP server URL: {url}")
-            
-        interaction_results = await self._test_interaction(url)
-        
-        # Structure the final results to show game start and random action tests separately
-        final_results = {
-            "test_result": interaction_results["test_result"],
-            "interaction_test": {
-                "overall_result": interaction_results["test_result"],
-                "game_start_test": {
-                    "test_result": interaction_results["game_start_test"]["test_result"],
-                    "diff_score": interaction_results["game_start_test"]["diff_score"],
-                    "screenshot": interaction_results["game_start_test"]["screenshot"]
-                },
-                "gameplay_test": {
-                    "test_result": interaction_results["gameplay_test"]["test_result"],
-                    "key_changes_detected": len([score for score in interaction_results["gameplay_test"]["diff_scores"] if score > 0.001]),
-                    "total_actions": len(interaction_results["gameplay_test"]["diff_scores"]),
-                    "max_diff_score": max(interaction_results["gameplay_test"]["diff_scores"]) if interaction_results["gameplay_test"]["diff_scores"] else 0
-                }
-            },
-            "console_logs": interaction_results["console_logs"],
-            "console_errors": interaction_results["console_errors"],  # For backwards compatibility
-            "screenshots": interaction_results["screenshots"],
-            "error": interaction_results.get("error", None)
-        }
-        
-        # Add console error message if present
-        if "console_error_message" in interaction_results:
-            final_results["console_error_message"] = interaction_results["console_error_message"]
-        
-        # Add key presses with errors information if available
-        if "key_presses_with_errors" in interaction_results:
-            final_results["key_presses_with_errors"] = interaction_results["key_presses_with_errors"]
-        
-        # Add game phase information to game_start_test results if available
-        if "game_phase_after_enter" in interaction_results["game_start_test"]:
-            final_results["interaction_test"]["game_start_test"]["game_phase_after_enter"] = interaction_results["game_start_test"]["game_phase_after_enter"]
-            final_results["interaction_test"]["game_start_test"]["game_phase_check_passed"] = interaction_results["game_start_test"]["game_phase_check_passed"]
-        
-        # Add the detailed results if available
-        if "random_actions" in interaction_results:
-            final_results["interaction_test"]["gameplay_test"]["detailed_actions"] = interaction_results["random_actions"]
-        
-        return final_results
-    
-    async def _test_interaction(self, url: str) -> Dict[str, Any]:
-        """
-        Tests game interaction with ENTER and random key presses.
-        
-        Args:
-            url: URL to the game
-            
-        Returns:
-            Dictionary with test results
-        """
-        result = {
-            "test_result": False,
-            "console_logs": {
-                "error": [],
-                "warning": [],
-                "info": [],
-                "log": [],
-                "debug": [],
-                "other": []
-            },
-            "console_errors": [],  # Keep for backwards compatibility
-            "js_exceptions": [],   # For JS syntax errors and exceptions
-            "network_errors": [],  # For tracking network request failures
-            "resource_errors": [], # For tracking resource loading failures
-            "parse_errors": [],    # For syntax/parse errors in scripts
-            "visual_changes": [],
-            "key_tests": [],
-            "screenshots": [],
-            "game_start_test": {
-                "test_result": False,
-                "diff_score": 0,
-                "screenshot": ""
-            },
-            "gameplay_test": {
-                "test_result": False,
-                "diff_scores": [],
-                "screenshots": []
-            }
-        }
-        
-        # Prepare screenshots directory
-        screenshots_dir = os.path.join(os.path.dirname(self.game_path), "game_check_results", "screenshots")
-        os.makedirs(screenshots_dir, exist_ok=True)
-        
-        async with async_playwright() as p:
-            browser = await p.firefox.launch(headless=True)
-            context = await browser.new_context()
-            page = await context.new_page()
-            
-            # Listen for all console messages
-            async def handle_console(msg: ConsoleMessage):
-                msg_type = msg.type.lower()
-                msg_text = f"{msg.text}"
-                
-                # Store in the appropriate category
-                if msg_type in result["console_logs"]:
-                    result["console_logs"][msg_type].append(msg_text)
-                else:
-                    result["console_logs"]["other"].append(f"{msg_type}: {msg_text}")
-                
-                # Also store errors in the legacy field for backwards compatibility
-                if msg_type == "error":
-                    result["console_errors"].append(f"error: {msg_text}")
-                
-                # Check for specific error patterns
-                lower_text = msg_text.lower()
-                
-                # Check for network errors
-                if "failed to load resource" in lower_text or "net::" in lower_text:
-                    result["network_errors"].append(msg_text)
-                
-                # Improved syntax error detection with more patterns
-                syntax_error_patterns = [
-                    "parseerror", 
-                    "syntax error", 
-                    "syntaxerror", 
-                    "unexpected token", 
-                    "is an invalid identifier",
-                    "invalid identifier", 
-                    "unexpected identifier", 
-                    "unexpected end of input", 
-                    "missing )", 
-                    "missing }", 
-                    "missing ]"
-                ]
-                
-                if any(pattern in lower_text for pattern in syntax_error_patterns):
-                    result["parse_errors"].append(msg_text)
-                    logging.error(f"Syntax error detected: {msg_text}")
-                
-                # Source map errors
-                if "source map" in lower_text and "error" in lower_text:
-                    result["parse_errors"].append(msg_text)
-                
-                # Log to Python console for debugging
-                log_level = logging.INFO if msg_type != "error" else logging.ERROR
-                logging.log(log_level, f"Browser console {msg_type}: {msg_text}")
-            
-            # Listen for page errors (including syntax errors)
-            async def handle_page_error(error):
-                error_msg = f"Page error: {error}"
-                result["js_exceptions"].append(error_msg)
-                logging.error(error_msg)
-                
-                # Add to console_errors for backwards compatibility
-                result["console_errors"].append(error_msg)
-                
-                # Add to console_logs error category
-                result["console_logs"]["error"].append(error_msg)
-            
-            # Listen for uncaught exceptions
-            async def handle_exception(exception):
-                error_msg = f"Uncaught exception: {exception}"
-                result["js_exceptions"].append(error_msg)
-                logging.error(error_msg)
-                
-                # Add to console_errors for backwards compatibility
-                result["console_errors"].append(error_msg)
-                
-                # Add to console_logs error category
-                result["console_logs"]["error"].append(error_msg)
-            
-            # Listen for failed network requests
-            async def handle_request_failed(request):
-                url = request.url
-                error_msg = f"Network request failed: {url}"
-                result["network_errors"].append(error_msg)
-                logging.error(error_msg)
-                
-                # Add to console_errors for backwards compatibility
-                result["console_errors"].append(error_msg)
-                
-                # Also add to console logs for consistency
-                result["console_logs"]["error"].append(error_msg)
-            
-            # Listen for resource loading errors (CSS, images, etc.)
-            async def handle_response(response):
-                if response.status >= 400:  # HTTP error codes
-                    url = response.url
-                    status = response.status
-                    error_msg = f"Resource loading error: {url} (Status: {status})"
+                    # Format: ERROR TYPE: message [Source: filename]
+                    error_msg = f"HTTPError: Resource loading error (Status: {status}) [Source: {file_name}]"
+                    
                     result["resource_errors"].append(error_msg)
                     logging.error(error_msg)
                     
