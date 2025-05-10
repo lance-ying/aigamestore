@@ -10,6 +10,10 @@ class SimplePromptXMLGenerator(GameGenerator):
     to generate both the game design and code implementation.
     """
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.use_baseline = kwargs.get('use_baseline', False)
+
     def generate_user_prompt(self, game_concept: str) -> str:
         """
         Generate user prompt from game concept for the simple prompt method
@@ -19,17 +23,21 @@ class SimplePromptXMLGenerator(GameGenerator):
             
         Returns:
             User prompt for the LLM
-        """        
-        if self.use_ecs:
+        """
+        output_format = self.get_output_format()
+        if self.use_baseline:
+            instructions = self.get_baseline_instructions()
+            output_format = self.get_baseline_output_format()
+        elif self.use_ecs:
             instructions = self.get_ecs_instructions()
         else:
             instructions = self.get_non_ecs_instructions()
-
-        output_format = self.get_output_format()
         task = f"""
-Here is the input from the user:
 <task>
-<game_concept>{game_concept}</game_concept>
+Implement an interesting game based on the game concept input from the user.
+<game_concept>
+{game_concept}
+</game_concept>
 </task>"""
         prompt = instructions + task + output_format
         return prompt
@@ -53,13 +61,21 @@ Here is the input from the user:
             if self.verbose:
                 print(f"Calling LLM with game concept: {game_concept[:100]}...")
                 
-            response = self.model_api.call(
-                user_prompt=user_prompt,
-                system_prompt=system_prompt,
-                verbose=self.verbose,
-                temperature=0.5,
-                top_p=0.9,
-            )
+            if self.use_baseline:
+                response = self.model_api.call(
+                    user_prompt=user_prompt,
+                    verbose=self.verbose,
+                    temperature=0.7,
+                    top_p=0.9,
+                )
+            else:
+                response = self.model_api.call(
+                    user_prompt=user_prompt,
+                    system_prompt=system_prompt,
+                    verbose=self.verbose,
+                    temperature=0.7,
+                    top_p=0.9,
+                )
             
             # Prepare conversation log for saving
             conversation_log = [
@@ -74,7 +90,9 @@ Here is the input from the user:
             game_controls = self.extract_game_controls(response)
             game_plan =  self.extract_game_plan(response)
             html_code = self.extract_code_block(response, "html") or ""
-            
+            game_design = self.extract_game_design(response)
+
+
             ai_testing_list = self.extract_ai_testing(response)
             # Get JavaScript files
             js_code_dict = self.extract_code_block(response, "javascript")
@@ -102,11 +120,13 @@ Here is the input from the user:
                 game_controls=game_controls,
                 game_concept=game_concept,
                 game_plan=game_plan,
+                game_design=game_design,
                 concept_path=concept_path,
                 genre=genre,
                 intermediate_outputs={"full_response": response},
                 conversation_log=conversation_log,
                 use_ecs=self.use_ecs,
+                use_baseline=self.use_baseline,
             )
             
             if self.verbose:
@@ -154,6 +174,13 @@ Here is the input from the user:
         instructions = open("game_generators/system_prompts/single_prompt_instructions_noecs.txt", "r").read()
         return instructions
     
+    def get_baseline_instructions(self) -> str:
+        """
+        Get the instructions for the baseline architecture
+        """
+        instructions = open("game_generators/system_prompts/baseline_instructions.txt", "r").read()
+        return instructions
+    
     def get_system_prompt(self) -> str:
         """
         Get the system prompt
@@ -187,8 +214,8 @@ Here is the input from the user:
       <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">{game_title}</h1>
       <div class="control-buttons">
         <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
-        <button id="ai_winModeBtn" class="control-button" onclick="window.setControlMode('AI_WIN')">AI (Win)</button>
-        <button id="ai_test_mechanicsModeBtn" class="control-button" onclick="window.setControlMode('AI_TEST_MECHANICS')">AI (Test Mechanics)</button>
+        <button id="ai_test_1ModeBtn" class="control-button" onclick="window.setControlMode('AI_TEST_1')">AI (Win)</button>
+        <button id="ai_test_2ModeBtn" class="control-button" onclick="window.setControlMode('AI_TEST_2')">AI (NAME OF TEST)</button>
         <!-- Add more AI mode buttons with correct ID convention -->
       </div>
       <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">{game_description}</p>
@@ -201,8 +228,17 @@ Here is the input from the user:
 </html>
 </example_html>
 
-Output instructions:
+<output_instructions>
 Output the code plan and game files in this format with NO OTHER TEXT:
+
+<game_design>
+<game_elements_from_game_concept>
+... (List of game elements like characters, objects, mechanics, etc. from the game concept)
+</game_elements_from_game_concept>
+<game_elements_beyond_game_concept>
+... (List of game elements like characters, objects, mechanics, etc. beyond the concept. Make it interesting, consistent with the concept, and feasible to implement in code.)
+</game_elements_beyond_game_concept>
+</game_design>
 
 <game_description>
 ... (game description to introduce the game to the user in maximum 3 sentences. Keep it short and concise.)
@@ -212,17 +248,13 @@ Output the code plan and game files in this format with NO OTHER TEXT:
 ... (game controls as a list of key bindings, Key: Action)
 </game_controls>
 
-<code_plan>
-... (code plan in maximum 5 sentences)
-</code_plan>
-
 <ai_testing>
-<{ai_test_name_WIN}>
-... (write in 1 sentence "What are you testing?" , start with "Testing:")
-... (write in 1 sentence "How are you testing it?" , start with "Strategy:")
-... (write in 1 sentence "What is the expected outcome?" , start with "Expected outcome:")
-</{ai_test_name_WIN}>
-// Add more ai_test_TESTNAME as needed where TESTNAME is the name of the test (WIN, MECHANICS, etc.)
+<AI_TEST_1>
+<testing>(write in 1-2 sentences "What are you testing?")</testing>
+<strategy>(write in 1-2 sentences "How are you testing it?" )</strategy>
+<expected_outcome>(write in 1-2 sentences "What is the expected outcome?")</expected_outcome>
+</AI_TEST_1>
+// Add tests (<=5) as needed along with the expected outcome, strategy, and testing
 </ai_testing>
 
 For the javascript files:
@@ -234,5 +266,51 @@ HTML following the <example_html> template (output last):
 <code filename="index.html">
 ... (html code)
 </code>
+</output_instructions>
+"""
+        return output_format
+    
+    def get_baseline_output_format(self) -> str:
+        """
+        Get the output format for the baseline architecture
+        """
+        output_format = """
+
+# HTML REFERENCE TEMPLATE
+<example_html>
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; } /* active button for current control mode */
+    </style>
+  </head>
+  <body>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</example_html>
+
+<output_instructions>
+Output the game files in this format with NO OTHER TEXT:
+
+For the javascript files:
+<code filename="{{name}}.{{extension}}">
+... (code)
+</code>
+
+HTML following the <example_html> template (output last):
+<code filename="index.html">
+... (html code)
+</code>
+</output_instructions>
 """
         return output_format

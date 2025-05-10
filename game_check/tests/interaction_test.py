@@ -35,6 +35,12 @@ async def test_game_interaction_async(game_path: str) -> Dict[str, Any]:
     async with GameBrowserController(game_path) as browser:
         results = await browser.test_game_interaction()
     
+    # Add console error message if test failed
+    if not results.get("test_result", False) and "console_errors" in results:
+        errors = [err for err in results["console_errors"] if "error" in err.lower()]
+        if errors:
+            results["console_error_message"] = "\n".join(errors)
+    
     # Save results
     save_test_results(results, game_path, "interaction_test")
     

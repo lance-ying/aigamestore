@@ -42,6 +42,24 @@ def run_all_tests(game_path: str, output_file: str = None) -> Dict[str, Any]:
     logging.info("Running game load test...")
     load_results = check_game_loads(game_path)
     results["load_test"] = load_results
+    
+    # Add console error message if test failed
+    if not load_results.get("test_result", False) and not "console_error_message" in load_results:
+        error_messages = []
+        if "console_logs" in load_results:
+            for msg_type, messages in load_results["console_logs"].items():
+                for msg in messages:
+                    if "error" in msg.lower():
+                        error_messages.append(msg)
+        elif "console_errors" in load_results:
+            # Fallback to legacy field
+            for err in load_results["console_errors"]:
+                if "error" in err.lower():
+                    error_messages.append(err)
+                    
+        if error_messages:
+            load_results["console_error_message"] = "\n".join(error_messages)
+    
     report_load_test(load_results)
     
     # Only run interaction tests if load test passed
@@ -50,6 +68,24 @@ def run_all_tests(game_path: str, output_file: str = None) -> Dict[str, Any]:
         logging.info("Running game interaction test...")
         interaction_results = test_game_interaction(game_path)
         results["interaction_test"] = interaction_results
+        
+        # Add console error message if test failed
+        if not interaction_results.get("test_result", False) and not "console_error_message" in interaction_results:
+            error_messages = []
+            if "console_logs" in interaction_results:
+                for msg_type, messages in interaction_results["console_logs"].items():
+                    for msg in messages:
+                        if "error" in msg.lower():
+                            error_messages.append(msg)
+            elif "console_errors" in interaction_results:
+                # Fallback to legacy field
+                for err in interaction_results["console_errors"]:
+                    if "error" in err.lower():
+                        error_messages.append(err)
+                    
+            if error_messages:
+                interaction_results["console_error_message"] = "\n".join(error_messages)
+        
         report_interaction_test(interaction_results)
     else:
         logging.warning("Skipping interaction test because load test failed")
@@ -127,6 +163,24 @@ def main():
         logging.info("Running game load test...")
         load_results = check_game_loads(game_path)
         results["load_test"] = load_results
+        
+        # Add console error message if test failed
+        if not load_results.get("test_result", False) and not "console_error_message" in load_results:
+            error_messages = []
+            if "console_logs" in load_results:
+                for msg_type, messages in load_results["console_logs"].items():
+                    for msg in messages:
+                        if "error" in msg.lower():
+                            error_messages.append(msg)
+            elif "console_errors" in load_results:
+                # Fallback to legacy field
+                for err in load_results["console_errors"]:
+                    if "error" in err.lower():
+                        error_messages.append(err)
+                    
+            if error_messages:
+                load_results["console_error_message"] = "\n".join(error_messages)
+        
         report_load_test(load_results)
         
         # Skip other tests if load test failed
@@ -146,6 +200,24 @@ def main():
         logging.info("Running game interaction test...")
         interaction_results = test_game_interaction(game_path)
         results["interaction_test"] = interaction_results
+        
+        # Add console error message if test failed
+        if not interaction_results.get("test_result", False) and not "console_error_message" in interaction_results:
+            error_messages = []
+            if "console_logs" in interaction_results:
+                for msg_type, messages in interaction_results["console_logs"].items():
+                    for msg in messages:
+                        if "error" in msg.lower():
+                            error_messages.append(msg)
+            elif "console_errors" in interaction_results:
+                # Fallback to legacy field
+                for err in interaction_results["console_errors"]:
+                    if "error" in err.lower():
+                        error_messages.append(err)
+                    
+            if error_messages:
+                interaction_results["console_error_message"] = "\n".join(error_messages)
+        
         report_interaction_test(interaction_results)
     
 

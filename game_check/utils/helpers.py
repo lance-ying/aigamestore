@@ -118,6 +118,14 @@ def format_test_summary(results: Dict[str, Any]) -> str:
     if "error" in results:
         summary.append(f"Error: {results['error']}")
     
+    # Add game phase information if present
+    if "interaction_test" in results and "game_start_test" in results["interaction_test"]:
+        game_start_test = results["interaction_test"]["game_start_test"]
+        if "game_phase_after_enter" in game_start_test:
+            phase = game_start_test["game_phase_after_enter"]
+            if phase and phase != "PLAYING":
+                summary.append(f"Game phase after ENTER: {phase}")
+    
     # Add number of console errors if present
     if "console_errors" in results:
         errors = [err for err in results["console_errors"] if "error" in err.lower()]
@@ -127,6 +135,24 @@ def format_test_summary(results: Dict[str, Any]) -> str:
                 summary.append(f"  - {err}")
             if len(errors) > 3:
                 summary.append(f"  - ... and {len(errors) - 3} more errors")
+    
+    # Add console error message if present
+    if "console_error_message" in results:
+        summary.append("Console error message:")
+        lines = results["console_error_message"].split("\n")
+        for line in lines[:3]:  # Show first few lines
+            summary.append(f"  - {line}")
+        if len(lines) > 3:
+            summary.append(f"  - ... and {len(lines) - 3} more lines")
+    
+    # Add information about key presses with errors if present
+    if "key_presses_with_errors" in results:
+        error_presses = results["key_presses_with_errors"]
+        summary.append(f"Key presses with errors: {len(error_presses)}")
+        for press in error_presses[:3]:  # Show first few
+            summary.append(f"  - Action #{press['index']}: key '{press['key']}'")
+        if len(error_presses) > 3:
+            summary.append(f"  - ... and {len(error_presses) - 3} more actions with errors")
     
     # Add visual changes information if present
     if "visual_changes" in results:

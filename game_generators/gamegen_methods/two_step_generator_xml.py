@@ -28,9 +28,11 @@ class TwoStepXMLGenerator(GameGenerator):
 
         output_format = self.get_game_design_output_format()
         task = f"""
-Here is the game concept from the user:
 <task>
-<game_concept>{game_concept}</game_concept>
+Write an interesting game design based on the game concept input from the user. Describe it well enough for the game developer to implement it.
+<game_concept>
+{game_concept}
+</game_concept>
 </task>"""
         prompt = instructions + task + output_format
         return prompt
@@ -45,9 +47,11 @@ Here is the game concept from the user:
             instructions = self.get_non_ecs_code_instructions()
         output_format = self.get_code_output_format()
         task = f"""
-Generate the game code for the following game design:
 <task>
-<game_design>{game_design}</game_design>
+Implement an interesting game based on this game design:
+<game_design>
+{game_design}
+</game_design>
 </task>
 """
         prompt = instructions + task + output_format
@@ -77,10 +81,9 @@ Generate the game code for the following game design:
                 user_prompt=game_design_prompt,
                 system_prompt=system_prompt_game_design,
                 verbose=self.verbose,
-                temperature=1.0,
+                temperature=0.9,
                 top_p=0.9,
             )
-
             game_design = self.extract_game_design(response_game_design)
 
             game_code_prompt = self.generate_code_prompt(game_design)
@@ -89,7 +92,7 @@ Generate the game code for the following game design:
                 user_prompt=game_code_prompt,
                 system_prompt=system_prompt_game_code,
                 verbose=self.verbose,
-                temperature=0.25,
+                temperature=0.6,
                 top_p=0.9,
             )
             # Prepare conversation log for saving
@@ -207,7 +210,7 @@ Generate the game code for the following game design:
 Output format:
 
 <game_design>
-... (game design <= 2000 words)
+... (game design in <= 1000 words)
 </game_design>
         """
         return output_format
@@ -217,10 +220,10 @@ Output format:
         Get the output format
         """
         output_format = """
-
 # HTML REFERENCE TEMPLATE
 <example_html>
-<!DOCTYPE html>
+
+<!doctype html>
 <html>
   <head>
     <meta charset="UTF-8" />
@@ -238,8 +241,8 @@ Output format:
       <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">{game_title}</h1>
       <div class="control-buttons">
         <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
-        <button id="ai_winModeBtn" class="control-button" onclick="window.setControlMode('AI_WIN')">AI (Win)</button>
-        <button id="ai_test_mechanicsModeBtn" class="control-button" onclick="window.setControlMode('AI_TEST_MECHANICS')">AI (Test Mechanics)</button>
+        <button id="ai_test_1ModeBtn" class="control-button" onclick="window.setControlMode('AI_TEST_1')">AI (Win)</button>
+        <button id="ai_test_2ModeBtn" class="control-button" onclick="window.setControlMode('AI_TEST_2')">AI (NAME OF TEST)</button>
         <!-- Add more AI mode buttons with correct ID convention -->
       </div>
       <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">{game_description}</p>
@@ -252,8 +255,8 @@ Output format:
 </html>
 </example_html>
 
-Output instructions:
-Output game information and game code in this format with NO OTHER TEXT:
+<output_instructions>
+Output the code plan and game files in this format with NO OTHER TEXT:
 
 <game_description>
 ... (game description to introduce the game to the user in maximum 3 sentences. Keep it short and concise.)
@@ -263,17 +266,13 @@ Output game information and game code in this format with NO OTHER TEXT:
 ... (game controls as a list of key bindings, Key: Action)
 </game_controls>
 
-<code_plan>
-... (code plan in maximum 5 sentences)
-</code_plan>
-
 <ai_testing>
-<{ai_test_name_WIN}>
-... (write in 1 sentence "What are you testing?" , start with "Testing:")
-... (write in 1 sentence "How are you testing it?" , start with "Strategy:")
-... (write in 1 sentence "What is the expected outcome?" , start with "Expected outcome:")
-</{ai_test_name_WIN}>
-// Add more ai_test_TESTNAME as needed where TESTNAME is the name of the test (WIN, MECHANICS, etc.)
+<AI_TEST_1>
+<testing>(write in 1-2 sentences "What are you testing?")</testing>
+<strategy>(write in 1-2 sentences "How are you testing it?" )</strategy>
+<expected_outcome>(write in 1-2 sentences "What is the expected outcome?")</expected_outcome>
+</AI_TEST_1>
+// Add tests (<=5) as needed along with the expected outcome, strategy, and testing
 </ai_testing>
 
 For the javascript files:
@@ -285,5 +284,6 @@ HTML following the <example_html> template (output last):
 <code filename="index.html">
 ... (html code)
 </code>
+</output_instructions>
 """
         return output_format
