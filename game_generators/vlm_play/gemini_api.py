@@ -105,6 +105,58 @@ class GeminiEvaluator:
         except Exception as e:
             logging.error(f"Error evaluating video with Gemini: {str(e)}")
             return None
+    
+    async def evaluate_video_with_custom_prompt(self, video_path: str, custom_prompt: str) -> Optional[str]:
+        """
+        Evaluate a game video using Gemini Vision with a custom prompt.
+        
+        Args:
+            video_path: Path to the MP4 video file
+            custom_prompt: Custom prompt to send to Gemini
+            
+        Returns:
+            Gemini's evaluation response or None if failed
+        """
+        if not os.path.exists(video_path):
+            logging.error(f"Video file not found: {video_path}")
+            return None
+            
+        try:
+            logging.info(f"Sending video to Gemini for evaluation with custom prompt: {video_path}")
+            
+            with open(video_path, "rb") as f:
+                video_data = f.read()
+                
+            # Create the content parts list with the custom prompt and video
+            parts = [
+                types.Part(text=custom_prompt),
+                types.Part(inline_data=types.Blob(
+                    mime_type="video/mp4",
+                    data=video_data
+                ))
+            ]
+            
+            # Create the final content
+            content = types.Content(parts=parts, role="user")
+            
+            # Call Gemini
+            response = await self.model_api.generate_content_async(
+                contents=[content],
+                stream=False,
+                system_instruction="Analyze the provided game video and give detailed, accurate feedback based on the specific instructions."
+            )
+            
+            # Check if we got a valid response
+            if not response or not response.candidates or not response.candidates[0].content:
+                logging.error("No valid response from Gemini API")
+                return None
+                
+            response_text = response.candidates[0].content.parts[0].text
+            return response_text
+            
+        except Exception as e:
+            logging.error(f"Error evaluating video with custom prompt: {str(e)}")
+            return None
             
     def parse_evaluation_response(self, response_text: str) -> Dict[str, Any]:
         """
@@ -125,6 +177,8 @@ class GeminiEvaluator:
             "visual_design",
             "bugs_issues",
             "strengths_weaknesses",
+            "improvement_suggestions",
+            "technical_improvements",
             "overall_assessment"
         ]
         
