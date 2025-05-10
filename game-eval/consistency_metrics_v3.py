@@ -329,8 +329,8 @@ if __name__ == "__main__":
             results["events"].append(entry["events"])
             results["log_analysis"].append(json.dumps(res, indent=4))
 
+            results["num_mechanics"] = len(game["mechanics_implemented"])
             results["consistency_score_llm_policy"].append(game["consistency_score_llm_policy"])
-
             results["consistency_score_rdm_policy"].append(game["consistency_score_rdm_policy"])
 
             mechanics_implemented = game["mechanics_implemented"]
@@ -902,6 +902,8 @@ if __name__ == "__main__":
     plt.savefig(save_dir / "avg_playability_rating_vs_game.png")
     plt.close()
 
+
+
     # Plot avg fun rating vs consistency score llm policy
     plt.figure(figsize=(6, 4))
     plt.scatter(avg_results["consistency_score_llm_policy"], avg_results["avg_fun_rating"], alpha=0.2)
@@ -1239,6 +1241,110 @@ if __name__ == "__main__":
     plt.ylabel('LLM-code policy')
     plt.tight_layout()
     plt.savefig(save_dir / "consistency_scores_random_vs_llm.png")
+    plt.close()
+
+
+    # plot probability of score (take the first samples)
+    plt.figure(figsize=(4, 3), dpi=150)
+    counts, bin_edges = np.histogram(first_samples["consistency_score_llm_policy"], bins=10, range=(0, 100))
+    cum_counts = np.cumsum(counts[::-1])[::-1]
+    probabilities = cum_counts / len(first_samples)
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+    plt.plot(bin_centers, probabilities, 'o-', color="lightcoral", alpha=0.7)
+    plt.xlabel("Consistency score (LLM-code policy)")
+    plt.ylabel("P(score > x)")
+    plt.xticks(np.linspace(0, 100, 11))
+    ax = plt.gca()
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    plt.tight_layout()
+    plt.savefig(save_dir / "consistency_scores_llm_code_first_samples_ccdf.png")
+    plt.close()
+
+    # plot histogram
+    plt.figure(figsize=(4, 3), dpi=150)
+    plt.bar(bin_centers, counts, width=10, color="lightcoral", alpha=0.7, edgecolor='white')
+    plt.xlabel("Consistency score (LLM-code policy)")
+    plt.ylabel("Number of samples")
+    plt.xlim(0, 100)  # Set x-axis limits to match the valid range
+    ax = plt.gca()
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    plt.tight_layout()
+    plt.savefig(save_dir / "consistency_scores_llm_code_first_samples_hist.png")
+    plt.close()
+
+    # plot probability of score (take the first samples)
+    plt.figure()
+    plt.hist(first_samples["consistency_score_llm_policy"], bins=10, color="lightcoral", alpha=0.7, edgecolor='white')
+    plt.xlabel("Consistency score (LLM-code policy)")
+    plt.ylabel("Number of samples")
+    plt.xlim(0, 100)  # Set x-axis limits to match the valid range
+    ax = plt.gca()
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    plt.tight_layout()
+    plt.savefig(save_dir / "consistency_scores_llm_code_first_samples.png")
+    plt.close()
+
+
+    # plot the number of mechanics vs consistency score
+    num_mechanics = []
+    consistency_scores = []
+    consistency_scores_rdm_policy = []
+    for game in game_dataset:
+        num_mechanics.append(len(game["mechanics_implemented"]))
+        consistency_scores.append(game["consistency_score_llm_policy"])
+        consistency_scores_rdm_policy.append(game["consistency_score_rdm_policy"])
+
+    plt.figure(figsize=(4, 3), dpi=150)
+    # Compute regression line
+    slope, intercept, r_value, p_value, std_err = stats.linregress(consistency_scores, num_mechanics)
+    r2 = r_value**2
+    
+    # Create scatter plot
+    plt.scatter(consistency_scores, num_mechanics, color="lightcoral")
+    
+    # Add regression line
+    x = np.array([min(consistency_scores), max(consistency_scores)])
+    y = slope * x + intercept
+    plt.plot(x, y, color='lightcoral')
+    
+    plt.xlabel("Consistency score (LLM-code policy)")
+    plt.ylabel("Number of mechanics")
+    # Add R² value
+    plt.text(0.05, 0.95, f'R² = {r2:.3f}', transform=plt.gca().transAxes, 
+             fontsize=8, verticalalignment='top')
+    ax = plt.gca()
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    plt.tight_layout()
+    plt.savefig(save_dir / "consistency_scores_llm_vs_num_mechanics.png")
+    plt.close()
+
+    plt.figure(figsize=(4, 3), dpi=150)
+    # Compute regression line
+    slope, intercept, r_value, p_value, std_err = stats.linregress(consistency_scores_rdm_policy, num_mechanics)
+    r2 = r_value**2
+    
+    # Create scatter plot
+    plt.scatter(consistency_scores_rdm_policy, num_mechanics, color="thistle")
+    
+    # Add regression line
+    x = np.array([min(consistency_scores_rdm_policy), max(consistency_scores_rdm_policy)])
+    y = slope * x + intercept
+    plt.plot(x, y, color='thistle')
+    
+    plt.xlabel("Consistency score (random policy)")
+    plt.ylabel("Number of mechanics")
+    # Add R² value
+    plt.text(0.05, 0.95, f'R² = {r2:.3f}', transform=plt.gca().transAxes, 
+             fontsize=8, verticalalignment='top')
+    ax = plt.gca()
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    plt.tight_layout()
+    plt.savefig(save_dir / "consistency_scores_rdm_vs_num_mechanics.png")
     plt.close()
 
     # TODO: doesn't take genre into account
