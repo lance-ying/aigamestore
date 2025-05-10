@@ -6,8 +6,8 @@ import json
 from utils import generate, run_game, code_from_dir
 
 
-perspective = "top-down"
-# perspective = "side-scrolling"
+# perspective = "top-down"
+perspective = "side-scrolling"
 
 thinking = False
 
@@ -18,7 +18,7 @@ save_dir = Path(__file__).parent / "results" / Path(__file__).stem
 max_samples = 5
 
 run_name = datetime.now().strftime("%Y%m%d_%H%M%S")
-run_name = f"run1/{model}/{'thinking' if thinking else 'no_thinking'}"
+run_name = f"run2/{model}/{'thinking' if thinking else 'no_thinking'}"
 
 save_dir = save_dir / run_name
 
@@ -37,7 +37,7 @@ prompt_game_plan = """Task: Write a game design document for a 2D game with a ""
 {description}
 </description>
 
-Focus on the game environment and the game flow. Don't include code in your game plan.
+Focus on the game environment and the game flow. Don't include technical details or code in your game design.
 
 Structure your answer as follows:
 <game_plan>

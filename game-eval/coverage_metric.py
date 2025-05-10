@@ -73,8 +73,46 @@ def run_game(game_code: dict[str, str], headless: bool = True,
             try:
                 playwright_instance = sync_playwright().start()
                 # For coverage collection, we need to use Chromium
-                browser_type = playwright_instance.chromium if collect_coverage else playwright_instance.firefox
-                browser = browser_type.launch(headless=headless)
+                # browser_type = playwright_instance.chromium if collect_coverage else playwright_instance.firefox
+                browser_type = playwright_instance.chromium
+                # browser = browser_type.launch(headless=headless)
+                # TODO: doesn't work on arm?
+                browser = browser_type.launch(
+                    headless=headless,
+                    args=[
+                        # Core WebGL rendering improvements - but less aggressive
+                        '--use-gl=egl',              # Use EGL instead of ANGLE (may help with transparency)
+                        '--ignore-gpu-blocklist',    # Ignore GPU blocklist
+                        
+                        # Remove problematic flags that might cause transparency
+                        # '--disable-gpu-vsync',
+                        # '--disable-accelerated-2d-canvas',
+                        # '--disable-gpu-memory-buffer-compositor-resources',
+                        
+                        # Keep GPU process separate to avoid transparency issues
+                        # '--in-process-gpu',
+                        
+                        # Security sandbox modifications (careful in production)
+                        '--no-sandbox',              # Disable sandbox (only for testing)
+                        
+                        # Remove other potentially problematic flags
+                        # '--disable-web-security',
+                        # '--disable-features=UseOzonePlatform',
+                        
+                        # Keep essential WebGL flags
+                        '--enable-webgl',            # Explicitly enable WebGL
+                        
+                        # Remove experimental features that might cause issues
+                        # '--enable-unsafe-webgpu',
+                        
+                        # Memory limits - keep these at moderate values
+                        '--gpu-program-cache-size-kb=512',
+                        '--force-gpu-mem-available-mb=512',
+                        
+                        # Basic logging
+                        '--enable-logging'
+                    ]
+                )
                 context = browser.new_context(
                     viewport={'width': viewport_width, 'height': viewport_height}
                 )
