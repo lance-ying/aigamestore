@@ -5,6 +5,7 @@ import glob
 import datetime
 import shutil
 from pathlib import Path
+import re
 
 from gamegen_methods.game_generator_base import GameGenerator
 
@@ -163,7 +164,6 @@ Output the <code_change_plan>, <updated_code filename="filename.js">, and <expla
 Explain your plan for the code changes specifically for each file in a few sentences. Mention no changes if the feedback is not related to the current code.
 </code_change_plan>
 
-// Output all game files, even if they don't need changes.
 <updated_code filename="filename.js">
 // Improved code here
 </updated_code>

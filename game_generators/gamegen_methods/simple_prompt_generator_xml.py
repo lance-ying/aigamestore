@@ -66,7 +66,7 @@ Implement an interesting game based on the game concept input from the user.
                     user_prompt=user_prompt,
                     verbose=self.verbose,
                     temperature=0.7,
-                    top_p=0.9,
+                    # top_p=0.9,
                 )
             else:
                 response = self.model_api.call(
@@ -74,7 +74,7 @@ Implement an interesting game based on the game concept input from the user.
                     system_prompt=system_prompt,
                     verbose=self.verbose,
                     temperature=0.7,
-                    top_p=0.9,
+                    # top_p=0.9,
                 )
             
             # Prepare conversation log for saving

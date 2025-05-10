@@ -82,7 +82,7 @@ Implement an interesting game based on this game design:
                 system_prompt=system_prompt_game_design,
                 verbose=self.verbose,
                 temperature=0.9,
-                top_p=0.9,
+                # top_p=0.9,
             )
             game_design = self.extract_game_design(response_game_design)
 
@@ -93,7 +93,7 @@ Implement an interesting game based on this game design:
                 system_prompt=system_prompt_game_code,
                 verbose=self.verbose,
                 temperature=0.6,
-                top_p=0.9,
+                # top_p=0.9,
             )
             # Prepare conversation log for saving
             conversation_log = [
@@ -256,6 +256,7 @@ Output format:
 </example_html>
 
 <output_instructions>
+Note: total tokens should be <= 40000.
 Output the code plan and game files in this format with NO OTHER TEXT:
 
 <game_description>
