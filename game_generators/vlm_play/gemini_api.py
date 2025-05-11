@@ -1,15 +1,14 @@
 import os
 import logging
 import json
+import time
 from typing import Dict, Any, Optional, List
 import sys
 sys.path.append("../")
 
-import google.generativeai as genai
-from google.generativeai.types import content_types as types
-
-from game_generators.utils import ModelAPI
-
+# Update imports to use the newer google-genai package
+from google import genai
+from google.genai import types
 
 class GeminiEvaluator:
     """Class to handle interactions with Gemini API for game evaluation."""
@@ -21,20 +20,54 @@ class GeminiEvaluator:
         Args:
             api_key: Google API key for Gemini access
         """
-        self.api_key = api_key or os.environ.get("GOOGLE_API_KEY")
+        self.api_key = api_key or os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
         
         if not self.api_key:
             raise ValueError(
                 "Google API key is required. Set GOOGLE_API_KEY environment variable or pass it as a parameter."
             )
             
-        # Setup Gemini API
-        genai.configure(api_key=self.api_key)
+        # Initialize the Gemini client
+        self.client = genai.Client(api_key=self.api_key)
+        self.model_name = "gemini-2.0-flash"  # Use the latest available model
+    
+    def wait_for_file_processing(self, uploaded_file):
+        """
+        Wait until the file is processed and in ACTIVE state.
         
-        # Initialize ModelAPI
-        self.model_api = ModelAPI("google:gemini-2.5-flash")
+        Args:
+            uploaded_file: The file object returned from the upload method
+            
+        Returns:
+            The file object in ACTIVE state
+            
+        Raises:
+            Exception: If file processing fails
+        """
+        logging.info(f"Waiting for file {uploaded_file.name} to be processed...")
         
-    async def evaluate_video(self, video_path: str) -> Optional[str]:
+        # Wait for the file to be processed
+        while uploaded_file.state == "PROCESSING":
+            logging.info(f"File is still processing: {uploaded_file.name}")
+            # Wait before checking again
+            time.sleep(5)
+            # Get the updated file status
+            uploaded_file = self.client.files.get(name=uploaded_file.name)
+        
+        # Check final state
+        if uploaded_file.state == "ACTIVE":
+            logging.info(f"File {uploaded_file.name} is now ACTIVE and ready for use")
+            return uploaded_file
+        elif uploaded_file.state == "FAILED":
+            error_msg = f"File processing failed: {getattr(uploaded_file, 'error', 'Unknown error')}"
+            logging.error(error_msg)
+            raise Exception(error_msg)
+        else:
+            error_msg = f"File is in unexpected state: {uploaded_file.state}"
+            logging.error(error_msg)
+            raise Exception(error_msg)
+        
+    def evaluate_video(self, video_path: str) -> Optional[str]:
         """
         Evaluate a game video using Gemini Vision.
         
@@ -51,9 +84,6 @@ class GeminiEvaluator:
         try:
             logging.info(f"Sending video to Gemini for evaluation: {video_path}")
             
-            with open(video_path, "rb") as f:
-                video_data = f.read()
-                
             # Prepare prompt for evaluation
             prompt = """
             You are a game tester evaluating an HTML5/JavaScript game.
@@ -75,38 +105,52 @@ class GeminiEvaluator:
             <overall_assessment>Your rating and explanation</overall_assessment>
             """
             
-            # Create the content parts list with the prompt and video
-            parts = [
-                types.Part(text=prompt),
-                types.Part(inline_data=types.Blob(
-                    mime_type="video/mp4",
-                    data=video_data
-                ))
+            # Upload the video file to the API
+            logging.info(f"Uploading video file: {video_path}")
+            video_file = self.client.files.upload(file=video_path)
+            logging.info(f"Video file uploaded with URI: {video_file.uri}, State: {video_file.state}")
+            
+            # Wait for the file to be processed before using it
+            video_file = self.wait_for_file_processing(video_file)
+            
+            # Prepare content with video and prompt
+            contents = [
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part.from_uri(
+                            file_uri=video_file.uri,
+                            mime_type=video_file.mime_type,
+                        ),
+                        types.Part.from_text(text=prompt),
+                    ],
+                ),
             ]
             
-            # Create the final content
-            content = types.Content(parts=parts, role="user")
-            
-            # Call Gemini
-            response = await self.model_api.generate_content_async(
-                contents=[content],
-                stream=False,
-                system_instruction="Analyze the provided game video and give detailed, accurate feedback."
+            # Configure response format
+            generate_content_config = types.GenerateContentConfig(
+                response_mime_type="text/plain",
             )
             
-            # Check if we got a valid response
-            if not response or not response.candidates or not response.candidates[0].content:
+            # Generate content using the model
+            logging.info(f"Generating content with model: {self.model_name}")
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=contents,
+                config=generate_content_config,
+            )
+            
+            if not response or not hasattr(response, 'text'):
                 logging.error("No valid response from Gemini API")
                 return None
                 
-            response_text = response.candidates[0].content.parts[0].text
-            return response_text
+            return response.text
             
         except Exception as e:
             logging.error(f"Error evaluating video with Gemini: {str(e)}")
             return None
     
-    async def evaluate_video_with_custom_prompt(self, video_path: str, custom_prompt: str) -> Optional[str]:
+    def evaluate_video_with_custom_prompt(self, video_path: str, custom_prompt: str) -> Optional[str]:
         """
         Evaluate a game video using Gemini Vision with a custom prompt.
         
@@ -124,39 +168,64 @@ class GeminiEvaluator:
         try:
             logging.info(f"Sending video to Gemini for evaluation with custom prompt: {video_path}")
             
-            with open(video_path, "rb") as f:
-                video_data = f.read()
-                
-            # Create the content parts list with the custom prompt and video
-            parts = [
-                types.Part(text=custom_prompt),
-                types.Part(inline_data=types.Blob(
-                    mime_type="video/mp4",
-                    data=video_data
-                ))
+            # Upload the video file to the API
+            logging.info(f"Uploading video file: {video_path}")
+            video_file = self.client.files.upload(file=video_path)
+            logging.info(f"Video file uploaded with URI: {video_file.uri}, State: {video_file.state}")
+            
+            # Wait for the file to be processed before using it
+            video_file = self.wait_for_file_processing(video_file)
+            
+            # Prepare content with video and prompt
+            contents = [
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part.from_uri(
+                            file_uri=video_file.uri,
+                            mime_type=video_file.mime_type,
+                        ),
+                        types.Part.from_text(text=custom_prompt),
+                    ],
+                ),
             ]
             
-            # Create the final content
-            content = types.Content(parts=parts, role="user")
-            
-            # Call Gemini
-            response = await self.model_api.generate_content_async(
-                contents=[content],
-                stream=False,
-                system_instruction="Analyze the provided game video and give detailed, accurate feedback based on the specific instructions."
+            # Configure response format
+            generate_content_config = types.GenerateContentConfig(
+                response_mime_type="text/plain",
             )
             
-            # Check if we got a valid response
-            if not response or not response.candidates or not response.candidates[0].content:
+            # Generate content using the model
+            logging.info(f"Generating content with model: {self.model_name}")
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=contents,
+                config=generate_content_config,
+            )
+            
+            if not response or not hasattr(response, 'text'):
                 logging.error("No valid response from Gemini API")
                 return None
                 
-            response_text = response.candidates[0].content.parts[0].text
-            return response_text
+            return response.text
             
         except Exception as e:
             logging.error(f"Error evaluating video with custom prompt: {str(e)}")
             return None
+            
+    # Keep the evaluate_video_with_custom_prompt_sync method for backward compatibility
+    def evaluate_video_with_custom_prompt_sync(self, video_path: str, custom_prompt: str) -> Optional[str]:
+        """
+        Evaluate a game video using Gemini Vision with a custom prompt.
+        
+        Args:
+            video_path: Path to the MP4 video file
+            custom_prompt: Custom prompt to send to Gemini
+            
+        Returns:
+            Gemini's evaluation response or None if failed
+        """
+        return self.evaluate_video_with_custom_prompt(video_path, custom_prompt)
             
     def parse_evaluation_response(self, response_text: str) -> Dict[str, Any]:
         """
@@ -227,7 +296,7 @@ class GeminiEvaluator:
             
         return result
         
-    async def generate_text_async(self, prompt: str) -> Optional[str]:
+    def generate_text(self, prompt: str) -> Optional[str]:
         """
         Generate text using Gemini with a text-only prompt.
         
@@ -240,27 +309,47 @@ class GeminiEvaluator:
         try:
             logging.info(f"Sending text prompt to Gemini")
             
-            # Create a text-only prompt
-            content = types.Content(
-                parts=[types.Part(text=prompt)],
-                role="user"
+            # Create content with prompt only
+            contents = [
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part.from_text(text=prompt),
+                    ],
+                ),
+            ]
+            
+            # Configure response format
+            generate_content_config = types.GenerateContentConfig(
+                response_mime_type="text/plain",
             )
             
-            # Call Gemini
-            response = await self.model_api.generate_content_async(
-                contents=[content],
-                stream=False,
-                system_instruction="You are a game development expert providing detailed feedback and analysis."
+            # Generate content using the model
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=contents,
+                config=generate_content_config,
             )
             
-            # Check if we got a valid response
-            if not response or not response.candidates or not response.candidates[0].content:
+            if not response or not hasattr(response, 'text'):
                 logging.error("No valid response from Gemini API")
                 return None
                 
-            response_text = response.candidates[0].content.parts[0].text
-            return response_text
+            return response.text
             
         except Exception as e:
             logging.error(f"Error generating text with Gemini: {str(e)}")
-            return None 
+            return None
+    
+    # Keep the generate_text_sync method for backward compatibility
+    def generate_text_sync(self, prompt: str) -> Optional[str]:
+        """
+        Generate text using Gemini with a text-only prompt (synchronous version).
+        
+        Args:
+            prompt: Text prompt to send to Gemini
+            
+        Returns:
+            Gemini's response text or None if failed
+        """
+        return self.generate_text(prompt) 
