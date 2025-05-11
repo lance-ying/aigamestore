@@ -225,11 +225,11 @@ class GameGenerator(ABC):
             return match.group(1).strip()
         return ""
     
-    def extract_ai_testing(self, text: str) -> str:
+    def extract_automated_testing(self, text: str) -> str:
         """
-        Extract ai testing from text
+        Extract automated testing from text
         """
-        pattern = r"<ai_testing>\s*(.*?)\s*</ai_testing>"
+        pattern = r"<automated_testing>\s*(.*?)\s*</automated_testing>"
         match = re.search(pattern, text, re.DOTALL)
         if match:
             return match.group(1).strip()
@@ -245,7 +245,7 @@ class GameGenerator(ABC):
         game_concept: str,
         game_plan: str,
         game_design: Optional[str] = None,
-        ai_testing: Optional[str] = None,
+        automated_testing: Optional[str] = None,
         concept_path: Optional[str] = None,
         genre: Optional[str] = None,
         intermediate_outputs: Optional[Dict[str, Any]] = None,
@@ -352,7 +352,7 @@ class GameGenerator(ABC):
                 "controls": game_controls,
                 "playability": False,
                 "plan": game_plan,
-                "ai_testing": ai_testing,
+                "automated_testing": automated_testing,
             },
             "generation_info": {
                 "method": self.__class__.__name__,

@@ -112,7 +112,7 @@ Implement an interesting game based on this game design:
             game_plan =  self.extract_game_plan(response)
             html_code = self.extract_code_block(response, "html") or ""
             
-            ai_testing_list = self.extract_ai_testing(response)
+            automated_testing_list = self.extract_automated_testing(response)
             # Get JavaScript files
             js_code_dict = self.extract_code_block(response, "javascript")
             js_files = []
@@ -140,7 +140,7 @@ Implement an interesting game based on this game design:
                 game_concept=game_concept,
                 game_plan=game_plan,
                 concept_path=concept_path,
-                ai_testing=ai_testing_list,
+                automated_testing=automated_testing_list,
                 genre=genre,
                 intermediate_outputs={"full_response": response},
                 conversation_log=conversation_log,
@@ -158,7 +158,7 @@ Implement an interesting game based on this game design:
                 "game_controls": game_controls,
                 "game_dir": game_dir,
                 "game_plan": game_plan,
-                "ai_testing": ai_testing_list,
+                "automated_testing": automated_testing_list,
             }
             
         except Exception as e:
@@ -244,7 +244,7 @@ Output format:
         <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
         <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">Test (Win)</button>
         <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">Test (NAME OF TEST)</button>
-        <!-- Add more AI mode buttons with correct ID convention -->
+        <!-- Add more automated testing mode buttons with correct ID convention -->
       </div>
       <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">{game_description}</p>
       <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">{game_controls}</p>

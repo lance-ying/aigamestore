@@ -66,7 +66,7 @@ Implement an interesting game based on the game concept input from the user.
                     user_prompt=user_prompt,
                     verbose=self.verbose,
                     temperature=0.7,
-                    # top_p=0.9,
+                    top_p=0.9,
                 )
             else:
                 response = self.model_api.call(
@@ -74,7 +74,7 @@ Implement an interesting game based on the game concept input from the user.
                     system_prompt=system_prompt,
                     verbose=self.verbose,
                     temperature=0.7,
-                    # top_p=0.9,
+                    top_p=0.9,
                 )
             
             # Prepare conversation log for saving
@@ -93,7 +93,7 @@ Implement an interesting game based on the game concept input from the user.
             game_design = self.extract_game_design(response)
 
 
-            ai_testing_list = self.extract_ai_testing(response)
+            automated_testing_list = self.extract_automated_testing(response)
             # Get JavaScript files
             js_code_dict = self.extract_code_block(response, "javascript")
             js_files = []
@@ -121,7 +121,7 @@ Implement an interesting game based on the game concept input from the user.
                 game_concept=game_concept,
                 game_plan=game_plan,
                 game_design=game_design,
-                ai_testing=ai_testing_list,
+                automated_testing=automated_testing_list,
                 concept_path=concept_path,
                 genre=genre,
                 intermediate_outputs={"full_response": response},
@@ -141,7 +141,7 @@ Implement an interesting game based on the game concept input from the user.
                 "game_controls": game_controls,
                 "game_dir": game_dir,
                 "game_plan": game_plan,
-                "ai_testing": ai_testing_list,
+                "automated_testing": automated_testing_list,
             }
             
         except Exception as e:
@@ -149,17 +149,7 @@ Implement an interesting game based on the game concept input from the user.
                 print(f"Error in game generation: {type(e).__name__}: {str(e)}")
                 import traceback
                 traceback.print_exc()
-            raise 
-    
-    def extract_ai_testing(self, response: str) -> List[Dict[str, str]]:
-        """
-        Extract the ai testing from the response
-        """
-        ai_testing_output = self.extract_code_block(response, "ai_testing")
-        if ai_testing_output:
-            return ai_testing_output
-        else:
-            return []
+            raise
     
     def get_ecs_instructions(self) -> str:
         """
