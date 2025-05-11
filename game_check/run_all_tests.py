@@ -96,7 +96,8 @@ def run_all_tests(game_path: str, output_file: str = None) -> Dict[str, Any]:
         results["load_test"].get("test_result", False) and
         results["interaction_test"].get("test_result", False)
     )
-    
+
+
     # Save combined results if output file specified
     if output_file:
         try:
@@ -111,7 +112,7 @@ def run_all_tests(game_path: str, output_file: str = None) -> Dict[str, Any]:
     print("OVERALL TEST RESULTS")
     print("="*50)
     print(f"Load Test: {'✅ PASSED' if results['load_test'].get('test_result', False) else '❌ FAILED'}")
-    interaction_test = results['interaction_test']['interaction_test']
+    interaction_test = results['interaction_test']
     game_start_test = interaction_test['game_start_test']
     gameplay_test = interaction_test['gameplay_test']
     print(f"Game Start Test: {'✅ PASSED' if game_start_test['test_result'] else '❌ FAILED'}")

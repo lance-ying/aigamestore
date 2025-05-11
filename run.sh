@@ -1,23 +1,3 @@
-#! /bin/bash
-START_NUM=2
-NUM_GAMES=5
-NUM_NARRATIVES=10
+# python game_generators/generate_game_main.py --concept_path "./game_prompts/generative_games/dev_games/platformer_0000.json" --method "three_step_xml" --verbose --model "anthropic:claude-3.7-sonnet" --allow_resample 0
 
-METHODS=(
-    "simple_prompt" 
-    "instruction_simple_prompt"
-    "complexity_guide"
-    "judge"
-)
-
-for i in $(seq -f "%04g" $START_NUM $(($START_NUM + $NUM_NARRATIVES - 1)))
-do
-    narrative_path="generative_games/new_games/google_gemini-2.0-flash/game_${i}.json"
-    for method in "${METHODS[@]}"
-    do
-        for j in $(seq 1 $NUM_GAMES)
-        do
-            python main.py --method "$method" --verbose --narrative "$narrative_path"
-        done
-    done
-done
+python game_generators/generate_game_main.py --concept_path ./game_prompts/generative_games/dev_games/platformer_0000.json --method simple_prompt_xml --verbose --generate_with_ai --no_ecs
