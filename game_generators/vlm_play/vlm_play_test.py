@@ -26,7 +26,7 @@ from .test_ai_modes import AIModeTester
 class VLMPlayEvaluation:
     """Class to evaluate games using video recording and LLM analysis."""
     
-    def __init__(self, 
+    def __init__(self,
                  game_path: str, 
                  output_dir: Optional[str] = None,
                  api_key: Optional[str] = None):
@@ -53,6 +53,7 @@ class VLMPlayEvaluation:
         self.gemini_evaluator = GeminiEvaluator(api_key)
         
         # Define default test modes
+        # TODO: these modes should be automatically parsed from the metadata. Check 
         self.ai_modes = [
             {"id": "ai_test_1ModeBtn", "name": "AI_Win"},
             {"id": "ai_test_2ModeBtn", "name": "AI_Movement_Test"},

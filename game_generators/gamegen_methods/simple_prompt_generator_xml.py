@@ -121,6 +121,7 @@ Implement an interesting game based on the game concept input from the user.
                 game_concept=game_concept,
                 game_plan=game_plan,
                 game_design=game_design,
+                ai_testing=ai_testing_list,
                 concept_path=concept_path,
                 genre=genre,
                 intermediate_outputs={"full_response": response},
