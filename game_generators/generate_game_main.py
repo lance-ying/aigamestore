@@ -50,7 +50,7 @@ def parse_args():
     parser.add_argument(
         "--allow_resample",
         type=int,
-        default=3,
+        default=0,
         help="Number of automatic resamples allowed if tests fail (0 means ask for confirmation)",
     )
 
