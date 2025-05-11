@@ -140,6 +140,7 @@ Implement an interesting game based on this game design:
                 game_concept=game_concept,
                 game_plan=game_plan,
                 concept_path=concept_path,
+                ai_testing=ai_testing_list,
                 genre=genre,
                 intermediate_outputs={"full_response": response},
                 conversation_log=conversation_log,
