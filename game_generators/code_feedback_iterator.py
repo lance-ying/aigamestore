@@ -151,7 +151,6 @@ Game controls:
 {game_controls}
 </game_controls>
 
-
 Current code:
 <current_code>
 {formatted_code}

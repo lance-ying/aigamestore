@@ -245,24 +245,24 @@ def main():
             else:
                 print("\n❌ Game failed some tests.")
 
-                # Check if we should resample
-                if attempt < max_attempts:
-                    if args.allow_resample > 0 and attempt <= args.allow_resample:
-                        print(
-                            f"Auto-resampling enabled ({args.allow_resample} allowed). Generating new game..."
-                        )
-                    else:
-                        if not get_user_confirmation(
-                            "Do you want to generate a new game?"
-                        ):
-                            print(
-                                "User chose not to resample. Keeping the current game."
-                            )
-                            break
-                else:
-                    print(
-                        f"Reached maximum attempts ({max_attempts}). Keeping the last generated game."
-                    )
+                # # Check if we should resample
+                # if attempt < max_attempts:
+                #     if args.allow_resample > 0 and attempt <= args.allow_resample:
+                #         print(
+                #             f"Auto-resampling enabled ({args.allow_resample} allowed). Generating new game..."
+                #         )
+                #     else:
+                #         if not get_user_confirmation(
+                #             "Do you want to generate a new game?"
+                #         ):
+                #             print(
+                #                 "User chose not to resample. Keeping the current game."
+                #             )
+                #             break
+                # else:
+                #     print(
+                #         f"Reached maximum attempts ({max_attempts}). Keeping the last generated game."
+                #     )
 
             attempt += 1
 
