@@ -9,6 +9,7 @@ import anthropic
 from google import genai
 
 
+SYSTEM_PROMPT = "You are a professional game developer."
 
 try:
     anthropic_client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
@@ -54,6 +55,7 @@ def create_batch_request(model, prompts, thinking=False):
                     params=MessageCreateParamsNonStreaming(
                         model=model,
                         max_tokens=64000,
+                        system=SYSTEM_PROMPT,
                         messages=[{"role": "user", "content": prompt}],
                         thinking={
                             "type": "enabled",
@@ -69,6 +71,7 @@ def create_batch_request(model, prompts, thinking=False):
                     params=MessageCreateParamsNonStreaming(
                         model=model,
                         max_tokens=64000,
+                        system=SYSTEM_PROMPT,
                         messages=[{"role": "user", "content": prompt}]
                     )
                 )
@@ -147,7 +150,7 @@ def get_batch_results(batch_id, thinking=False):
     return results
 
 
-def get_completion(model, prompt, thinking=False):
+def get_completion(model, prompt, thinking=False, thinking_tokens=10000):
     """Get completion from the model.
     
     Args:
@@ -177,13 +180,15 @@ def get_completion(model, prompt, thinking=False):
         if thinking:
             thinking_content = ""
             answer = ""
-
+            print(f"Thinking with {thinking_tokens} tokens")
             with anthropic_client.messages.stream(
                 model=model,
                 max_tokens=40000,
+                system=SYSTEM_PROMPT,
                 thinking={
                     "type": "enabled",
-                    "budget_tokens": 10000
+                    # "budget_tokens": 10000
+                    "budget_tokens": thinking_tokens
                 },
                 messages=[{"role": "user", "content": prompt}]
             ) as stream:
@@ -209,6 +214,7 @@ def get_completion(model, prompt, thinking=False):
             answer = ""
             with anthropic_client.messages.stream(
                 max_tokens=40000,
+                system=SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": prompt}],
                 model=model,
             ) as stream:
@@ -267,7 +273,7 @@ def get_completion(model, prompt, thinking=False):
         raise ValueError(f"Model {model} not supported")
 
 
-def generate(model, prompt, save_dir, code_dir=None, thinking=False, max_tries=3):
+def generate(model, prompt, save_dir, code_dir=None, thinking=False, thinking_tokens=10000, max_tries=3):
     """
     Generate code for a given prompt or batch of prompts.
 
@@ -284,7 +290,7 @@ def generate(model, prompt, save_dir, code_dir=None, thinking=False, max_tries=3
     """
     # Determine if we're in batch mode
     batch_mode = isinstance(prompt, list)
-    
+
     if batch_mode:
         if not isinstance(save_dir, list) or len(prompt) != len(save_dir):
             raise ValueError("When prompt is a list, save_dir must be a matching list of directories")
@@ -335,7 +341,7 @@ def generate(model, prompt, save_dir, code_dir=None, thinking=False, max_tries=3
         
         while try_idx < max_tries:
             try:
-                batch_results = get_completion(model, prompt, thinking=thinking)
+                batch_results = get_completion(model, prompt, thinking=thinking, thinking_tokens=thinking_tokens)
                 if thinking and not isinstance(batch_results, dict):
                     # If thinking is enabled but result is not a dict, we got a (thinking, answer) tuple
                     # Convert to a dict with a single entry
@@ -390,12 +396,12 @@ def generate(model, prompt, save_dir, code_dir=None, thinking=False, max_tries=3
         while try_idx < max_tries:
             try:
                 if thinking:
-                    thinking_content, answer = get_completion(model, prompt, thinking=thinking)
+                    thinking_content, answer = get_completion(model, prompt, thinking=thinking, thinking_tokens=thinking_tokens)
 
                     with open(save_dir / "thinking.txt", "w") as f:
                         f.write(thinking_content)
                 else:
-                    answer = get_completion(model, prompt, thinking=False)
+                    answer = get_completion(model, prompt, thinking=False, thinking_tokens=thinking_tokens)
 
             except Exception as e:
                 print(f"Error: {e}")

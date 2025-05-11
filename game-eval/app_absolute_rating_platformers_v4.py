@@ -16,7 +16,7 @@ from huggingface_hub import HfApi
 HF_TOKEN = os.environ.get("HF_TOKEN")
 
 
-games_version = "v8"
+games_version = "v9"
 run_name = "pilot1"
 
 GAMES_DATASET = f"generative-games/gen-games-{games_version}"
@@ -34,7 +34,7 @@ SAVE_HF = True
 
 # Calibration game IDs
 CALIBRATION_GAME_BAD_ID = "33f1577ab08d982c056d9e7e7f76a8b9f2bd68c73c0410aad9eadb14f7fd1ab7"
-CALIBRATION_GAME_GOOD_ID = "20ad132ca6e34565b785c61bcc3b344f296f628fe824898165d5bb60ff0d19bb"
+CALIBRATION_GAME_GOOD_ID = "5876551c2749a58a1cd6ef80632ddbce31579e622c9f7ffb6cb52cad4fa92d32"
 
 RESULTS_DIR = Path(__file__).parent / "results" / f"games_{games_version}"
 
@@ -850,10 +850,10 @@ HTML_TEMPLATE = '''
             <iframe class="game-frame" src="/game/{{ game_path }}"></iframe>
             <div class="rating-sliders">
                 <div class="timer-container" id="timer-display">
-                    Please play for: 1:00
+                    Please play for: 0:30
                 </div>
                 <div id="play-instruction" style="text-align: center; padding: 30px; color: #555; font-size: 16px;">
-                    <p>Please try playing the game for 1 minute even if it has issues. Then you will be asked to rate the game</p>
+                    <p>Please try playing the game for at least 30 seconds even if it has issues. Then you will be asked to rate the game</p>
                     <p style="font-size: 14px; margin-top: 10px;"><i>Note: Some games may have audio</i></p>
                 </div>
                 <div id="rating-panel" style="display: none;">
@@ -934,7 +934,7 @@ HTML_TEMPLATE = '''
         const submitBtn = document.getElementById("submit-ratings");
         
         // Timer functionality
-        let timeLeft = 60; // 60 seconds = 1 minute
+        let timeLeft = 30; // 30 seconds
         let timerInterval;
         let timerComplete = false;
         const timerDisplay = document.getElementById("timer-display");
@@ -960,7 +960,7 @@ HTML_TEMPLATE = '''
                 } else {
                     const minutes = Math.floor(timeLeft / 60);
                     const seconds = timeLeft % 60;
-                    timerDisplay.textContent = `Please play for: ${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
+                    timerDisplay.textContent = `Please play for: 0:${seconds < 10 ? '0' : ''}${seconds}`;
                 }
             }, 1000);
         }
@@ -1062,7 +1062,7 @@ HTML_TEMPLATE = '''
         document.getElementById('submit-ratings').addEventListener('click', function() {
             // Only allow submission if timer is complete
             if (!timerComplete) {
-                alert("Please play the game for at least 1 minute before submitting ratings.");
+                alert("Please play the game for at least 30 seconds before submitting ratings.");
                 return;
             }
             
@@ -2265,7 +2265,7 @@ INSTRUCTIONS_TEMPLATE = '''
             <p>Your task is to evaluate a series of basic 2D games. You will be shown a total of ''' + str(NUM_GAMES_TO_RATE) + ''' games to rate. These games may contain issues. You should take these issues into account when rating the games.</p>
             <h3>Please follow these steps to provide your rating:</h3>
             <ol>
-                <li><b>Please play each game for about 1 minute</b> to get a good feel for it. If the game appears broken or has issues, please still try your best to interact with it for the full minute.</li>
+                <li><b>Please play each game for at least 30 seconds</b> to get a good feel for it. If the game appears broken or has issues, please still try your best to interact with it for the full time.</li>
                 <li><b>Rate the playability of the game on a scale from 0 to 100:</b><br>
                     - 0: Completely unplayable or broken<br>
                     - 50: Average controls and interaction<br>

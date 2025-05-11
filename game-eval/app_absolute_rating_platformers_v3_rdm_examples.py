@@ -26,15 +26,11 @@ FEEDBACK_DATASET = f"generative-games/gen-games-{games_version}-feedback-{run_na
 
 COMPLETION_CODE = "CH1OQ9N6"
 
-NUM_CALIBRATION_GAMES = 2  # Number of games to show during calibration
+NUM_CALIBRATION_GAMES = 5  # Number of games to show during calibration
 NUM_GAMES_TO_RATE = 15
 PUSH_EVERY_N_RATINGS = 1
 SAVE_LOCALLY = False
 SAVE_HF = True
-
-# Calibration game IDs
-CALIBRATION_GAME_BAD_ID = "33f1577ab08d982c056d9e7e7f76a8b9f2bd68c73c0410aad9eadb14f7fd1ab7"
-CALIBRATION_GAME_GOOD_ID = "20ad132ca6e34565b785c61bcc3b344f296f628fe824898165d5bb60ff0d19bb"
 
 RESULTS_DIR = Path(__file__).parent / "results" / f"games_{games_version}"
 
@@ -125,26 +121,17 @@ GAMES_DATASET = load_games_dataset()
 
 def get_random_game(for_calibration=False):
     """Get a random game from the dataset and generate a unique rating_id, per user"""
-    rating_id = str(uuid.uuid4())
-
+    rated_games = get_rated_games()
+    calibration_games = get_calibration_games()
+    
     if for_calibration:
-        calibration_games = get_calibration_games()
         # Check if the user has already seen enough calibration games
         if len(calibration_games) >= NUM_CALIBRATION_GAMES:
             return None, None
 
-        # hand pick games for calibration
-        assert NUM_CALIBRATION_GAMES == 2
-        GAME_BAD = GAMES_DATASET.filter(lambda x: x["id"] == CALIBRATION_GAME_BAD_ID)[0]
-        GAME_GOOD = GAMES_DATASET.filter(lambda x: x["id"] == CALIBRATION_GAME_GOOD_ID)[0]
-        games_to_show = [GAME_BAD, GAME_GOOD]
-        assert len(calibration_games) < len(games_to_show)
-        game = games_to_show[len(calibration_games)]
-
-        return game, rating_id
-
+        # For calibration, choose from games not already used in calibration
+        available_games = [game for game in GAMES_DATASET if game["id"] not in calibration_games]
     else:
-        rated_games = get_rated_games()
         # Check if the user has already rated the target number of games
         if len(rated_games) >= NUM_GAMES_TO_RATE:
             return None, None
@@ -152,11 +139,12 @@ def get_random_game(for_calibration=False):
         # For rating, choose from games not already rated (but could include calibration games)
         available_games = [game for game in GAMES_DATASET if game["id"] not in rated_games]
     
-        if not available_games:
-            return None, None # Should not happen if NUM_GAMES_TO_RATE is less than dataset size, but good practice
-        
-        game = random.choice(available_games)
-        return game, rating_id
+    if not available_games:
+        return None, None # Should not happen if NUM_GAMES_TO_RATE is less than dataset size, but good practice
+    
+    game = random.choice(available_games)
+    rating_id = str(uuid.uuid4())
+    return game, rating_id
 
 # HTML template for Prolific ID login
 LOGIN_TEMPLATE = '''
@@ -853,7 +841,7 @@ HTML_TEMPLATE = '''
                     Please play for: 1:00
                 </div>
                 <div id="play-instruction" style="text-align: center; padding: 30px; color: #555; font-size: 16px;">
-                    <p>Please try playing the game for 1 minute even if it has issues. Then you will be asked to rate the game</p>
+                    <p>Please play the game for 1 minute then you will be asked to rate the game</p>
                     <p style="font-size: 14px; margin-top: 10px;"><i>Note: Some games may have audio</i></p>
                 </div>
                 <div id="rating-panel" style="display: none;">
@@ -2038,7 +2026,7 @@ CALIBRATION_TEMPLATE = '''
     
     <div class="main-content">
         <div class="calibration-info">
-            These are example game people have really liked and really disliked.
+            This is an example of the types of games you will be rating.
         </div>
         <div class="game-container">
             <div class="game-box">
@@ -2286,7 +2274,7 @@ INSTRUCTIONS_TEMPLATE = '''
                 <li>If you are not serious about the evaluation, we will not be able to compensate you.</li>
                 <li>The game window may lose focus. If this happens, please click on the game window to focus it.</li>
             </ul>
-            <p>Before you start rating, you will see example games. Briefly interact with them to get a feel for the range of games you will be rating. </p>
+            <p>Before you start rating, you will see 5 example games. Briefly interact with them to get a feel for the range of games you will be rating. </p>
             <button onclick="window.location.href='/instructions-complete'">Start</button>
         </div>
     </body>

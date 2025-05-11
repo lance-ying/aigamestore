@@ -70,7 +70,8 @@ if __name__ == "__main__":
     save_dirs = []
 
     theme_dirs = sorted(games_dir.glob("theme_*"), key=lambda d: int(d.name.split("_")[-1]))
-    theme_dirs = theme_dirs[:num_themes]
+    # theme_dirs = theme_dirs[:num_themes]
+    theme_dirs = theme_dirs[10:]
 
     for theme_dir in theme_dirs:
         sample_dirs = sorted(theme_dir.glob("sample_*"), key=lambda d: int(d.name.split("_")[-1]))
