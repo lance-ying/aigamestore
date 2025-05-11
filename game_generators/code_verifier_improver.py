@@ -529,7 +529,6 @@ def main():
             
             logging.info("Game verification failed. Improving game code...")
             logging.info("Feedback: \n" + feedback)
-            exit(0)
 
             # The exit(0) is for debugging, it should be removed in production
             # exit(0)

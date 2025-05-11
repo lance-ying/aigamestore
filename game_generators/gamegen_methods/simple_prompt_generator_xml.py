@@ -232,13 +232,20 @@ Output the code plan and game files in this format with NO OTHER TEXT:
 </game_design>
 
 <game_description>
-... (game description to introduce the game to the user in maximum 3 sentences. Keep it short and concise.)
+... (Tell the user what the game is about, what they need to do, and the objective. Keep it short and concise.)
 </game_description>
 
 <game_controls>
 ... (game controls as a list of key bindings, Key: Action)
 </game_controls>
 
+For the javascript files:
+Write fully functional code (except automated_testing_code.js)
+<code filename="{{name}}.{{extension}}">
+... (code)
+</code>
+
+Write a plan for automated testing of the game:
 <automated_testing>
 <TEST_1>
 <test_description>(write in 1-2 sentences "What are you testing?")</test_description>
@@ -248,8 +255,8 @@ Output the code plan and game files in this format with NO OTHER TEXT:
 // Add tests (<=5) as needed along with the expected outcome, strategy, and testing
 </automated_testing>
 
-For the javascript files:
-<code filename="{{name}}.{{extension}}">
+Write the automated_testing_code.js based on the automated_testing section to validate the game:
+<code filename="automated_testing_code.js">
 ... (code)
 </code>
 

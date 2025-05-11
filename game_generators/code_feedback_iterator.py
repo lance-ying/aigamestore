@@ -278,43 +278,108 @@ List filename: changes made, which feedback it addresses, and how it addresses i
         game_dir_path = Path(game_dir)
         input_folder_name = game_dir_path.name
         
-        # Check if the input folder is already an iteration with format sample_0000_vibe_coding_1
-        # where the mode matches the current mode
-        base_folder_name = input_folder_name
-        current_iteration = 0
-        
-        # Pattern to look for: _mode_number at the end of the folder name
-        pattern = f"_{self.mode}_"
-        if pattern in input_folder_name:
-            parts = input_folder_name.split(pattern)
-            if len(parts) == 2 and parts[1].isdigit():
-                base_folder_name = parts[0]
-                current_iteration = int(parts[1])
-        
-        # Create the MODE_updates directory in the parent folder
-        parent_dir = game_dir_path.parent
-        # If already in a MODE_updates directory, use the same directory
-        if parent_dir.name == f"{self.mode}_updates":
-            updates_dir = parent_dir
+        # Special handling for vibe_coding mode
+        if self.mode == "vibe_coding":
+            # Check if the path already contains vibe_coding
+            if "vibe_coding" in str(game_dir_path):
+                # Extract the base folder name and current iteration
+                base_folder_name = None
+                current_iteration = 0
+                
+                # Look for folder_*_vibe_coding_iter_* pattern
+                pattern = r"(folder_\d+)_vibe_coding_iter_(\d+)"
+                match = re.search(pattern, input_folder_name)
+                if match:
+                    base_folder_name = match.group(1)
+                    current_iteration = int(match.group(2))
+                else:
+                    # Fallback: just use the current folder name as base
+                    base_folder_name = "folder_1"
+                
+                # Use the parent directory (which should be the vibe_coding dir)
+                updates_dir = game_dir_path.parent
+                
+                # Determine the next iteration number
+                next_iteration = current_iteration + 1
+                
+                # Create the new directory for this iteration
+                iteration_dir = updates_dir / f"{base_folder_name}_vibe_coding_iter_{next_iteration}"
+            else:
+                # This is the first vibe_coding iteration
+                # Create the vibe_coding directory in the same location as the game folder
+                updates_dir = game_dir_path.parent / "vibe_coding"
+                updates_dir.mkdir(parents=True, exist_ok=True)
+                
+                # Use folder_1 as the base name
+                base_folder_name = "folder_1"
+                next_iteration = 1
+                
+                # Create the new directory for this iteration
+                iteration_dir = updates_dir / f"{base_folder_name}_vibe_coding_iter_{next_iteration}"
         else:
-            updates_dir = parent_dir / f"{self.mode}_updates"
-            updates_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Determine the next iteration number
-        existing_iterations = [
-            int(d.name.split(f"_{self.mode}_")[1])
-            for d in updates_dir.iterdir()
-            if d.is_dir() and f"_{self.mode}_" in d.name and d.name.split(f"_{self.mode}_")[0] == base_folder_name
-        ]
-        # Include current iteration if found
-        if current_iteration > 0:
-            existing_iterations.append(current_iteration)
+            # Original code for other modes
+            # Check if the input folder is already an iteration with format sample_0000_mode_1
+            base_folder_name = input_folder_name
+            current_iteration = 0
             
-        next_iteration = max(existing_iterations, default=0) + 1
+            # Pattern to look for: _mode_number at the end of the folder name
+            pattern = f"_{self.mode}_"
+            if pattern in input_folder_name:
+                parts = input_folder_name.split(pattern)
+                if len(parts) == 2 and parts[1].isdigit():
+                    base_folder_name = parts[0]
+                    current_iteration = int(parts[1])
+            
+            # Create the MODE_updates directory in the parent folder
+            parent_dir = game_dir_path.parent
+            # If already in a MODE_updates directory, use the same directory
+            if parent_dir.name == f"{self.mode}_updates":
+                updates_dir = parent_dir
+            else:
+                updates_dir = parent_dir / f"{self.mode}_updates"
+                updates_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Determine the next iteration number
+            existing_iterations = [
+                int(d.name.split(f"_{self.mode}_")[1])
+                for d in updates_dir.iterdir()
+                if d.is_dir() and f"_{self.mode}_" in d.name and d.name.split(f"_{self.mode}_")[0] == base_folder_name
+            ]
+            # Include current iteration if found
+            if current_iteration > 0:
+                existing_iterations.append(current_iteration)
+                
+            next_iteration = max(existing_iterations, default=0) + 1
+            
+            # Create the new directory for this iteration
+            iteration_dir = updates_dir / f"{base_folder_name}_{self.mode}_{next_iteration}"
         
-        # Create the new directory for this iteration
-        iteration_dir = updates_dir / f"{base_folder_name}_{self.mode}_{next_iteration}"
+        # Create the directory if it doesn't exist
         iteration_dir.mkdir(parents=True, exist_ok=True)
+        
+        # First, copy all files from the source game directory to preserve assets and other files
+        if self.verbose:
+            print(f"Copying all files from {game_dir_path} to {iteration_dir}")
+        
+        # Get list of filenames that will be updated (to exclude them from copying)
+        updated_filenames = set(updated_files.keys())
+        
+        # Copy all files from source directory, excluding those that will be updated
+        for item in os.listdir(game_dir_path):
+            source = game_dir_path / item
+            destination = iteration_dir / item
+            
+            # Skip directories like vibe_coding_updates to avoid recursive copying
+            if item.endswith("_updates") or item.endswith("_orig_files"):
+                continue
+                
+            if os.path.isdir(source):
+                # Copy directories recursively
+                if not os.path.exists(destination):
+                    shutil.copytree(source, destination)
+            elif item not in updated_filenames and item != "index.html" and item != "metadata.json":
+                # Copy files that aren't being updated and aren't special files
+                shutil.copy2(source, destination)
         
         # Copy any needed files from the original directory
         if not metadata:
@@ -570,5 +635,5 @@ List filename: changes made, which feedback it addresses, and how it addresses i
         """
         Get the vibe coding feedback
         """
-        vibe_coding_feedback = "Improve the game code while being consistent with the <game_description> and <game_controls>. Do not add new game elements or change the game objective and design. The code should still be following the same game description, characters, controls, action mappings, and have the same aesthetic vibe. Ensure the game loads, start on pressing ENTER, and is still playable. Output the code with the same filenames."
+        vibe_coding_feedback = "Improve the game code while being consistent with the game description and controls. Ensure the game loads, start on pressing ENTER, and is still playable. Output the code with the same filenames."
         return vibe_coding_feedback

@@ -51,13 +51,6 @@ def parse_args():
     )
 
     parser.add_argument(
-        "--allow_resample",
-        type=int,
-        default=0,
-        help="Number of automatic resamples allowed if tests fail (0 means ask for confirmation)",
-    )
-
-    parser.add_argument(
         "--no_ecs",
         action="store_true",
         help="Use non-ECS architecture for game generation",
@@ -216,65 +209,26 @@ def main():
         else:
             raise ValueError(f"Unknown method: {args.method}")
 
-        # Generate and test the game, with resampling if needed
-        max_attempts = 3  # Maximum number of generation attempts
-        attempt = 1
-        game_passed = False
+        # Generate the game
+        result = generator.generate_game(
+            game_concept=game_concept,
+            concept_path=args.concept_path,
+        )
 
-        while attempt <= max_attempts and not game_passed:
-            if attempt > 1:
-                print(
-                    f"\nAttempting game generation again (attempt {attempt}/{max_attempts})..."
-                )
+        print(f"Game generated successfully: {result['title']}")
+        print(f"Saved to: {result['game_dir']}")
 
-            # Generate the game
-            result = generator.generate_game(
-                game_concept=game_concept,
-                concept_path=args.concept_path,
-            )
+        # Test the game
+        print("\nTesting game functionality...")
+        game_passed = test_game(result["game_dir"], args.verbose)
 
-            print(f"Game generated successfully: {result['title']}")
-            print(f"Saved to: {result['game_dir']}")
-
-            # Test the game
-            print("\nTesting game functionality...")
-            game_passed = test_game(result["game_dir"], args.verbose)
-
-            if game_passed:
-                print("\n✅ Game passed all tests!")
-            else:
-                print("\n❌ Game failed some tests.")
-
-                # # Check if we should resample
-                # if attempt < max_attempts:
-                #     if args.allow_resample > 0 and attempt <= args.allow_resample:
-                #         print(
-                #             f"Auto-resampling enabled ({args.allow_resample} allowed). Generating new game..."
-                #         )
-                #     else:
-                #         if not get_user_confirmation(
-                #             "Do you want to generate a new game?"
-                #         ):
-                #             print(
-                #                 "User chose not to resample. Keeping the current game."
-                #             )
-                #             break
-                # else:
-                #     print(
-                #         f"Reached maximum attempts ({max_attempts}). Keeping the last generated game."
-                #     )
-
-            attempt += 1
+        if game_passed:
+            print("\n✅ Game passed all tests!")
+        else:
+            print("\n❌ Game failed some tests.")
 
         # Final outcome
-        if game_passed:
-            print(f"\nFinal game generation successful after {attempt-1} attempt(s)!")
-        else:
-            print(
-                f"\nWarning: Final game did not pass all tests after {attempt-1} attempt(s)."
-            )
-
-        print(f"Game title: {result['title']}")
+        print(f"\nGame title: {result['title']}")
         print(f"Game location: {result['game_dir']}")
 
     except Exception as e:
