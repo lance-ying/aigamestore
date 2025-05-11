@@ -294,7 +294,7 @@ List filename: changes made, which feedback it addresses, and how it addresses i
                     current_iteration = int(match.group(2))
                 else:
                     # Fallback: just use the current folder name as base
-                    base_folder_name = "folder_1"
+                    base_folder_name = input_folder_name
                 
                 # Use the parent directory (which should be the vibe_coding dir)
                 updates_dir = game_dir_path.parent
@@ -311,7 +311,7 @@ List filename: changes made, which feedback it addresses, and how it addresses i
                 updates_dir.mkdir(parents=True, exist_ok=True)
                 
                 # Use folder_1 as the base name
-                base_folder_name = "folder_1"
+                base_folder_name = input_folder_name.split("/")[-1]
                 next_iteration = 1
                 
                 # Create the new directory for this iteration
