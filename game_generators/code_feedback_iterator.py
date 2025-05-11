@@ -187,17 +187,17 @@ List filename: changes made, which feedback it addresses, and how it addresses i
         """
         # Extract code blocks using the format specified in the system prompt
         code_blocks = re.findall(
-            r"<updated_code filename=\"(.*?)\">(.*?)</updated_code>", text, re.DOTALL
+            r"<updated_code filename=\"(.*?)\">(.*?)</updated_code>", response, re.DOTALL
         )
         
         js_files = {}
         for filename, code in code_blocks:
             if filename.endswith(".js"):
-                    # Clean up code block markers
-                    code = re.sub("```(javascript|js)?", "", code)
-                    # Normalize path separators to use forward slashes
-                    normalized_filename = filename.replace("\\", "/")
-                    js_files[normalized_filename] = code.strip()
+                # Clean up code block markers
+                code = re.sub("```(javascript|js)?", "", code)
+                # Normalize path separators to use forward slashes
+                normalized_filename = filename.replace("\\", "/")
+                js_files[normalized_filename] = code.strip()
             
             # If no JS files found, create a default game.js
             if not js_files:
