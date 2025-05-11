@@ -10,7 +10,7 @@ from gamegen_methods.simple_prompt_generator import SimplePromptGenerator
 from gamegen_methods.simple_prompt_generator_exp import SimplePromptEXPGenerator
 from gamegen_methods.simple_prompt_generator_xml import SimplePromptXMLGenerator
 from gamegen_methods.two_step_generator_xml import TwoStepXMLGenerator
-from gamegen_methods.three_step_generator_xml import ThreeStepXMLGenerator
+from gamegen_methods.multipass_generator_xml import MultiPassXMLGenerator
 from gamegen_methods.template_based_generator import TemplateBasedGenerator
 from gamegen_methods.template_based_form_generator import TemplateBasedFormGenerator
 from game_check.run_all_tests import run_all_tests
@@ -40,16 +40,7 @@ def parse_args():
         "--method",
         type=str,
         default="simple_prompt",
-        choices=[
-            "baseline",
-            "simple_prompt",
-            "simple_prompt_exp",
-            "simple_prompt_xml",
-            "two_step_xml",
-            "template_based",
-            "template_based_form",
-            "three_step_xml",
-        ],  # TODO: "guide_complexity", "template", "template_character_driven", "template_with_critic", "template_with_play"],
+        choices=["baseline", "simple_prompt", "simple_prompt_exp", "simple_prompt_xml", "two_step_xml", "template_based", "template_based_form", "multi_step_xml"], # TODO: "guide_complexity", "template", "template_character_driven", "template_with_critic", "template_with_play"],
         help="Game generation method to use",
     )
 
@@ -83,7 +74,13 @@ def parse_args():
         action="store_true",
         help="Use baseline architecture for game generation",
     )
-
+    
+    parser.add_argument(
+        "--num_passes",
+        type=int,
+        default=4,
+        help="Number of passes to use for multi-step game generation",
+    )
     return parser.parse_args()
 
 
@@ -115,6 +112,24 @@ def test_game(game_dir: str, verbose: bool) -> bool:
     try:
         results = run_all_tests(game_dir)
         return results["overall_result"]
+    except KeyError as e:
+        # Handle the case where 'interaction_test' key doesn't have the expected nested structure
+        if verbose:
+            print(f"Warning: KeyError when processing test results: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        # If we have partial results, extract what we can
+        if isinstance(results, dict):
+            # Check if load test passed
+            load_test_passed = results.get("load_test", {}).get("test_result", False)
+            
+            # Check if interaction test has a simple result
+            interaction_test_passed = results.get("interaction_test", {}).get("test_result", False)
+            
+            # Return overall result (both tests must pass)
+            return load_test_passed and interaction_test_passed
+        return False
     except Exception as e:
         print(f"Error running tests: {type(e).__name__}: {str(e)}")
         if verbose:
@@ -179,11 +194,12 @@ def main():
                 verbose=args.verbose,
                 use_ecs=not args.no_ecs,
             )
-        elif args.method == "three_step_xml":
-            generator = ThreeStepXMLGenerator(
+        elif args.method == "multi_step_xml":
+            generator = MultiPassXMLGenerator(
                 model_name=args.model,
                 verbose=args.verbose,
                 use_ecs=not args.no_ecs,
+                num_passes=args.num_passes,
             )
         elif args.method == "template_based_form":
             generator = TemplateBasedFormGenerator(

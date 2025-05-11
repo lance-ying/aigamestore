@@ -14,6 +14,7 @@ from typing import Dict, Any, List, Optional
 # Import from our modules using relative imports
 from .browser_utils import BrowserManager, PLAYWRIGHT_ENABLED
 from .video_processing import VideoRecorder
+from .vlm_play_test import VLMPlayEvaluation, evaluate_game as vlm_evaluate_game
 
 
 class GamePlayer:
@@ -33,7 +34,7 @@ class GamePlayer:
         if output_dir:
             self.output_dir = output_dir
         else:
-            self.output_dir = os.path.join(self.game_path, "vlm_eval")
+            self.output_dir = os.path.join(os.path.dirname(self.game_path), "vlm_eval")
         
         os.makedirs(self.output_dir, exist_ok=True)
         
@@ -92,19 +93,13 @@ class GamePlayer:
                 await page.keyboard.press("Enter")
                 await page.wait_for_timeout(2000)
                 
-                # Define the AI mode buttons based on the user's request
-                ai_test_buttons = [
-                    {"id": "ai_test_1ModeBtn", "text": "AI (Win)"},
-                    {"id": "ai_test_2ModeBtn", "text": "AI (Movement Test)"},
-                    {"id": "ai_test_3ModeBtn", "text": "AI (Vine Swinging)"},
-                    {"id": "ai_test_4ModeBtn", "text": "AI (Hazard Avoidance)"},
-                    {"id": "ai_test_5ModeBtn", "text": "AI (Power-up Test)"}
-                ]
+                # Find all test buttons with the new format
+                test_buttons = await self.browser_manager.find_game_test_buttons(page)
                 
-                logging.info(f"Found {len(ai_test_buttons)} test buttons")
+                logging.info(f"Found {len(test_buttons)} test buttons")
                 
                 # Process each button sequentially
-                for button_info in ai_test_buttons:
+                for button_info in test_buttons:
                     button_id = button_info["id"]
                     button_text = button_info["text"]
                     
@@ -198,60 +193,63 @@ def play_game(game_path: str, output_dir: Optional[str] = None) -> Dict[str, Any
     return asyncio.run(play_game_async(game_path, output_dir))
 
 def main():
-    """Parse command line arguments and play a game."""
+    """Parse command line arguments and play or evaluate a game."""
     parser = argparse.ArgumentParser(
-        description="Play games with different AI modes and record gameplay videos"
+        description="Play and evaluate games with automated testing"
     )
     
-    parser.add_argument(
-        "--game_path", required=True, help="Path to the game directory or HTML file to play"
-    )
+    # Main argument group
+    subparsers = parser.add_subparsers(dest="command", help="Command to execute")
     
-    parser.add_argument(
-        "--output-dir",
-        help="Directory to save output videos (defaults to 'vlm_eval' in game directory)",
-    )
+    # Play command
+    play_parser = subparsers.add_parser("play", help="Play and record gameplay videos")
+    play_parser.add_argument("game_path", help="Path to the game directory or HTML file")
+    play_parser.add_argument("--output", "-o", help="Directory to save recorded videos")
     
-    parser.add_argument(
-        "--verbose", action="store_true", help="Enable verbose logging"
-    )
+    # Evaluate command
+    evaluate_parser = subparsers.add_parser("evaluate", help="Evaluate game with VLM")
+    evaluate_parser.add_argument("game_path", help="Path to the game directory or HTML file")
+    evaluate_parser.add_argument("--output", "-o", help="Directory to save evaluation results")
+    evaluate_parser.add_argument("--api-key", help="Google API key for Gemini access")
+    
+    # Common options
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
     
     args = parser.parse_args()
     
-    if args.verbose:
-        logging.basicConfig(level=logging.INFO, 
-                           format='%(asctime)s - %(levelname)s - %(message)s')
-    else:
-        logging.basicConfig(level=logging.WARNING,
-                           format='%(asctime)s - %(levelname)s - %(message)s')
+    # Configure logging
+    log_level = logging.INFO if args.verbose else logging.WARNING
+    logging.basicConfig(
+        level=log_level,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
     
-    try:
-        # Play the game and record videos
-        output_dir = args.output_dir
-        if not output_dir:
-            output_dir = os.path.join(args.game_path, "vlm_eval")
-            
-        results = play_game(args.game_path, output_dir)
-        
-        # Print summary
-        print("\n===== Game Recording Summary =====")
-        print(f"Game: {args.game_path}")
-        if results["success"]:
-            print(f"Status: Success - Recorded {len(results['video_paths'])} gameplay videos")
-            
-            # Print video paths
-            for video_path in results["video_paths"]:
-                print(f"  Video: {video_path}")
-                
-        else:
-            print(f"Status: Failed - {results.get('error', 'Unknown error')}")
-            
-        # Return success status
-        return 0 if results["success"] else 1
-        
-    except Exception as e:
-        logging.error(f"Error during gameplay recording: {str(e)}", exc_info=True)
+    # If no command specified, show help
+    if not args.command:
+        parser.print_help()
         return 1
+    
+    # Execute command
+    if args.command == "play":
+        results = play_game(args.game_path, args.output)
+        
+        if results["success"]:
+            print(f"Recording completed successfully. Recorded {len(results['video_paths'])} videos.")
+            print(f"See results in {args.output or os.path.join(os.path.dirname(args.game_path), 'vlm_eval')}")
+            return 0
+        else:
+            print(f"Recording failed: {results.get('error', 'Unknown error')}")
+            return 1
+            
+    elif args.command == "evaluate":
+        results = vlm_evaluate_game(args.game_path, args.output, args.api_key)
+        
+        if results["success"]:
+            print(f"Evaluation completed successfully. See results in {args.output or os.path.join(os.path.dirname(args.game_path), 'vlm_evaluation')}")
+            return 0
+        else:
+            print(f"Evaluation failed: {', '.join(results.get('errors', ['Unknown error']))}")
+            return 1
 
 if __name__ == "__main__":
     sys.exit(main()) 

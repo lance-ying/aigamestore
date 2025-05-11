@@ -107,7 +107,7 @@ class BrowserManager:
         
     async def find_game_test_buttons(self, page: Page) -> List[Dict[str, Any]]:
         """
-        Find all AI test buttons on the page.
+        Find all TEST buttons on the page with the new format.
         
         Args:
             page: Playwright page object
@@ -122,43 +122,48 @@ class BrowserManager:
         if not canvas_count:
             raise ValueError("No canvas element found on the page")
             
-        # Find all ai_test buttons
-        ai_test_buttons = await page.evaluate(
+        # Find all test buttons with the new format
+        test_buttons = await page.evaluate(
             """
             () => {
                 const buttons = Array.from(document.querySelectorAll('button, input[type="button"]'));
                 return buttons
-                    .filter(btn => btn.id && btn.id.startsWith('ai_test_'))
+                    .filter(btn => btn.id && btn.id.toLowerCase().includes('test_') && btn.id.toLowerCase().includes('modebtn'))
                     .map(btn => ({
                         id: btn.id,
                         text: btn.innerText || btn.value || '',
-                        index: parseInt(btn.id.replace('ai_test_', '')) || 0
+                        testMode: (btn.onclick && btn.onclick.toString().match(/setControlMode\\(['"]([^'"]+)['"]\\)/)?.[1]) || ''
                     }))
-                    .sort((a, b) => a.index - b.index); // Sort by index if available
+                    .sort((a, b) => {
+                        // Sort by test number if available
+                        const numA = parseInt(a.id.match(/test_(\d+)/i)?.[1] || '0');
+                        const numB = parseInt(b.id.match(/test_(\d+)/i)?.[1] || '0');
+                        return numA - numB;
+                    });
             }
             """
         )
         
-        if not ai_test_buttons:
+        if not test_buttons:
             logging.warning(
-                "No buttons with id starting with 'ai_test_' found. Looking for any buttons..."
+                "No buttons with id containing 'test_' found. Looking for any buttons..."
             )
             
             # Try to find any buttons as a fallback
-            ai_test_buttons = await page.evaluate(
+            test_buttons = await page.evaluate(
                 """
                 () => {
                     const buttons = Array.from(document.querySelectorAll('button, input[type="button"]'));
                     return buttons.map((btn, index) => ({
                         id: btn.id || `button_${index}`,
                         text: btn.innerText || btn.value || '',
-                        index: index
+                        testMode: (btn.onclick && btn.onclick.toString().match(/setControlMode\\(['"]([^'"]+)['"]\\)/)?.[1]) || ''
                     }));
                 }
                 """
             )
             
-        return ai_test_buttons
+        return test_buttons
         
     async def perform_automated_gameplay(self, page: Page, duration: int = 30) -> None:
         """

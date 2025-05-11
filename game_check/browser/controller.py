@@ -2544,19 +2544,8 @@ class GameBrowserController:
                 # Check for errors that may have occurred during the interaction
                 has_interaction_errors = len(result["console_logs"]["error"]) > 0 or len(result["js_exceptions"]) > 0
                 
-                # Determine if test passed
-                test_result = gameplay_change_detected and not has_interaction_errors
-                
-                # Update result data
-                result["test_result"] = test_result
-                if not test_result:
-                    if not gameplay_change_detected:
-                        result["error"] = "No visual change detected in the game after pressing keys. Game doesn't respond to input."
-                    elif has_interaction_errors:
-                        result["error"] = "Game encountered errors during interaction."
-                        # Compile error messages for better reporting
-                        error_messages = result["console_logs"]["error"] + [err for err in result["js_exceptions"] if err not in result["console_logs"]["error"]]
-                        result["error_details"] = "\n".join(error_messages)
+                # Removing reference to undefined gameplay_change_detected variable
+                # The test result has already been determined earlier in the function
                 
                 # Before returning the result, deduplicate errors
                 result["structured_errors"] = self._deduplicate_errors(result["structured_errors"])

@@ -32,7 +32,7 @@ class GeminiEvaluator:
         genai.configure(api_key=self.api_key)
         
         # Initialize ModelAPI
-        self.model_api = ModelAPI("google:gemini-2.0-flash")
+        self.model_api = ModelAPI("google:gemini-2.5-flash")
         
     async def evaluate_video(self, video_path: str) -> Optional[str]:
         """
@@ -225,4 +225,42 @@ class GeminiEvaluator:
         except Exception as e:
             logging.warning(f"Failed to extract rating: {str(e)}")
             
-        return result 
+        return result
+        
+    async def generate_text_async(self, prompt: str) -> Optional[str]:
+        """
+        Generate text using Gemini with a text-only prompt.
+        
+        Args:
+            prompt: Text prompt to send to Gemini
+            
+        Returns:
+            Gemini's response text or None if failed
+        """
+        try:
+            logging.info(f"Sending text prompt to Gemini")
+            
+            # Create a text-only prompt
+            content = types.Content(
+                parts=[types.Part(text=prompt)],
+                role="user"
+            )
+            
+            # Call Gemini
+            response = await self.model_api.generate_content_async(
+                contents=[content],
+                stream=False,
+                system_instruction="You are a game development expert providing detailed feedback and analysis."
+            )
+            
+            # Check if we got a valid response
+            if not response or not response.candidates or not response.candidates[0].content:
+                logging.error("No valid response from Gemini API")
+                return None
+                
+            response_text = response.candidates[0].content.parts[0].text
+            return response_text
+            
+        except Exception as e:
+            logging.error(f"Error generating text with Gemini: {str(e)}")
+            return None 

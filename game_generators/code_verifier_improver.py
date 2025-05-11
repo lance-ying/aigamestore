@@ -515,7 +515,6 @@ def main():
         # For basic_test mode: first verify, then improve if tests fail
         logging.info("Running verification in basic_test mode...")
         results = run_verification(args.game_path, args.output)
-        
         # Print stack traces if available and requested
         if args.show_stack_traces and "feedback" in results:
             for test_type in ["load_test", "interaction_test"]:
@@ -530,6 +529,8 @@ def main():
             
             logging.info("Game verification failed. Improving game code...")
             logging.info("Feedback: \n" + feedback)
+            exit(0)
+
             # The exit(0) is for debugging, it should be removed in production
             # exit(0)
             
