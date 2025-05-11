@@ -1,6 +1,6 @@
 # VLM Play
 
-This module provides functionality to evaluate games by recording gameplay and analyzing using Gemini 2.0 Flash.
+This module provides functionality to evaluate games by recording gameplay and analyzing using Gemini 2.5 Flash.
 
 ## Code Structure
 
@@ -9,23 +9,53 @@ The codebase is organized into the following modules:
 - `browser_utils.py`: Contains the `BrowserManager` class to handle browser interactions with Playwright.
 - `video_processing.py`: Contains the `VideoRecorder` class to handle video recording and processing.
 - `gemini_api.py`: Contains the `GeminiEvaluator` class to handle interactions with Gemini API.
-- `evaluator.py`: Contains the main `GameEvaluator` class that coordinates the evaluation process.
-- `main.py`: Command-line interface for game evaluation.
-- `evaluate_game.py`: Entry point wrapper script that uses the modular implementation.
+- `vlm_play_test.py`: Contains the `VLMPlayEvaluation` class for the parallel testing with the new TEST button format.
+- `test_ai_modes.py`: Contains the `AIModeTester` class for testing different game modes sequentially.
+- `evaluator.py`: Contains the original `GameEvaluator` class for backward compatibility.
+- `main.py`: Command-line interface for game evaluation and recording.
+
+## Features
+
+- Support for new TEST button format (e.g., `<button id="test_1_ModeBtn" onclick="window.setControlMode('TEST_1')">Test (Win)</button>`)
+- Parallel recording of gameplay for all test buttons to optimize testing time
+- Reading test descriptions, strategies, and expected outcomes from metadata.json
+- Using Gemini 2.5 Flash to evaluate gameplay based on test criteria
+- Comprehensive evaluation reports with individual test feedback
+- Aggregated feedback for game developers
+- Canvas-focused recording that ensures only the game canvas is captured
+- Precise recording sequence: wait for page to load, navigate to canvas, press test button, start recording canvas, press ENTER to start the game
 
 ## Usage
 
+### Command Line
+
 ```bash
-python -m vlm_play.evaluate_game /path/to/game/directory
+# Play and record gameplay videos
+python -m vlm_play.main play /path/to/game/directory
+
+# Evaluate game with the new TEST button format and metadata
+python -m vlm_play.main evaluate /path/to/game/directory
 ```
 
-or
+### Python API
 
 ```python
 from vlm_play import evaluate_game
 
 results = evaluate_game("/path/to/game/directory")
 print(results)
+```
+
+### Metadata Format
+
+The system uses information from `metadata.json` in the game directory to understand test purposes:
+
+```json
+{
+  "game_info": {
+    "automated_testing": "<automated_testing>\n<TEST_1>\n<test_description>What are you testing?</test_description>\n<strategy_description>How are you testing it?</strategy_description>\n<expected_outcome>What is the expected outcome?</expected_outcome>\n</TEST_1>\n</automated_testing>"
+  }
+}
 ```
 
 ## Requirements
@@ -35,20 +65,27 @@ print(results)
 - Playwright (install with `pip install playwright && python -m playwright install firefox`)
 - FFmpeg for video processing
 
-## Functionality
+## Workflow
 
-The module performs the following operations:
-
-1. Launches a browser to load and interact with HTML5 games
-2. Finds game test buttons on the page
-3. Records gameplay for each mode
-4. Evaluates the recorded videos using Gemini Vision API
-5. Generates analysis of game mechanics, user experience, visual design, and bugs
+1. Identifies all TEST buttons on the game page
+2. For each test button:
+   a. Waits for the page to load
+   b. Navigates to and focuses on the canvas element
+   c. Presses the test button
+   d. Starts recording only the canvas
+   e. Presses ENTER to start the game
+   f. Records for 30 seconds
+3. Processes recordings in parallel to optimize testing time
+4. Retrieves test information from metadata.json
+5. Evaluates each video with Gemini 2.5 Flash using specific test criteria
+6. Generates aggregated feedback for the game developer
+7. Creates comprehensive HTML reports with all evaluations
 
 ## Output
 
-The evaluation results are saved in the `evaluation_results` directory next to the game directory:
+The evaluation results are saved in the `vlm_evaluation` directory next to the game directory:
 
-- MP4 videos of gameplay for each mode
-- JSON files with Gemini's evaluation for each mode
-- Summary JSON file with all evaluations 
+- MP4 videos of gameplay for each test mode
+- JSON files with Gemini's evaluation for each test
+- Aggregated feedback JSON with comprehensive analysis
+- HTML report with all evaluations, videos, and feedback 

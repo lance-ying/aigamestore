@@ -96,7 +96,8 @@ def run_all_tests(game_path: str, output_file: str = None) -> Dict[str, Any]:
         results["load_test"].get("test_result", False) and
         results["interaction_test"].get("test_result", False)
     )
-    
+
+
     # Save combined results if output file specified
     if output_file:
         try:
@@ -111,11 +112,27 @@ def run_all_tests(game_path: str, output_file: str = None) -> Dict[str, Any]:
     print("OVERALL TEST RESULTS")
     print("="*50)
     print(f"Load Test: {'✅ PASSED' if results['load_test'].get('test_result', False) else '❌ FAILED'}")
-    interaction_test = results['interaction_test']['interaction_test']
-    game_start_test = interaction_test['game_start_test']
-    gameplay_test = interaction_test['gameplay_test']
-    print(f"Game Start Test: {'✅ PASSED' if game_start_test['test_result'] else '❌ FAILED'}")
-    print(f"Gameplay Test: {'✅ PASSED' if gameplay_test['test_result'] else '❌ FAILED'}")
+    
+    # Handle possible different structures of interaction_test results
+    try:
+        if results['interaction_test'].get("test_result", False) == False and "error" in results['interaction_test']:
+            # Simple error case
+            print(f"Interaction Test: ❌ FAILED - {results['interaction_test']['error']}")
+        elif "interaction_test" in results['interaction_test']:
+            # Nested structure with detailed results
+            interaction_test = results['interaction_test']['interaction_test']
+            game_start_test = interaction_test['game_start_test']
+            gameplay_test = interaction_test['gameplay_test']
+            print(f"Game Start Test: {'✅ PASSED' if game_start_test['test_result'] else '❌ FAILED'}")
+            print(f"Gameplay Test: {'✅ PASSED' if gameplay_test['test_result'] else '❌ FAILED'}")
+        else:
+            # Simple pass/fail case
+            print(f"Interaction Test: {'✅ PASSED' if results['interaction_test'].get('test_result', False) else '❌ FAILED'}")
+    except (KeyError, TypeError) as e:
+        # Handle missing keys in the interaction test results
+        logging.warning(f"Error processing interaction test results: {e}")
+        print(f"Interaction Test: ❌ FAILED - Could not process results")
+    
     print("-"*50)
     print(f"Overall Result: {'✅ PASSED' if results['overall_result'] else '❌ FAILED'}")
     print("="*50 + "\n")
@@ -251,11 +268,25 @@ def main():
     if tests_to_run["load"]:
         print(f"Load Test: {'✅ PASSED' if results.get('load_test', {}).get('test_result', False) else '❌ FAILED'}")
     if tests_to_run["interaction"]:
-        interaction_test = results['interaction_test']['interaction_test']
-        game_start_test = interaction_test['game_start_test']
-        gameplay_test = interaction_test['gameplay_test']
-        print(f"Game Start Test: {'✅ PASSED' if game_start_test['test_result'] else '❌ FAILED'}")
-        print(f"Gameplay Test: {'✅ PASSED' if gameplay_test['test_result'] else '❌ FAILED'}")
+        # Handle possible different structures of interaction_test results
+        try:
+            if results['interaction_test'].get("test_result", False) == False and "error" in results['interaction_test']:
+                # Simple error case
+                print(f"Interaction Test: ❌ FAILED - {results['interaction_test']['error']}")
+            elif "interaction_test" in results['interaction_test']:
+                # Nested structure with detailed results
+                interaction_test = results['interaction_test']['interaction_test']
+                game_start_test = interaction_test['game_start_test']
+                gameplay_test = interaction_test['gameplay_test']
+                print(f"Game Start Test: {'✅ PASSED' if game_start_test['test_result'] else '❌ FAILED'}")
+                print(f"Gameplay Test: {'✅ PASSED' if gameplay_test['test_result'] else '❌ FAILED'}")
+            else:
+                # Simple pass/fail case
+                print(f"Interaction Test: {'✅ PASSED' if results['interaction_test'].get('test_result', False) else '❌ FAILED'}")
+        except (KeyError, TypeError) as e:
+            # Handle missing keys in the interaction test results
+            logging.warning(f"Error processing interaction test results: {e}")
+            print(f"Interaction Test: ❌ FAILED - Could not process results")
     print("-"*50)
     print(f"Overall Result: {'✅ PASSED' if results['overall_result'] else '❌ FAILED'}")
     print("="*50 + "\n")

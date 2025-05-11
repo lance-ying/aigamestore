@@ -82,7 +82,7 @@ Implement an interesting game based on this game design:
                 system_prompt=system_prompt_game_design,
                 verbose=self.verbose,
                 temperature=0.9,
-                top_p=0.9,
+                # top_p=0.9,
             )
             game_design = self.extract_game_design(response_game_design)
 
@@ -93,7 +93,7 @@ Implement an interesting game based on this game design:
                 system_prompt=system_prompt_game_code,
                 verbose=self.verbose,
                 temperature=0.6,
-                top_p=0.9,
+                # top_p=0.9,
             )
             # Prepare conversation log for saving
             conversation_log = [
@@ -112,7 +112,7 @@ Implement an interesting game based on this game design:
             game_plan =  self.extract_game_plan(response)
             html_code = self.extract_code_block(response, "html") or ""
             
-            ai_testing_list = self.extract_ai_testing(response)
+            automated_testing_list = self.extract_automated_testing(response)
             # Get JavaScript files
             js_code_dict = self.extract_code_block(response, "javascript")
             js_files = []
@@ -140,6 +140,7 @@ Implement an interesting game based on this game design:
                 game_concept=game_concept,
                 game_plan=game_plan,
                 concept_path=concept_path,
+                automated_testing=automated_testing_list,
                 genre=genre,
                 intermediate_outputs={"full_response": response},
                 conversation_log=conversation_log,
@@ -157,7 +158,7 @@ Implement an interesting game based on this game design:
                 "game_controls": game_controls,
                 "game_dir": game_dir,
                 "game_plan": game_plan,
-                "ai_testing": ai_testing_list,
+                "automated_testing": automated_testing_list,
             }
             
         except Exception as e:
@@ -241,9 +242,9 @@ Output format:
       <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">{game_title}</h1>
       <div class="control-buttons">
         <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
-        <button id="ai_test_1ModeBtn" class="control-button" onclick="window.setControlMode('AI_TEST_1')">AI (Win)</button>
-        <button id="ai_test_2ModeBtn" class="control-button" onclick="window.setControlMode('AI_TEST_2')">AI (NAME OF TEST)</button>
-        <!-- Add more AI mode buttons with correct ID convention -->
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">Test (Win)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">Test (NAME OF TEST)</button>
+        <!-- Add more automated testing mode buttons with correct ID convention -->
       </div>
       <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">{game_description}</p>
       <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">{game_controls}</p>
@@ -266,14 +267,14 @@ Output the code plan and game files in this format with NO OTHER TEXT:
 ... (game controls as a list of key bindings, Key: Action)
 </game_controls>
 
-<ai_testing>
-<AI_TEST_1>
-<testing>(write in 1-2 sentences "What are you testing?")</testing>
-<strategy>(write in 1-2 sentences "How are you testing it?" )</strategy>
+<automated_testing>
+<TEST_1>
+<test_description>(write in 1-2 sentences "What are you testing?")</test_description>
+<strategy_description>(write in 1-2 sentences "How are you testing it?" )</strategy_description>
 <expected_outcome>(write in 1-2 sentences "What is the expected outcome?")</expected_outcome>
-</AI_TEST_1>
+</TEST_1>
 // Add tests (<=5) as needed along with the expected outcome, strategy, and testing
-</ai_testing>
+</automated_testing>
 
 For the javascript files:
 <code filename="{{name}}.{{extension}}">

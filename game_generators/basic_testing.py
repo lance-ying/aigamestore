@@ -578,38 +578,25 @@ class BasicTesting:
         if "module_errors" in aggregated_feedback and aggregated_feedback["module_errors"]:
             print("\n🔄 MODULE/IMPORT ERRORS:")
             for item in aggregated_feedback["module_errors"]:
-                # Only print concise error messages, not full stack traces
-                if "at " not in item and not item.count("\n") > 1:
-                    print(f"- {item}")
+                print(f"- {item}\n")
                 
         # Print undefined variable errors since they're common issues
         if "undefined_vars" in aggregated_feedback and aggregated_feedback["undefined_vars"]:
             print("\n❓ UNDEFINED VARIABLE ERRORS:")
             for item in aggregated_feedback["undefined_vars"]:
-                # Only print concise error messages, not stack traces
-                if "Page error:" in item or "Console error:" in item:
-                    print(f"- {item}")
-                elif "is undefined" in item or "is not defined" in item:
-                    # Try to extract just the error part without stack trace
-                    if "\n" in item:
-                        concise_item = item.split("\n")[0]
-                        print(f"- {concise_item}")
-                    else:
-                        print(f"- {item}")
+                print(f"- {item}\n")
         
-        # Hide stack traces by default in normal output
-        # if "stack_traces" in aggregated_feedback and aggregated_feedback["stack_traces"]:
-        #    print("\n⚠️ STACK TRACES:")
-        #    for item in aggregated_feedback["stack_traces"]:
-        #        print(f"- {item}\n")
+        # Print stack traces next since they provide detailed context
+        if "stack_traces" in aggregated_feedback and aggregated_feedback["stack_traces"]:
+            print("\n⚠️ STACK TRACES:")
+            for item in aggregated_feedback["stack_traces"]:
+                print(f"- {item}\n")
         
         # Print syntax errors next since they're critical
         if "syntax_errors" in aggregated_feedback and aggregated_feedback["syntax_errors"]:
             print("\n🚫 SYNTAX ERRORS (critical):")
             for item in aggregated_feedback["syntax_errors"]:
-                # Only print concise error messages, not stack traces
-                if "at " not in item and not item.count("\n") > 1:
-                    print(f"- {item}")
+                print(f"- {item}")
         
         # Print other categories
         categories_order = ["errors", "warnings", "info", "logs", "other"]
@@ -617,6 +604,4 @@ class BasicTesting:
             if category in aggregated_feedback and aggregated_feedback[category]:
                 print(f"\n{category.upper()}:")
                 for item in aggregated_feedback[category]:
-                    # Skip items that look like stack traces
-                    if "at " not in item and not item.count("\n") > 1:
-                        print(f"- {item}") 
+                    print(f"- {item}") 

@@ -93,7 +93,7 @@ Implement an interesting game based on the game concept input from the user.
             game_design = self.extract_game_design(response)
 
 
-            ai_testing_list = self.extract_ai_testing(response)
+            automated_testing_list = self.extract_automated_testing(response)
             # Get JavaScript files
             js_code_dict = self.extract_code_block(response, "javascript")
             js_files = []
@@ -121,6 +121,7 @@ Implement an interesting game based on the game concept input from the user.
                 game_concept=game_concept,
                 game_plan=game_plan,
                 game_design=game_design,
+                automated_testing=automated_testing_list,
                 concept_path=concept_path,
                 genre=genre,
                 intermediate_outputs={"full_response": response},
@@ -140,7 +141,7 @@ Implement an interesting game based on the game concept input from the user.
                 "game_controls": game_controls,
                 "game_dir": game_dir,
                 "game_plan": game_plan,
-                "ai_testing": ai_testing_list,
+                "automated_testing": automated_testing_list,
             }
             
         except Exception as e:
@@ -148,17 +149,7 @@ Implement an interesting game based on the game concept input from the user.
                 print(f"Error in game generation: {type(e).__name__}: {str(e)}")
                 import traceback
                 traceback.print_exc()
-            raise 
-    
-    def extract_ai_testing(self, response: str) -> List[Dict[str, str]]:
-        """
-        Extract the ai testing from the response
-        """
-        ai_testing_output = self.extract_code_block(response, "ai_testing")
-        if ai_testing_output:
-            return ai_testing_output
-        else:
-            return []
+            raise
     
     def get_ecs_instructions(self) -> str:
         """
@@ -214,8 +205,8 @@ Implement an interesting game based on the game concept input from the user.
       <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">{game_title}</h1>
       <div class="control-buttons">
         <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
-        <button id="ai_test_1ModeBtn" class="control-button" onclick="window.setControlMode('AI_TEST_1')">AI (Win)</button>
-        <button id="ai_test_2ModeBtn" class="control-button" onclick="window.setControlMode('AI_TEST_2')">AI (NAME OF TEST)</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Win)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (NAME OF TEST)</button>
         <!-- Add more AI mode buttons with correct ID convention -->
       </div>
       <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">{game_description}</p>
@@ -241,24 +232,31 @@ Output the code plan and game files in this format with NO OTHER TEXT:
 </game_design>
 
 <game_description>
-... (game description to introduce the game to the user in maximum 3 sentences. Keep it short and concise.)
+... (Tell the user what the game is about, what they need to do, and the objective. Keep it short and concise.)
 </game_description>
 
 <game_controls>
 ... (game controls as a list of key bindings, Key: Action)
 </game_controls>
 
-<ai_testing>
-<AI_TEST_1>
-<testing>(write in 1-2 sentences "What are you testing?")</testing>
-<strategy>(write in 1-2 sentences "How are you testing it?" )</strategy>
-<expected_outcome>(write in 1-2 sentences "What is the expected outcome?")</expected_outcome>
-</AI_TEST_1>
-// Add tests (<=5) as needed along with the expected outcome, strategy, and testing
-</ai_testing>
-
 For the javascript files:
+Write fully functional code (except automated_testing_code.js)
 <code filename="{{name}}.{{extension}}">
+... (code)
+</code>
+
+Write a plan for automated testing of the game:
+<automated_testing>
+<TEST_1>
+<test_description>(write in 1-2 sentences "What are you testing?")</test_description>
+<strategy_description>(write in 1-2 sentences "How are you testing it?" )</strategy_description>
+<expected_outcome>(write in 1-2 sentences "What is the expected outcome?")</expected_outcome>
+</TEST_1>
+// Add tests (<=5) as needed along with the expected outcome, strategy, and testing
+</automated_testing>
+
+Write the automated_testing_code.js based on the automated_testing section to validate the game:
+<code filename="automated_testing_code.js">
 ... (code)
 </code>
 
