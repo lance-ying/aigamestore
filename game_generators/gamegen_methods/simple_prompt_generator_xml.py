@@ -91,8 +91,7 @@ Implement an interesting game based on the game concept input from the user.
             game_plan =  self.extract_game_plan(response)
             html_code = self.extract_code_block(response, "html") or ""
             game_design = self.extract_game_design(response)
-
-
+            automated_testing_code = self.extract_automated_testing_code(response)
             automated_testing_list = self.extract_automated_testing(response)
             # Get JavaScript files
             js_code_dict = self.extract_code_block(response, "javascript")
@@ -122,6 +121,7 @@ Implement an interesting game based on the game concept input from the user.
                 game_plan=game_plan,
                 game_design=game_design,
                 automated_testing=automated_testing_list,
+                automated_testing_code=automated_testing_code,
                 concept_path=concept_path,
                 genre=genre,
                 intermediate_outputs={"full_response": response},
@@ -256,9 +256,9 @@ Write a plan for automated testing of the game:
 </automated_testing>
 
 Write the automated_testing_code.js based on the automated_testing section to validate the game:
-<code filename="automated_testing_code.js">
+<automated_testing_code filename="automated_testing_code.js">
 ... (code)
-</code>
+</automated_testing_code>
 
 HTML following the <example_html> template (output last):
 <code filename="index.html">

@@ -843,12 +843,11 @@ class VLMPlayEvaluation:
             
             # Create prompt for Gemini using test information
             prompt = f"""
-            You are a part of a team of game play testers.
-            You are given a video of a game developed in JavaScript. You are testing the game for the following: {}. 
+            <task>
             The player is trying to test the game for the following: {test_description}. 
             Following was their strategy: {strategy_description}. 
             They expected the following would happen: {expected_outcome}.
-            
+            </task>
             Can you evaluate the video and answer the following questions:
             
             1. Was the expected outcome reached? If not, do you think the player was making progress towards the intended goal for the test?
