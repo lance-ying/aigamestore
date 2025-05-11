@@ -35,10 +35,6 @@ description: ...
 </theme>
 """
 
-# CRITICAL: Make sure the game is extremely simple and straight to the point. Make it fun and addictive.
-# Keep your implementation extremely minimal.
-# HIGHEST PRIORITY: The game must be fully playable and winnable.
-
 prompt_game_code = """
 Task: Implement a fun and addictive 2D minigame with a """ + perspective + """ perspective in p5.js based on the following description:
 <description>
@@ -66,45 +62,6 @@ Use the following format to write your final code:
 ```
 """
 
-
-# p5js_guidelines = """* Don't use any external assets.
-# * Include a index.html to run the game (don't include any other content in the index.html file except for the p5.js and p5.collide2D imports and the game scripts).
-# * Include the p5.js and p5.collide2D libraries in the index.html file.
-#     ```html
-#     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
-#     <script src="https://cdn.jsdelivr.net/gh/bmoren/p5.collide2D/p5.collide2d.min.js"></script>
-#     ```
-# * Use ES6 modules (import/export) for all JavaScript files - do not use Node.js require() statements.
-# * Use p5.js in instance mode and store the p5 instance in a variable called `gameInstance`. Make the game variables accessible with a getState() function (but don't use it in your game implementation). Expose the game instance globally as follows:
-#     ```javascript
-#     ...
-#     const p5 = window.p5
-#     let gameInstance = new p5(p => {
-#         // Initialize variables
-#         ...
-#         // Expose all the variables (before defining the functions). Don't use getState() in your game implementation.
-#         p.getState = () => {
-#             ...
-#         }
-#         // Functions
-#         ...
-#     });
-#     // Expose the game instance globally
-#     window.gameInstance = gameInstance;
-#     ```
-# * IMPORTANT: Make sure to properly pass the object `p` in the game code to access p5js functions. Otherwise you will get a "ReferenceError: p is not defined" error.
-# * Use p5.collide2D for ALL collision detection. Available functions: collidePointPoint, collidePointCircle, collidePointEllipse, collidePointRect, collidePointLine, collidePointArc, collideRectRect, collideCircleCircle, collideRectCircle, collideLineLine, collideLineCircle, collideLineRect, collidePointPoly, collideCirclePoly, collideRectPoly, collideLinePoly, collidePolyPoly, collidePointTriangle. These functions are accessible through the `p` object. Note that the specific order of the words in the function name matters. For example, 'collideCircleRect' is not available.
-# * IMPORTANT: The specific order of the words in the p5.collide2D function names matter. For example, 'collideRectCircle' is a function, but 'collideCircleRect' is not available.
-# * Make sure variables are ALWAYS properly defined and accessible from the scope they are used!
-# * Set the canvas size to 600x400 pixels.
-# * Ensure full reproducibility by setting the random seed to a fixed value.
-# * Use a finite state machine for the player character.
-# * Make sure the player's controls and parameters are coherent with the gameplay and physics.
-# * Make sure the game has a clear goal and win state.
-# * Implement professional-looking and polished graphics.
-# * IMPORTANT: Don't draw elements that are randomly sampled at every frame as this causes flickering.
-# * Start the game with clear instructions on how to play (the player has to press Enter to start the game).
-# * Make sure the player can restart the game at any time by pressing 'R'."""
 
 
 p5js_guidelines = """* Don't use any external assets.

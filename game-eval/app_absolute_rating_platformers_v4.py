@@ -149,7 +149,31 @@ def get_random_game(for_calibration=False):
         if len(rated_games) >= NUM_GAMES_TO_RATE:
             return None, None
 
-        # For rating, choose from games not already rated (but could include calibration games)
+        # Get prompt_ids from rated games
+        rated_prompt_methods = []
+        for game in GAMES_DATASET:
+            if game["id"] in rated_games:
+                rated_prompt_methods.append((game["prompt_id"], game["method"]))
+
+        # First, check if there are prompts with rated games but not all methods rated yet
+        prompt_ids_rated = set(pm[0] for pm in rated_prompt_methods)
+        
+        for prompt_id in prompt_ids_rated:
+            # Find methods already rated for this prompt
+            methods_rated_for_prompt = [pm[1] for pm in rated_prompt_methods if pm[0] == prompt_id]
+            
+            # Look for games with this prompt_id but a different method
+            balanced_games = [game for game in GAMES_DATASET 
+                            if game["prompt_id"] == prompt_id 
+                            and game["method"] not in methods_rated_for_prompt
+                            and game["id"] not in rated_games]
+            
+            if balanced_games:
+                # Found games with same prompt but different methods
+                game = random.choice(balanced_games)
+                return game, rating_id
+        
+        # If no balanced games found, fall back to random selection from remaining games
         available_games = [game for game in GAMES_DATASET if game["id"] not in rated_games]
     
         if not available_games:
