@@ -98,7 +98,7 @@ Implement an interesting game based on the game concept input from the user.
             js_files = []
             for filename, code in js_code_dict.items():
                 js_files.append((filename, code))
-            
+            js_files.append(("automated_testing_code.js", automated_testing_code))
             # Parse genre from concept file if available
             genre = None
             if concept_path:
@@ -121,7 +121,6 @@ Implement an interesting game based on the game concept input from the user.
                 game_plan=game_plan,
                 game_design=game_design,
                 automated_testing=automated_testing_list,
-                automated_testing_code=automated_testing_code,
                 concept_path=concept_path,
                 genre=genre,
                 intermediate_outputs={"full_response": response},
@@ -222,15 +221,6 @@ Implement an interesting game based on the game concept input from the user.
 <output_instructions>
 Output the code plan and game files in this format with NO OTHER TEXT:
 
-<game_design>
-<game_elements_from_game_concept>
-... (List of game elements like characters, objects, mechanics, etc. from the game concept)
-</game_elements_from_game_concept>
-<game_elements_beyond_game_concept>
-... (List of game elements like characters, objects, mechanics, etc. beyond the concept. Make it interesting, consistent with the concept, and feasible to implement in code.)
-</game_elements_beyond_game_concept>
-</game_design>
-
 <game_description>
 ... (Tell the user what the game is about, what they need to do, and the objective. Keep it short and concise.)
 </game_description>
@@ -245,7 +235,7 @@ Write fully functional code (except automated_testing_code.js)
 ... (code)
 </code>
 
-Write a plan for automated testing of the game:
+Based on the game code, write the automated testing plan:
 <automated_testing>
 <TEST_1>
 <test_description>(write in 1-2 sentences "What are you testing?")</test_description>
@@ -255,7 +245,7 @@ Write a plan for automated testing of the game:
 // Add tests (<=5) as needed along with the expected outcome, strategy, and testing
 </automated_testing>
 
-Write the automated_testing_code.js based on the automated_testing section to validate the game:
+Based on the game code and your automated testing plan, write the automated_testing_code.js to validate the game:
 <automated_testing_code filename="automated_testing_code.js">
 ... (code)
 </automated_testing_code>

@@ -257,7 +257,6 @@ class GameGenerator(ABC):
         use_ecs: bool = True,
         use_baseline: bool = False,
         game_design: Optional[str] = None,
-        automated_testing_code: Optional[str] = None,
         automated_testing: Optional[str] = None,
         concept_path: Optional[str] = None,
         genre: Optional[str] = None,
@@ -363,7 +362,6 @@ class GameGenerator(ABC):
                 "controls": game_controls,
                 "playability": False,
                 "plan": game_plan,
-                "automated_testing_code": automated_testing_code,
                 "automated_testing": automated_testing,
             },
             "generation_info": {
@@ -384,7 +382,6 @@ class GameGenerator(ABC):
 
         # Save conversation history log and intermediate outputs
         self.output_summary(game_dir, conversation_log, intermediate_outputs)
-        
         return game_dir
 
     def output_summary(
