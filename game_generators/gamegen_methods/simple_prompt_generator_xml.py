@@ -91,14 +91,12 @@ Implement an interesting game based on the game concept input from the user.
             game_plan =  self.extract_game_plan(response)
             html_code = self.extract_code_block(response, "html") or ""
             game_design = self.extract_game_design(response)
-            automated_testing_code = self.extract_automated_testing_code(response)
             automated_testing_list = self.extract_automated_testing(response)
             # Get JavaScript files
             js_code_dict = self.extract_code_block(response, "javascript")
             js_files = []
             for filename, code in js_code_dict.items():
                 js_files.append((filename, code))
-            js_files.append(("automated_testing_code.js", automated_testing_code))
             # Parse genre from concept file if available
             genre = None
             if concept_path:
@@ -206,7 +204,7 @@ Implement an interesting game based on the game concept input from the user.
         <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
         <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Win)</button>
         <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (NAME OF TEST)</button>
-        <!-- Add more AI mode buttons with correct ID convention -->
+        <!-- Add more test buttons with correct ID convention -->
       </div>
       <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">{game_description}</p>
       <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">{game_controls}</p>
@@ -229,26 +227,20 @@ Output the code plan and game files in this format with NO OTHER TEXT:
 ... (game controls as a list of key bindings, Key: Action)
 </game_controls>
 
-For the javascript files:
-Write fully functional code (except automated_testing_code.js)
-<code filename="{{name}}.{{extension}}">
-... (code)
-</code>
-
 Based on the game code, write the automated testing plan:
 <automated_testing>
 <TEST_1>
 <test_description>(write in 1-2 sentences "What are you testing?")</test_description>
-<strategy_description>(write in 1-2 sentences "How are you testing it?" )</strategy_description>
+<strategy_description>(write in 1-2 sentences "How are you testing it?")</strategy_description>
 <expected_outcome>(write in 1-2 sentences "What is the expected outcome?")</expected_outcome>
 </TEST_1>
 // Add tests (<=5) as needed along with the expected outcome, strategy, and testing
 </automated_testing>
 
-Based on the game code and your automated testing plan, write the automated_testing_code.js to validate the game:
-<automated_testing_code filename="automated_testing_code.js">
+For the javascript files:
+<code filename="{{name}}.{{extension}}">
 ... (code)
-</automated_testing_code>
+</code>
 
 HTML following the <example_html> template (output last):
 <code filename="index.html">
