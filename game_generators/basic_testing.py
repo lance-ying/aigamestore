@@ -557,7 +557,7 @@ class BasicTesting:
         # Collect unique messages from both tests
         for test_type in ["load_test", "interaction_test"]:
             for category in categories:
-                if test_type in results["feedback"] and category in results["feedback"][test_type]:
+                if "feedback" in results and test_type in results["feedback"] and category in results["feedback"][test_type]:
                     for item in results["feedback"][test_type][category]:
                         if item:  # Skip empty messages
                             aggregated_feedback[category].add(item)

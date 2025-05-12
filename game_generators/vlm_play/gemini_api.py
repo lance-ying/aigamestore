@@ -86,7 +86,7 @@ class GeminiEvaluator:
             
             # Prepare prompt for evaluation
             prompt = """
-            You are a game tester evaluating an HTML5/JavaScript game.
+            You are a game tester evaluating an HTML5/JavaScript gameplay video.
             Your task is to analyze this gameplay video and provide comprehensive feedback on the following aspects:
             
             1. Gameplay: Describe the basic mechanics and goal of the game based on what you observe.

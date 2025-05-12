@@ -580,6 +580,60 @@ def run_verification(game_path: str, output_file: str = None) -> Dict[str, Any]:
     return results
 
 
+def format_vlm_feedback(aggregated_feedback: Dict[str, Any]) -> str:
+    """
+    Format the aggregated feedback from VLM Play into a structured format for the code improver.
+    
+    Args:
+        aggregated_feedback: Dictionary containing the aggregated feedback sections
+        
+    Returns:
+        Formatted feedback string for the code improver
+    """
+    feedback = """<context>
+We conducted a comprehensive evaluation of your game using VLM Play, which records gameplay videos and analyzes them for issues and improvement opportunities.
+</context>
+
+<feedback>
+"""
+    
+    # Add critical issues section if available
+    if "critical_issues" in aggregated_feedback and aggregated_feedback["critical_issues"]:
+        feedback += f"## Critical Issues\n\n{aggregated_feedback['critical_issues']}\n\n"
+    
+    # Add game mechanics section if available
+    if "game_mechanics" in aggregated_feedback and aggregated_feedback["game_mechanics"]:
+        feedback += f"## Game Mechanics\n\n{aggregated_feedback['game_mechanics']}\n\n"
+    
+    # Add game progression section if available
+    if "game_progression" in aggregated_feedback and aggregated_feedback["game_progression"]:
+        feedback += f"## Game Progression\n\n{aggregated_feedback['game_progression']}\n\n"
+    
+    # Add graphics and animation section if available
+    if "graphics_and_animation" in aggregated_feedback and aggregated_feedback["graphics_and_animation"]:
+        feedback += f"## Graphics and Animation\n\n{aggregated_feedback['graphics_and_animation']}\n\n"
+    
+    # Add console errors section if available
+    if "console_errors" in aggregated_feedback and aggregated_feedback["console_errors"]:
+        feedback += f"## Console Errors\n\n{aggregated_feedback['console_errors']}\n\n"
+    
+    # Add recommendations section if available
+    if "recommendations" in aggregated_feedback and aggregated_feedback["recommendations"]:
+        feedback += f"## Recommendations\n\n{aggregated_feedback['recommendations']}\n\n"
+    
+    # Add other feedback section if available
+    if "other_feedback" in aggregated_feedback and aggregated_feedback["other_feedback"]:
+        feedback += f"## Other Feedback\n\n{aggregated_feedback['other_feedback']}\n\n"
+    
+    # Add conclusion section if available
+    if "conclusion" in aggregated_feedback and aggregated_feedback["conclusion"]:
+        feedback += f"## Conclusion\n\n{aggregated_feedback['conclusion']}\n\n"
+    
+    feedback += "</feedback>\n\n<important>\nPlease address the issues identified in the feedback, focusing on critical issues first. Ensure the game loads, start on pressing ENTER, key inputs work, and the game is still playable.\n</important>"
+    
+    return feedback
+
+
 def main():
     """Main function to parse arguments and run the verification and improvement process."""
     parser = argparse.ArgumentParser(
@@ -597,6 +651,10 @@ def main():
         help="Mode to run the verifier and improver in (default: basic_test)",
     )
     parser.add_argument("--output", "-o", help="Path to save combined results (JSON)")
+    parser.add_argument(
+        "--output_dir",
+        help="Directory to save the output files after iteration (for vibe_coding and vlm_play modes)",
+    )
     parser.add_argument(
         "--verbose", "-v", action="store_true", help="Enable verbose output"
     )
@@ -697,17 +755,20 @@ def main():
         # Improve the code using vibe coding framework
         try:
             logging.info("Improving game code using vibe coding framework...")
-            improvement_results = improver.iterate_code(args.game_path, None)
+            improvement_results = improver.iterate_code(args.game_path, None, output_dir=args.output_dir)
             logging.info("Code improvement completed successfully")
             logging.info(
                 f"Updated files: {', '.join(improvement_results['updated_files'])}"
             )
-            logging.info(f"Iteration saved to: {improvement_results['iteration_dir']}")
+            
+            # Use the specified output_dir or the default iteration directory
+            iteration_dir = args.output_dir if args.output_dir else improvement_results["iteration_dir"]
+            logging.info(f"Iteration saved to: {iteration_dir}")
 
             # After improving, run verification just to check results (not for further improvement)
             logging.info("Running verification to check improved code...")
             results = run_verification(
-                improvement_results["iteration_dir"], args.output
+                iteration_dir, args.output
             )
 
             # Print stack traces if available and requested
@@ -744,16 +805,17 @@ def main():
 
         async def run_vlm_play():
             try:
-                # Initialize VLMPlayEvaluation
+                # Initialize VLMPlayEvaluation with output_dir if provided
+                output_dir = args.output_dir if args.output_dir else args.output
                 evaluator = VLMPlayEvaluation(
-                    args.game_path, output_dir=args.output, api_key=args.api_key
+                    args.game_path, output_dir=output_dir, api_key=args.api_key
                 )
 
                 if args.skip_eval:
                     # Run record-only mode
                     logging.info("Running in record-only mode...")
                     results = await test_record_only(
-                        args.game_path, args.output, args.only_button
+                        args.game_path, output_dir, args.only_button
                     )
 
                     if results["success"]:
@@ -797,19 +859,48 @@ def main():
                                 print(agg["summary"].strip())
 
                         # Show output location
-                        output_dir = args.output or os.path.join(
-                            os.path.dirname(args.game_path), "vlm_evaluation"
-                        )
                         print(f"\nResults saved to: {output_dir}")
                         print(
                             f"HTML report: {os.path.join(output_dir, 'evaluation_report.html')}"
                         )
+                        
+                        # Initialize the code improver with appropriate settings
+                        improver = CodeFeedbackIterator(
+                            verbose=args.verbose, mode="vlm_play_fix", temperature=0.5
+                        )
+                        
+                        # Format the aggregated feedback for the code improver
+                        formatted_feedback = format_vlm_feedback(results["aggregated_feedback"])
+                        
+                        # Improve the code based on the feedback and save to output_dir
+                        try:
+                            logging.info("Improving game code based on VLM play feedback...")
+                            improvement_results = improver.iterate_code(
+                                args.game_path, 
+                                formatted_feedback, 
+                                output_dir=output_dir
+                            )
+                            logging.info("Code improvement completed successfully")
+                            logging.info(
+                                f"Updated files: {', '.join(improvement_results['updated_files'])}"
+                            )
+                            
+                            # Show the output directory where updated code is saved
+                            if improvement_results.get("iteration_dir"):
+                                print(f"\nImproved code saved to: {improvement_results['iteration_dir']}")
+                            
+                        except Exception as e:
+                            logging.error(f"Error improving code: {str(e)}")
+                            import traceback
+                            traceback.print_exc()
+                        
                         sys.exit(0)
                     else:
                         logging.error("VLM evaluation failed")
                         for error in results.get("errors", ["Unknown error"]):
                             logging.error(f"Error: {error}")
                         sys.exit(1)
+                    
 
             except Exception as e:
                 logging.error(f"Error in VLM play mode: {str(e)}")

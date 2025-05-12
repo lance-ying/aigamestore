@@ -14,7 +14,7 @@ class CodeFeedbackIterator(GameGenerator):
     A class that iterates on game code based on feedback using LLM calls.
     """
 
-    def __init__(self, *args, mode: str = "guided_iteration", temperature: float = 0.25, **kwargs):
+    def __init__(self, *args, mode: str = "guided_iteration", temperature: float = 0.6, **kwargs):
         super().__init__(*args, **kwargs)
         self.mode = mode
         self.temperature = temperature
@@ -259,6 +259,7 @@ List filename: changes made, which feedback it addresses, and how it addresses i
         metadata: Optional[Dict[str, Any]] = None,
         conversation_log: Optional[List[Dict[str, str]]] = None,
         explanation_sections: Optional[Dict[str, str]] = None,
+        output_dir: Optional[str] = None
     ) -> str:
         """
         Save the updated game files and metadata in a new folder structure
@@ -270,11 +271,58 @@ List filename: changes made, which feedback it addresses, and how it addresses i
             metadata: Original game metadata if available
             conversation_log: Conversation log of the iteration
             explanation_sections: Dictionary containing code_change_plan and explain_edits sections
+            output_dir: Optional directory to save all files (overrides default behavior)
             
         Returns:
             Path to the saved game directory
         """
-        # Parse the game directory path
+        # If output_dir is provided, use it directly
+        if output_dir:
+            iteration_dir = Path(output_dir)
+            # Create all parent directories if they don't exist
+            iteration_dir.mkdir(parents=True, exist_ok=True)
+            
+            # First, copy specific files from the source game directory
+            if self.verbose:
+                print(f"Copying necessary files from {game_dir} to {iteration_dir}")
+            
+            # Get list of filenames that will be updated
+            updated_filenames = set(updated_files.keys())
+            
+            # Copy only specific files from source directory, excluding those that will be updated
+            for item in os.listdir(game_dir):
+                source = os.path.join(game_dir, item)
+                destination = os.path.join(iteration_dir, item)
+                
+                # Skip directories like vibe_coding_updates to avoid recursive copying
+                if item.endswith("_updates") or item.endswith("_orig_files"):
+                    continue
+                    
+                if os.path.isdir(source):
+                    # Copy directories recursively
+                    if not os.path.exists(destination):
+                        shutil.copytree(source, destination)
+                elif item not in updated_filenames:
+                    # Only copy HTML files and other non-JS, non-JSON files (assets)
+                    # Skip JSON files as we'll generate new metadata
+                    _, ext = os.path.splitext(item)
+                    if ext.lower() != '.json':  # Skip JSON files
+                        shutil.copy2(source, destination)
+            
+            # Save the updated JavaScript files
+            for filename, content in updated_files.items():
+                file_path = iteration_dir / filename
+                # Ensure the parent directory exists
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(content)
+            
+            if self.verbose:
+                print(f"Updated game saved to: {iteration_dir}")
+            
+            return str(iteration_dir)
+            
+        # Otherwise use the original folder structure logic
         game_dir_path = Path(game_dir)
         input_folder_name = game_dir_path.name
         
@@ -482,13 +530,14 @@ List filename: changes made, which feedback it addresses, and how it addresses i
         
         return str(iteration_dir)
 
-    def iterate_code(self, game_dir: str, feedback: Optional[str] = None) -> Dict[str, Any]:
+    def iterate_code(self, game_dir: str, feedback: Optional[str] = None, output_dir: Optional[str] = None) -> Dict[str, Any]:
         """
         Iterate on game code based on feedback
         
         Args:
             game_dir: Path to the game directory
             feedback: Feedback to improve the code (required for guided_iteration and basic_test_fix modes)
+            output_dir: Optional directory to save all files (overrides default behavior)
             
         Returns:
             Dictionary containing updated files and any intermediate outputs
@@ -564,8 +613,9 @@ List filename: changes made, which feedback it addresses, and how it addresses i
                     else:
                         shutil.copy2(source, destination)
             
-            # Save the updated code in the original location
-            self.save_updated_code(game_dir, updated_files)
+            # Save the updated code in the original location (except when output_dir is specified)
+            if not output_dir:
+                self.save_updated_code(game_dir, updated_files)
             
             # Read metadata from the original game directory
             metadata_path = os.path.join(game_dir, "metadata.json")
@@ -574,25 +624,27 @@ List filename: changes made, which feedback it addresses, and how it addresses i
                 with open(metadata_path, 'r') as f:
                     metadata = json.load(f)
             
-            # Save files in the new structure (skip for basic_test_fix mode)
+            # Save files in the new structure (or in output_dir if specified)
             iteration_dir = None
-            if self.mode != "basic_test_fix":
+            if self.mode != "basic_test_fix" or output_dir:
                 iteration_dir = self.save_file(
                     game_dir,
                     updated_files,
                     feedback or self.get_vibe_coding_feedback(),
                     metadata,
                     conversation_log,
-                    explanation_sections
+                    explanation_sections,
+                    output_dir
                 )
             
-            # Save the conversation log in the original directory too
-            log_path = os.path.join(game_dir, f"code_iteration_{self.mode}.json")
-            with open(log_path, 'w') as f:
-                json.dump(conversation_log, f, indent=2)
+            # Save the conversation log in the original directory too (unless output_dir is specified)
+            if not output_dir:
+                log_path = os.path.join(game_dir, f"code_iteration_{self.mode}.json")
+                with open(log_path, 'w') as f:
+                    json.dump(conversation_log, f, indent=2)
             
             if self.verbose:
-                print(f"Code updated successfully in: {game_dir}")
+                print(f"Code updated successfully in: {output_dir or game_dir}")
             
             return {
                 "game_dir": game_dir,
@@ -635,5 +687,5 @@ List filename: changes made, which feedback it addresses, and how it addresses i
         """
         Get the vibe coding feedback
         """
-        vibe_coding_feedback = "Improve the game code while being consistent with the game description and controls. Ensure the game loads, start on pressing ENTER, and is still playable. Output the code with the same filenames."
+        vibe_coding_feedback = "Improve the game code. Ensure the game loads, start on pressing ENTER, key inputs work, and the game is still playable."
         return vibe_coding_feedback
