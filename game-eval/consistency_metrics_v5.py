@@ -150,6 +150,7 @@ if __name__ == "__main__":
 
             results["game_id"].append(game_id)
             results["rating_id"].append(rating_id)
+            results["game_prompt_id"].append(game["prompt_id"])
             results["game_concept_id"].append(game["game_concept_id"])
             results["game_genre"].append(game["game_genre"])
             results["game_sample_id"].append(game["game_sample_id"])
@@ -316,6 +317,46 @@ if __name__ == "__main__":
     plt.close('all')
 
 
+
+    plt.figure()
+    sns.barplot(data=results, y="rating_fun", x="method")
+    plt.xlabel("Method")
+    plt.ylabel("Fun rating")
+    plt.tight_layout()
+    plt.savefig(save_dir / "fun_rating_vs_method.png")
+    plt.close('all')
+
+    plt.figure()
+    sns.barplot(data=results, y="rating_playability", x="method")
+    plt.xlabel("Method")
+    plt.ylabel("Playability rating")
+    plt.tight_layout()
+    plt.savefig(save_dir / "playability_rating_vs_method.png")
+    plt.close('all')
+
+    averaged_results = results.groupby(["method", "game_prompt_id"]).agg({
+        "rating_fun": "mean",
+        "rating_playability": "mean"
+    }).reset_index()
+    plt.figure()
+    sns.barplot(data=averaged_results, y="rating_fun", x="method")
+    plt.xlabel("Method")
+    plt.ylabel("Fun rating")
+    plt.tight_layout()
+    plt.savefig(save_dir / "fun_rating_vs_method_averaged.png")
+    plt.close('all')
+
+    plt.figure()
+    sns.barplot(data=averaged_results, y="rating_playability", x="method")
+    plt.xlabel("Method")
+    plt.ylabel("Playability rating")
+    plt.tight_layout()
+    plt.savefig(save_dir / "playability_rating_vs_method_averaged.png")
+    plt.close('all')
+
+
+
+
     # average ratings across participants for each game sample
     num_ratings_per_game = {}
 
@@ -435,16 +476,18 @@ if __name__ == "__main__":
 
     # Plot delta of ratings between methods
     # breakpoint()
-    games_with_both_methods = set(avg_results[avg_results["method"] == "simple_prompt_with_resampling"]["game_prompt_id"]).intersection(
-        set(avg_results[avg_results["method"] == "simple_prompt_with_resampling_then_improve"]["game_prompt_id"])
+    m1 = "simple_prompt_with_resampling"
+    m2 = "minigame"
+    games_with_both_methods = set(avg_results[avg_results["method"] == m1]["game_prompt_id"]).intersection(
+        set(avg_results[avg_results["method"] == m2]["game_prompt_id"])
     )
     
     # Filter to only games that have both methods
     filtered_results = avg_results[avg_results["game_prompt_id"].isin(games_with_both_methods)]
     
     # Calculate deltas for games with both methods
-    method1_df = filtered_results[filtered_results["method"] == "simple_prompt_with_resampling"].sort_values("game_prompt_id")
-    method2_df = filtered_results[filtered_results["method"] == "simple_prompt_with_resampling_then_improve"].sort_values("game_prompt_id")
+    method1_df = filtered_results[filtered_results["method"] == m1].sort_values("game_prompt_id")
+    method2_df = filtered_results[filtered_results["method"] == m2].sort_values("game_prompt_id")
     
     delta_fun = method2_df["avg_fun_rating"].values - method1_df["avg_fun_rating"].values
     delta_playability = method2_df["avg_playability_rating"].values - method1_df["avg_playability_rating"].values
@@ -453,7 +496,7 @@ if __name__ == "__main__":
     plt.figure(figsize=(5, 4))
     plt.hist(delta_fun, bins=10, alpha=0.7, color='skyblue')
     plt.axvline(x=0, color='black', linestyle='--', alpha=0.7)
-    plt.xlabel('Delta Fun Rating (improve - critic)')
+    plt.xlabel('Delta fun rating new method - old method')
     plt.ylabel('Frequency')
     ax = plt.gca()
     ax.spines['top'].set_visible(False)
@@ -466,7 +509,7 @@ if __name__ == "__main__":
     plt.figure(figsize=(5, 4))
     plt.hist(delta_playability, bins=10, alpha=0.7, color='lightcoral')
     plt.axvline(x=0, color='black', linestyle='--', alpha=0.7)
-    plt.xlabel('Delta Playability Rating (improve - critic)')
+    plt.xlabel('Delta playability rating new method - old method')
     plt.ylabel('Frequency')
     ax = plt.gca()
     ax.spines['top'].set_visible(False)
@@ -483,8 +526,8 @@ if __name__ == "__main__":
     
     # Get the actual method names
     methods = avg_results["method"].unique()
-    method1_name = methods[1]
-    method2_name = methods[0]
+    method1_name = methods[0]
+    method2_name = methods[1]
 
     # Collect data safely by matching genre and concept
     for game_concept_id in avg_results["game_concept_id"].unique():

@@ -6,12 +6,11 @@ import json
 from utils import generate, code_from_dir
 
 
+
 # TODO: fix issue collision with the ground (makes jumping really hard and it's annoying)
 # TODO: fix restart button not working sometimes
 # TODO: still have some flickering so might be good to improve game twice
 
-perspective = "top-down"
-# perspective = "side-scrolling"
 
 thinking = False
 
@@ -26,17 +25,9 @@ run_name = f"run1/{model}/{'thinking' if thinking else 'no_thinking'}"
 
 save_dir = save_dir / run_name
 
-prompt_themes = """Task: list 100 themes for 2D game level ideas with a """ + perspective + """ perspective.
-
-Structure your answer as follows:
-<theme>
-category: ...
-description: ...
-</theme>
-"""
 
 prompt_game_code = """
-Task: Implement a fun and addictive 2D minigame with a """ + perspective + """ perspective in p5.js based on the following description:
+Task: Implement a fun and addictive 2D minigame in p5.js based on the following description:
 <description>
 {description}
 </description>
@@ -107,6 +98,7 @@ p5js_guidelines = """* Don't use any external assets.
 * Use a finite state machine for the player character.
 * Make sure the player's controls and parameters are coherent with the gameplay and physics.
 * Make sure the game has a clear goal and win state.
+* Make sure the game is playable only with the keyboard. Use the arrow keys for player movement.
 * Implement professional-looking and polished graphics.
 * Start the game with clear instructions on how to play (the player has to press Enter to start the game).
 * Make sure the player can restart the game at any time by pressing 'R'.
@@ -328,11 +320,10 @@ def run_game(game_code: dict[str, str], headless: bool = True,
                     
                     # TODO: sometimes screen position should be fixed (e.g. camera following the player) but not world position
                     # Check if position actually changed
-                    epsilon = 5
-                    print(latest_pos.get("screen_x"), initial_pos.get("screen_x"))
-                    print(latest_pos.get("screen_y"), initial_pos.get("screen_y"))
-                    if (abs(latest_pos.get("screen_x") - initial_pos.get("screen_x")) > epsilon or
-                        abs(latest_pos.get("screen_y") - initial_pos.get("screen_y")) > epsilon):
+                    # epsilon = 5  # TODO: what should epsilon be for game position (don't know what the units are)
+                    epsilon = 1
+                    if (abs(latest_pos.get("game_x") - initial_pos.get("game_x")) > epsilon or
+                        abs(latest_pos.get("game_y") - initial_pos.get("game_y")) > epsilon):
                         position_changed = True
                 
                 print(position_changed)
@@ -379,9 +370,10 @@ def run_game(game_code: dict[str, str], headless: bool = True,
                                 reset_latest_pos = page.evaluate("window.gameInstance.logs.player_positions")[-1]
                                 print("reset_latest_pos", reset_latest_pos)
                                 # Check if position changed with epsilon threshold
-                                epsilon = 5
-                                if (abs(reset_latest_pos.get("screen_x") - reset_initial_pos.get("screen_x")) > epsilon or
-                                    abs(reset_latest_pos.get("screen_y") - reset_initial_pos.get("screen_y")) > epsilon):
+                                # epsilon = 5
+                                epsilon = 1
+                                if (abs(reset_latest_pos.get("game_x") - reset_initial_pos.get("game_x")) > epsilon or
+                                    abs(reset_latest_pos.get("game_y") - reset_initial_pos.get("game_y")) > epsilon):
                                     reset_position_changed = True
                                     break  # Found movement, no need to check other keys
                             
@@ -533,19 +525,28 @@ def run_game(game_code: dict[str, str], headless: bool = True,
 
 if __name__ == "__main__":
     # TODO: make sure reuse exactly same prompt as no_thinking in gen_game_topdown
-    theme_path = Path(__file__).parent / "results" / "gen_game_topdown" / perspective / "run1_claude-3-7-sonnet-20250219" / "themes" / "answer.txt"
-    with open(theme_path, "r", encoding="utf-8") as f:
-        answer_themes = f.read()
-    themes = re.findall(r"<theme>(.*?)</theme>", answer_themes, re.DOTALL)
+    # theme_path = Path(__file__).parent / "results" / "gen_game_topdown" / perspective / "run1_claude-3-7-sonnet-20250219" / "themes" / "answer.txt"
+    # with open(theme_path, "r", encoding="utf-8") as f:
+    #     answer_themes = f.read()
+    # themes = re.findall(r"<theme>(.*?)</theme>", answer_themes, re.DOTALL)
+
+    theme_path = Path(__file__).parent.parent / "game_prompts" / "generative_games" / "final_concepts"
+    themes = {}
+    game_concepts = sorted(list(theme_path.glob("*.json")))
+    for path in game_concepts:
+        with open(path, "r", encoding="utf-8") as f:
+            game_concept = json.load(f)
+        themes[path.stem] = game_concept["concept"]
+    themes = list(themes.values())
 
     prompts = []
     save_dirs = []
 
-    num_themes = 16
+    num_themes = 20
     themes = themes[:num_themes]
 
     for idx, theme in enumerate(themes):
-        _save_dir = save_dir / perspective / f"theme_{idx}" / "sample_0"
+        _save_dir = save_dir / f"theme_{idx}" / "sample_0"
         _prompt = prompt_game_code.format(
             description=theme,
             p5js_guidelines=p5js_guidelines,
@@ -554,7 +555,7 @@ if __name__ == "__main__":
         prompts.append(_prompt)
         save_dirs.append(_save_dir)
 
-    games_dir = Path(__file__).parent / "results" / "gen_game_topdown" / perspective / "run1_claude-3-7-sonnet-20250219" / "no_thinking" / "games"
+    games_dir = Path(__file__).parent / "results" / "gen_game_topdown" / "run1_claude-3-7-sonnet-20250219" / "no_thinking" / "games"
 
     print("Number of prompts:", len(prompts))
     for i in range(len(prompts)):
@@ -569,7 +570,7 @@ if __name__ == "__main__":
         resample_save_dirs = []
         for i, save_dir in enumerate(save_dirs):
             if not (save_dir / "run_check.json").exists():
-                errors, issues = run_game(code_from_dir(save_dir), headless=True, total_test_time=120000)
+                errors, issues = run_game(code_from_dir(save_dir), headless=True, total_test_time=60000)
 
                 run_check = {"status": "passed", "errors": [], "issues": []}
                 if errors:
