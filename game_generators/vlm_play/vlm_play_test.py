@@ -51,13 +51,39 @@ class VLMPlayEvaluation:
             output_dir: Directory to save recorded videos and evaluation results
             api_key: Google API key for Gemini access
         """
-        self.game_path = os.path.abspath(game_path)
+        # Check if the game_path is a directory and find the index.html
+        self.original_path = os.path.abspath(game_path)
+        
+        if os.path.isdir(self.original_path):
+            # Look for index.html first
+            index_html = os.path.join(self.original_path, "index.html")
+            if os.path.exists(index_html):
+                self.game_path = index_html
+                logging.info(f"Found index.html in directory: {self.game_path}")
+            else:
+                # Look for any HTML file
+                html_files = [f for f in os.listdir(self.original_path) if f.endswith('.html')]
+                if html_files:
+                    self.game_path = os.path.join(self.original_path, html_files[0])
+                    logging.info(f"Using HTML file found in directory: {self.game_path}")
+                else:
+                    # No HTML file found, just use the directory
+                    self.game_path = self.original_path
+                    logging.warning(f"No HTML files found in directory: {self.original_path}")
+        else:
+            self.game_path = self.original_path
+            
+        print(f"Game path: {self.game_path}")
         
         # Setup output directory
         if output_dir:
             self.output_dir = output_dir
         else:
-            self.output_dir = os.path.join(os.path.dirname(self.game_path), "vlm_evaluation")
+            # Use the original path (directory) for output if it's a directory
+            if os.path.isdir(self.original_path):
+                self.output_dir = os.path.join(self.original_path, "vlm_evaluation")
+            else:
+                self.output_dir = os.path.join(os.path.dirname(self.game_path), "vlm_evaluation")
         
         os.makedirs(self.output_dir, exist_ok=True)
         
@@ -67,19 +93,34 @@ class VLMPlayEvaluation:
         
         # Load metadata if available
         self.metadata = self._load_metadata()
-        
+        self.game_description = self.metadata['game_info']['game_description']
+        self.game_controls = self.metadata['game_info']['game_controls']
+        self.game_code = self.metadata['game_info']['game_code']
         # Parse automated testing info from metadata
         self.test_info = self._parse_automated_testing_info()
     
     def _load_metadata(self) -> Dict[str, Any]:
         """Load metadata.json file if it exists in the game path."""
-        metadata_path = os.path.join(os.path.dirname(self.game_path), "metadata.json")
+        # Try to find metadata.json in the original path first (directory)
+        if hasattr(self, 'original_path') and os.path.isdir(self.original_path):
+            metadata_path = os.path.join(self.original_path, "metadata.json")
+        else:
+            # Fallback to game path directory
+            metadata_path = os.path.join(os.path.dirname(self.game_path), "metadata.json")
+            
+        logging.info(f"Looking for metadata at: {metadata_path}")
+        
         if os.path.exists(metadata_path):
             try:
                 with open(metadata_path, 'r') as f:
-                    return json.load(f)
+                    metadata = json.load(f)
+                    logging.info(f"Loaded metadata from: {metadata_path}")
+                    return metadata
             except Exception as e:
                 logging.warning(f"Failed to load metadata.json: {str(e)}")
+        else:
+            logging.warning(f"Metadata file not found at: {metadata_path}")
+            
         return {}
     
     def _parse_automated_testing_info(self) -> Dict[str, Dict[str, str]]:
@@ -87,29 +128,69 @@ class VLMPlayEvaluation:
         test_info = {}
         
         if not self.metadata or 'game_info' not in self.metadata or 'automated_testing' not in self.metadata['game_info']:
-            logging.warning("No automated testing info found in metadata")
+            logging.warning(f"No automated testing info found in metadata: {self.metadata}")
             return test_info
-        
-        automated_testing = self.metadata['game_info']['automated_testing']
+        game_info = self.metadata['game_info']
+        game_description = game_info['game_description']
+        game_controls = game_info['game_controls']
+
+        # TODO: Add code to the input to the LLM to include the game description and controls
+        automated_testing = game_info['automated_testing']
         
         try:
+            # Check if the XML is properly formatted
+            if not automated_testing.strip().startswith("<TEST_"):
+                logging.warning("Automated testing info does not start with <TEST_. Format may be incorrect.")
+                
             # Parse the XML-formatted automated testing information
+            # First, clean up the string to ensure it's valid XML
+            # Remove any potential extra whitespace between tags
             xml_str = f"<root>{automated_testing}</root>"
-            root = ET.fromstring(xml_str)
             
-            # Process each test
-            for test_elem in root.findall("./TEST_*"):
-                test_name = test_elem.tag
+            try:
+                # First try standard XML parsing
+                root = ET.fromstring(xml_str)
                 
-                test_description = test_elem.find("test_description")
-                strategy_description = test_elem.find("strategy_description")
-                expected_outcome = test_elem.find("expected_outcome")
+                # Process each test
+                for test_elem in root.findall("./TEST_*"):
+                    test_name = test_elem.tag
+                    
+                    test_description = test_elem.find("test_description")
+                    strategy_description = test_elem.find("strategy_description")
+                    expected_outcome = test_elem.find("expected_outcome")
+                    
+                    test_info[test_name] = {
+                        "test_description": test_description.text.strip() if test_description is not None and test_description.text else "",
+                        "strategy_description": strategy_description.text.strip() if strategy_description is not None and strategy_description.text else "",
+                        "expected_outcome": expected_outcome.text.strip() if expected_outcome is not None and expected_outcome.text else ""
+                    }
+            except ET.ParseError as xml_error:
+                # If standard parsing fails, try manual parsing
+                logging.warning(f"XML parsing failed: {str(xml_error)}. Trying manual parsing...")
                 
-                test_info[test_name] = {
-                    "test_description": test_description.text.strip() if test_description is not None and test_description.text else "",
-                    "strategy_description": strategy_description.text.strip() if strategy_description is not None and strategy_description.text else "",
-                    "expected_outcome": expected_outcome.text.strip() if expected_outcome is not None and expected_outcome.text else ""
-                }
+                # Manual parsing for format like:
+                # <TEST_1>
+                # <test_description>...</test_description>
+                # <strategy_description>...</strategy_description>
+                # <expected_outcome>...</expected_outcome>
+                # </TEST_1>
+                
+                import re
+                
+                # Find all TEST blocks
+                test_blocks = re.findall(r'<(TEST_\d+)>(.*?)</\1>', automated_testing, re.DOTALL)
+                
+                for test_name, test_content in test_blocks:
+                    # Extract the inner content
+                    test_description_match = re.search(r'<test_description>(.*?)</test_description>', test_content, re.DOTALL)
+                    strategy_match = re.search(r'<strategy_description>(.*?)</strategy_description>', test_content, re.DOTALL)
+                    outcome_match = re.search(r'<expected_outcome>(.*?)</expected_outcome>', test_content, re.DOTALL)
+                    
+                    test_info[test_name] = {
+                        "test_description": test_description_match.group(1).strip() if test_description_match else "",
+                        "strategy_description": strategy_match.group(1).strip() if strategy_match else "",
+                        "expected_outcome": outcome_match.group(1).strip() if outcome_match else ""
+                    }
                 
         except Exception as e:
             logging.error(f"Error parsing automated testing info: {str(e)}")
@@ -139,27 +220,104 @@ class VLMPlayEvaluation:
             context = await browser.new_context()
             page = await context.new_page()
             
+            # Set up console error tracking
+            await browser_manager.setup_console_error_tracking(page)
+            
             # Navigate to the page
             await page.goto(url, wait_until="networkidle", timeout=15000)
             await page.wait_for_timeout(2000)
             
-            # Find all TEST buttons with the new format
-            test_buttons = await page.evaluate(
-                """
-                () => {
-                    const buttons = Array.from(document.querySelectorAll('button, input[type="button"]'));
-                    return buttons
-                        .filter(btn => btn.id && btn.id.toLowerCase().includes('test_') && btn.id.toLowerCase().includes('modebtn'))
-                        .map(btn => ({
+            # JavaScript code for first button detection approach
+            first_button_detection_js = """
+            () => {
+                const buttons = Array.from(document.querySelectorAll('button, input[type="button"]'));
+                return buttons
+                    .filter(btn => {
+                        if (!btn.id) return false;
+                        const id = btn.id.toLowerCase();
+                        // Look for patterns like test_1_modebtn, test_2_modebtn, etc.
+                        return id.includes('test_') && id.includes('modebtn');
+                    })
+                    .map(btn => {
+                        let testMode = '';
+                        if (btn.onclick) {
+                            const onclickStr = btn.onclick.toString();
+                            const match = onclickStr.match(/setControlMode\\(['"]([^'"]+)['"]\)/);
+                            if (match) {
+                                testMode = match[1];
+                            }
+                        }
+                        return {
                             id: btn.id,
                             text: btn.innerText || btn.value || '',
-                            testMode: (btn.onclick && btn.onclick.toString().match(/setControlMode\\(['"]([^'"]+)['"]\\)/)?.[1]) || ''
-                        }));
-                }
-                """
-            )
+                            testMode: testMode
+                        };
+                    });
+            }
+            """
+            
+            # Find all TEST buttons with the new format
+            test_buttons = await page.evaluate(first_button_detection_js)
+            
+            logging.info(f"Button search results: {test_buttons}")
+            
+            # JavaScript code for lenient button detection approach
+            lenient_button_detection_js = """
+            () => {
+                const buttons = Array.from(document.querySelectorAll('button, input[type="button"]'));
+                return buttons
+                    .filter(btn => {
+                        if (!btn.id) return false;
+                        const id = btn.id.toLowerCase();
+                        // More lenient pattern matching
+                        return id.includes('test');
+                    })
+                    .map(btn => {
+                        // Try to extract test mode from onclick attribute or button ID
+                        let testMode = '';
+                        if (btn.onclick) {
+                            const onclickStr = btn.onclick.toString();
+                            const match = onclickStr.match(/setControlMode\\(['"]([^'"]+)['"]\)/);
+                            if (match) {
+                                testMode = match[1];
+                            }
+                        }
+                        
+                        // If no testMode found from onclick, try to derive from ID
+                        if (!testMode && btn.id) {
+                            const idMatch = btn.id.match(/test_?(\\d+)/i);
+                            if (idMatch) {
+                                testMode = 'TEST_' + idMatch[1];
+                            }
+                        }
+                        
+                        return {
+                            id: btn.id,
+                            text: btn.innerText || btn.value || '',
+                            testMode: testMode
+                        };
+                    })
+                    .filter(btn => btn.testMode); // Only include buttons with a testMode
+            }
+            """
+            
+            # If no test buttons found with the first attempt, try a more lenient approach
+            if not test_buttons:
+                logging.warning("No TEST buttons found with the first approach, trying a more lenient search")
+                test_buttons = await page.evaluate(lenient_button_detection_js)
+                
+                logging.info(f"Lenient button search results: {test_buttons}")
             
             await context.close()
+            
+            # Get console errors before closing browser
+            console_errors = browser_manager.get_console_errors_summary()
+            results["console_errors"]["initial_page_load"] = console_errors
+            
+            # Log any errors from initial page load
+            if console_errors["has_errors"]:
+                logging.error(f"Console errors during initial page load: {json.dumps(console_errors, indent=2)}")
+                
             await browser.close()
             
             if not test_buttons:
@@ -170,7 +328,7 @@ class VLMPlayEvaluation:
             
             logging.info(f"Found {len(test_buttons)} TEST buttons: {test_buttons}")
             
-            # Record videos for all test buttons in parallel
+            # Record videos for all test buttons in parallel (keeping this part parallel for efficiency)
             logging.info(f"Starting parallel recording of {len(test_buttons)} test buttons")
             start_time = asyncio.get_event_loop().time()
             video_paths = await self._record_test_videos_parallel(test_buttons)
@@ -186,10 +344,12 @@ class VLMPlayEvaluation:
                 results["errors"].append(error_msg)
                 return results
             
-            # For each recorded video, run Gemini evaluation
-            logging.info("Starting Gemini evaluation of recorded videos")
+            # Process each test video sequentially to avoid parallel Gemini API calls
+            logging.info("Starting sequential evaluation of recorded videos with Gemini")
             evaluations = []
-            for button_info, video_path in video_paths.items():
+            
+            # Process each video one by one (sequentially)
+            for button_id, (button_info, video_path) in video_paths.items():
                 if not os.path.exists(video_path):
                     logging.warning(f"Video file does not exist: {video_path}")
                     continue
@@ -199,7 +359,7 @@ class VLMPlayEvaluation:
                 
                 logging.info(f"Evaluating gameplay for mode: {test_mode} (Button ID: {test_id})")
                 
-                # Get test information from metadata
+                # Get test information from metadata and evaluate each video independently
                 evaluation = await self._evaluate_test_video(
                     video_path=video_path,
                     test_mode=test_mode,
@@ -210,16 +370,18 @@ class VLMPlayEvaluation:
                     evaluations.append(evaluation)
                     results["evaluations"].append(evaluation)
                     
-                    # Save evaluation to file
+                    # Save individual evaluation to file
                     eval_file_path = os.path.join(self.output_dir, f"{test_id}_evaluation.json")
                     with open(eval_file_path, "w") as f:
                         json.dump(evaluation, f, indent=2)
                     
                     logging.info(f"Saved evaluation to {eval_file_path}")
             
-            # Generate aggregated feedback if we have evaluations
+            # Generate aggregated feedback only after all individual evaluations are complete
             if evaluations:
                 logging.info(f"Generating aggregated feedback from {len(evaluations)} evaluations")
+                
+                # Make a separate aggregation call with all the collected evaluations
                 aggregated_feedback = await self._generate_aggregated_feedback(evaluations)
                 results["aggregated_feedback"] = aggregated_feedback
                 
@@ -243,9 +405,9 @@ class VLMPlayEvaluation:
         
         return results
     
-    async def _record_test_videos_parallel(self, test_buttons: List[Dict[str, Any]]) -> Dict[Dict[str, Any], str]:
+    async def _record_test_videos_parallel(self, test_buttons: List[Dict[str, Any]]) -> Dict[str, Tuple[Dict[str, Any], str]]:
         """Record videos for all test buttons in parallel, focusing only on the canvas."""
-        video_paths = {}
+        video_paths = {}  # Use button_id as key instead of button_info dictionary
         tasks = []
         
         # Setup browser once
@@ -268,11 +430,12 @@ class VLMPlayEvaluation:
                     continue
                 
                 button_info, video_path = result
+                button_id = button_info["id"]
                 if video_path and os.path.exists(video_path):
-                    video_paths[button_info] = video_path
-                    logging.info(f"Successfully recorded video for {button_info['id']}: {video_path}")
+                    video_paths[button_id] = (button_info, video_path)
+                    logging.info(f"Successfully recorded video for {button_id}: {video_path}")
                 else:
-                    logging.warning(f"Failed to record video for {button_info['id']}")
+                    logging.warning(f"Failed to record video for {button_id}")
         
         finally:
             # Close browser
@@ -284,10 +447,16 @@ class VLMPlayEvaluation:
     async def _record_single_video(self, browser, url, button_info) -> Tuple[Dict[str, Any], Optional[str]]:
         """Record a single video for a test button, focusing only on the canvas."""
         button_id = button_info["id"]
+        test_mode = button_info.get("testMode", "")
+        test_name = test_mode or button_id
         
         # Create new context for this recording
         context = await browser.new_context()
         page = await context.new_page()
+        
+        # Set up console error tracking
+        browser_manager = BrowserManager(self.game_path)
+        await browser_manager.setup_console_error_tracking(page)
         
         try:
             # 1. Wait for the page to load
@@ -295,7 +464,7 @@ class VLMPlayEvaluation:
             logging.info(f"Page loaded for test button: {button_id}")
             await page.wait_for_timeout(2000)
             
-            # 2. Navigate to canvas and ensure it's the focus
+            # 2. First try to find and focus on the canvas
             canvas_found = await page.evaluate("""
                 () => {
                     const canvas = document.querySelector('canvas');
@@ -330,31 +499,48 @@ class VLMPlayEvaluation:
             
             if not canvas_found:
                 logging.error("Canvas element not found on the page")
+                # Get console errors
+                console_errors = browser_manager.get_console_errors_summary()
+                logging.error(f"Console errors for {test_mode}: {json.dumps(console_errors, indent=2)}")
                 return button_info, None
             
-            # 3. Press the test button to activate the test mode
-            button = await page.query_selector(f"#{button_id}")
-            if button:
-                await button.click()
-                logging.info(f"Clicked test button: {button_id}")
-                await page.wait_for_timeout(1000)  # Wait for mode to change
-            else:
-                # Try alternative approach to find and click the button
-                button_found = await page.evaluate(f"""
+            # 3. Try to activate the test mode using multiple approaches
+            test_mode_set = False
+            
+            # Get initial control mode
+            initial_mode = await page.evaluate("""
+                () => {
+                    if (typeof window.getGameState === 'function') {
+                        const state = window.getGameState();
+                        if (state) return state.controlMode;
+                    } else if (window.gameState) {
+                        return window.gameState.controlMode;
+                    }
+                    return null;
+                }
+            """)
+            
+            logging.info(f"Initial control mode: {initial_mode}")
+            
+            # Try to click the button via JavaScript first (most reliable approach)
+            try:
+                button_clicked = await page.evaluate(f"""
                     () => {{
-                        // Try by ID
+                        // Find button by id
                         let button = document.getElementById('{button_id}');
                         
-                        // Try by class if ID not found
+                        // If not found, try other selectors
                         if (!button) {{
-                            const buttons = Array.from(document.querySelectorAll('button'));
+                            // Try by any button containing the test mode in its onclick
+                            const buttons = Array.from(document.querySelectorAll('button, input[type="button"]'));
                             button = buttons.find(b => 
                                 b.id === '{button_id}' || 
-                                (b.onclick && b.onclick.toString().includes('{button_id}'))
+                                (b.onclick && b.onclick.toString().includes('{test_mode}'))
                             );
                         }}
                         
                         if (button) {{
+                            // Click the button programmatically
                             button.click();
                             return true;
                         }}
@@ -362,112 +548,220 @@ class VLMPlayEvaluation:
                     }}
                 """)
                 
-                if not button_found:
-                    logging.error(f"Button {button_id} not found and could not be clicked")
-                    return button_info, None
+                if button_clicked:
+                    logging.info(f"Clicked button {button_id} via JavaScript")
+                else:
+                    logging.warning(f"Could not find button {button_id} via JavaScript")
                 
-                logging.info(f"Found and clicked test button: {button_id} using JavaScript")
+                # Wait for mode change
                 await page.wait_for_timeout(1000)
+            except Exception as e:
+                logging.warning(f"JavaScript click attempt failed: {str(e)}")
             
-            # Ensure canvas is still focused and visible after button click
-            await page.evaluate("""
-                () => {
-                    const canvas = document.querySelector('canvas');
-                    if (!canvas) return;
+            # Check if control mode was set (case-insensitive comparison)
+            control_mode_info = await page.evaluate(f"""
+                () => {{
+                    let currentMode = null;
+                    let source = null;
                     
-                    // Ensure canvas is still visible and other elements are hidden
-                    canvas.scrollIntoView();
-                    Array.from(document.body.children).forEach(el => {
-                        if (el !== canvas && !el.contains(canvas)) {
-                            el.style.display = 'none';
-                        }
-                    });
-                }
+                    if (typeof window.getGameState === 'function') {{
+                        const state = window.getGameState();
+                        if (state) {{
+                            currentMode = state.controlMode;
+                            source = 'getGameState()';
+                        }}
+                    }} else if (window.gameState) {{
+                        currentMode = window.gameState.controlMode;
+                        source = 'window.gameState';
+                    }}
+                    
+                    return {{
+                        currentMode,
+                        source,
+                        expectedMode: '{test_mode}'
+                    }};
+                }}
             """)
             
-            # 4. Start recording the canvas
-            test_name = button_info["testMode"] or button_id
-            logging.info(f"Starting to record canvas for test: {test_name}")
+            logging.info(f"Control mode after click: {json.dumps(control_mode_info, indent=2)}")
             
-            # Create a new recording context with viewport matching canvas size
-            canvas_dimensions = await page.evaluate("""
-                () => {
-                    const canvas = document.querySelector('canvas');
-                    if (!canvas) return null;
-                    return {
-                        width: canvas.width || canvas.clientWidth,
-                        height: canvas.height || canvas.clientHeight
-                    };
-                }
-            """)
+            # Check if we have the expected control mode (case-insensitive)
+            current_mode = control_mode_info.get('currentMode')
+            if current_mode and isinstance(current_mode, str):
+                if current_mode.upper() == test_mode.upper():
+                    test_mode_set = True
+                    logging.info(f"Control mode successfully set to {current_mode}")
             
-            if not canvas_dimensions:
-                logging.error("Could not determine canvas dimensions")
-                return button_info, None
+            # If mode not set, try direct setting
+            if not test_mode_set:
+                try:
+                    direct_set = await page.evaluate(f"""
+                        () => {{
+                            try {{
+                                // Try direct setting
+                                if (typeof window.setControlMode === 'function') {{
+                                    window.setControlMode('{test_mode}');
+                                    return true;
+                                }} else if (window.gameState) {{
+                                    window.gameState.controlMode = '{test_mode}';
+                                    return true;
+                                }}
+                                return false;
+                            }} catch (e) {{
+                                console.error("Error setting control mode:", e);
+                                return false;
+                            }}
+                        }}
+                    """)
+                    
+                    if direct_set:
+                        logging.info(f"Directly set control mode to {test_mode}")
+                        test_mode_set = True
+                except Exception as e:
+                    logging.warning(f"Direct control mode setting failed: {str(e)}")
             
-            # Close current page/context
+            # 4. Press ENTER to start the game (continue even if control mode not set)
+            logging.info("Pressing ENTER to start the game")
+            await page.keyboard.press("Enter")
+            
+            # 5. Start recording - simplify by just recording what happens regardless of control mode
+            logging.info(f"Starting to record for test: {test_name}")
+            
+            # Create a new recording context
             await page.close()
             await context.close()
             
-            # Create a new context with recording enabled and viewport matching canvas
+            # Record at a reasonable size
             recording_context = await browser.new_context(
-                viewport=canvas_dimensions,
+                viewport={"width": 800, "height": 600},
                 record_video_dir=self.output_dir,
-                record_video_size=canvas_dimensions
+                record_video_size={"width": 800, "height": 600}
             )
             
             recording_page = await recording_context.new_page()
-            await recording_page.goto(url, wait_until="networkidle", timeout=15000)
             
-            # Hide everything except canvas
-            await recording_page.evaluate("""
-                () => {
-                    // Style body and hide everything else
-                    document.body.style.margin = '0';
-                    document.body.style.padding = '0';
-                    document.body.style.overflow = 'hidden';
-                    document.body.style.background = '#000';
-                    
-                    const canvas = document.querySelector('canvas');
-                    if (!canvas) return;
-                    
-                    // Position canvas at center of viewport
-                    canvas.style.position = 'absolute';
-                    canvas.style.left = '50%';
-                    canvas.style.top = '50%';
-                    canvas.style.transform = 'translate(-50%, -50%)';
-                    
-                    // Hide everything else
-                    Array.from(document.body.children).forEach(el => {
-                        if (el !== canvas && !el.contains(canvas)) {
-                            el.style.display = 'none';
+            try:
+                await recording_page.goto(url, wait_until="networkidle", timeout=15000)
+                
+                # Hide everything except canvas
+                await recording_page.evaluate("""
+                    () => {
+                        const canvas = document.querySelector('canvas');
+                        if (!canvas) return;
+                        
+                        // Style canvas
+                        canvas.style.position = 'absolute';
+                        canvas.style.left = '50%';
+                        canvas.style.top = '50%';
+                        canvas.style.transform = 'translate(-50%, -50%)';
+                        
+                        // Hide other elements for clean recording
+                        document.body.style.margin = '0';
+                        document.body.style.padding = '0';
+                        document.body.style.background = '#000';
+                        
+                        Array.from(document.body.children).forEach(el => {
+                            if (el !== canvas && !el.contains(canvas)) {
+                                el.style.display = 'none';
+                            }
+                        });
+                    }
+                """)
+                
+                # Set the control mode in this new context
+                await recording_page.evaluate(f"""
+                    () => {{
+                        try {{
+                            // Try setting control mode via function call first
+                            if (typeof window.setControlMode === 'function') {{
+                                window.setControlMode('{test_mode}');
+                            }}
+                            // Try direct setting if function not available
+                            else if (window.gameState) {{
+                                window.gameState.controlMode = '{test_mode}';
+                            }}
+                            // Try clicking button if available
+                            else {{
+                                const button = document.getElementById('{button_id}');
+                                if (button) button.click();
+                            }}
+                        }} catch (e) {{
+                            console.error("Error setting test mode:", e);
+                        }}
+                    }}
+                """)
+                
+                # Press ENTER again to start the game
+                await recording_page.keyboard.press("Enter")
+                
+                # Record for 10 seconds
+                logging.info(f"Recording for {test_name} for 10 seconds")
+                
+                # Check game phase every second and restart if needed
+                start_time = asyncio.get_event_loop().time()
+                end_time = start_time + 10
+                
+                while asyncio.get_event_loop().time() < end_time:
+                    # Check game phase
+                    game_phase = await recording_page.evaluate("""
+                        () => {
+                            try {
+                                // Try to get game state via getGameState function
+                                if (typeof window.getGameState === 'function') {
+                                    const state = window.getGameState();
+                                    if (state && state.gamePhase) {
+                                        return state.gamePhase;
+                                    }
+                                }
+                                // Fall back to direct gameState access
+                                else if (window.gameState && window.gameState.gamePhase) {
+                                    return window.gameState.gamePhase;
+                                }
+                                return 'unknown';
+                            } catch (e) {
+                                console.error('Error checking game phase:', e);
+                                return 'error';
+                            }
                         }
-                    });
-                }
-            """)
+                    """)
+                    
+                    # If game is not in playing phase, restart it
+                    if game_phase and game_phase.lower() != 'playing':
+                        logging.info(f"Game phase is {game_phase}, restarting game...")
+                        
+                        # Press R to restart
+                        await recording_page.keyboard.press('r')
+                        await recording_page.wait_for_timeout(500)
+                        
+                        # Press ENTER to confirm restart
+                        await recording_page.keyboard.press('Enter')
+                        await recording_page.wait_for_timeout(500)
+                        
+                        # Reset test mode again in case it was lost
+                        await recording_page.evaluate(f"""
+                            () => {{
+                                try {{
+                                    if (typeof window.setControlMode === 'function') {{
+                                        window.setControlMode('{test_mode}');
+                                    }} else if (window.gameState) {{
+                                        window.gameState.controlMode = '{test_mode}';
+                                    }}
+                                }} catch (e) {{
+                                    console.error('Error resetting test mode:', e);
+                                }}
+                            }}
+                        """)
+                    
+                    # Wait a second before checking again
+                    await recording_page.wait_for_timeout(1000)
+                
+            except Exception as e:
+                logging.error(f"Error during recording: {str(e)}")
+            finally:
+                # Close recording context to finalize the video
+                await recording_context.close()
             
-            # Click the test button again in this new context
-            await recording_page.evaluate(f"""
-                () => {{
-                    const button = document.getElementById('{button_id}');
-                    if (button) button.click();
-                }}
-            """)
-            await recording_page.wait_for_timeout(1000)
-            
-            # 5. Press ENTER to start the game
-            logging.info("Pressing ENTER to start the game")
-            await recording_page.keyboard.press("Enter")
-            
-            # Record for 30 seconds
-            logging.info(f"Recording canvas for {test_name} for 30 seconds")
-            await recording_page.wait_for_timeout(30000)
-            
-            # Stop recording by closing the context
-            video_path = None
-            await recording_context.close()
-            
-            # Find the recorded video file
+            # 6. Process the recorded video
             video_files = [f for f in os.listdir(self.output_dir) if f.endswith(".webm")]
             if video_files:
                 latest_video = max(video_files, key=lambda f: os.path.getmtime(os.path.join(self.output_dir, f)))
@@ -499,11 +793,16 @@ class VLMPlayEvaluation:
                     os.remove(webm_path)
                 else:
                     logging.error(f"Failed to convert video: {stderr.decode()}")
+                    video_path = None
             else:
                 logging.error("No recorded video file found")
+                # Get console errors
+                console_errors = browser_manager.get_console_errors_summary()
+                logging.error(f"Console errors for {test_mode}: {json.dumps(console_errors, indent=2)}")
+                video_path = None
             
             return button_info, video_path
-        
+            
         except Exception as e:
             logging.error(f"Error recording video for {button_id}: {str(e)}")
             return button_info, None
@@ -544,24 +843,26 @@ class VLMPlayEvaluation:
             
             # Create prompt for Gemini using test information
             prompt = f"""
-            Here is a video of a game made in JavaScript. The player is trying to test the game for the following: {test_description}. 
+            <task>
+            The player is trying to test the game for the following: {test_description}. 
             Following was their strategy: {strategy_description}. 
             They expected the following would happen: {expected_outcome}.
-            
+            </task>
             Can you evaluate the video and answer the following questions:
             
             1. Was the expected outcome reached? If not, do you think the player was making progress towards the intended goal for the test?
             2. Do you think that their strategy is bad?
             3. If not, what is broken in the game and can be improved based on this test?
             
-            Format your response using XML tags for each answer:
+            Output your response in the following format:
             <outcome_reached>Your detailed answer about whether the expected outcome was reached</outcome_reached>
             <strategy_evaluation>Your detailed evaluation of the testing strategy</strategy_evaluation>
             <improvements>Your detailed suggestions on what is broken and how to improve the game</improvements>
             """
             
-            # Send video to Gemini for evaluation
-            response = await self.gemini_evaluator.evaluate_video_with_custom_prompt(video_path, prompt)
+            # Send video to Gemini for evaluation using the synchronous method
+            # This avoids the error with generate_content_async
+            response = self.gemini_evaluator.evaluate_video_with_custom_prompt_sync(video_path, prompt)
             
             if not response:
                 logging.error(f"Failed to get evaluation for {test_mode}")
@@ -569,6 +870,7 @@ class VLMPlayEvaluation:
             
             # Parse the response
             evaluation = self._parse_test_evaluation_response(response)
+            print(f"Evaluation: {evaluation}")
             
             # Add mode and button information
             evaluation["test_mode"] = test_mode
@@ -678,7 +980,7 @@ class VLMPlayEvaluation:
             """
             
             # Use Gemini to generate the aggregated feedback
-            response = await self.gemini_evaluator.model_api.generate_text_async(prompt)
+            response = self.gemini_evaluator.generate_text(prompt)
             
             if not response:
                 logging.error("Failed to generate aggregated feedback")
@@ -742,6 +1044,8 @@ class VLMPlayEvaluation:
                 .error-container {{ margin: 10px 0; background: #fff8f8; padding: 10px; border-left: 3px solid #f00; }}
                 .evaluation-section {{ margin: 15px 0; padding: 10px; background: #f9f9f9; border-left: 3px solid #333; }}
                 .aggregated-feedback {{ margin: 20px 0; padding: 15px; background: #f0f7ff; border-left: 3px solid #0066cc; }}
+                .console-errors {{ margin: 15px 0; padding: 10px; background: #fff8f8; border-left: 3px solid #f00; font-family: monospace; }}
+                pre {{ background-color: #f3f3f3; padding: 8px; overflow-x: auto; }}
             </style>
         </head>
         <body>
@@ -754,9 +1058,31 @@ class VLMPlayEvaluation:
             }</span></p>
             <p>Total evaluations: {len(results["evaluations"])}</p>
             
+            <!-- Console Errors Section -->
+            <h2>Console Errors</h2>
+        """
+        
+        # Add console errors if available
+        if results.get("console_errors"):
+            for context, errors in results["console_errors"].items():
+                if errors.get("has_errors"):
+                    html_content += f"""
+                    <div class="console-errors">
+                        <h3>Errors from {context}</h3>
+                        <p>Error count: {errors.get("error_count", 0)}</p>
+                        <pre>{json.dumps(errors.get("errors", []), indent=2)}</pre>
+                    </div>
+                    """
+                else:
+                    html_content += f"<p>No console errors from {context}.</p>"
+        else:
+            html_content += "<p>No console errors recorded.</p>"
+            
+        # Add aggregated feedback if available
+        html_content += """
             <!-- Aggregated Feedback Section -->
             <h2>Aggregated Feedback</h2>
-            """
+        """
         
         # Add aggregated feedback if available
         if results.get("aggregated_feedback"):
@@ -793,6 +1119,8 @@ class VLMPlayEvaluation:
             
             rel_video_path = os.path.relpath(video_path, self.output_dir) if video_path else ""
             
+            video_html = f"<video width=\"640\" height=\"480\" controls><source src=\"{rel_video_path}\" type=\"video/mp4\">Your browser does not support the video tag.</video>" if rel_video_path else "<p>No video available</p>"
+            
             html_content += f"""
             <div class="evaluation-section">
                 <h3>Test: {test_mode} ({button_text})</h3>
@@ -810,10 +1138,7 @@ class VLMPlayEvaluation:
                 
                 <div class="video-container">
                     <h4>Gameplay Video</h4>
-                    <video width="640" height="480" controls>
-                        <source src="{rel_video_path}" type="video/mp4">
-                        Your browser does not support the video tag.
-                    </video>
+                    {video_html}
                 </div>
             </div>
             """
@@ -834,6 +1159,21 @@ class VLMPlayEvaluation:
             f.write(html_content)
         
         logging.info(f"Generated evaluation report: {report_path}")
+
+    def get_instructions(self) -> str:
+        """
+        Get the instructions for the game play tester.
+        """
+        return f"""
+You are a part of a team of game play testers. you are testing a game developed in JavaScript.
+<game_description>
+{self.game_description}
+</game_description>
+<game_controls>
+{self.game_controls}
+</game_controls>
+You are given a video of a game developed in JavaScript.
+"""
 
 # Async function for easy API
 async def evaluate_game_async(game_path: str, output_dir: Optional[str] = None, api_key: Optional[str] = None) -> Dict[str, Any]:
@@ -864,7 +1204,9 @@ def evaluate_game(game_path: str, output_dir: Optional[str] = None, api_key: Opt
     Returns:
         Dictionary with evaluation results
     """
+    print(f"Evaluating game: {game_path}")
     return asyncio.run(evaluate_game_async(game_path, output_dir, api_key))
+
 
 # CLI entrypoint
 def main():
@@ -896,4 +1238,4 @@ def main():
         sys.exit(1)
 
 if __name__ == "__main__":
-    main() 
+    main()

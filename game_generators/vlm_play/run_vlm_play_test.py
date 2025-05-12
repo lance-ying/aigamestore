@@ -14,6 +14,14 @@ import sys
 import argparse
 import asyncio
 
+# Check for required packages
+try:
+    from google import genai
+except ImportError:
+    print("Error: The 'google-genai' package is required to run VLM Play tests.")
+    print("Please install it with: pip install google-genai")
+    sys.exit(1)
+
 # Add parent directory to path to ensure proper imports
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)

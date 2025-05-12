@@ -117,7 +117,17 @@ class GameGenerator(ABC):
         if match:
             return match.group(1).strip()
         return ""
-
+    
+    def extract_automated_testing_code(self, text: str) -> str:
+        """
+        Extract automated testing code from text
+        """
+        pattern = r"<automated_testing_code>\s*(.*?)\s*</automated_testing_code>"
+        match = re.search(pattern, text, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+        return ""
+    
     def extract_code_block(self, text: str, language: str = "javascript") -> Union[str, Dict[str, str]]:
         """
         Extract code blocks from text output
@@ -244,14 +254,14 @@ class GameGenerator(ABC):
         game_controls: str,
         game_concept: str,
         game_plan: str,
+        use_ecs: bool = True,
+        use_baseline: bool = False,
         game_design: Optional[str] = None,
         automated_testing: Optional[str] = None,
         concept_path: Optional[str] = None,
         genre: Optional[str] = None,
         intermediate_outputs: Optional[Dict[str, Any]] = None,
         conversation_log: Optional[List[Dict[str, str]]] = None,
-        use_ecs: bool = True,
-        use_baseline: bool = False,
     ) -> Path:
         """
         Save generated game files and metadata
@@ -372,7 +382,6 @@ class GameGenerator(ABC):
 
         # Save conversation history log and intermediate outputs
         self.output_summary(game_dir, conversation_log, intermediate_outputs)
-        
         return game_dir
 
     def output_summary(
