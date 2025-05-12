@@ -452,7 +452,7 @@ if __name__ == "__main__":
     plt.figure(figsize=(5, 4))
     plt.hist(delta_fun, bins=10, alpha=0.7, color='skyblue')
     plt.axvline(x=0, color='black', linestyle='--', alpha=0.7)
-    plt.xlabel('Delta Fun Rating (improve - critic)')
+    plt.xlabel('Delta Fun Rating')
     plt.ylabel('Frequency')
     ax = plt.gca()
     ax.spines['top'].set_visible(False)
@@ -465,7 +465,7 @@ if __name__ == "__main__":
     plt.figure(figsize=(5, 4))
     plt.hist(delta_playability, bins=10, alpha=0.7, color='lightcoral')
     plt.axvline(x=0, color='black', linestyle='--', alpha=0.7)
-    plt.xlabel('Delta Playability Rating (improve - critic)')
+    plt.xlabel('Delta Playability Rating')
     plt.ylabel('Frequency')
     ax = plt.gca()
     ax.spines['top'].set_visible(False)
@@ -593,3 +593,34 @@ if __name__ == "__main__":
     plt.tight_layout()
     plt.savefig(save_dir / "method_comparison_individual.png")
     plt.close()
+
+
+
+    
+    # Create a string with all the ratings
+    ratings_str = "Game Ratings Summary:\n\n"
+    for _, row in results.iterrows():
+        ratings_str += f"Game ID: {row['game_id']}\n"
+        ratings_str += f"User ID: {row['user_id']}\n"
+        ratings_str += f"Method: {row['method']}\n"
+        ratings_str += f"Fun Rating: {row['rating_fun']}\n"
+        ratings_str += f"Playability Rating: {row['rating_playability']}\n"
+        ratings_str += f"Explanation: {row['explanation']}\n"
+        ratings_str += "-" * 80 + "\n\n"
+    
+    # Save the ratings string to a file
+    with open(save_dir / "all_ratings.txt", "w") as f:
+        f.write(ratings_str)
+        
+    print(f"All ratings saved to {save_dir / 'all_ratings.txt'}")
+
+    from utils import generate
+
+    prompt = f"""Task: Summarize the ratings of the games.
+
+<ratings>
+{ratings_str}
+</ratings>
+"""
+
+    generate("claude-3-7-sonnet-20250219", prompt, thinking=True, save_dir=save_dir / "ratings_summary")

@@ -464,11 +464,11 @@ def run_game(game_code: dict[str, str], headless: bool = True,
              initial_wait: int = 500,
              sticky_prob: float = 0.7,
              action_duration: int = 150,
-             total_test_time: int = 10000,
+             total_test_time: int = 60000,
              viewport_width: int = 600,
              viewport_height: int = 400,
              sticky_actions: tuple[str, ...] | None = None,
-             max_execution_time: int = 60000) -> list:
+             max_execution_time: int = 180000) -> list:
     """Test if a p5.js game can run without errors using Playwright.
 
     Args:
@@ -585,7 +585,13 @@ def run_game(game_code: dict[str, str], headless: bool = True,
                 
                 # Perform some basic interactions
                 page.wait_for_timeout(initial_wait)  # Initial wait for game to settle
-        
+
+                page.keyboard.down("Space")
+                page.wait_for_timeout(100)
+                page.keyboard.up("Space")
+                page.wait_for_timeout(100)
+
+
                 # it seems that sometimes press doesn't start the game (might be because key is not down for long enough)
                 page.keyboard.down("Enter")
                 page.wait_for_timeout(100)
