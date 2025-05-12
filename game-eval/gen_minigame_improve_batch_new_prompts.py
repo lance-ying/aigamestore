@@ -9,7 +9,7 @@ from utils import generate, code_from_dir
 from gen_minigame_batch_new_prompts import run_game
 
 
-prompt_improve_game = """Task: Make this minigame even more fun and addictive by making sure it has a crystal clear goal that is easily understandable by anyone.
+prompt_improve_game = """Task: Make this minigame even more fun by making sure it has a crystal clear goal that is easily understandable by anyone.
 <instructions>
 * IMPORTANT: Don't make the game any more difficult. Make sure the game starts EXTREMELY simple and easy, and then slightly more difficult. Much better make a game too easy than too difficult.
 * Make sure the game still starts right away when the player presses 'Enter' (the player should be able to move after pressing 'Enter'). Don't implement any tutorial. This is a minigame.
@@ -63,7 +63,7 @@ SAVE_DIR = SAVE_DIR / run_name
 
 
 if __name__ == "__main__":
-    num_themes = 10
+    num_themes = 50
 
     games_dir = Path(__file__).parent / "results" / "gen_minigame_batch_new_prompts" / "run1" / "claude-3-7-sonnet-20250219" / "no_thinking"
 

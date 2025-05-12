@@ -9,7 +9,7 @@ from utils import generate, code_from_dir
 from gen_minigame_batch_new_prompts import run_game
 
 
-prompt_improve_game = """Task: Make this minigame even more fun and addictive by adding audio
+prompt_improve_game = """Task: Make this minigame even more fun by adding audio
 
 <instructions>
 * Create synthesizers. Don't use external audio files or URLs.
@@ -46,7 +46,7 @@ SAVE_DIR = SAVE_DIR / run_name
 
 
 if __name__ == "__main__":
-    num_themes = 10
+    num_themes = 50
 
     games_dir = Path(__file__).parent / "results" / "gen_minigame_improve_batch_new_prompts" / "run1" / "claude-3-7-sonnet-20250219" / "thinking"
 

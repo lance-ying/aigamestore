@@ -27,7 +27,7 @@ save_dir = save_dir / run_name
 
 
 prompt_game_code = """
-Task: Implement a fun and addictive 2D minigame in p5.js based on the following description:
+Task: Implement a fun 2D minigame in p5.js based on the following description:
 <description>
 {description}
 </description>
@@ -542,7 +542,7 @@ if __name__ == "__main__":
     prompts = []
     save_dirs = []
 
-    num_themes = 20
+    num_themes = 50
     themes = themes[:num_themes]
 
     for idx, theme in enumerate(themes):
