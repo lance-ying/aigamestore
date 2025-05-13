@@ -526,6 +526,24 @@ def run_game(game_code: dict[str, str], headless: bool = True,
             context = None
             try:
                 playwright_instance = sync_playwright().start()
+
+
+                # TODO: if want to use chromium, need to add args:
+                """
+                browser = playwright_instance.chromium.launch(
+                    headless=headless,
+                    args=[
+                        '--disable-gpu',
+                        '--disable-gpu-compositing',
+                        '--disable-gpu-rasterization',
+                        '--disable-gpu-sandbox',
+                        '--disable-software-rasterizer',
+                        '--force-cpu-draw',
+                        '--disable-web-security',
+                        '--disable-site-isolation-trials'
+                    ]
+                )
+                """
                 browser = playwright_instance.firefox.launch(headless=headless)
                 context = browser.new_context(
                     viewport={'width': viewport_width, 'height': viewport_height}
