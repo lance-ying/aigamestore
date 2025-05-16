@@ -18,6 +18,7 @@ class GameGenerator(ABC):
         verbose: bool = False,
         use_ecs: bool = True,
         use_baseline: bool = False,
+        use_basic: bool = False,
         game_design_system_prompt_path: str = "game_generators/system_prompts/game_design.txt",
         game_design_withai_system_prompt_path: str = "game_generators/system_prompts/game_design_withai.txt",
         code_generation_system_prompt_path: str = "game_generators/system_prompts/code_generation.txt",
@@ -34,6 +35,7 @@ class GameGenerator(ABC):
             verbose: Whether to print verbose output
             use_ecs: Whether to use ECS architecture for game generation
             use_baseline: Whether to use baseline architecture for game generation
+            use_basic: Whether to use basic instructions which include automated testing and user logging but no game design specifications for game generation
             game_design_system_prompt_path: Path to the game design system prompt
             code_generation_system_prompt_path: Path to the code generation system prompt
             code_generation_nonecs_system_prompt_path: Path to the code generation system prompt for non-ECS games
@@ -43,6 +45,7 @@ class GameGenerator(ABC):
         self.temperature = temperature
         self.use_ecs = use_ecs
         self.use_baseline = use_baseline
+        self.use_basic = use_basic
         self.generate_with_ai = generate_with_ai
         # Load system prompts
         with open(game_design_system_prompt_path, "r") as f:
@@ -300,6 +303,14 @@ class GameGenerator(ABC):
                     / concept_path.split("/")[-1]
                     .replace(".json", "")
                 )
+            elif self.use_basic:
+                game_dir = (
+                    Path("games")
+                    / self.model_name.split(":")[1]
+                    / "Single_Prompt_Basic"
+                    / concept_path.split("/")[-1]
+                    .replace(".json", "")
+                )
             elif use_ecs:
                 game_dir = (
                     Path("games")
@@ -369,6 +380,8 @@ class GameGenerator(ABC):
                 "model": self.model_name,
                 "timestamp": timestamp,
                 "sample_index": f"sample_{next_sample}",
+                "temperature": self.temperature,
+                "top_p": self.top_p
             },
             "game_files": {
                 "html": "index.html",

@@ -40,7 +40,7 @@ def parse_args():
         "--method",
         type=str,
         default="simple_prompt",
-        choices=["baseline", "simple_prompt", "simple_prompt_exp", "simple_prompt_xml", "two_step_xml", "template_based", "template_based_form", "multi_step_xml"], # TODO: "guide_complexity", "template", "template_character_driven", "template_with_critic", "template_with_play"],
+        choices=["baseline", "simple_prompt_basic", "simple_prompt", "simple_prompt_exp", "simple_prompt_xml", "two_step_xml", "template_based", "template_based_form", "multi_step_xml"], # TODO: "guide_complexity", "template", "template_character_driven", "template_with_critic", "template_with_play"],
         help="Game generation method to use",
     )
 
@@ -74,6 +74,21 @@ def parse_args():
         default=4,
         help="Number of passes to use for multi-step game generation",
     )
+
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=1.0,
+        help="Temperature for the LLM",
+    )
+
+    parser.add_argument(
+        "--top_p",
+        type=float,
+        default=0.9,
+        help="Top P for the LLM",
+    )
+    
     return parser.parse_args()
 
 
@@ -153,6 +168,14 @@ def main():
                 verbose=args.verbose,
                 use_ecs=not args.no_ecs,
                 use_baseline=True,
+            )
+        elif args.method == "simple_prompt_basic":
+            generator = SimplePromptXMLGenerator(
+                model_name=args.model,
+                verbose=args.verbose,
+                use_ecs=not args.no_ecs,
+                use_basic=True,
+                temperature=args.temperature if args.temperature else 1.0,
             )
         elif args.method == "simple_prompt":
             generator = SimplePromptGenerator(

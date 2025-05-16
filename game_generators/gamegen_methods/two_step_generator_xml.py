@@ -260,21 +260,21 @@ Output format:
 Output the code plan and game files in this format with NO OTHER TEXT in less than 35000 tokens:
 
 <game_description>
-... (Tell the user what the game is about, what they need to do, and the objective. Keep it short and concise.)
+... (Decscribe the game to the player, the objective, what they need to know to play and enjoy the game. Don't mention the controls here. Keep it short and concise.)
 </game_description>
 
 <game_controls>
-... (game controls as a list of key bindings, Key: Action)
+... (Game controls as a list of key bindings, Key: Action)
 </game_controls>
 
 Based on the game code, write the automated testing plan:
 <automated_testing>
 <TEST_1>
-<test_description>(write in 1-2 sentences "What are you testing?")</test_description>
-<strategy_description>(write in 1-2 sentences "How are you testing it?")</strategy_description>
-<expected_outcome>(write in 1-2 sentences "What is the expected outcome?")</expected_outcome>
+<test_description>(write in 1-2 sentences "What are you testing and the intent of the test?")</test_description>
+<strategy_description>(write in 1-2 sentences "What is your gameplay strategy to test it?")</strategy_description>
+<expected_outcome>(write in 1-2 sentences "What is the expected outcome? When do you consider the test successful?")</expected_outcome>
 </TEST_1>
-// Add tests (<=5) as needed along with the expected outcome, strategy, and testing
+// Add more tests (<=5) as needed
 </automated_testing>
 
 For the javascript files:

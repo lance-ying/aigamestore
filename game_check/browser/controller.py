@@ -2293,6 +2293,53 @@ class GameBrowserController:
                     new_resource_errors = result["resource_errors"][resource_errors_before:]
                     new_parse_errors = result["parse_errors"][parse_errors_before:]
                     
+                    # Check game phase after key press
+                    try:
+                        # First check if getGameState function exists
+                        has_game_state_function = await page.evaluate(r"""() => {
+                            return typeof getGameState === 'function';
+                        }""")
+                        
+                        if has_game_state_function:
+                            game_state = await page.evaluate("getGameState()")
+                            if game_state and isinstance(game_state, dict):
+                                game_phase = game_state.get("gamePhase")
+                                logging.info(f"Current game phase after key {random_key}: {game_phase}")
+                                
+                                # If game is over, restart it by pressing R followed by Enter
+                                if game_phase in ["GAME_OVER_WIN", "GAME_OVER_LOSS"]:
+                                    logging.info(f"Game over detected ({game_phase}), restarting game...")
+                                    
+                                    # Press R to restart
+                                    await self._test_key_press(page, "r", f"restart_r_{i}", screenshots_dir)
+                                    await page.wait_for_timeout(50)
+                                    
+                                    # Press Enter to confirm restart
+                                    restart_key_test = await self._test_key_press(page, "Enter", f"restart_enter_{i}", screenshots_dir)
+                                    await page.wait_for_timeout(100)
+                                    
+                                    # Update previous screenshot after restart
+                                    if restart_key_test.get("screenshot"):
+                                        prev_screenshot = restart_key_test.get("screenshot")
+                                    
+                                    # Record this restart action
+                                    random_action_info = {
+                                        "action_index": i,
+                                        "key": f"{random_key} (triggered game over: {game_phase})",
+                                        "restart_performed": True,
+                                        "screenshot": key_test.get("screenshot"),
+                                        "diff_score": key_test.get("diff_score", 0),
+                                        "new_errors": [],
+                                        "has_errors": False
+                                    }
+                                    random_action_results.append(random_action_info)
+                                    
+                                    # Continue to next random action
+                                    continue
+                    except Exception as e:
+                        # Just log the error and continue with testing if game state check fails
+                        logging.warning(f"Error checking game phase: {e}")
+                    
                     has_new_errors = (
                         len(new_errors) > 0 or 
                         len(new_exceptions) > 0 or
