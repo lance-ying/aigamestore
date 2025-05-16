@@ -395,6 +395,13 @@ class GameGenerator(ABC):
 
         # Save conversation history log and intermediate outputs
         self.output_summary(game_dir, conversation_log, intermediate_outputs)
+
+        # Run basic test on the saved game
+        cmd = f"python game_generators/code_verifier_improver.py --game_path {game_dir} --mode basic_test --temperature 0.1"
+        if self.verbose:
+            print(f"Running basic test: {cmd}")
+        os.system(cmd)
+        
         return game_dir
 
     def output_summary(

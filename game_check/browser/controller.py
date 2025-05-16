@@ -2250,13 +2250,14 @@ class GameBrowserController:
                 logging.info("Running gameplay test (random key presses)")
                 
                 # Now perform random actions for gameplay test
-                logging.info("Starting random action sequence (16 actions)")
+                logging.info("Starting random action sequence (32 initial keys + 256 sticky keys)")
                 random_action_results = []
                 
-                for i in range(16):
+                # Initial 32 random key presses
+                for i in range(32):
                     # Choose a random key from gameplay keys
                     random_key = random.choice(self.gameplay_keys)
-                    logging.info(f"Random action {i+1}/16: Pressing key {random_key}")
+                    logging.info(f"Initial random action {i+1}/32: Pressing key {random_key}")
                     
                     # Store previous errors count to check for new ones
                     errors_before = len(result["console_logs"]["error"])
@@ -2404,6 +2405,138 @@ class GameBrowserController:
                     
                     # Wait between actions
                     await page.wait_for_timeout(50)
+                
+                # Now perform 256 "sticky keys" actions
+                for i in range(256):
+                    # Choose a random key and stick with it for 4-16 consecutive presses
+                    sticky_key = random.choice(self.gameplay_keys)
+                    consecutive_presses = random.randint(4, 16)
+                    
+                    logging.info(f"Sticky action {i+1}/256: Pressing {sticky_key} for {consecutive_presses} consecutive times")
+                    
+                    # Apply the same key multiple times
+                    for j in range(consecutive_presses):
+                        # Store previous errors count to check for new ones
+                        errors_before = len(result["console_logs"]["error"])
+                        exceptions_before = len(result["js_exceptions"])
+                        network_errors_before = len(result["network_errors"])
+                        resource_errors_before = len(result["resource_errors"])
+                        parse_errors_before = len(result["parse_errors"])
+                        
+                        # Test key press
+                        key_test = await self._test_key_press(page, sticky_key, f"sticky_{i}_{j}_{sticky_key}", screenshots_dir)
+                        
+                        # Calculate diff with previous screenshot
+                        if prev_screenshot and key_test.get("screenshot"):
+                            diff_score = self._compare_screenshots(prev_screenshot, key_test.get("screenshot"))
+                            key_test["diff_score"] = diff_score
+                            
+                            # Add to gameplay test results
+                            result["gameplay_test"]["diff_scores"].append(diff_score)
+                            result["gameplay_test"]["screenshots"].append(key_test.get("screenshot"))
+                            
+                            if diff_score > 0.001:
+                                result["visual_changes"].append({
+                                    "key": sticky_key,
+                                    "diff_score": diff_score
+                                })
+                            
+                            # Update previous screenshot for next comparison
+                            prev_screenshot = key_test.get("screenshot")
+                        
+                        # Check for new errors of all types
+                        new_errors = result["console_logs"]["error"][errors_before:]
+                        new_exceptions = result["js_exceptions"][exceptions_before:]
+                        new_network_errors = result["network_errors"][network_errors_before:]
+                        new_resource_errors = result["resource_errors"][resource_errors_before:]
+                        new_parse_errors = result["parse_errors"][parse_errors_before:]
+                        
+                        has_new_errors = (
+                            len(new_errors) > 0 or 
+                            len(new_exceptions) > 0 or
+                            len(new_network_errors) > 0 or
+                            len(new_resource_errors) > 0 or
+                            len(new_parse_errors) > 0
+                        )
+                        
+                        # Combine all errors for this action
+                        all_new_errors = (
+                            new_errors + 
+                            new_exceptions + 
+                            new_network_errors + 
+                            new_resource_errors + 
+                            new_parse_errors
+                        )
+                        
+                        # Add to action results
+                        sticky_action_info = {
+                            "action_index": f"{i}_{j}",
+                            "key": sticky_key,
+                            "sticky_sequence": f"{j+1}/{consecutive_presses}",
+                            "screenshot": key_test.get("screenshot"),
+                            "diff_score": key_test.get("diff_score", 0),
+                            "new_errors": all_new_errors,
+                            "has_errors": has_new_errors
+                        }
+                        
+                        random_action_results.append(sticky_action_info)
+                        
+                        # Wait between actions
+                        await page.wait_for_timeout(30)
+                    
+                    # Check game phase after every 4 actions (every sticky key sequence)
+                    try:
+                        # First check if getGameState function exists
+                        has_game_state_function = await page.evaluate(r"""() => {
+                            return typeof getGameState === 'function';
+                        }""")
+                        
+                        if has_game_state_function:
+                            game_state = await page.evaluate("getGameState()")
+                            if game_state and isinstance(game_state, dict):
+                                game_phase = game_state.get("gamePhase")
+                                logging.info(f"Current game phase after sticky sequence {i+1}: {game_phase}")
+                                
+                                # If game is over, restart it by pressing R followed by Enter
+                                if game_phase in ["GAME_OVER_WIN", "GAME_OVER_LOSS"]:
+                                    logging.info(f"Game over detected ({game_phase}), restarting game...")
+                                    
+                                    # Press R to restart
+                                    await self._test_key_press(page, "r", f"restart_r_sticky_{i}", screenshots_dir)
+                                    await page.wait_for_timeout(50)
+                                    
+                                    # Check if phase changed to START
+                                    try:
+                                        game_state = await page.evaluate("getGameState()")
+                                        if game_state and isinstance(game_state, dict):
+                                            game_phase = game_state.get("gamePhase")
+                                            logging.info(f"Game phase after R: {game_phase}")
+                                            
+                                            # If not in START phase yet, press Enter to restart
+                                            restart_key_test = await self._test_key_press(page, "Enter", f"restart_enter_sticky_{i}", screenshots_dir)
+                                            await page.wait_for_timeout(100)
+                                            
+                                            # Update previous screenshot after restart
+                                            if restart_key_test.get("screenshot"):
+                                                prev_screenshot = restart_key_test.get("screenshot")
+                                            
+                                            # Record this restart action
+                                            restart_action_info = {
+                                                "action_index": f"restart_{i}",
+                                                "key": "R+Enter (restart)",
+                                                "restart_performed": True,
+                                                "game_phase_before": game_phase,
+                                                "screenshot": restart_key_test.get("screenshot"),
+                                                "diff_score": restart_key_test.get("diff_score", 0),
+                                                "new_errors": [],
+                                                "has_errors": False
+                                            }
+                                            random_action_results.append(restart_action_info)
+                                    except Exception as e:
+                                        logging.warning(f"Error checking game phase after restart: {e}")
+                    except Exception as e:
+                        # Just log the error and continue with testing if game state check fails
+                        logging.warning(f"Error checking game phase: {e}")
                 
                 # Add random action results to the overall results
                 result["random_actions"] = random_action_results
