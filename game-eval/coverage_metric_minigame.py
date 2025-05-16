@@ -3,9 +3,13 @@ from pathlib import Path
 import numpy as np
 from termcolor import colored
 
+from utils import code_from_dir, generate
+import re
+
 
 def run_game(game_code: dict[str, str], headless: bool = True, 
              initial_wait: int = 500,
+             random_policy: bool = True,
              sticky_prob: float = 0.7,
              action_duration: int = 150,
              total_test_time: int = 10000,
@@ -133,25 +137,30 @@ def run_game(game_code: dict[str, str], headless: bool = True,
                 document.body.style.overflow = 'hidden';
                 """)
                 
-                page.wait_for_timeout(initial_wait)
-                page.keyboard.down("Enter")
-                page.wait_for_timeout(100)
-                page.keyboard.up("Enter")
+                if random_policy:
+                    page.wait_for_timeout(initial_wait)
+                    page.keyboard.down("Enter")
+                    page.wait_for_timeout(100)
+                    page.keyboard.up("Enter")
 
-                import random
-                current_time = 0
-                current_action = None
-                while current_time < total_test_time:
-                    if current_action is None or random.random() > sticky_prob:
-                        if current_action:
-                            page.keyboard.up(current_action)
-                        current_action = random.choice(sticky_actions)
-                        page.keyboard.down(current_action)
-                    page.wait_for_timeout(action_duration)
-                    current_time += action_duration
-                if current_action:
-                    page.keyboard.up(current_action)
-                page.wait_for_timeout(100)
+                    import random
+                    current_time = 0
+                    current_action = None
+                    while current_time < total_test_time:
+                        if current_action is None or random.random() > sticky_prob:
+                            if current_action:
+                                page.keyboard.up(current_action)
+                            current_action = random.choice(sticky_actions)
+                            page.keyboard.down(current_action)
+                        page.wait_for_timeout(action_duration)
+                        current_time += action_duration
+                    if current_action:
+                        page.keyboard.up(current_action)
+                    page.wait_for_timeout(100)
+
+
+                else:
+                    page.wait_for_timeout(total_test_time)
 
                 print("Collecting coverage")
                 coverage_result = client.send("Profiler.takePreciseCoverage")
@@ -265,7 +274,7 @@ def analyze_coverage(coverage_data: dict, game_code, verbose: bool = True) -> No
     return executed_lines_by_file
 
 
-prompt = """Your task is to identify where each individual game mechanic is implemented in the code.
+prompt_mechanics = """Your task is to identify where each individual game mechanic is implemented in the code.
 
 Consider only the following types of mechanics:
 * Player movement mechanics: How the player moves (up, down, left, right, jump, etc.)
@@ -314,6 +323,25 @@ def get_mechanics(game_code: dict[str, str]) -> list[dict]:
 """
 
 
+prompt_policy = """Task: Implement an AI that explores the game.
+
+<instructions>
+* implement the ai player in a separate file called "ai_player.js"
+* use document.dispatchEvent to simulate actions
+* add `bubbles: true` to the keyboard events
+</instructions>
+
+You are only allowed to modify the `index.html` file and create the `ai_player.js` file.
+Format your answer in the following format for the files that need to be updated:
+<code filename="{{name}}.{{extension}}">
+...
+</code> 
+
+<game_code>
+{game_code}
+</game_code>
+"""
+
 
 thinking = True
 thinking_tokens = 1024
@@ -326,18 +354,12 @@ run_name = "run1"
 save_dir = save_dir / run_name / model / ("thinking" if thinking else "no_thinking")
 
 
+def analyze_mechanics(game_code: dict[str, str], save_dir: Path):
+    code_str = ""
+    for relative_path, code in game_code.items():
+        code_str += f"<code filename=\"{relative_path}\">{code}</code>\n\n"
 
-if __name__ == "__main__":
-    """Run the original game test from the main function."""
-    from utils import code_from_dir, generate
-    import re
-
-    perspective = "top-down"
-    games_dir = Path(__file__).parent / "results" / "gen_game_topdown" / perspective / "run1_claude-3-7-sonnet-20250219" / "no_thinking" / "games" / "theme_0" / "sample_0" / "code_original"
-
-    code_dict, code_str = code_from_dir(games_dir, return_str=True)
-
-    prompt = prompt.format(game_code=code_str)
+    prompt = prompt_mechanics.format(game_code=code_str)
     answer = generate(model, prompt, save_dir, thinking=thinking, thinking_tokens=thinking_tokens)
 
     python_code = answer.split("```python")[1].split("```")[0]
@@ -345,14 +367,14 @@ if __name__ == "__main__":
     # Execute the extracted Python code to get mechanics
     local_vars = {}
     exec(python_code, globals(), local_vars)
-    mechanics = local_vars['get_mechanics'](code_dict)
+    mechanics = local_vars['get_mechanics'](game_code)
     
     # double check that line number and code are consistent
     for mechanic in mechanics:
         line_nb = mechanic["line"]
-        line_code = mechanic["code"]
-        line_game_code = code_dict[mechanic["file"]].split("\n")[line_nb-1]
-        line_game_code = line_game_code.strip()
+        line_code = mechanic["code"].strip()
+        line_game_code = game_code[mechanic["file"]].split("\n")[line_nb-1].strip()
+
         assert line_game_code == line_code, f"Line number {line_nb} in {mechanic['file']} does not match code: {line_code}, found: {line_game_code}"
 
     # Save mechanics to JSON
@@ -360,16 +382,16 @@ if __name__ == "__main__":
         json.dump(mechanics, f, indent=4)
 
     # Run the game and get coverage
-    errors, coverage_data = run_game(code_dict, headless=False, total_test_time=3000)
+    errors, coverage_data = run_game(game_code, headless=False, sticky_prob=0.8, total_test_time=60000)
     print("Coverage data structure:")
     print(f"Keys: {list(coverage_data.keys() if isinstance(coverage_data, dict) else [])}")
-    executed_lines = analyze_coverage(coverage_data, code_dict, verbose=True)
+    executed_lines = analyze_coverage(coverage_data, game_code, verbose=True)
 
     # Save highlighted code to a file
     with open(save_dir / "highlighted_code.txt", "w") as f:
         for file_name, lines in executed_lines.items():
             f.write(f"\n===== LINE-BY-LINE COVERAGE FOR: {file_name} =====\n")
-            code_lines = code_dict[file_name].split('\n')
+            code_lines = game_code[file_name].split('\n')
             for i, line in enumerate(code_lines):
                 marker = '✓' if i in lines else '✗'
                 f.write(f"{i+1:4d} {marker} {line}\n")
@@ -395,3 +417,60 @@ if __name__ == "__main__":
         }, f, indent=4)
 
 
+
+
+
+if __name__ == "__main__":
+    games_dir = Path(__file__).parent / "results" / "gen_minigame_improve_batch" / "run1" / "claude-3-7-sonnet-20250219" / "thinking" / "top-down"
+
+    num_themes = 1
+
+    themes_dir = sorted(games_dir.glob("theme_*"), key=lambda x: int(x.stem.split("_")[-1]))
+
+    themes_dir = themes_dir[:num_themes]
+
+    for theme_dir in themes_dir:
+        code_original = code_from_dir(theme_dir / "code_original")
+
+        improved_sample_dirs = sorted((theme_dir / "improve_iter1").glob("sample_*"), key=lambda x: int(x.stem.split("_")[-1]))
+        print(improved_sample_dirs)
+        code_improved = code_from_dir(improved_sample_dirs[-1])
+
+        _save_dir_original = save_dir / theme_dir.stem / "original"
+        _save_dir_improved = save_dir / theme_dir.stem / "improved"
+
+        # copy code
+        for file_path, code in code_original.items():
+            (_save_dir_original / "game_code").mkdir(parents=True, exist_ok=True)
+            (_save_dir_original / "game_code" / file_path).write_text(code)
+
+        for file_path, code in code_improved.items():
+            (_save_dir_improved / "game_code").mkdir(parents=True, exist_ok=True)
+            (_save_dir_improved / "game_code" / file_path).write_text(code)
+
+        if not (_save_dir_original / "executed_mechanics.json").exists():
+            analyze_mechanics(code_original, _save_dir_original)
+
+        if not (_save_dir_improved / "executed_mechanics.json").exists():
+            analyze_mechanics(code_improved, _save_dir_improved)
+
+        # breakpoint()
+
+    # the minigames don't expose the state
+    # for theme_dir in themes_dir:
+    #     _save_dir = save_dir / theme_dir.stem / "llm_policy"
+    #     _save_dir.mkdir(parents=True, exist_ok=True)
+
+    #     improved_sample_dirs = sorted((theme_dir / "improve_iter1").glob("sample_*"), key=lambda x: int(x.stem.split("_")[-1]))
+    #     code_improved, code_improved_str = code_from_dir(improved_sample_dirs[-1], return_str=True)
+
+    #     # copy code to _save_dir
+    #     for file_path, code in code_improved.items():
+    #         (_save_dir / file_path).write_text(code)
+
+    #     # generate policy
+    #     prompt = prompt_policy.format(game_code=code_improved_str)
+    #     answer = generate(model, prompt, _save_dir, thinking=thinking, thinking_tokens=thinking_tokens)
+
+    #     code = code_from_dir(_save_dir)
+    #     run_game(code, headless=False, random_policy=False)
