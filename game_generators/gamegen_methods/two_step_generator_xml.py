@@ -92,7 +92,7 @@ Implement an interesting game based on this game design:
                 user_prompt=game_code_prompt,
                 system_prompt=system_prompt_game_code,
                 verbose=self.verbose,
-                temperature=0.7,
+                temperature=0.6,
                 top_p=0.9,
             )
             # Prepare conversation log for saving
@@ -257,7 +257,7 @@ Output format:
 </example_html>
 
 <output_instructions>
-Output the code plan and game files in this format with NO OTHER TEXT:
+Output the code plan and game files in this format with NO OTHER TEXT in less than 35000 tokens:
 
 <game_description>
 ... (Tell the user what the game is about, what they need to do, and the objective. Keep it short and concise.)

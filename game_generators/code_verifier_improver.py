@@ -21,6 +21,7 @@ vibe_coding:
   - uses the vibe coding framework to update the game code
 """
 
+import json
 import os
 import sys
 import argparse
@@ -596,40 +597,21 @@ We conducted a comprehensive evaluation of your game using VLM Play, which recor
 
 <feedback>
 """
+    sections = [
+        "critical_issues", 
+        "playability_feedback",
+        "game_progression_feedback", 
+        "game_mechanics_feedback", 
+        "graphics_and_animation_feedback", 
+        "console_errors_feedback",
+        "other_feedback",
+        "proposed_enhancements"
+    ]
+    for section in sections:
+        if section in aggregated_feedback and aggregated_feedback[section]:
+            feedback += f"## {section.replace('_', ' ').title()}\n\n{aggregated_feedback[section]}\n\n"
     
-    # Add critical issues section if available
-    if "critical_issues" in aggregated_feedback and aggregated_feedback["critical_issues"]:
-        feedback += f"## Critical Issues\n\n{aggregated_feedback['critical_issues']}\n\n"
-    
-    # Add game mechanics section if available
-    if "game_mechanics" in aggregated_feedback and aggregated_feedback["game_mechanics"]:
-        feedback += f"## Game Mechanics\n\n{aggregated_feedback['game_mechanics']}\n\n"
-    
-    # Add game progression section if available
-    if "game_progression" in aggregated_feedback and aggregated_feedback["game_progression"]:
-        feedback += f"## Game Progression\n\n{aggregated_feedback['game_progression']}\n\n"
-    
-    # Add graphics and animation section if available
-    if "graphics_and_animation" in aggregated_feedback and aggregated_feedback["graphics_and_animation"]:
-        feedback += f"## Graphics and Animation\n\n{aggregated_feedback['graphics_and_animation']}\n\n"
-    
-    # Add console errors section if available
-    if "console_errors" in aggregated_feedback and aggregated_feedback["console_errors"]:
-        feedback += f"## Console Errors\n\n{aggregated_feedback['console_errors']}\n\n"
-    
-    # Add recommendations section if available
-    if "recommendations" in aggregated_feedback and aggregated_feedback["recommendations"]:
-        feedback += f"## Recommendations\n\n{aggregated_feedback['recommendations']}\n\n"
-    
-    # Add other feedback section if available
-    if "other_feedback" in aggregated_feedback and aggregated_feedback["other_feedback"]:
-        feedback += f"## Other Feedback\n\n{aggregated_feedback['other_feedback']}\n\n"
-    
-    # Add conclusion section if available
-    if "conclusion" in aggregated_feedback and aggregated_feedback["conclusion"]:
-        feedback += f"## Conclusion\n\n{aggregated_feedback['conclusion']}\n\n"
-    
-    feedback += "</feedback>\n\n<important>\nPlease address the issues identified in the feedback, focusing on critical issues first. Ensure the game loads, start on pressing ENTER, key inputs work, and the game is still playable.\n</important>"
+    feedback += "</feedback>\n\n<important>\nPlease address the issues identified in the feedback, focusing on critical issues first. Update the automated testing code. Ensure the game loads, start on pressing ENTER, key inputs work, and the game is still playable.\n</important>"
     
     return feedback
 
@@ -709,11 +691,6 @@ def main():
             feedback = generate_feedback_from_results(results, args.mode)
 
             logging.info("Game verification failed. Improving game code...")
-            logging.info("Feedback: \n" + feedback)
-
-            # The exit(0) is for debugging, it should be removed in production
-            # exit(0)
-
             # Initialize the code improver
             improver = CodeFeedbackIterator(
                 verbose=args.verbose, mode="basic_test_fix", temperature=0.1
@@ -830,6 +807,9 @@ def main():
                     # Run full evaluation
                     logging.info("Starting full VLM evaluation...")
                     results = await evaluator.evaluate_game()
+                    # save the results to a file 
+                    with open(os.path.join(output_dir, "vlm_play_results.json"), "w") as f:
+                        json.dump(results, f)
 
                     if results["success"]:
                         logging.info(
@@ -841,32 +821,45 @@ def main():
                             print("\nAggregated Feedback Summary:")
                             print("=" * 80)
                             agg = results["aggregated_feedback"]
+                            sections = [
+                                "critical_issues", 
+                                "playability_feedback",
+                                "game_progression_feedback", 
+                                "game_mechanics_feedback", 
+                                "graphics_and_animation_feedback", 
+                                "console_errors_feedback",
+                                "automated_testing_feedback",
+                                "other_feedback",
+                                "proposed_enhancements"
+                            ]
+                            # Display each section from the aggregated feedback
+                            for section in sections:
+                                if section in agg and agg[section]:
+                                    print(f"\n{section.replace('_', ' ').title()}:")
+                                    # Handle multi-line feedback by splitting and formatting
+                                    for line in agg[section].split("\n"):
+                                        if line.strip():
+                                            print(f"  - {line.strip()}")
 
-                            if "critical_issues" in agg:
-                                print("\nCritical Issues:")
-                                for issue in agg["critical_issues"].split("\n"):
-                                    if issue.strip():
-                                        print(f"  - {issue.strip()}")
-
-                            if "recommendations" in agg:
-                                print("\nRecommendations:")
-                                for rec in agg["recommendations"].split("\n"):
-                                    if rec.strip():
-                                        print(f"  - {rec.strip()}")
-
-                            if "summary" in agg:
-                                print("\nOverall Summary:")
-                                print(agg["summary"].strip())
-
+                        # save the aggregated feedback to a file 
                         # Show output location
                         print(f"\nResults saved to: {output_dir}")
+                        # save the aggregated feedback to a file 
+                        with open(os.path.join(output_dir, "aggregated_feedback.txt"), "w") as f:
+                            f.write(str(results["aggregated_feedback"]))
+                        
+                        # Generate the HTML report if it wasn't already created
+                        if not os.path.exists(os.path.join(output_dir, "evaluation_report.html")):
+                            evaluator._generate_combined_report(results)
+                            logging.info(f"HTML report generated at: {os.path.join(output_dir, 'evaluation_report.html')}")
+
                         print(
                             f"HTML report: {os.path.join(output_dir, 'evaluation_report.html')}"
                         )
                         
                         # Initialize the code improver with appropriate settings
                         improver = CodeFeedbackIterator(
-                            verbose=args.verbose, mode="vlm_play_fix", temperature=0.5
+                            verbose=args.verbose, mode="guided_feedback", temperature=0.5
                         )
                         
                         # Format the aggregated feedback for the code improver

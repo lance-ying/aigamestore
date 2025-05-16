@@ -95,6 +95,7 @@ class VLMPlayEvaluation:
         # Load metadata if available
         self.metadata = self._load_metadata()
         print(f"Metadata: {self.metadata}")
+        self.game_concept = self.metadata['game_info']['concept']
         self.game_description = self.metadata['game_info']['description']
         self.game_controls = self.metadata['game_info']['controls']
         # self.game_code = self.metadata['game_info']['game_code']
@@ -421,21 +422,19 @@ class VLMPlayEvaluation:
         """Record videos for all test buttons in parallel, focusing only on the canvas."""
         video_paths = {}  # Use button_id as key instead of button_info dictionary
         tasks = []
-        temp_dirs = []  # Store temporary directories for cleanup
+        
+        # Create a single test_videos directory for all recordings
+        test_videos_dir = os.path.join(self.output_dir, "test_videos")
+        os.makedirs(test_videos_dir, exist_ok=True)
         
         # Setup browser once
         browser_manager = BrowserManager(self.game_path)
         browser, url = await browser_manager.setup_browser()
         
         try:
-            # Create tasks for each button with unique temporary directories
+            # Create tasks for each button
             for button_info in test_buttons:
-                # Create a unique temporary directory for each recording
-                temp_dir = os.path.join(self.output_dir, f"temp_{button_info['id']}_{int(time.time() * 1000)}")
-                os.makedirs(temp_dir, exist_ok=True)
-                temp_dirs.append(temp_dir)
-                
-                task = self._record_single_video(browser, url, button_info, temp_dir)
+                task = self._record_single_video(browser, url, button_info, test_videos_dir)
                 tasks.append(task)
             
             # Run tasks with a limit on concurrency to avoid overwhelming the system
@@ -476,7 +475,7 @@ class VLMPlayEvaluation:
                                 retry_browser, 
                                 url, 
                                 test_buttons[i],
-                                os.path.join(self.output_dir, f"retry_{test_buttons[i]['id']}")
+                                test_videos_dir
                             )
                             
                             if video_path and os.path.exists(video_path):
@@ -498,21 +497,10 @@ class VLMPlayEvaluation:
             # Close browser
             await browser.close()
             await browser_manager.close()
-            
-            # Clean up temporary directories
-            for temp_dir in temp_dirs:
-                try:
-                    # Only remove if it exists and is a directory
-                    if os.path.exists(temp_dir) and os.path.isdir(temp_dir):
-                        # Only remove empty directories
-                        if not os.listdir(temp_dir):
-                            os.rmdir(temp_dir)
-                except Exception as e:
-                    logging.warning(f"Failed to clean up temporary directory {temp_dir}: {str(e)}")
         
         return video_paths
     
-    async def _record_single_video(self, browser, url, button_info, temp_dir) -> Tuple[Dict[str, Any], Optional[str]]:
+    async def _record_single_video(self, browser, url, button_info, test_videos_dir) -> Tuple[Dict[str, Any], Optional[str]]:
         """Record a single video for a test button, focusing only on the canvas."""
         button_id = button_info["id"]
         test_mode = button_info.get("testMode", "")
@@ -751,7 +739,7 @@ class VLMPlayEvaluation:
             # Record at a reasonable size
             recording_context = await browser.new_context(
                 viewport={"width": 800, "height": 600},
-                record_video_dir=temp_dir,
+                record_video_dir=test_videos_dir,
                 record_video_size={"width": 800, "height": 600}
             )
             
@@ -879,10 +867,10 @@ class VLMPlayEvaluation:
                 await recording_context.close()
             
             # 6. Process the recorded video with improved error handling
-            video_files = [f for f in os.listdir(temp_dir) if f.endswith(".webm")]
+            video_files = [f for f in os.listdir(test_videos_dir) if f.endswith(".webm")]
             if video_files:
-                latest_video = max(video_files, key=lambda f: os.path.getmtime(os.path.join(temp_dir, f)))
-                webm_path = os.path.join(temp_dir, latest_video)
+                latest_video = max(video_files, key=lambda f: os.path.getmtime(os.path.join(test_videos_dir, f)))
+                webm_path = os.path.join(test_videos_dir, latest_video)
                 
                 # Ensure the webm file actually has content
                 webm_size = os.path.getsize(webm_path)
@@ -890,18 +878,15 @@ class VLMPlayEvaluation:
                     logging.error(f"Recorded webm file is too small ({webm_size} bytes), likely invalid")
                     return button_info, None
                 
-                # Generate a unique filename for the final MP4 in the output dir
-                final_mp4_path = os.path.join(self.output_dir, f"{test_name}_{int(time.time())}.mp4")
-                
-                # First convert to a temp location
-                mp4_path = os.path.join(temp_dir, f"{test_name}.mp4")
+                # Generate a unique filename for the final MP4 in the test_videos dir
+                final_mp4_path = os.path.join(test_videos_dir, f"{test_name}_{int(time.time())}.mp4")
                 
                 # Use FFmpeg to convert with better parameters for reliability
                 ffmpeg_cmd = [
                     "ffmpeg", "-y", "-i", webm_path, 
                     "-c:v", "libx264", "-crf", "23", "-preset", "ultrafast",  # Use ultrafast preset for speed
                     "-pix_fmt", "yuv420p",  # Ensure compatibility
-                    mp4_path
+                    final_mp4_path
                 ]
                 
                 try:
@@ -913,10 +898,7 @@ class VLMPlayEvaluation:
                     
                     stdout, stderr = await process.communicate()
                     
-                    if process.returncode == 0 and os.path.exists(mp4_path) and os.path.getsize(mp4_path) > 0:
-                        # Copy the temp MP4 to final location
-                        import shutil
-                        shutil.copy2(mp4_path, final_mp4_path)
+                    if process.returncode == 0 and os.path.exists(final_mp4_path) and os.path.getsize(final_mp4_path) > 0:
                         logging.info(f"Successfully converted video to {final_mp4_path}")
                         
                         # Delete the webm file to save space
@@ -953,7 +935,7 @@ class VLMPlayEvaluation:
                             logging.error(f"Alternative FFmpeg conversion also failed: {alt_stderr.decode()}")
                             
                             # As a last resort, just copy the webm file to output as is
-                            webm_output = os.path.join(self.output_dir, f"{test_name}.webm")
+                            webm_output = os.path.join(test_videos_dir, f"{test_name}.webm")
                             import shutil
                             shutil.copy2(webm_path, webm_output)
                             logging.warning(f"Copied webm file as-is to {webm_output}")
@@ -963,7 +945,7 @@ class VLMPlayEvaluation:
                     
                     # As a last resort, just copy the webm file to output
                     try:
-                        webm_output = os.path.join(self.output_dir, f"{test_name}.webm")
+                        webm_output = os.path.join(test_videos_dir, f"{test_name}.webm")
                         import shutil
                         shutil.copy2(webm_path, webm_output)
                         logging.warning(f"Copied webm file as-is to {webm_output}")
@@ -995,6 +977,10 @@ class VLMPlayEvaluation:
         """Record videos for all test buttons sequentially as a fallback approach."""
         video_paths = {}  # Use button_id as key
         
+        # Create a single test_videos directory for all recordings
+        test_videos_dir = os.path.join(self.output_dir, "test_videos")
+        os.makedirs(test_videos_dir, exist_ok=True)
+        
         # Create a new browser for sequential recording
         browser_manager = BrowserManager(self.game_path)
         browser, url = await browser_manager.setup_browser()
@@ -1005,13 +991,9 @@ class VLMPlayEvaluation:
                 button_id = button_info["id"]
                 logging.info(f"Sequential recording for button {button_id}")
                 
-                # Create a unique temporary directory
-                temp_dir = os.path.join(self.output_dir, f"seq_{button_id}_{int(time.time() * 1000)}")
-                os.makedirs(temp_dir, exist_ok=True)
-                
                 try:
                     # Record single video with longer timeouts
-                    button_info, video_path = await self._record_single_video(browser, url, button_info, temp_dir)
+                    button_info, video_path = await self._record_single_video(browser, url, button_info, test_videos_dir)
                     
                     if video_path and os.path.exists(video_path):
                         video_paths[button_id] = (button_info, video_path)
@@ -1024,13 +1006,6 @@ class VLMPlayEvaluation:
                     
                 except Exception as e:
                     logging.error(f"Error in sequential recording for {button_id}: {str(e)}")
-                
-                # Clean up temp dir if empty
-                try:
-                    if os.path.exists(temp_dir) and os.path.isdir(temp_dir) and not os.listdir(temp_dir):
-                        os.rmdir(temp_dir)
-                except Exception as e:
-                    logging.warning(f"Failed to clean up temporary directory {temp_dir}: {str(e)}")
         
         finally:
             # Close browser
@@ -1075,18 +1050,29 @@ You are evaluating a video of a gameplay video where the player is trying to tes
 They followed the following strategy: {strategy_description}. 
 They expected the following would happen: {expected_outcome}.
 </task>
-Can you evaluate the video and answer the following questions to provide feedback to the game developer:
-1. Was the expected outcome reached? If not, do you think the player was making progress towards the intended goal for the test?
-2. What is your evaluation of the testing strategy? How can they improve their strategy?
-3. What do you think can be improved in the game based on this test?
-4. What is your overall assessment of the game based on this test?
-5. What else do you think the game developer can do to make the game better?
+<output_instructions>
+Write your feedback inside the section tags for each section, formatting each line with `-`.
 Output your response in the following format:
-<outcome_reached>Your detailed answer about whether the expected outcome was reached</outcome_reached>
-<strategy_evaluation>Your detailed evaluation of the testing strategy</strategy_evaluation>
-<improvements>Your detailed suggestions on what is broken and how to improve the game</improvements>
-<overall_assessment>Your overall assessment of the game</overall_assessment>
-<other_feedback>Any other feedback you think is important for the game developer</other_feedback>
+<outcome_reached>
+... // Was the expected outcome reached? If not, do you think the player was making progress towards the intended goal for the test?</outcome_reached>
+</outcome_reached>
+
+<strategy_evaluation>
+... // What is your evaluation of the testing strategy? How can they improve their testing strategy?</strategy_evaluation>
+</strategy_evaluation>
+
+<test_evaluation>
+... // What is your evaluation of the game based on this test? Keep it limited to the scope of the intent of the test.</test_evaluation>
+</test_evaluation>
+
+<game_assessment>
+... // What is your assessment of the game based on this test?</game_assessment>
+</game_assessment>
+
+<suggested_improvements>
+... // What do you think can be improved in the game? Think about playability, game mechanics, game progression, graphics, and other aspects of the game.</suggested_improvements>
+</suggested_improvements>
+</output_instructions>
 """
             
             # Send video to Gemini for evaluation using the synchronous method
@@ -1135,13 +1121,12 @@ Output your response in the following format:
         """
         result = {}
         
-        # Define the sections to extract
         sections = [
             "outcome_reached",
             "strategy_evaluation",
-            "improvements",
-            "overall_assessment",
-            "other_feedback"
+            "test_evaluation",
+            "game_assessment",
+            "suggested_improvements",
         ]
         
         # Helper function to extract XML tags content
@@ -1199,8 +1184,10 @@ Output your response in the following format:
                 test_mode = eval.get("test_mode", "")
                 test_description = eval.get("test_description", "")
                 outcome_reached = eval.get("outcome_reached", "")
-                improvements = eval.get("improvements", "")
-                overall_assessment = eval.get("overall_assessment", "")
+                strategy_evaluation = eval.get("strategy_evaluation", "")
+                test_evaluation = eval.get("test_evaluation", "")
+                game_assessment = eval.get("game_assessment", "")
+                suggested_improvements = eval.get("suggested_improvements", "")
                 
                 # Get console errors specific to this test if available
                 console_errors = ""
@@ -1216,9 +1203,11 @@ Output your response in the following format:
                             all_console_errors.extend(errors.get("errors", []))
                 
                 summary = f"Test: {test_mode} - {test_description}\n"
-                summary += f"Outcome: {outcome_reached}\n"
-                summary += f"Improvements: {improvements}\n"
-                summary += f"Assessment: {overall_assessment}\n"
+                summary += f"Outcome: \n{outcome_reached}\n"
+                summary += f"Strategy: \n{strategy_evaluation}\n"
+                summary += f"Test: \n{test_evaluation}\n"
+                summary += f"Assessment: \n{game_assessment}\n"
+                summary += f"Improvements: \n{suggested_improvements}\n"
                 if console_errors:
                     summary += f"{console_errors}\n"
                 
@@ -1255,32 +1244,58 @@ Output your response in the following format:
                         console_summary += f"(+ {len(sorted_errors) - 5} more unique errors)"
                 
                 all_tests_summary += console_summary
-            
+            print(f"All tests summary: {all_tests_summary}")
             instructions = self.get_instructions()
             # Create prompt for Gemini to aggregate feedback
             prompt = f"""
 {instructions}
 
 <task>
-You are reviewing multiple gameplay testing videos of a JavaScript game to provide comprehensive feedback for improvement.
-</task>
-
+Here is the test summary on all gameplay testing videos. Please aggregate this feedback into actionable feedback for the game developer based on all gameplay testing videos.
 <tests_summary>
 {all_tests_summary}
 </tests_summary>
+</task>
 
-Please aggregate this feedback into comprehensive actionable feedback for the game developer based on all gameplay testing videos.
-Focus on the most important issues that need to be fixed and provide actionable recommendations.
+<output_instructions>
+Format your response in an instructive and actionable format answering the questions within each section. Keep the feedback concise and to the point within the section tags.
+Write your feedback inside the section tags for each section, formatting each line with `-`.
+<critical_issues>
+... // What are the most critical issues that need to be fixed?
+</critical_issues>
 
-Format your response using these XML tags:
-<critical_issues>List and explain the most important issues that need immediate attention</critical_issues>
-<game_progression>Assessment of game flow, level design, difficulty progression, and player engagement</game_progression>
-<game_mechanics>Evaluation of core gameplay mechanics, controls responsiveness, physics, and player interaction</game_mechanics>
-<graphics_and_animation>Assessment of visual elements, animations, effects, and overall aesthetic quality</graphics_and_animation>
-<console_errors>Analysis of any JavaScript errors or performance issues observed during testing</console_errors>
-<recommendations>Prioritized list of actionable recommendations for the developer</recommendations>
-<other_feedback>Any additional observations or suggestions not covered in the previous sections</other_feedback>
-<conclusion>Brief overall conclusion about the game's state and potential</conclusion>
+<playability_feedback>
+... // How can we improve the playability of the game?
+</playability_feedback>
+
+<game_progression_feedback>
+... // How can we improve the game progression?
+</game_progression_feedback>
+
+<game_mechanics_feedback>
+... // How can we improve the game mechanics?
+</game_mechanics_feedback>
+
+<graphics_and_animation_feedback>
+... // How can we improve the graphics and animation?
+</graphics_and_animation_feedback>
+
+<console_errors_feedback>
+... // Based on the console errors (if any), what would you suggest the game developer to do to fix the errors?
+</console_errors_feedback>
+
+<automated_testing_feedback>
+... // Feedback on the automated testing. What should be the updates on the automated tests? Other tests to add?
+</automated_testing_feedback>
+
+<other_feedback>
+... // What else do you think the game developer can do to make the game better?
+</other_feedback>
+
+<proposed_enhancements>
+... // What are the proposed enhancements to the game?
+</proposed_enhancements>
+</output_instructions>
 """
             
             # Use Gemini to generate the aggregated feedback
@@ -1294,13 +1309,14 @@ Format your response using these XML tags:
             aggregated_feedback = {}
             sections = [
                 "critical_issues", 
-                "game_progression", 
-                "game_mechanics", 
-                "graphics_and_animation", 
-                "console_errors",
-                "recommendations", 
+                "playability_feedback",
+                "game_progression_feedback", 
+                "game_mechanics_feedback", 
+                "graphics_and_animation_feedback", 
+                "console_errors_feedback",
+                "automated_testing_feedback",
                 "other_feedback",
-                "conclusion"
+                "proposed_enhancements"
             ]
             
             # Helper function to extract XML tags content
@@ -1315,9 +1331,6 @@ Format your response using these XML tags:
                 start_pos += len(start_tag)
                 end_pos = content.find(end_tag, start_pos)
                 
-                if end_pos == -1:
-                    return None
-                    
                 return content[start_pos:end_pos].strip()
             
             # Extract each section
@@ -1327,7 +1340,6 @@ Format your response using these XML tags:
                     aggregated_feedback[section] = section_content
                 else:
                     aggregated_feedback[section] = ""
-            
             return aggregated_feedback
             
         except Exception as e:
@@ -1397,36 +1409,22 @@ Format your response using these XML tags:
             <h2>Aggregated Feedback</h2>
         """
         
-        # Add aggregated feedback if available
+        # Add aggregated feedback if available - dynamically based on keys
         if results.get("aggregated_feedback"):
             aggregated = results["aggregated_feedback"]
-            html_content += f"""
-            <div class="aggregated-feedback">
-                <h3>Critical Issues</h3>
-                <div>{aggregated.get("critical_issues", "")}</div>
-                
-                <h3>Game Progression</h3>
-                <div>{aggregated.get("game_progression", "")}</div>
-                
-                <h3>Game Mechanics</h3>
-                <div>{aggregated.get("game_mechanics", "")}</div>
-                
-                <h3>Graphics and Animation</h3>
-                <div>{aggregated.get("graphics_and_animation", "")}</div>
-                
-                <h3>Console Errors Analysis</h3>
-                <div>{aggregated.get("console_errors", "")}</div>
-                
-                <h3>Recommendations</h3>
-                <div>{aggregated.get("recommendations", "")}</div>
-                
-                <h3>Other Feedback</h3>
-                <div>{aggregated.get("other_feedback", "")}</div>
-                
-                <h3>Conclusion</h3>
-                <div>{aggregated.get("conclusion", "")}</div>
-            </div>
-            """
+            html_content += '<div class="aggregated-feedback">'
+            
+            # Dynamically add sections based on keys in the aggregated feedback dictionary
+            for key, value in aggregated.items():
+                if value:  # Only add sections with content
+                    # Format the section title (convert snake_case to Title Case)
+                    section_title = key.replace('_', ' ').title()
+                    html_content += f"""
+                    <h3>{section_title}</h3>
+                    <div>{value}</div>
+                    """
+            
+            html_content += '</div>'
         else:
             html_content += "<p>No aggregated feedback available.</p>"
         
@@ -1449,17 +1447,28 @@ Format your response using these XML tags:
                 <p>Button ID: {button_id}</p>
                 
                 <h4>Test Information</h4>
-                <p><strong>What:</strong> {eval.get("test_description", "")}</p>
-                <p><strong>How:</strong> {eval.get("strategy_description", "")}</p>
-                <p><strong>Expected Outcome:</strong> {eval.get("expected_outcome", "")}</p>
-                
-                <h4>Evaluation</h4>
                 <p><strong>Outcome Reached:</strong> {eval.get("outcome_reached", "")}</p>
                 <p><strong>Strategy Evaluation:</strong> {eval.get("strategy_evaluation", "")}</p>
-                <p><strong>Improvements:</strong> {eval.get("improvements", "")}</p>
-                <p><strong>Overall Assessment:</strong> {eval.get("overall_assessment", "")}</p>
-                <p><strong>Other Feedback:</strong> {eval.get("other_feedback", "")}</p>
-                
+                <p><strong>Test Evaluation:</strong> {eval.get("test_evaluation", "")}</p>
+                <p><strong>Game Assessment:</strong> {eval.get("game_assessment", "")}</p>                
+                <p><strong>Suggested Improvements:</strong> {eval.get("suggested_improvements", "")}</p>
+                <h4>Evaluation</h4>
+            """
+            
+            # Dynamically add evaluation sections based on keys
+            for key, value in eval.items():
+                # Skip certain keys that we've already handled or are metadata
+                if key not in ["button_id", "button_text", "test_mode", "video_path", 
+                              "test_description", "strategy_description", "expected_outcome", 
+                              "console_errors"]:
+                    if value and isinstance(value, str):  # Only add string values with content
+                        # Format the section title (convert snake_case to Title Case)
+                        section_title = key.replace('_', ' ').title()
+                        html_content += f"""
+                        <p><strong>{section_title}:</strong> {value}</p>
+                        """
+            
+            html_content += f"""
                 <div class="video-container">
                     <h4>Gameplay Video</h4>
                     {video_html}
@@ -1489,8 +1498,13 @@ Format your response using these XML tags:
         Get the instructions for the game play tester.
         """
         return f"""
-You are a professional JavaScript game developer and game tester known for providing precise feedback by evaluating gameplay videos of 2D video games made using p5.js.
-You are evaluating a game developed in JavaScript with the following description and controls:
+You are a professional JavaScript game developer and tester known for providing precise feedback by evaluating gameplay videos of 2D video games.
+The game developer developed for the following game idea:
+<game_concept>
+{self.game_concept}
+</game_concept>
+
+The game developer developed the game and sent the following description and controls:
 <game_description>
 {self.game_description}
 </game_description>
@@ -1501,10 +1515,9 @@ You are evaluating a game developed in JavaScript with the following description
 Following were the constraints on the game development team:
 <game_development_constraints>
 - Use keyboard keys for controls. No mouse controls. Only allowed keys: [Arrow keys (37-40), SPACE (32), Z (90), SHIFT (16), ENTER to start the game (13), R to restart the game after a win/loss (82), ESC to pause the game (27).]
-- The game should be playable in a web browser.
 - The game must start on pressing ENTER key, pauses when ESC key is pressed, and restart on pressing R key at the end of the game.
 - No external images, sprites, or assets. No sound or music effects.
-- All graphics and animations are created using p5.js.
+- All graphics and animations are created using p5.js primitives.
 </game_development_constraints>
 """
 

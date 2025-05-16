@@ -134,7 +134,6 @@ class CodeFeedbackIterator(GameGenerator):
             # For basic_test_fix mode, use the provided feedback directly
             # The feedback string is expected to come from another program
             pass  # No need to modify the feedback
-        
         prompt = f"""
 <task>
 Please update the current game code based on the feedback.
@@ -157,19 +156,20 @@ Current code:
 </current_code>
 
 <output_instructions>
-Output the <code_change_plan>, <updated_code filename="filename.js">, and <explain_edits> sections that require changes to address the feedback. Do not rewrite files that don't need changes.
+Output the <code_change_plan>, <updated_code filename="filename.js">, and <explain_edits> sections that require changes to address the feedback. 
+You can update the structure of the code or file structure if you think it helps in addressing the feedback. 
+Do not rewrite files that don't need.
 
 <code_change_plan>
-Explain your plan for the code changes specifically for each file in a few sentences. Mention no changes if the feedback is not related to the current code.
+... // Explain your plan for the code changes specifically for each file in a few sentences. Mention no changes if the feedback is not related to the current code.
 </code_change_plan>
 
 <updated_code filename="filename.js">
-// Improved code here
+... // Improved code here
 </updated_code>
 
 <explain_edits>
-Explain the key changes you made to each file and how they address the feedback.
-List filename: changes made, which feedback it addresses, and how it addresses it.
+... // Explain the changes made to the code.
 </explain_edits>
 </output_instructions>
 """
@@ -548,6 +548,7 @@ List filename: changes made, which feedback it addresses, and how it addresses i
                 
             # Generate user prompt
             user_prompt = self.generate_user_prompt(game_dir, feedback)
+            print(feedback)
             system_prompt = self.get_system_prompt()
             
             # Call the LLM
