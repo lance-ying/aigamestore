@@ -14,7 +14,7 @@ class CodeFeedbackIterator(GameGenerator):
     A class that iterates on game code based on feedback using LLM calls.
     """
 
-    def __init__(self, *args, mode: str = "guided_iteration", temperature: float = 0.6, **kwargs):
+    def __init__(self, *args, mode: str = "guided_iteration", temperature: float = 0.7, **kwargs):
         super().__init__(*args, **kwargs)
         self.mode = mode
         self.temperature = temperature
@@ -154,12 +154,52 @@ Current code:
 <current_code>
 {formatted_code}
 </current_code>
+"""+"""
+
+# HTML REFERENCE TEMPLATE
+<example_html>
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; } /* active button for current control mode */
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">{game_title}</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Win)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (NAME OF TEST)</button>
+        <!-- Add more test buttons with correct ID convention and click handlers -->
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">{game_description}</p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">{game_controls}</p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</example_html>
 
 <output_instructions>
-Output the code change plan, the updated code, and tags for changes to address the feedback. 
-You can update the structure of the code or file structure if you think it helps in addressing the feedback. 
-Do not rewrite files that don't need changes.
+Output the code change plan, followed by the updated game description and game controls (if needed), updated automated testing plan, the updated code, and finally explain the changes in their respective tags for changes to address the feedback.
+Do not rewrite files unless you want to make any changes. Any file that is not updated will be left unchanged in the updated code automatically.
 
+// Based on the feedback, write the plan for changing the game code. Describe changes to each file and the reason for the change.
+<code_change_plan>
+... (file_name: Changes to the file, reason for the change)
+</code_change_plan>
+
+// Update the game description and game controls to address the feedback (if needed):
 <game_description>
 ... (Decscribe the game to the player, the objective, what they need to know to play and enjoy the game. Don't mention the controls here. Keep it short and concise.)
 </game_description>
@@ -168,17 +208,17 @@ Do not rewrite files that don't need changes.
 ... (Game controls as a list of key bindings, Key: Action)
 </game_controls>
 
-Based on the game code, write the automated testing plan:
+Based on the game code, write the updated automated testing plan:
 <automated_testing>
 <TEST_1>
 <test_description>(write in 1-2 sentences "What are you testing and the intent of the test?")</test_description>
 <strategy_description>(write in 1-2 sentences "What is your gameplay strategy to test it?")</strategy_description>
 <expected_outcome>(write in 1-2 sentences "What is the expected outcome? When do you consider the test successful?")</expected_outcome>
 </TEST_1>
-// Add more tests (<=5) as needed
+// Add more tests (upto 5)
 </automated_testing>
 
-For the javascript files:
+For any javascript files that you update (must update `automated_testing_controller.js` to include the new tests):
 <updated_code filename="{{name}}.{{extension}}">
 ... (code)
 </updated_code>
@@ -187,6 +227,11 @@ HTML following the <example_html> template (output last):
 <updated_html filename="index.html">
 ... (html code)
 </updated_html>
+
+// Explain the changes in their respective tags for changes to address the feedback.
+<explain_edits>
+... (Explain the changes in 1-2 sentences for each file that was updated. Each line should be a separate sentence starting with `-`.)
+</explain_edits>
 
 </output_instructions>
 """

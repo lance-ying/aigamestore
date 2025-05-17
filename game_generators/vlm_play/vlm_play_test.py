@@ -738,9 +738,9 @@ class VLMPlayEvaluation:
             
             # Record at a reasonable size
             recording_context = await browser.new_context(
-                viewport={"width": 600, "height": 400},
+                viewport={"width": 800, "height": 600},
                 record_video_dir=test_videos_dir,
-                record_video_size={"width": 600, "height": 400}
+                record_video_size={"width": 800, "height": 600}
             )
             
             recording_page = await recording_context.new_page()
@@ -804,7 +804,7 @@ class VLMPlayEvaluation:
                 
                 # Check game phase every second and restart if needed
                 start_time = asyncio.get_event_loop().time()
-                end_time = start_time + 10
+                end_time = start_time + 15
                 
                 while asyncio.get_event_loop().time() < end_time:
                     # Check game phase

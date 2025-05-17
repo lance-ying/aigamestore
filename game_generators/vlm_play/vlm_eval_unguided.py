@@ -9,6 +9,7 @@ This module provides a more free-form approach to evaluate games using VLM with:
 """
 
 import os
+import re
 import sys
 import json
 import logging
@@ -139,63 +140,32 @@ class VLMPlayEvaluationUnguided:
         game_info = self.metadata['game_info']
         automated_testing = game_info['automated_testing']
         
-        try:
-            # Check if the XML is properly formatted
-            if not automated_testing.strip().startswith("<TEST_"):
-                logging.warning("Automated testing info does not start with <TEST_. Format may be incorrect.")
+        try:          
+            # Parsing test info for format like:
+            # <TEST_1>
+            # <test_description>...</test_description>
+            # <strategy_description>...</strategy_description>
+            # <expected_outcome>...</expected_outcome>
+            # </TEST_1>
                 
-            # Parse the XML-formatted automated testing information
-            # First, clean up the string to ensure it's valid XML
-            # Remove any potential extra whitespace between tags
-            xml_str = f"<root>{automated_testing}</root>"
+            # Find all TEST blocks
+            test_blocks = re.findall(r'<(TEST_\d+)>(.*?)</\1>', automated_testing, re.DOTALL)
             
-            try:
-                # First try standard XML parsing
-                root = ET.fromstring(xml_str)
+            for test_name, test_content in test_blocks:
+                # Extract the inner content
+                test_description_match = re.search(r'<test_description>(.*?)</test_description>', test_content, re.DOTALL)
+                strategy_match = re.search(r'<strategy_description>(.*?)</strategy_description>', test_content, re.DOTALL)
+                outcome_match = re.search(r'<expected_outcome>(.*?)</expected_outcome>', test_content, re.DOTALL)
                 
-                # Process each test
-                for test_elem in root.findall("./TEST_*"):
-                    test_name = test_elem.tag
-                    
-                    test_description = test_elem.find("test_description")
-                    strategy_description = test_elem.find("strategy_description")
-                    expected_outcome = test_elem.find("expected_outcome")
-                    
-                    test_info[test_name] = {
-                        "test_description": test_description.text.strip() if test_description is not None and test_description.text else "",
-                        "strategy_description": strategy_description.text.strip() if strategy_description is not None and strategy_description.text else "",
-                        "expected_outcome": expected_outcome.text.strip() if expected_outcome is not None and expected_outcome.text else ""
-                    }
-            except ET.ParseError as xml_error:
-                # If standard parsing fails, try manual parsing
-                logging.warning(f"XML parsing failed: {str(xml_error)}. Trying manual parsing...")
-                
-                # Manual parsing for format like:
-                # <TEST_1>
-                # <test_description>...</test_description>
-                # <strategy_description>...</strategy_description>
-                # <expected_outcome>...</expected_outcome>
-                # </TEST_1>
-                
-                import re
-                
-                # Find all TEST blocks
-                test_blocks = re.findall(r'<(TEST_\d+)>(.*?)</\1>', automated_testing, re.DOTALL)
-                
-                for test_name, test_content in test_blocks:
-                    # Extract the inner content
-                    test_description_match = re.search(r'<test_description>(.*?)</test_description>', test_content, re.DOTALL)
-                    strategy_match = re.search(r'<strategy_description>(.*?)</strategy_description>', test_content, re.DOTALL)
-                    outcome_match = re.search(r'<expected_outcome>(.*?)</expected_outcome>', test_content, re.DOTALL)
-                    
-                    test_info[test_name] = {
-                        "test_description": test_description_match.group(1).strip() if test_description_match else "",
-                        "strategy_description": strategy_match.group(1).strip() if strategy_match else "",
-                        "expected_outcome": outcome_match.group(1).strip() if outcome_match else ""
-                    }
-                
+                test_info[test_name] = {
+                    "test_description": test_description_match.group(1).strip() if test_description_match else "",
+                    "strategy_description": strategy_match.group(1).strip() if strategy_match else "",
+                    "expected_outcome": outcome_match.group(1).strip() if outcome_match else ""
+                }
+            
         except Exception as e:
             logging.error(f"Error parsing automated testing info: {str(e)}")
+            exit(0)
         
         return test_info
     
@@ -445,6 +415,11 @@ class VLMPlayEvaluationUnguided:
             Dictionary with evaluation results or None if failed
         """
         try:
+            print("Printing in _evaluate_test_video_unstructured")
+            print(f"Test mode: {test_mode}")
+            print(f"Button info: {button_info}")
+            print(f"Test info: {self.test_info}")
+
             # Get test information from metadata
             test_info = self.test_info.get(test_mode, {})
             test_description = test_info.get("test_description", "")
@@ -460,14 +435,14 @@ class VLMPlayEvaluationUnguided:
             prompt = f"""{instructions}
 
 <task>
-You are evaluating a gameplay video where the player is testing the game for the following: {test_description}. 
-They followed the following strategy: {strategy_description}. 
-They expected the following would happen: {expected_outcome}.
+You are evaluating a gameplay video testing the game for the following: {test_description}
+They followed the following strategy: {strategy_description}
+They expected the following outcome of the test: {expected_outcome}
 
-Analyze this video and provide feedback to make the game more fun, entertaining, and engaging for players.
+Analyze this video and provide feedback to make the game more fun, interesting, and engaging for players.
 </task>
 """
-            
+
             # Send video to Gemini for evaluation
             response = self.gemini_evaluator.evaluate_video_with_custom_prompt_sync(video_path, prompt)
             
@@ -585,12 +560,12 @@ Analyze this video and provide feedback to make the game more fun, entertaining,
 {instructions}
 
 <task>
-Here are your feedbacks from all gameplay testing videos.
+Here are your feedbacks from analyzing all gameplay testing videos.
 <tests_summary>
 {all_tests_summary}
 </tests_summary>
 
-Please aggregate this feedback into actionable feedback for the game developer based on all gameplay testing videos.
+Please aggregate this feedback into actionable feedback for the game developer to make the game more fun, interesting, and playable for a first time player.
 </task>
 """
             
@@ -742,20 +717,16 @@ Please aggregate this feedback into actionable feedback for the game developer b
         Get the instructions for the game play tester.
         """
         return f"""
-You are a professional JavaScript game developer and tester known for providing precise feedback by evaluating gameplay videos of 2D video games.
+You are an expert JavaScript game developer and game tester who is known for making games more fun, interesting, and playable for a general audience with varied gaming experience with no prior knowledge of this game.
+You will be analyzing games developed by a game developer for a given game concept. Provide actionable feedback by evaluating gameplay videos of 2D video games to the game developer who will improve the game based on your feedback.
+
 The game developer developed for the following input game concept: {self.game_concept}
-Please suggest improvements, updates, and additions to the game including all aspects of the game, its description, and controls.
-Game iterated with your feedback must respect the game concept and improves the game to make it more fun, interesting, and playable for a general audience with varied gaming experience with no prior knowledge of this game.
+Suggest changes and additions to the game including all aspects of the game, its description, and controls.
 
-The game is explained to the player as follows: {self.game_description}
-It is played with the following controls:
+# Game information presented to the player:
+Game description: {self.game_description}
+Game controls:
 {self.game_controls}
-
-Following were the constraints on the game development:
-- Use keyboard keys for controls. No mouse controls. Only allowed keys: [Arrow keys (37-40), SPACE (32), Z (90), SHIFT (16), ENTER to start the game (13), R to restart the game after a win/loss (82), ESC to pause the game (27).]
-- The game must start on pressing ENTER key, pauses when ESC key is pressed, and restart on pressing R key at the end of the game.
-- No external images, sprites, or assets. No sound or music effects.
-- All graphics and animations are created using p5.js primitives.
 """
 
 # Async function for easy API

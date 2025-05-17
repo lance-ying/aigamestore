@@ -21,16 +21,17 @@ def generate_feedback_from_results(results: Dict[str, Any], mode: str) -> str:
     """
     feedback = ""
     if mode == "basic_test":
-        feedback = """<context>
-We conducted basic tests on the game code. The test checks if the game loads in the browser, followed by an interaction test where the game must start on pressing ENTER, and if random actions lead to changes in the game state and rendered changes on screen.
-</context>
-Based on the test results, we have the following feedback and tasks for you:
+        feedback = """
+<feedback>
+We conducted basic tests on the game code. The test checks if the game loads in the browser, followed by an interaction test where the game must start on pressing ENTER, and if gameplay is conducted by pressing control keys without any errors or crashing due to implementation errors.
+Some of the common causes of errors are: syntax errors, undefined variables, module/import errors, p5 functions not being called correctly, console errors, rendering errors leading to visual glitches or not updating the game state, and other errors.
+Based on the test, we are reporting based on the first error that we found. Check for other code errors which might lead to similar issues and fix them.
+Here are the error messages:
 
 """
         # Check if load test failed
         if not results["load_test"].get("test_result", False):
-            feedback += """<feedback>
-<feedback_1>
+            feedback += """
 The game failed to load properly.
 """
 
@@ -258,13 +259,12 @@ The game failed to load properly.
                             # Make sure each error is on its own line
                             feedback += f"{error}\n"
 
-            feedback += "Please fix the game so it loads correctly in the browser.</feedback_1>\n<feedback_2>\nThe interaction test was not possible. Ensure that the game starts when ENTER is pressed and pressing control keys leads to changes in the game state and update the rendering. Also, check for syntax errors. The game should be playable by pressing ENTER and using control keys to move around after your changes.</feedback_2>"
+            feedback += "Please fix these errors and related errors to make the game playable.\n - The interaction test was not possible. Ensure that the game starts when ENTER is pressed and pressing control keys leads to changes in the game state and update the rendering. Also, check for syntax errors. The game should be playable by pressing ENTER and using control keys to move around after your changes."
 
         # Check if interaction test failed (but load test passed)
         elif not results["interaction_test"].get("test_result", False):
-            feedback += """<feedback>
-<feedback_1>
-The game loads but fails the interaction test. Intended output is that random key presses must change the game state and update the visual output in the canvas. Following is the error message: 
+            feedback += """
+The game loads but fails the interaction test. Expected output is that random key presses must change the game state and update the rendered output in the canvas. Following are the error messages: 
 """
 
             # Get structured errors if available
@@ -479,15 +479,13 @@ The game loads but fails the interaction test. Intended output is that random ke
                             feedback += f"{error}\n"
 
             feedback += """
-Please fix these issues to make the game playable and responsive to key presses following the game mechanics.
-</feedback_1>
-<feedback>
+Please iterate on the game code with the following feedback to make the game playable and responsive to key presses following the game mechanics.
+</feedback>
 """
 
         feedback += """
 <important>
-Keep your changes to the game code only to address the <feedback> above.
-Be careful while making changes to the code, and make sure you are not introducing any new errors.
+Be careful while making changes to the code, and make sure you are not introducing any new errors. Game code should be updated to address the feedback. Make sure it loads without errors, starts when ENTER is pressed, and pressing control keys leads to changes in the game state and update the rendering.
 </important>"""
 
     elif mode == "vibe_coding":

@@ -191,8 +191,8 @@ def main():
     parser.add_argument(
         "--temperature",
         type=float,
-        default=0.5,
-        help="Temperature for LLM generation (default: 0.25)",
+        default=0.7,
+        help="Temperature for LLM generation",
     )
     parser.add_argument(
         "--show_stack_traces",

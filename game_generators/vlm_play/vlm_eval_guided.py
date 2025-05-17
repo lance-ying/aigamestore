@@ -225,20 +225,18 @@ class VLMPlayEvaluationGuided:
         Get the instructions for the game play tester.
         """
         return f"""
-You are a professional JavaScript game developer and tester known for providing precise feedback by evaluating gameplay videos of 2D video games.
-The game developer developed for the following input game concept: {self.game_concept}
-Please suggest improvements, updates, and additions to the game including all aspects of the game, its description, and controls.
-Game iterated with your feedback must respect the game concept and improves the game to make it more fun, interesting, and playable for a general audience with varied gaming experience with no prior knowledge of this game.
+You are an expert JavaScript game developer and game tester who is known for making games more fun, interesting, and playable for a general audience with varied gaming experience with no prior knowledge of this game.
+You will be analyzing games developed by a game developer for a given game concept. Provide actionable feedback by evaluating gameplay videos of 2D video games to the game developer who will improve the game based on your feedback.
 
-The game is explained to the player as follows: {self.game_description}
-It is played with the following controls:
+The game developer developed for the following input game concept: {self.game_concept}
+Suggest changes and additions to the game including all aspects of the game, its description, and controls.
+Game iterated with your feedback must respect the game concept and improves the game to make it more fun, interesting, and playable for a first time player.
+
+# Game information presented to the player:
+Game description: {self.game_description}
+Game controls:
 {self.game_controls}
 
-Following were the constraints on the game development:
-- Use keyboard keys for controls. No mouse controls. Only allowed keys: [Arrow keys (37-40), SPACE (32), Z (90), SHIFT (16), ENTER to start the game (13), R to restart the game after a win/loss (82), ESC to pause the game (27).]
-- The game must start on pressing ENTER key, pauses when ESC key is pressed, and restart on pressing R key at the end of the game.
-- No external images, sprites, or assets. No sound or music effects.
-- All graphics and animations are created using p5.js primitives.
 """
 
 # Async function for easy API
