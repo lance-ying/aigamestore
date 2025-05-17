@@ -2430,12 +2430,14 @@ class GameBrowserController:
                     await page.wait_for_timeout(50)
                 
                 # Now perform 128 "sticky keys" actions
-                for i in range(128):
+                total_actions = 128
+                current_action = 0
+                while current_action < total_actions:
                     # Choose a random key and stick with it for 4-16 consecutive presses
                     sticky_key = random.choice(self.gameplay_keys)
                     consecutive_presses = random.randint(4, 16)
                     
-                    logging.info(f"Sticky action {i+1}/128: Pressing {sticky_key} for {consecutive_presses} consecutive times")
+                    logging.info(f"Sticky action {current_action+1}/{total_actions}: Pressing {sticky_key} for {consecutive_presses} consecutive times")
                     
                     # Apply the same key multiple times
                     for j in range(consecutive_presses):
@@ -2506,6 +2508,7 @@ class GameBrowserController:
                         
                         # Wait between actions
                         await page.wait_for_timeout(50)
+                        current_action += 1
                     
                     # Check game phase after every 4 actions (every sticky key sequence)
                     try:

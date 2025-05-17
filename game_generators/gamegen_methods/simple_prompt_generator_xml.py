@@ -15,7 +15,7 @@ class SimplePromptXMLGenerator(GameGenerator):
         self.use_baseline = kwargs.get('use_baseline', False)
         self.use_basic = kwargs.get('use_basic', False)
         self.temperature = kwargs.get('temperature', 1.0)
-        self.top_p = kwargs.get('top_p', 1.0)
+        self.top_p = kwargs.get('top_p', 0.9)
     def generate_user_prompt(self, game_concept: str) -> str:
         """
         Generate user prompt from game concept for the simple prompt method

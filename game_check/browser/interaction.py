@@ -313,16 +313,41 @@ async def run_gameplay_test(page: Page, screenshots_dir: str, frame_counter: int
                     # If game is over, restart it by pressing R followed by Enter
                     if game_phase in ["GAME_OVER_WIN", "GAME_OVER_LOSS"]:
                         logging.info(f"Game over detected ({game_phase}), restarting game...")
-                        
-                        # Press R to restart
-                        await test_key_press(page, "r", f"restart_r_{i}", 
-                                            screenshots_dir, frame_counter + i + 2, key_mapping)
-                        await page.wait_for_timeout(50)
-                        
-                        # Press Enter to confirm restart
-                        restart_key_test = await test_key_press(page, "Enter", f"restart_enter_{i}", 
-                                                              screenshots_dir, frame_counter + i + 3, key_mapping)
-                        await page.wait_for_timeout(100)
+                        restart_count = 0
+                        while game_phase != "START" and restart_count < 10:
+                            # Press R to restart
+                            result = await test_key_press(page, "r", f"restart_r_{i}", screenshots_dir, frame_counter, key_mapping)
+                            await page.wait_for_timeout(200)
+                            restart_count += 1
+                            frame_counter += 1
+                            
+                            # Check if game is in START phase
+                            game_state = await page.evaluate("getGameState()")
+                            if game_state and isinstance(game_state, dict):
+                                game_phase = game_state.get("gamePhase")
+                                logging.info(f"Current game phase after restart: {game_phase}")
+                                if game_phase == "START":
+                                    break
+                            else:
+                                logging.error(f"Game is not in START phase after restart: {game_phase}")
+
+                        restart_count = 0
+                        while game_phase != "PLAYING" and restart_count < 10:
+                            # Press Enter to confirm restart
+                            restart_key_test = await test_key_press(page, "Enter", f"restart_enter_{i}", screenshots_dir, frame_counter, key_mapping)
+                            await page.wait_for_timeout(100)
+                            restart_count += 1
+                            frame_counter += 1
+                            
+                            # Check if game is in START phase
+                            game_state = await page.evaluate("getGameState()")
+                            if game_state and isinstance(game_state, dict):
+                                game_phase = game_state.get("gamePhase")
+                                logging.info(f"Current game phase after restart: {game_phase}")
+                                if game_phase == "PLAYING":
+                                    break
+                            else:
+                                logging.error(f"Game is not in PLAYING phase after restart: {game_phase}")
                         
                         # Update previous screenshot after restart
                         if restart_key_test.get("screenshot"):

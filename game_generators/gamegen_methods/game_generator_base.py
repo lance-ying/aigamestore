@@ -14,7 +14,8 @@ class GameGenerator(ABC):
     def __init__(
         self,
         model_name: str = "anthropic:claude-3.7-sonnet",
-        temperature: float = 0.7,
+        temperature: float = 1.0,
+        top_p: float = 0.9,
         verbose: bool = False,
         use_ecs: bool = True,
         use_baseline: bool = False,
@@ -43,6 +44,7 @@ class GameGenerator(ABC):
         self.model_name = model_name
         self.verbose = verbose
         self.temperature = temperature
+        self.top_p = top_p
         self.use_ecs = use_ecs
         self.use_baseline = use_baseline
         self.use_basic = use_basic

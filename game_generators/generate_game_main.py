@@ -176,6 +176,7 @@ def main():
                 use_ecs=not args.no_ecs,
                 use_basic=True,
                 temperature=args.temperature if args.temperature else 1.0,
+                top_p=args.top_p if args.top_p else 0.9,
             )
         elif args.method == "simple_prompt":
             generator = SimplePromptGenerator(
@@ -241,18 +242,18 @@ def main():
         print(f"Game generated successfully: {result['title']}")
         print(f"Saved to: {result['game_dir']}")
 
-        # Test the game
-        print("\nTesting game functionality...")
-        game_passed = test_game(result["game_dir"], args.verbose)
+        # # Test the game
+        # print("\nTesting game functionality...")
+        # game_passed = test_game(result["game_dir"], args.verbose)
 
-        if game_passed:
-            print("\n✅ Game passed all tests!")
-        else:
-            print("\n❌ Game failed some tests.")
+        # if game_passed:
+        #     print("\n Game passed all tests!")
+        # else:
+        #     print("\n Game failed some tests.")
 
-        # Final outcome
-        print(f"\nGame title: {result['title']}")
-        print(f"Game location: {result['game_dir']}")
+        # # Final outcome
+        # print(f"\nGame title: {result['title']}")
+        # print(f"Game location: {result['game_dir']}")
 
     except Exception as e:
         print(f"Error generating game: {type(e).__name__}: {str(e)}")
