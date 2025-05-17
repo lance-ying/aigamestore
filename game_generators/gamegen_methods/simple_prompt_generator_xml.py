@@ -248,7 +248,7 @@ Output the code plan and game files in this format with NO OTHER TEXT:
 ... (Game controls as a list of key bindings, Key: Action)
 </game_controls>
 
-Based on the game code, write the automated testing plan:
+Write the automated testing plan:
 <automated_testing>
 <TEST_1>
 <test_description>(write in 1-2 sentences "What are you testing and the intent of the test?")</test_description>

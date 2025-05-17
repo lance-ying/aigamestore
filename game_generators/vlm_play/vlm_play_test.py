@@ -738,9 +738,9 @@ class VLMPlayEvaluation:
             
             # Record at a reasonable size
             recording_context = await browser.new_context(
-                viewport={"width": 800, "height": 600},
+                viewport={"width": 600, "height": 400},
                 record_video_dir=test_videos_dir,
-                record_video_size={"width": 800, "height": 600}
+                record_video_size={"width": 600, "height": 400}
             )
             
             recording_page = await recording_context.new_page()
@@ -1044,34 +1044,34 @@ class VLMPlayEvaluation:
             # Create prompt for Gemini using test information
             prompt = f"""
 {instructions}
-
 <task>
-You are evaluating a video of a gameplay video where the player is trying to test the game for the following: {test_description}. 
+Please analyze the following gameplay video and provide feedback based on test description, strategy, and expected outcome of the test.
+The player is trying to test the game for the following: {test_description}. 
 They followed the following strategy: {strategy_description}. 
 They expected the following would happen: {expected_outcome}.
 </task>
+
 <output_instructions>
-Write your feedback inside the section tags for each section, formatting each line with `-`.
-Output your response in the following format:
+Addressing the questions in each section tag within the tags, write your analysis and feedback as a list with each line starting with `-`.
 <outcome_reached>
-... // Was the expected outcome reached? If not, do you think the player was making progress towards the intended goal for the test?</outcome_reached>
+... // Was the expected test outcome achieved? If not, do you think the player was making progress towards the intended goal for the test?
 </outcome_reached>
 
 <strategy_evaluation>
-... // What is your evaluation of the testing strategy? How can they improve their testing strategy?</strategy_evaluation>
+... // Was the correct strategy chosen for this test? Was the strategy executed correctly? How can they improve their testing strategy?
 </strategy_evaluation>
 
 <test_evaluation>
-... // What is your evaluation of the game based on this test? Keep it limited to the scope of the intent of the test.</test_evaluation>
+... // What does the result of this test suggest about the game aspect which was tested? Keep it limited to the scope of the description of the test.
 </test_evaluation>
 
 <game_assessment>
-... // What is your assessment of the game based on this test?</game_assessment>
+... // Based on the gameplay video, provide a comprehensive analysis of all game aspects beyond this specific test.
 </game_assessment>
 
-<suggested_improvements>
-... // What do you think can be improved in the game? Think about playability, game mechanics, game progression, graphics, and other aspects of the game.</suggested_improvements>
-</suggested_improvements>
+<suggestions>
+... // What game aspects require improvements and what changes, updates, and additions do you recommend?
+</suggestions>
 </output_instructions>
 """
             
@@ -1252,9 +1252,10 @@ Output your response in the following format:
 
 <task>
 Here is the test summary on all gameplay testing videos. Please aggregate this feedback into actionable feedback for the game developer based on all gameplay testing videos.
-<tests_summary>
+Please suggest improvements or changes to the game that are aligned with the game concept and improves the game to make it more fun, interesting, and playable for a general audience with varied gaming experience with no prior knowledge of this game.
+
+Test Summary:
 {all_tests_summary}
-</tests_summary>
 </task>
 
 <output_instructions>
@@ -1497,29 +1498,23 @@ Write your feedback inside the section tags for each section, formatting each li
         """
         Get the instructions for the game play tester.
         """
-        return f"""
+        instructions = f"""
 You are a professional JavaScript game developer and tester known for providing precise feedback by evaluating gameplay videos of 2D video games.
-The game developer developed for the following game idea:
-<game_concept>
-{self.game_concept}
-</game_concept>
+The game developer developed for the following input game concept: {self.game_concept}
+Please suggest improvements, updates, and additions to the game including all aspects of the game, its description, and controls.
+Game iterated with your feedback must respect the game concept and improves the game to make it more fun, interesting, and playable for a general audience with varied gaming experience with no prior knowledge of this game.
 
-The game developer developed the game and sent the following description and controls:
-<game_description>
-{self.game_description}
-</game_description>
-<game_controls>
+The game developer implemented the game with the following description: {self.game_description}
+It is played with the following controls:
 {self.game_controls}
-</game_controls>
 
-Following were the constraints on the game development team:
-<game_development_constraints>
+Following were the constraints on the game development:
 - Use keyboard keys for controls. No mouse controls. Only allowed keys: [Arrow keys (37-40), SPACE (32), Z (90), SHIFT (16), ENTER to start the game (13), R to restart the game after a win/loss (82), ESC to pause the game (27).]
 - The game must start on pressing ENTER key, pauses when ESC key is pressed, and restart on pressing R key at the end of the game.
 - No external images, sprites, or assets. No sound or music effects.
 - All graphics and animations are created using p5.js primitives.
-</game_development_constraints>
 """
+        return instructions
 
 # Async function for easy API
 async def evaluate_game_async(game_path: str, output_dir: Optional[str] = None, api_key: Optional[str] = None) -> Dict[str, Any]:

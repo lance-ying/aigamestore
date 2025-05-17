@@ -136,7 +136,7 @@ class CodeFeedbackIterator(GameGenerator):
             pass  # No need to modify the feedback
         prompt = f"""
 <task>
-Please update the current game code based on the feedback.
+Please update the current game code based on the feedback:
 {feedback}
 </task>
 
@@ -156,21 +156,38 @@ Current code:
 </current_code>
 
 <output_instructions>
-Output the <code_change_plan>, <updated_code filename="filename.js">, and <explain_edits> sections that require changes to address the feedback. 
+Output the code change plan, the updated code, and tags for changes to address the feedback. 
 You can update the structure of the code or file structure if you think it helps in addressing the feedback. 
-Do not rewrite files that don't need.
+Do not rewrite files that don't need changes.
 
-<code_change_plan>
-... // Explain your plan for the code changes specifically for each file in a few sentences. Mention no changes if the feedback is not related to the current code.
-</code_change_plan>
+<game_description>
+... (Decscribe the game to the player, the objective, what they need to know to play and enjoy the game. Don't mention the controls here. Keep it short and concise.)
+</game_description>
 
-<updated_code filename="filename.js">
-... // Improved code here
+<game_controls>
+... (Game controls as a list of key bindings, Key: Action)
+</game_controls>
+
+Based on the game code, write the automated testing plan:
+<automated_testing>
+<TEST_1>
+<test_description>(write in 1-2 sentences "What are you testing and the intent of the test?")</test_description>
+<strategy_description>(write in 1-2 sentences "What is your gameplay strategy to test it?")</strategy_description>
+<expected_outcome>(write in 1-2 sentences "What is the expected outcome? When do you consider the test successful?")</expected_outcome>
+</TEST_1>
+// Add more tests (<=5) as needed
+</automated_testing>
+
+For the javascript files:
+<updated_code filename="{{name}}.{{extension}}">
+... (code)
 </updated_code>
 
-<explain_edits>
-... // Explain the changes made to the code.
-</explain_edits>
+HTML following the <example_html> template (output last):
+<updated_html filename="index.html">
+... (html code)
+</updated_html>
+
 </output_instructions>
 """
         return prompt
@@ -206,6 +223,26 @@ Do not rewrite files that don't need.
                 js_files["game.js"] = "// Default game.js - Generated empty file\n"
                 
         return js_files
+
+    def extract_updated_html(self, response: str) -> str:
+        """
+        Extract HTML code from LLM response
+        
+        Args:
+            response: LLM response
+            
+        Returns:
+            HTML code as a string, or empty string if not found
+        """
+        # Extract HTML code using the format specified in the system prompt
+        html_matches = re.findall(
+            r"<updated_html filename=\"(.*?)\">(.*?)</updated_html>", response, re.DOTALL
+        )
+        
+        # Return the content of the first match if found, otherwise empty string
+        if html_matches and len(html_matches) > 0:
+            return html_matches[0][1].strip()
+        return ""
 
     def extract_explanation_sections(self, response: str) -> Dict[str, str]:
         """
@@ -314,6 +351,7 @@ Do not rewrite files that don't need.
                 file_path = iteration_dir / filename
                 # Ensure the parent directory exists
                 file_path.parent.mkdir(parents=True, exist_ok=True)
+                
                 with open(file_path, 'w', encoding='utf-8') as f:
                     f.write(content)
             
@@ -555,16 +593,12 @@ Do not rewrite files that don't need.
             if self.verbose:
                 print(f"Calling LLM to improve code using {self.mode} mode...")
             
-            # Determine temperature based on mode
-            temperature = self.temperature
-            if self.mode == "basic_test_fix":
-                temperature = 0.1  # Fixed lower temperature for basic_test_fix mode
-                
+
             response = self.model_api.call(
                 user_prompt=user_prompt,
-                system_prompt=system_prompt,
+                system_prompt=system_prompt if self.mode != "vibe_coding" else None,
                 verbose=True,
-                temperature=temperature,
+                temperature=self.temperature if self.mode != "basic_test_fix" else 0.1,
                 top_p=0.9,
             )
             
@@ -577,6 +611,11 @@ Do not rewrite files that don't need.
             
             # Extract updated code from response
             updated_files = self.extract_updated_code(response)
+            
+            # Extract HTML and add it to updated_files if not empty
+            html_content = self.extract_updated_html(response)
+            if html_content:
+                updated_files["index.html"] = html_content
             
             # Extract explanation sections
             explanation_sections = self.extract_explanation_sections(response)
@@ -626,17 +665,16 @@ Do not rewrite files that don't need.
                     metadata = json.load(f)
             
             # Save files in the new structure (or in output_dir if specified)
-            iteration_dir = None
-            if self.mode != "basic_test_fix" or output_dir:
-                iteration_dir = self.save_file(
-                    game_dir,
-                    updated_files,
-                    feedback or self.get_vibe_coding_feedback(),
-                    metadata,
-                    conversation_log,
-                    explanation_sections,
-                    output_dir
-                )
+            # Always save metadata for all modes
+            iteration_dir = self.save_file(
+                game_dir,
+                updated_files,
+                feedback or self.get_vibe_coding_feedback(),
+                metadata,
+                conversation_log,
+                explanation_sections,
+                output_dir
+            )
             
             # Save the conversation log in the original directory too (unless output_dir is specified)
             if not output_dir:
