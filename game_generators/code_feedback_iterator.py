@@ -710,6 +710,7 @@ Current html code:
                 self.save_updated_code(game_dir, updated_files)
                 with open(os.path.join(game_dir, "metadata.json"), 'w') as f:
                     json.dump(metadata, f, indent=2)
+                iteration_dir = game_dir
             else:
                 # Save files in the new structure (or in output_dir if specified)
                 # Always save metadata for all modes
@@ -773,7 +774,7 @@ Current html code:
         """
         Get the vibe coding feedback
         """
-        vibe_coding_feedback = "Improve the game code. Ensure the game loads, start on pressing ENTER, key inputs work, and the game is still playable."
+        vibe_coding_feedback = "Improve the game. Ensure the game compiles with no errors, starts on pressing ENTER, key inputs work, and the game is still playable."
         return vibe_coding_feedback
 
 
@@ -821,12 +822,12 @@ Current html code:
 Output the code change plan, the updated code, and finally explain the changes in their respective tags for changes to address the feedback.
 Do not rewrite files unless you want to make any changes. Any file that is not updated will be left unchanged from the original game code.
 
-// Based on the feedback, write the plan for changing the game code. Describe changes to each file and the reason for the change.
+Based on the feedback, write the plan for changing the game code. Describe changes to each file and the reason for the change.
 <code_change_plan>
 ... (file_name: Plan of changes to the file and reason for the change)
 </code_change_plan>
 
-Based on the updated game code, write the updated automated testing plan (only output if the updated code requires updating the automated testing functions):
+Based on the updated game code:
 <updated_automated_testing>
 <TEST_1>
 <test_description>(write in 1-2 sentences "What are you testing and the intent of the test?")</test_description>
@@ -836,7 +837,7 @@ Based on the updated game code, write the updated automated testing plan (only o
 // Add more tests (up to 7)
 </updated_automated_testing>
 
-For any javascript files that you update (only output the automated_testing_controller.js file if the updated code requires updating the automated testing functions):
+For any javascript files that you update:
 <updated_code filename="{{name}}.{{extension}}">
 ... (code)
 </updated_code>
@@ -874,9 +875,10 @@ HTML following the <example_html> template (output last):
       <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">{game_title}</h1>
       <div class="control-buttons">
         <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
-        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Win)</button>
-        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (NAME OF TEST)</button>
-        <!-- Add more test buttons with correct ID convention and click handlers -->
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Basic testing)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Win)</button>
+        <button id="test_3_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_3')">TEST (Switching between tests)</button>
+        // Add more test buttons with correct ID convention and click handlers
       </div>
       <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">{game_description}</p>
       <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">{game_controls}</p>

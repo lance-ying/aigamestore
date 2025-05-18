@@ -62,6 +62,79 @@ async def setup_page_error_handlers(page: Page, result: Dict[str, Any]) -> None:
     
     # Listen for resource loading errors
     page.on("response", lambda response: handle_response(response, result))
+    
+    # Inject error tracking script
+    try:
+        # Add a global error handler that captures errors including gameState errors
+        await page.evaluate("""() => {
+            // Initialize error message array if it doesn't exist
+            window._errorMessages = window._errorMessages || [];
+            
+            // Save original error handler if it exists
+            const originalOnError = window.onerror;
+            
+            // Install new error handler
+            window.onerror = function(message, source, lineno, colno, error) {
+                // Add error to our array
+                window._errorMessages.push(message);
+                
+                // Specific checks for gameState errors
+                if (message && typeof message === 'string') {
+                    const lowerMsg = message.toLowerCase();
+                    if (lowerMsg.includes('gamestate') || 
+                        lowerMsg.includes('game_state') || 
+                        lowerMsg.includes('p.gamestate') ||
+                        lowerMsg.includes('is undefined') || 
+                        lowerMsg.includes('cannot read property')) {
+                        
+                        // Add to console for immediate visibility
+                        console.error('Captured by error handler: ' + message);
+                        
+                        // Try to extract more debug info for p.gameState errors
+                        if (lowerMsg.includes('p.gamestate')) {
+                            try {
+                                const pExists = typeof p !== 'undefined';
+                                const pInfo = pExists ? 
+                                    JSON.stringify(Object.keys(p).filter(k => typeof p[k] !== 'function')) : 
+                                    'p is undefined';
+                                console.error('Debug info - p object: ' + pInfo);
+                            } catch (e) {
+                                console.error('Debug info - p object: error getting info');
+                            }
+                        }
+                    }
+                }
+                
+                // Call original handler if it exists
+                if (typeof originalOnError === 'function') {
+                    return originalOnError(message, source, lineno, colno, error);
+                }
+                return false;
+            };
+            
+            // Also monitor changes to gamePhase
+            let lastGamePhase = null;
+            const checkGamePhase = () => {
+                try {
+                    if (typeof getGameState === 'function') {
+                        const state = getGameState();
+                        if (state && state.gamePhase !== lastGamePhase) {
+                            lastGamePhase = state.gamePhase;
+                            console.log('Game phase changed to: ' + state.gamePhase);
+                        }
+                    }
+                } catch (e) {
+                    console.error('Error checking game phase: ' + e.message);
+                }
+            };
+            
+            // Check game phase periodically
+            setInterval(checkGamePhase, 500);
+        }""")
+        
+        logging.info("Error tracking script injected successfully")
+    except Exception as e:
+        logging.error(f"Failed to inject error tracking script: {e}")
 
 
 async def handle_console(msg: ConsoleMessage, result: Dict[str, Any]) -> None:

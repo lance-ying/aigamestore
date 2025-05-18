@@ -40,7 +40,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from game_generators.basic_testing import BasicTesting
 
 # Import CodeFeedbackIterator
-from game_generators.code_verifier_utils import generate_feedback_from_results
+from game_generators.code_verifier_utils import generate_feedback_from_results, extract_game_start_errors
 from game_generators.code_feedback_iterator import CodeFeedbackIterator
 from vlm_play.vlm_play_test import VLMPlayEvaluation
 from vlm_play.vlm_eval_guided import VLMPlayEvaluationGuided
@@ -67,26 +67,68 @@ def run_verification(game_path: str, output_file: str = None) -> Dict[str, Any]:
         if key != "feedback":  # Skip printing the detailed feedback
             print(f"{key}: {value}")
 
-    # Check for runtime errors like "X is undefined" and display them prominently
-    runtime_error_patterns = [
-        "is not defined",
-        "is undefined",
-        "cannot read property",
-        "cannot read properties of undefined",
-    ]
+    # Import game_start_errors extraction function
+    from game_generators.code_verifier_utils import extract_game_start_errors
+    
+    # Extract and display game start errors prominently
+    game_start_errors = extract_game_start_errors(results)
+    game_start_errors_found = bool(game_start_errors)
+    
+    if game_start_errors_found:
+        print("\n🚨 GAME START ERRORS DETECTED (when pressing ENTER):")
+        for i, error in enumerate(game_start_errors):
+            # Limit to first 5 errors to avoid overwhelming output
+            if i < 5: 
+                print(f"  {error}")
+            elif i == 5:
+                print(f"  ... and {len(game_start_errors) - 5} more errors")
+                break
+        print("\nThese errors indicate the game is not starting properly when ENTER is pressed.")
+        print("Common causes include:")
+        print("- The gameState object is not properly initialized")
+        print("- The 'p' object doesn't exist or doesn't have a gameState property")
+        print("- There's a timing issue where gameState is accessed before it's ready")
+    
+    # If no game start errors were found but the interaction test failed, check for generic runtime errors
+    if not game_start_errors_found and not results.get("overall_result", False):
+        runtime_error_patterns = [
+            "is not defined",
+            "is undefined",
+            "cannot read property",
+            "cannot read properties of undefined",
+            "typeerror",
+            "referenceerror"
+        ]
 
-    # Check both load and interaction logs for runtime errors
-    for logs_dict in [load_logs, interaction_logs]:
-        if "error" in logs_dict:
-            for error_msg in logs_dict["error"]:
-                for pattern in runtime_error_patterns:
-                    if pattern.lower() in str(error_msg).lower():
+        # Check both load and interaction logs for runtime errors
+        for logs_dict in [load_logs, interaction_logs]:
+            if "error" in logs_dict:
+                for error_msg in logs_dict["error"]:
+                    if any(pattern in str(error_msg).lower() for pattern in runtime_error_patterns):
                         print("\n🚨 RUNTIME ERROR DETECTED:")
                         print(f"  {error_msg}")
                         print(
                             "This is likely the cause of the failure. Check variable names and initialization."
                         )
                         break
+
+    # Check for errors in console logs that might have been missed
+    if (not game_start_errors_found and 
+        "interaction_test" in results and 
+        "console_logs" in results["interaction_test"]):
+        
+        # Look for key error patterns in all console logs
+        error_patterns = ["p.gamestate", "undefined", "null", "typeerror", "uncaught"]
+        
+        for log_type, messages in results["interaction_test"]["console_logs"].items():
+            for msg in messages:
+                if any(pattern in str(msg).lower() for pattern in error_patterns):
+                    print("\n⚠️ POTENTIAL ERROR FOUND IN CONSOLE LOGS:")
+                    print(f"  [{log_type}] {msg}")
+                    game_start_errors_found = True
+                    break
+            if game_start_errors_found:
+                break
 
     # Aggregate and print feedback
     aggregated_feedback = tester.aggregate_feedback(results)
@@ -105,9 +147,8 @@ def format_vlm_feedback(aggregated_feedback: Dict[str, Any]) -> str:
     Returns:
         Formatted feedback string for the code improver
     """
-    feedback = """<context>
-We conducted a comprehensive evaluation of your game using VLM Play, which records gameplay videos and analyzes them for issues and improvement opportunities.
-</context>
+    feedback = """
+We conducted a comprehensive evaluation of the game.
 
 <feedback>
 """
@@ -141,24 +182,15 @@ def format_unstructured_feedback(aggregated_feedback: Dict[str, Any]) -> str:
         Formatted feedback string for the code improver
     """
     if "unstructured_aggregated_feedback" not in aggregated_feedback:
-        return """<context>
-Unable to retrieve unstructured feedback from the evaluation.
-</context>
-
-<feedback>
-Please ensure the game loads properly, starts when ENTER is pressed, and responds to key inputs.
-</feedback>
-"""
+        raise ValueError("Unable to retrieve unstructured feedback from the evaluation.")
     
-    feedback = """
+    feedback = f"""
 <feedback>
-"""
-    feedback += aggregated_feedback["unstructured_aggregated_feedback"]
-    feedback += """
+{aggregated_feedback["unstructured_aggregated_feedback"]}
 </feedback>
 
 <important>
-Please address the issues identified in the feedback to make the game more fun and engaging. Ensure the game loads properly, starts when ENTER is pressed, key inputs work, and the game is playable.
+Please address the issues identified in the feedback to make the game more fun and engaging. Ensure the game compiles with no errors, starts on pressing ENTER, key inputs work, and the game is still playable.
 </important>
 """
     return feedback
@@ -222,6 +254,7 @@ def main():
         # For basic_test mode: first verify, then improve if tests fail
         logging.info("Running verification in basic_test mode...")
         results = run_verification(args.game_path, args.output)
+        
         # Print stack traces if available and requested
         if args.show_stack_traces and "feedback" in results:
             for test_type in ["load_test", "interaction_test"]:
@@ -237,7 +270,8 @@ def main():
         if not results["overall_result"]:
             # Generate feedback based on the verification results
             feedback = generate_feedback_from_results(results, args.mode)
-
+            print(feedback)
+            exit(0)
             logging.info("Game verification failed. Improving game code...")
             # Initialize the code improver
             improver = CodeFeedbackIterator(

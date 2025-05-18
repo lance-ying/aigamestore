@@ -230,15 +230,24 @@ You will be analyzing games developed by a game developer for a given game conce
 
 The game developer developed for the following input game concept: {self.game_concept}
 Suggest changes and additions to the game including all aspects of the game, its description, and controls.
-Game iterated with your feedback must respect the game concept and improves the game to make it more fun, interesting, and playable for a first time player.
 
 # Game information presented to the player:
 Game description: {self.game_description}
 Game controls:
 {self.game_controls}
 
+# Hard constraints on the game developer when implementing the game code:
+- Keyboard inputs only. No mouse control. Allowed keyboard keys:
+  - Allowed gameplay control keys: Arrow keys (37-40), SPACE (32), SHIFT (16), Z (90)
+  - Game phase specific controls: 
+    - ENTER (13) to start the game at the start screen
+    - ESC (27) to pause the game
+    - R (82) to restart the game. Pressing R takes you back to the start screen when the game is over so that the game can be played again.
+- Allowed libraries: p5.js, p5.collide2D.
+- Graphics and animations only using p5.
+- No external images, sprites, fonts, or other assets. 
+- No audio or sound effects.
 """
-
 # Async function for easy API
 async def evaluate_game_async(game_path: str, output_dir: Optional[str] = None, api_key: Optional[str] = None) -> Dict[str, Any]:
     """

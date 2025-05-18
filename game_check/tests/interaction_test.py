@@ -36,10 +36,46 @@ async def test_game_interaction_async(game_path: str) -> Dict[str, Any]:
         results = await browser.test_game_interaction()
     
     # Add console error message if test failed
-    if not results.get("test_result", False) and "console_errors" in results:
-        errors = [err for err in results["console_errors"] if "error" in err.lower()]
-        if errors:
-            results["console_error_message"] = "\n".join(errors)
+    if not results.get("test_result", False):
+        error_messages = []
+        
+        # Collect errors from console logs
+        if "console_logs" in results:
+            # First check for error type messages
+            if "error" in results["console_logs"]:
+                error_messages.extend(results["console_logs"]["error"])
+            
+            # Also check for errors in non-error categories
+            error_patterns = ["error", "undefined", "cannot read", "null", "is not defined", "typeerror"]
+            for msg_type, messages in results["console_logs"].items():
+                if msg_type != "error":  # Skip error type as we already processed it
+                    for msg in messages:
+                        if any(pattern in str(msg).lower() for pattern in error_patterns):
+                            error_messages.append(f"{msg_type}: {msg}")
+        
+        # Also include errors from legacy console_errors field
+        if "console_errors" in results:
+            for err in results["console_errors"]:
+                if err not in error_messages:
+                    error_messages.append(err)
+                    
+        # Also check for structured_errors if available
+        if "structured_errors" in results:
+            for err in results["structured_errors"]:
+                error_msg = err.get("message", "")
+                if error_msg and error_msg not in error_messages:
+                    error_messages.append(error_msg)
+        
+        # Check for specific gameState errors
+        if "error" in results:
+            error_text = results["error"]
+            if "game did not start" in error_text.lower() or "p.gamestate" in error_text.lower():
+                if error_text not in error_messages:
+                    error_messages.append(error_text)
+        
+        # Add combined error message if we found any errors
+        if error_messages:
+            results["console_error_message"] = "\n".join(error_messages)
     
     # Save results
     save_test_results(results, game_path, "interaction_test")

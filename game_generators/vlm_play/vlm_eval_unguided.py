@@ -727,8 +727,20 @@ Suggest changes and additions to the game including all aspects of the game, its
 Game description: {self.game_description}
 Game controls:
 {self.game_controls}
-"""
 
+# Hard constraints on the game developer when implementing the game code:
+- Keyboard inputs only. No mouse control. Allowed keyboard keys:
+  - Allowed gameplay control keys: Arrow keys (37-40), SPACE (32), SHIFT (16), Z (90)
+  - Game phase specific controls: 
+    - ENTER (13) to start the game at the start screen
+    - ESC (27) to pause the game
+    - R (82) to restart the game. Pressing R takes you back to the start screen when the game is over so that the game can be played again.
+- Allowed libraries: p5.js, p5.collide2D.
+- Graphics and animations only using p5.
+- No external images, sprites, fonts, or other assets. 
+- No audio or sound effects.
+"""
+    
 # Async function for easy API
 async def evaluate_game_async(game_path: str, output_dir: Optional[str] = None, api_key: Optional[str] = None) -> Dict[str, Any]:
     """

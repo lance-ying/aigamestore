@@ -6,6 +6,7 @@ This module provides a base class for testing game files by checking if:
 1. The game loads properly
 2. The game starts on pressing enter
 3. Random actions lead to changes in the game state
+4. Automated testing works properly (if applicable)
 
 It uses functions from the game_check module to perform these tests.
 """
@@ -16,10 +17,12 @@ import logging
 import re
 from typing import Dict, Any, List, Optional, Tuple
 
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 # Import game_check functions
 from game_check.tests.load_test import check_game_loads, report_load_test
 from game_check.tests.interaction_test import test_game_interaction, report_interaction_test
-from game_check.utils.helpers import save_test_results
+from game_check.utils.helpers import save_test_results, find_html_file
 
 
 class BasicTesting:
@@ -56,9 +59,21 @@ class BasicTesting:
             "is not defined", 
             "is undefined", 
             "cannot read property",
-            "cannot read properties of undefined"
+            "cannot read properties of undefined",
+            "ReferenceError",
+            "SyntaxError",
+            "TypeError",
+            "RangeError",
+            "URIError",
+            "EvalError",
+            "InternalError",
+            "Uncaught",
         ]):
-            # Don't clean file paths for runtime errors
+            # if there is a path in the msg starting with "file://" or "http://" or "https://", replace it with str.strip(-/)[-1] which keeps the last part of the path that is the file name
+            if any(pattern in msg.lower() for pattern in ["file://", "http://", "https://"]):
+                msg = re.sub(r'file://|http://|https://', '', msg)
+                msg = msg.strip("/")[-1]
+
             return msg
             
         # Clean up extra spaces, tabs, etc.
@@ -95,44 +110,189 @@ class BasicTesting:
             "syntax_errors": [],  # Special category for syntax errors
             "stack_traces": [],   # For stack traces
             "module_errors": [],  # New category for module/import errors
-            "undefined_vars": []  # New category for undefined variable errors
+            "undefined_vars": [], # New category for undefined variable errors
+            "game_start_errors": []  # New category specifically for game start errors
         }
         
-        # Process errors
+        # First, process all error messages to ensure we capture their stack traces
+        if "error" in logs_dict and logs_dict["error"]:
+            error_with_traces = []
+            
+            for msg in logs_dict["error"]:
+                # Check if this is a JavaScript runtime error
+                error_msg = str(msg)
+                
+                # Look for common runtime error patterns
+                is_runtime_error = any(pattern in error_msg.lower() for pattern in [
+                    "is not defined",
+                    "is undefined",
+                    "cannot read property",
+                    "cannot read properties of undefined",
+                    "null is not an object",
+                    "is not a function",
+                    "undefined is not a function",
+                    "cannot set property",
+                    "cannot access",
+                    "referenceerror",
+                    "typeerror"
+                ])
+                
+                # Check specifically for undefined variable errors
+                is_undefined_var = any(pattern in error_msg.lower() for pattern in [
+                    "is not defined",
+                    "is undefined",
+                ])
+                
+                # Check for module import errors
+                is_module_error = any(pattern in error_msg.lower() for pattern in [
+                    "import",
+                    "export",
+                    "module",
+                    "cannot find module",
+                    "failed to load module",
+                    "error loading module",
+                    "cannot resolve module",
+                    "import(",
+                    "dynamic import"
+                ])
+                
+                # Check for game start specific errors
+                is_game_start_error = any(pattern in error_msg.lower() for pattern in [
+                    "gamestate",
+                    "game_state",
+                    "p.gamestate",
+                    "game phase",
+                    "game not starting",
+                    "error after pressing enter",
+                    "captured by error handler"
+                ])
+                
+                # For runtime errors, add the full message as both an error and a stack trace
+                if is_runtime_error:
+                    # Keep the original message intact for stack traces
+                    feedback["errors"].append(error_msg)
+                    feedback["stack_traces"].append(error_msg)
+                    error_with_traces.append(error_msg)
+                    
+                    # Also add to specific error categories for better feedback
+                    if is_undefined_var:
+                        feedback["undefined_vars"].append(error_msg)
+                    if is_module_error:
+                        feedback["module_errors"].append(error_msg)
+                    if is_game_start_error:
+                        feedback["game_start_errors"].append(error_msg)
+        
+        # First, specifically check for syntax errors since they're often critical
+        syntax_errors = []
+        for log_type, messages in logs_dict.items():
+            for msg in messages:
+                lower_msg = str(msg).lower()
+                
+                # Check for module import errors first (to categorize separately)
+                is_module_error = any(pattern in lower_msg for pattern in [
+                    "import",
+                    "export",
+                    "module",
+                    "cannot find module",
+                    "failed to load module",
+                    "error loading module",
+                    "cannot resolve module"
+                ])
+                
+                # Check for game start errors
+                is_game_start_error = any(pattern in lower_msg for pattern in [
+                    "gamestate",
+                    "game_state", 
+                    "p.gamestate",
+                    "game phase",
+                    "game not starting",
+                    "error after pressing enter",
+                    "captured by error handler"
+                ])
+                
+                if is_module_error:
+                    feedback["module_errors"].append(msg)
+                    # Also add to stack traces to preserve full information
+                    feedback["stack_traces"].append(msg)
+                
+                if is_game_start_error:
+                    feedback["game_start_errors"].append(msg)
+                    # Also add as a regular error
+                    feedback["errors"].append(msg)
+                    
+                # Check for various syntax error patterns
+                if any(pattern in lower_msg for pattern in [
+                    "syntaxerror", 
+                    "syntax error", 
+                    "unexpected token", 
+                    "is an invalid identifier",
+                    "invalid identifier", 
+                    "unexpected identifier", 
+                    "unexpected end of input"
+                ]):
+                    # Keep the full message for syntax errors
+                    syntax_errors.append(msg)
+                    feedback["syntax_errors"].append(msg)
+                    feedback["errors"].append(msg)
+                    
+                    # Extract and preserve stack trace
+                    stack_trace = self.extract_stack_trace(msg)
+                    if stack_trace:
+                        feedback["stack_traces"].append(stack_trace)
+                    
+        # If we found syntax errors, print them first and prominently
+        if syntax_errors:
+            print(f"\n{test_name} SYNTAX ERRORS (critical):")
+            for msg in syntax_errors:
+                print(f"  - 🚫 {msg}")
+            has_logs = True
+        
+        # If we found game start errors, print them prominently
+        if feedback["game_start_errors"]:
+            print(f"\n{test_name} GAME START ERRORS (critical):")
+            for msg in feedback["game_start_errors"]:
+                print(f"  - 🎮 {msg}")
+            has_logs = True
+        
+        # Process regular errors
         if "error" in logs_dict and logs_dict["error"]:
             print(f"\n{test_name} ERRORS:")
             for msg in logs_dict["error"]:
-                # For undefined variable errors, format them concisely
-                if any(pattern in str(msg).lower() for pattern in ["is not defined", "is undefined"]):
-                    # Try to extract variable name
-                    var_match = re.search(r'([a-zA-Z0-9_$]+) is (not defined|undefined)', str(msg).lower())
-                    if var_match:
-                        var_name = var_match.group(1)
-                        # Try to extract source file
-                        source_file = None
-                        if "[source:" in str(msg).lower():
-                            source_match = re.search(r'\[source: (.*?)\]', str(msg).lower())
-                            if source_match:
-                                source_file = source_match.group(1)
-                        
-                        # Format concise error message
-                        concise_msg = f"Page error: {var_name} is undefined"
-                        if source_file:
-                            concise_msg += f" [Source: {source_file}]"
-                        
-                        feedback["errors"].append(concise_msg)
-                        feedback["undefined_vars"].append(concise_msg)
-                        print(f"  - {concise_msg}")
-                    else:
-                        # Fallback to original message
-                        feedback["errors"].append(msg)
-                        print(f"  - {msg}")
-                else:
-                    # For other errors, use original message
-                    feedback["errors"].append(msg)
+                # Skip errors we've already logged as syntax errors or runtime errors
+                if msg in error_with_traces:
+                    continue
+                    
+                lower_msg = str(msg).lower()
+                is_syntax_error = any(pattern in lower_msg for pattern in [
+                    "syntaxerror", 
+                    "syntax error", 
+                    "unexpected token", 
+                    "is an invalid identifier",
+                    "invalid identifier"
+                ])
+                
+                # Skip if it's a game start error we already displayed
+                is_game_start_error = any(pattern in lower_msg for pattern in [
+                    "gamestate",
+                    "game_state", 
+                    "p.gamestate",
+                    "game phase",
+                    "game not starting",
+                    "error after pressing enter"
+                ])
+                
+                if not is_syntax_error and not is_game_start_error:
+                    # Keep the full message for better debugging
                     print(f"  - {msg}")
+                    feedback["errors"].append(msg)
+                    
+                    # Extract and preserve stack trace
+                    stack_trace = self.extract_stack_trace(msg)
+                    if stack_trace:
+                        feedback["stack_traces"].append(stack_trace)
+                        print(f"    Stack trace: {stack_trace}")
             has_logs = True
-            
+        
         # Process warnings
         if "warning" in logs_dict and logs_dict["warning"]:
             print(f"\n{test_name} WARNINGS:")
@@ -158,7 +318,7 @@ class BasicTesting:
                 feedback["logs"].append(cleaned_msg)
                 print(f"  - {cleaned_msg}")
             has_logs = True
-            
+        
         return feedback, has_logs
     
     def verify_game(self, game_path: str, output_file: Optional[str] = None) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
@@ -209,6 +369,27 @@ class BasicTesting:
         # Calculate overall result
         load_test_passed = results["load_test"].get("test_result", False)
         interaction_test_passed = results["interaction_test"].get("test_result", False)
+        
+        # Extract automated testing check result if available
+        automated_testing_check_passed = True  # Default to True if not present
+        has_automated_testing_buttons = False
+        if (
+            "interaction_test" in results and 
+            "interaction_test" in results["interaction_test"] and
+            "automated_testing_check" in results["interaction_test"]["interaction_test"]
+        ):
+            automated_check = results["interaction_test"]["interaction_test"]["automated_testing_check"]
+            automated_testing_check_passed = automated_check.get("test_result", True)
+            has_automated_testing_buttons = automated_check.get("buttons_found", False)
+            
+            # Add automated testing info to results
+            results["automated_testing_check"] = {
+                "test_result": automated_testing_check_passed,
+                "buttons_found": has_automated_testing_buttons,
+                "player_info_changed": automated_check.get("player_info_changed", False)
+            }
+        
+        # Overall result is true only if all tests pass
         results["overall_result"] = load_test_passed and interaction_test_passed
         
         # Print overall result
@@ -231,6 +412,16 @@ class BasicTesting:
                     if "gameplay_test" in interaction_detail:
                         gameplay_test = interaction_detail["gameplay_test"]
                         print(f"Gameplay Test: {'✅ PASSED' if gameplay_test.get('test_result', False) else '❌ FAILED'}")
+                    
+                    # Display automated testing check results if buttons were found
+                    if "automated_testing_check" in interaction_detail:
+                        automated_check = interaction_detail["automated_testing_check"]
+                        if automated_check.get("buttons_found", False):
+                            print(f"Automated Testing Check: {'✅ PASSED' if automated_check.get('test_result', False) else '❌ FAILED'}")
+                            if not automated_check.get("test_result", False):
+                                print("  - Player information is not changing during automated testing")
+                        else:
+                            print("Automated Testing Check: ⏭️ SKIPPED (No automated testing buttons found)")
             else:
                 # Fallback if structure doesn't match expected format
                 print(f"Interaction Test: {'✅ PASSED' if interaction_test_passed else '❌ FAILED'}")
@@ -262,6 +453,23 @@ class BasicTesting:
         interaction_logs = results["interaction_test"].get("console_logs", {})
         interaction_feedback, interaction_logs_printed = self.get_logs(interaction_logs, "INTERACTION TEST")
         results["feedback"]["interaction_test"] = interaction_feedback
+        
+        # Combine all feedback for easy access
+        results["feedback"]["all_errors"] = load_feedback.get("errors", []) + interaction_feedback.get("errors", [])
+        results["feedback"]["all_warnings"] = load_feedback.get("warnings", []) + interaction_feedback.get("warnings", [])
+        results["feedback"]["all_logs"] = (
+            load_feedback.get("logs", []) + interaction_feedback.get("logs", []) +
+            load_feedback.get("info", []) + interaction_feedback.get("info", []) +
+            load_feedback.get("other", []) + interaction_feedback.get("other", [])
+        )
+        
+        # If automated testing buttons were found but not working, add a specific error
+        if has_automated_testing_buttons and not automated_testing_check_passed:
+            automated_error = "Automated testing is not working: player information is not changing during automated testing"
+            if "all_errors" in results["feedback"]:
+                results["feedback"]["all_errors"].append(automated_error)
+            else:
+                results["feedback"]["all_errors"] = [automated_error]
         
         # If no logs were printed, inform the user
         if not load_logs_printed and not interaction_logs_printed:
@@ -373,3 +581,88 @@ class BasicTesting:
                     # Skip items that look like stack traces
                     if "at " not in item and not item.count("\n") > 1:
                         print(f"- {item}") 
+    
+    def extract_stack_trace(self, msg: str) -> Optional[str]:
+        """
+        Extract stack trace from an error message.
+        
+        Args:
+            message: The error message that may contain a stack trace
+            
+        Returns:
+            The stack trace if present, otherwise None
+        """
+        if not isinstance(msg, str):
+            return None
+            
+        # Check for common JavaScript runtime errors that might have stack traces
+        runtime_error_patterns = [
+            "is not defined",
+            "is undefined",
+            "cannot read property",
+            "cannot read properties of undefined",
+            "null is not an object",
+            "is not a function",
+            "undefined is not a function",
+            "cannot set property",
+            "cannot access",
+            "referenceerror",
+            "typeerror",
+            "syntaxerror",
+            "urierror",
+            "evalerror",
+            "rangeerror",
+            "p.gamestate",
+            "game_state",
+            "uncaught"
+        ]
+        
+        # If it's a runtime error, treat the entire message as potentially having a stack trace
+        for pattern in runtime_error_patterns:
+            if pattern.lower() in msg.lower():
+                return msg
+            
+        # Check for common stack trace patterns
+        if "    at " in msg or "at " in msg:
+            # Handle different stack trace formats
+            
+            # Handle ES6 module imports (which often have different stack trace formats)
+            # Look for patterns like "at ModuleEvaluation" or references to import/export
+            if any(pattern in msg for pattern in [
+                "ModuleEvaluation", 
+                "import", 
+                "export", 
+                "module", 
+                "ModuleNamespaceObject",
+                "node_modules",
+                ".js:",
+                ".mjs:",
+                ".jsx:",
+                ".ts:",
+                ".tsx:",
+                "import(",
+                "import.",
+                "imported from",
+                "Failed to load module from",
+                "Dynamic import",
+                "Uncaught SyntaxError"
+            ]):
+                # Make sure we keep the full stack trace including ES6 module information
+                return msg
+            
+            # Standard stack trace format
+            return msg
+            
+        # Look for error locations that might indicate a stack trace
+        if re.search(r'at .+\.js:[0-9]+:[0-9]+', msg) or re.search(r'[a-zA-Z0-9_\-./]+\.(js|mjs|jsx|ts|tsx):[0-9]+', msg):
+            return msg
+        
+        # Look for module import errors
+        if re.search(r'(Failed to|Error|Cannot) (load|resolve|find|import) (module|file|dependency) [\'"]([^\'"])+[\'"]', msg, re.IGNORECASE):
+            return msg
+                
+        # Check for gameState specific errors
+        if "gamestate" in msg.lower() or "p.gamestate" in msg.lower() or "game phase" in msg.lower():
+            return msg
+            
+        return None 

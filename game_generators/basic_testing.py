@@ -111,12 +111,12 @@ class BasicTesting:
             "undefined is not a function",
             "cannot set property",
             "cannot access",
-            "ReferenceError",
-            "TypeError",
-            "SyntaxError",
-            "URIError",
-            "EvalError",
-            "RangeError"
+            "referenceerror",
+            "typeerror",
+            "syntaxerror",
+            "urierror",
+            "evalerror",
+            "rangeerror"
         ]
         
         # If it's a runtime error, treat the entire message as potentially having a stack trace
