@@ -186,7 +186,7 @@ Current html code:
         code_blocks = re.findall(
             r"<updated_code filename=\"(.*?)\">(.*?)</updated_code>", response, re.DOTALL
         )
-        
+        print("code_blocks: ", code_blocks)
         js_files = {}
         for filename, code in code_blocks:
             if filename.endswith(".js"):
@@ -204,25 +204,7 @@ Current html code:
                 
         return js_files
 
-    def extract_updated_html(self, response: str) -> str:
-        """
-        Extract HTML code from LLM response
-        
-        Args:
-            response: LLM response
-            
-        Returns:
-            HTML code as a string, or empty string if not found
-        """
-        # Extract HTML code using the format specified in the system prompt
-        html_matches = re.findall(
-            r"<updated_html filename=\"(.*?)\">(.*?)</updated_html>", response, re.DOTALL
-        )
-        
-        # Return the content of the first match if found, otherwise empty string
-        if html_matches and len(html_matches) > 0:
-            return html_matches[0][1].strip()
-        return ""
+
     
     def extract_updated_game_description(self, response: str) -> str:
         """
@@ -359,26 +341,28 @@ Current html code:
             
             # Get list of filenames that will be updated
             updated_filenames = set(updated_files.keys())
+            print("updated_filenames: ", updated_filenames)
             
             # Copy only specific files from source directory, excluding those that will be updated
-            for item in os.listdir(game_dir):
-                source = os.path.join(game_dir, item)
-                destination = os.path.join(iteration_dir, item)
-                
-                # Skip directories like vibe_coding_updates to avoid recursive copying
-                if item.endswith("_updates") or item.endswith("_orig_files"):
-                    continue
+            if output_dir != game_dir:
+                for item in os.listdir(game_dir):
+                    source = os.path.join(game_dir, item)
+                    destination = os.path.join(iteration_dir, item)
                     
-                if os.path.isdir(source):
-                    # Copy directories recursively
-                    if not os.path.exists(destination):
-                        shutil.copytree(source, destination)
-                elif item not in updated_filenames:
-                    # Only copy HTML files and other non-JS, non-JSON files (assets)
-                    # Skip JSON files as we'll generate new metadata
-                    _, ext = os.path.splitext(item)
-                    if ext.lower() != '.json':  # Skip JSON files
-                        shutil.copy2(source, destination)
+                    # Skip directories like vibe_coding_updates to avoid recursive copying
+                    if item.endswith("_updates") or item.endswith("_orig_files"):
+                        continue
+                        
+                    if os.path.isdir(source):
+                        # Copy directories recursively
+                        if not os.path.exists(destination):
+                            shutil.copytree(source, destination)
+                    elif item not in updated_filenames:
+                        # Only copy HTML files and other non-JS, non-JSON files (assets)
+                        # Skip JSON files as we'll generate new metadata
+                        _, ext = os.path.splitext(item)
+                        if ext.lower() != '.json':  # Skip JSON files
+                            shutil.copy2(source, destination)
             
             # Save the updated JavaScript files
             for filename, content in updated_files.items():
@@ -618,8 +602,6 @@ Current html code:
             if (self.mode == "guided_iteration" or self.mode == "basic_test_fix") and not feedback:
                 raise ValueError(f"Feedback is required for {self.mode} mode")
             
-            print(feedback)
-            exit()
             # Generate user prompt
             user_prompt = self.generate_user_prompt(game_dir, feedback)
             print(feedback)
@@ -824,7 +806,7 @@ Current html code:
 Output the code change plan, the updated code, and finally explain the changes in their respective tags for changes to address the feedback.
 Do not rewrite files unless you want to make any changes. Any file that is not updated will be left unchanged from the original game code.
 
-Based on the feedback, write the plan for changing the game code. Describe changes to each file and the reason for the change.
+Based on the feedback and your code review, write the plan for changing the game code. Describe changes to each file that you will be updating and the reason for the change.
 <code_change_plan>
 ... (file_name: Plan of changes to the file and reason for the change)
 </code_change_plan>

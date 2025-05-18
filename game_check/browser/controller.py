@@ -255,7 +255,7 @@ class GameBrowserController:
         os.makedirs(screenshots_dir, exist_ok=True)
         
         async with async_playwright() as p:
-            browser = await p.firefox.launch(headless=False)  # Keep headless=False for debugging
+            browser = await p.firefox.launch(headless=True)  # Keep headless=False for debugging
             context = await browser.new_context()
             
             # Step 2: Use context.add_init_script() for earliest possible error catching
@@ -939,7 +939,7 @@ class GameBrowserController:
         os.makedirs(screenshots_dir, exist_ok=True)
         
         async with async_playwright() as p:
-            browser = await p.firefox.launch(headless=False)
+            browser = await p.firefox.launch(headless=True)
             context = await browser.new_context()
             page = await context.new_page()
             

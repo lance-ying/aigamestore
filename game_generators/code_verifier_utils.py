@@ -25,8 +25,6 @@ def generate_feedback_from_results(results: Dict[str, Any], mode: str) -> str:
         feedback = """
 <feedback>
 We conducted basic tests on the game code. The test checks if the game loads in the browser, followed by an interaction test where the game must start on pressing ENTER, and if gameplay is conducted by pressing control keys without any errors or crashing due to implementation errors.
-Some of the common causes of errors are: syntax errors, undefined variables, module/import errors, p5 functions not being called correctly, console errors, rendering errors leading to visual glitches or not updating the game state, and other errors.
-Based on the test, we are reporting based on the first error that we found. Check for other code errors which might lead to similar issues and fix them.
 Here are the error messages:
 
 """
@@ -480,13 +478,23 @@ The game loads but fails the interaction test. Expected output is that random ke
                             feedback += f"{error}\n"
 
             feedback += """
-Please iterate on the game code with the following feedback to make the game playable and responsive to key presses following the game mechanics.
+Please consider what might be causing this issue and update the game code accordingly.
 </feedback>
 """
 
         feedback += """
 <important>
-Be careful while making changes to the code, and make sure you are not introducing any new errors. Game code should be updated to address the feedback. Make sure it loads without errors, starts when ENTER is pressed, and pressing control keys leads to changes in the game state and update the rendering.
+The error messages are based on the first error that was found. There might be other implementation bugs which might lead to similar issues preventing a error-free gameplay experience. Please review the code and fix all the errors.
+Some of the common causes of errors are:
+- incorrect or missing imports and exports,
+- syntax errors,
+- incorrect conditional statements for setting the color in p5. Use ternary operator to set colors for conditional rendering: Example: `p.fill(...(CONDITION ? [255, 220, 150] : [40, 30, 20]));`
+- undefined variables,
+- redeclaration of variables,
+- p5 functions not being called correctly,
+
+You can rewrite, add, or remove code to fix the issue. Be careful while making changes to the code, and make sure you are not introducing any new errors. 
+Make sure it loads without errors, starts when ENTER is pressed, and pressing control keys leads to changes in the game state and update the rendering.
 </important>"""
 
     elif mode == "vibe_coding":
