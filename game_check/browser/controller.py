@@ -255,261 +255,123 @@ class GameBrowserController:
         os.makedirs(screenshots_dir, exist_ok=True)
         
         async with async_playwright() as p:
-            browser = await p.firefox.launch(headless=True)
+            browser = await p.firefox.launch(headless=False)  # Keep headless=False for debugging
             context = await browser.new_context()
             
-            # Special script to detect syntax errors early
-            detect_script = """
-            // Log any existing errors
-            window.onload = function() {
-                if (window.syntaxErrors) {
-                    console.error('Syntax errors detected:', window.syntaxErrors);
-                }
-            };
-            
-            // Track all script elements to check for syntax errors
-            const originalCreateElement = document.createElement;
-            document.createElement = function() {
-                const element = originalCreateElement.apply(document, arguments);
-                
-                if (arguments[0].toLowerCase() === 'script') {
-                    // Capture syntax errors from script loading
-                    element.onerror = function(event) {
-                        const src = element.src || 'inline script';
-                        console.error(`Script error: ${src}`, event);
-                        
-                        // Try to extract detailed error info
-                        if (!window.syntaxErrors) {
-                            window.syntaxErrors = [];
-                        }
-                        window.syntaxErrors.push({
-                            src: src,
-                            error: event
-                        });
+            # Step 2: Use context.add_init_script() for earliest possible error catching
+            await context.add_init_script("""
+                window.earlyJsErrorEvents = []; // Store full event objects
+                window.addEventListener('error', (event) => {
+                    // event is an ErrorEvent object
+                    const errorData = {
+                        message: event.message,
+                        filename: event.filename,
+                        lineno: event.lineno,
+                        colno: event.colno,
+                        error_type: event.error ? event.error.name : 'Unknown', // e.g., SyntaxError
+                        error_stack: event.error ? event.error.stack : null,
+                        timestamp: new Date().toISOString()
                     };
-                }
-                return element;
-            };
-            
-            // Enhanced error tracking - collect all errors
-            window.jsErrors = [];
-            window.moduleErrors = [];
-            window.undefinedVars = [];
-            
-            // Global error handler
-            window.onerror = function(message, source, lineno, colno, error) {
-                console.error('Caught JS error:', message, source, lineno);
-                
-                const errorInfo = {
-                    message: message,
-                    source: source,
-                    lineno: lineno,
-                    colno: colno,
-                    stack: error ? error.stack : null,
-                    timestamp: new Date().toISOString()
-                };
-                
-                // Push to general errors collection
-                window.jsErrors.push(errorInfo);
-                
-                // Check if it's an undefined variable error
-                if (message && (
-                    message.includes('is not defined') || 
-                    message.includes('undefined') ||
-                    message.includes('null') ||
-                    message.includes('cannot read property')
-                )) {
-                    // Try to extract variable name
-                    let varName = 'unknown';
-                    const varMatch = message.match(/([a-zA-Z0-9_$]+) is (not defined|undefined)/);
-                    if (varMatch) {
-                        varName = varMatch[1];
-                    }
-                    
-                    // Add to undefined vars collection
-                    window.undefinedVars.push({
-                        ...errorInfo,
-                        variableName: varName
+                    window.earlyJsErrorEvents.push(errorData);
+                    // Also explicitly console.error to ensure it's caught by Playwright's console listener
+                    console.error('[EarlyErrorCatch] ' + event.message + ' at ' + event.filename + ':' + event.lineno);
+                });
+
+                window.addEventListener('unhandledrejection', (event) => {
+                    // event is a PromiseRejectionEvent
+                    window.earlyJsErrorEvents.push({
+                        message: event.reason ? (event.reason.message || String(event.reason)) : 'Unhandled Promise Rejection',
+                        filename: 'N/A (Promise)',
+                        lineno: 0,
+                        colno: 0,
+                        error_type: event.reason ? event.reason.name : 'PromiseRejection',
+                        error_stack: event.reason ? event.reason.stack : null,
+                        timestamp: new Date().toISOString()
                     });
+                });
+                
+                // Enhanced error tracking - collect all errors
+                window.jsErrors = [];
+                window.moduleErrors = [];
+                window.undefinedVars = [];
+                
+                // Global error handler to capture additional context
+                window.onerror = function(message, source, lineno, colno, error) {
+                    console.error('Caught JS error:', message, source, lineno);
                     
-                    console.error(`Variable '${varName}' is undefined/not defined. Check initialization and spelling.`);
-                }
-                
-                // Check if it's a module/import error
-                if (message && (
-                    message.includes('import') || 
-                    message.includes('export') ||
-                    message.includes('module') ||
-                    source && (source.includes('import') || source.includes('export'))
-                )) {
-                    // Add to module errors collection
-                    window.moduleErrors.push(errorInfo);
-                    console.error(`Module/import error detected: ${message}`);
-                }
-                
-                // Return true to indicate we've handled the error
-                return true;
-            };
-            
-            // Enhanced unhandled promise rejection handler
-            window.addEventListener('unhandledrejection', function(event) {
-                console.error('Unhandled Promise Rejection:', event.reason);
-                
-                const errorInfo = {
-                    message: event.reason.message || 'Unhandled Promise Rejection',
-                    reason: event.reason.toString(),
-                    stack: event.reason.stack,
-                    timestamp: new Date().toISOString()
-                };
-                
-                // Push to general errors collection
-                window.jsErrors.push(errorInfo);
-                
-                // Extract source information from stack trace if available
-                let sourceFile = 'unknown';
-                if (event.reason && event.reason.stack) {
-                    const stackMatch = event.reason.stack.match(/at (?:.*?)([a-zA-Z0-9._\-/]+\.(js|mjs|ts|jsx|tsx)):[0-9]+(?::[0-9]+)?/);
-                    if (stackMatch) {
-                        sourceFile = stackMatch[1];
-                        errorInfo.sourceFile = sourceFile;
-                    }
-                }
-                
-                // Check if it's a module error
-                if (errorInfo.message && (
-                    errorInfo.message.includes('import') || 
-                    errorInfo.message.includes('export') ||
-                    errorInfo.message.includes('module')
-                )) {
-                    window.moduleErrors.push(errorInfo);
-                }
-            });
-            
-            // Enhanced dynamic import error tracking
-            const originalImport = window.import;
-            if (typeof originalImport === 'function') {
-                window.import = function() {
-                    return originalImport.apply(this, arguments)
-                        .catch(error => {
-                            console.error(`Dynamic import error:`, error);
-                            
-                            const errorInfo = {
-                                message: error.message,
-                                modulePath: arguments[0],
-                                stack: error.stack,
-                                timestamp: new Date().toISOString()
-                            };
-                            
-                            window.moduleErrors.push(errorInfo);
-                            window.jsErrors.push(errorInfo);
-                            
-                            // Re-throw the error to maintain original behavior
-                            throw error;
-                        });
-                };
-            }
-            
-            // Track resource loading errors with enhanced information
-            const originalCreateElement = document.createElement;
-            document.createElement = function() {
-                const element = originalCreateElement.apply(document, arguments);
-                
-                if (arguments[0].toLowerCase() === 'script') {
-                    element.addEventListener('error', (e) => {
-                        const src = e.target.src || 'inline script';
-                        const errorInfo = {
-                            type: 'script',
-                            src: src,
-                            filename: src.split('/').pop(),
-                            timestamp: new Date().toISOString()
-                        };
-                        window.jsErrors.push(errorInfo);
-                        
-                        // Check if it's a module
-                        if (e.target.type === 'module' || src.includes('module') || src.includes('import')) {
-                            window.moduleErrors.push(errorInfo);
-                            console.error(`Module script load error: ${src}`);
-                        } else {
-                            console.error(`Script load error: ${src}`);
+                    const errorInfo = {
+                        message: message,
+                        source: source,
+                        lineno: lineno,
+                        colno: colno,
+                        stack: error ? error.stack : null,
+                        timestamp: new Date().toISOString()
+                    };
+                    
+                    // Push to general errors collection
+                    window.jsErrors.push(errorInfo);
+                    
+                    // Check if it's an undefined variable error
+                    if (message && (
+                        message.includes('is not defined') || 
+                        message.includes('undefined') ||
+                        message.includes('null') ||
+                        message.includes('cannot read property')
+                    )) {
+                        // Try to extract variable name
+                        let varName = 'unknown';
+                        const varMatch = message.match(/([a-zA-Z0-9_$]+) is (not defined|undefined)/);
+                        if (varMatch) {
+                            varName = varMatch[1];
                         }
-                    });
-                }
-                
-                if (arguments[0].toLowerCase() === 'link' && element.rel === 'stylesheet') {
-                    element.addEventListener('error', (e) => {
-                        const href = e.target.href;
-                        console.error(`Stylesheet load error: ${href}`);
-                        window.jsErrors.push({
-                            type: 'stylesheet',
-                            src: href,
-                            filename: href.split('/').pop(),
-                            timestamp: new Date().toISOString()
+                        
+                        // Add to undefined vars collection
+                        window.undefinedVars.push({
+                            ...errorInfo,
+                            variableName: varName
                         });
-                    });
-                }
-                
-                if (arguments[0].toLowerCase() === 'img') {
-                    element.addEventListener('error', (e) => {
-                        const src = e.target.src;
-                        console.error(`Image load error: ${src}`);
-                        window.jsErrors.push({
-                            type: 'image',
-                            src: src,
-                            filename: src.split('/').pop(),
-                            timestamp: new Date().toISOString()
-                        });
-                    });
-                }
-                
-                return element;
-            };
-            """
-            
-            # Add a special route to intercept HTML and inject early error detection
-            async def intercept_html(route, request):
-                response = await route.fetch()
-                content_type = response.headers.get('content-type', '')
-                
-                if 'text/html' in content_type:
-                    # Get original HTML content
-                    html = await response.text()
+                        
+                        console.error(`Variable '${varName}' is undefined/not defined. Check initialization and spelling.`);
+                    }
                     
-                    # Insert our script as early as possible to detect syntax errors
-                    head_pos = html.find('<head>')
-                    if head_pos >= 0:
-                        html = html[:head_pos+6] + f'<script>{detect_script}</script>' + html[head_pos+6:]
-                    else:
-                        # If no head tag, try to insert at the start of body or html
-                        body_pos = html.find('<body>')
-                        if body_pos >= 0:
-                            html = html[:body_pos+6] + f'<script>{detect_script}</script>' + html[body_pos+6:]
-                        else:
-                            html_pos = html.find('<html>')
-                            if html_pos >= 0:
-                                html = html[:html_pos+6] + f'<script>{detect_script}</script>' + html[html_pos+6:]
+                    // Check for redeclaration errors
+                    if (message && message.includes('redeclaration')) {
+                        console.error(`Redeclaration Error: ${message} at ${source}:${lineno}`);
+                    }
                     
-                    await route.fulfill(
-                        status=response.status,
-                        headers={**response.headers, 'content-length': str(len(html))},
-                        body=html
-                    )
-                else:
-                    await route.continue_()
+                    // Check if it's a module/import error
+                    if (message && (
+                        message.includes('import') || 
+                        message.includes('export') ||
+                        message.includes('module') ||
+                        source && (source.includes('import') || source.includes('export'))
+                    )) {
+                        // Add to module errors collection
+                        window.moduleErrors.push(errorInfo);
+                        console.error(`Module/import error detected: ${message}`);
+                    }
+                };
+            """)
             
-            # Apply the interception to all HTML pages
-            await context.route('**/*.html', intercept_html)
-            await context.route(url, intercept_html)
-            
-            # Capture console logs and errors
+            # Now create the page
             page = await context.new_page()
             
-            # Enable verbose logging for all browser operations
-            page.on("console", lambda msg: logging.info(f"CONSOLE: {msg.type} - {msg.text}"))
-            
-            # Listen for all console messages
+            # Step 1 & 3: Prioritize Playwright's native handlers with enhanced logging
             async def handle_console(msg: ConsoleMessage):
-                msg_type = msg.type.lower()
-                msg_text = f"{msg.text}"
+                logging.critical(
+                    f"RAW PLAYWRIGHT CONSOLE EVENT --- Type: {msg.type()}, Text: \"{msg.text()}\", "
+                    f"Location: {msg.location()}"
+                )
+                
+                msg_type = msg.type().lower()
+                msg_text = msg.text()
+                msg_text_lower = msg_text.lower()
+                
+                # Get location data for better source tracking
+                loc = msg.location()
+                source_file = loc.get('url')
+                line_number = loc.get('lineNumber')
+                column_number = loc.get('columnNumber')
                 
                 # Store in the appropriate category
                 if msg_type in result["console_logs"]:
@@ -521,368 +383,182 @@ class GameBrowserController:
                 if msg_type == "error":
                     result["console_errors"].append(f"error: {msg_text}")
                 
-                # Extract source file and line info from console error message
-                source_file = None
-                line_number = None
-                column_number = None
-                
-                # Try to extract source information from console message
-                # Pattern like: "filename.js:123:45" or "path/to/filename.js:123:45"
-                file_match = re.search(r'([a-zA-Z0-9._\-/\\]+\.(js|css|html|jsx|tsx))(?::([0-9]+))?(?::([0-9]+))?', msg_text)
-                if file_match:
-                    source_file = file_match.group(1)
-                    line_number = int(file_match.group(3)) if file_match.group(3) else None
-                    column_number = int(file_match.group(4)) if file_match.group(4) else None
-                    
-                # Create structured error for console errors
-                if msg_type == "error":
-                    structured_error = self._create_structured_error(
-                        message=msg_text,
-                        error_type="console_error",
-                        source_file=source_file,
-                        line_number=line_number,
-                        column_number=column_number,
-                        context="console_message"
-                    )
-                    result["structured_errors"].append(structured_error)
-                
-                # Check for specific error patterns
-                lower_text = msg_text.lower()
-                
-                # Debug log for all error messages to ensure we're seeing them
-                if msg_type == "error" or "error" in lower_text:
-                    logging.error(f"RAW BROWSER ERROR: {msg_text}")
-                
-                # Check for network errors
-                if "failed to load resource" in lower_text or "net::" in lower_text:
-                    result["network_errors"].append(msg_text)
-                    # Add structured network error
-                    network_error = self._create_structured_error(
-                        message=msg_text,
-                        error_type="network_error",
-                        source_file=source_file,
-                        line_number=line_number,
-                        context="resource_loading"
-                    )
-                    result["structured_errors"].append(network_error)
-                    
-                # Improved syntax error detection with more patterns
+                # Define expanded syntax error patterns
                 syntax_error_patterns = [
                     "parseerror", 
                     "syntax error", 
                     "syntaxerror", 
-                    "unexpected token", 
+                    "unexpected token",
                     "is an invalid identifier",
                     "invalid identifier", 
                     "unexpected identifier", 
                     "unexpected end of input", 
                     "missing )", 
                     "missing }", 
-                    "missing ]"
+                    "missing ]", 
+                    "missing :",  # Added missing :
+                    "redeclaration"
                 ]
                 
-                if any(pattern in lower_text for pattern in syntax_error_patterns):
-                    result["parse_errors"].append(msg_text)
-                    logging.error(f"Syntax error detected: {msg_text}")
+                # Check for syntax errors specifically
+                if msg_type == "error":
+                    is_syntax_error_console = False
                     
-                    # Add structured syntax error
-                    syntax_error = self._create_structured_error(
+                    # Check for syntax errors based on patterns
+                    if any(pattern in msg_text_lower for pattern in syntax_error_patterns):
+                        is_syntax_error_console = True
+                        error_type_console = "syntax_error"
+                        result["parse_errors"].append(msg_text)
+                        logging.error(f"CONSOLE Syntax Error: {msg_text} at {source_file}:{line_number}")
+                    else:
+                        error_type_console = "console_error"  # Generic console error
+                        
+                    # Create structured error for all console errors
+                    structured_error = self._create_structured_error(
                         message=msg_text,
-                        error_type="syntax_error",
+                        error_type=error_type_console,
                         source_file=source_file,
                         line_number=line_number,
                         column_number=column_number,
-                        context="syntax"
+                        context="console_message"
                     )
-                    result["structured_errors"].append(syntax_error)
+                    result["structured_errors"].append(structured_error)
                     
-                # Source map errors
-                if "source map" in lower_text and "error" in lower_text:
-                    result["parse_errors"].append(msg_text)
+                    # Check for specific error types to categorize them correctly
                     
-                    # Add structured source map error
-                    sourcemap_error = self._create_structured_error(
-                        message=msg_text,
-                        error_type="sourcemap_error",
-                        source_file=source_file,
-                        line_number=line_number,
-                        context="source_mapping"
-                    )
-                    result["structured_errors"].append(sourcemap_error)
+                    # Check for network errors
+                    if "failed to load resource" in msg_text_lower or "net::" in msg_text_lower:
+                        result["network_errors"].append(msg_text)
+                        network_error = self._create_structured_error(
+                            message=msg_text,
+                            error_type="network_error",
+                            source_file=source_file,
+                            line_number=line_number,
+                            context="resource_loading"
+                        )
+                        result["structured_errors"].append(network_error)
                 
                 # Log to Python console for debugging
                 log_level = logging.INFO if msg_type != "error" else logging.ERROR
                 logging.log(log_level, f"Browser console {msg_type}: {msg_text}")
             
-            # Listen for page errors (including syntax errors)
+            # Improved page error handler
             async def handle_page_error(error):
-                # Try to extract source file information from the error message
-                error_str = str(error)
+                logging.critical(
+                    f"RAW PLAYWRIGHT PAGEERROR EVENT --- Error Type: {type(error)}, "
+                    f"Error Name: {error.name if hasattr(error, 'name') else 'Unknown'}, "
+                    f"Error Message: \"{error.message if hasattr(error, 'message') else str(error)}\", "
+                    f"Error Stack: \"{error.stack if hasattr(error, 'stack') else 'No stack'}\""
+                )
+                
+                error_message = getattr(error, 'message', str(error))
+                error_name = getattr(error, 'name', type(error).__name__)
+                error_stack = getattr(error, 'stack', None)
+                
+                error_message_lower = error_message.lower()
+                error_name_lower = error_name.lower()
+                
+                # Default to runtime, override if SyntaxError is clear
+                error_type = "runtime_error"
+                is_syntax_error = False
+                
+                if "syntaxerror" in error_name_lower or any(pattern in error_message_lower for pattern in [
+                    "syntax error", 
+                    "unexpected token", 
+                    "invalid identifier", 
+                    "unexpected identifier", 
+                    "unexpected end of input", 
+                    "missing", 
+                    "redeclaration"
+                ]):
+                    error_type = "syntax_error"
+                    is_syntax_error = True
+                
+                # Try to extract source file, line, and column from the stack or message
                 source_file = None
                 line_number = None
                 column_number = None
-                error_type = "runtime_error"  # Default error type
                 
-                # More comprehensive matching for source file patterns in error messages
-                # 1. First try to match the common pattern: "at Function (file.js:123:45)"
-                file_match = re.search(r'at (?:.*?)(?:\()?([a-zA-Z0-9._\-/]+\.(js|mjs|ts|jsx|tsx))(?::([0-9]+))?(?::([0-9]+))?(?:\))?', error_str)
-                if file_match:
-                    source_file = file_match.group(1)
-                    line_number = int(file_match.group(3)) if file_match.group(3) else None
-                    column_number = int(file_match.group(4)) if file_match.group(4) else None
-                else:
-                    # 2. Try to match module import patterns: "Error loading module from "file.js""
-                    module_match = re.search(r'(?:loading|importing|from|module) ["\']([a-zA-Z0-9._\-/]+\.(js|mjs|ts|jsx|tsx))["\']', error_str)
-                    if module_match:
-                        source_file = module_match.group(1)
-                        error_type = "module_error"
-                    else:
-                        # 3. Try to match filename patterns in the error message
-                        filename_match = re.search(r'(?:in|at|from) ["\']?([a-zA-Z0-9._\-/]+\.(js|mjs|ts|jsx|tsx))["\']?', error_str)
-                        if filename_match:
-                            source_file = filename_match.group(1)
-                
-                # Extract just the filename without full path for cleaner display
-                filename = None
-                if source_file and '/' in source_file:
-                    filename = source_file.split('/')[-1]
-                else:
-                    filename = source_file
-                
-                # Format the error message with source file if available
-                if source_file:
-                    error_msg = f"Page error: {error} [Source: {filename}]"
-                else:
-                    error_msg = f"Page error: {error}"
+                # Extract from stack trace
+                if error_stack:
+                    # Try pattern: "at http://localhost:8000/file.js:287:11"
+                    match = re.search(r'at (?:.*?)(?:\()?([^\s(]+?):([0-9]+):([0-9]+)(?:\))?', 
+                                      error_stack.split('\n')[0] if '\n' in error_stack else error_stack)
+                    if not match:
+                        # Try another common pattern if first fails
+                        match = re.search(r'([^\s@]+):([0-9]+):([0-9]+)', 
+                                          error_stack.split('\n')[0] if '\n' in error_stack else error_stack)
                     
-                result["js_exceptions"].append(error_msg)
-                logging.error(f"RAW PAGE ERROR: {error}")
+                    if match:
+                        source_file = match.group(1)
+                        try:
+                            line_number = int(match.group(2))
+                            column_number = int(match.group(3))
+                        except ValueError:
+                            pass
                 
-                # Add to console_errors for backwards compatibility
-                result["console_errors"].append(error_msg)
+                # If stack parsing failed, try from message (for syntax errors)
+                if not source_file and is_syntax_error:
+                    # Example: "SyntaxError: redeclaration of const playerCenterX automated_testing_controller.js:287:11"
+                    file_match_in_message = re.search(r'([a-zA-Z0-9._\-/\\]+\.(?:js|mjs))(?::([0-9]+))?(?::([0-9]+))?', error_message)
+                    if file_match_in_message:
+                        source_file = file_match_in_message.group(1)
+                        if file_match_in_message.group(2):
+                            line_number = int(file_match_in_message.group(2))
+                        if file_match_in_message.group(3) and file_match_in_message.group(3).isdigit():
+                            column_number = int(file_match_in_message.group(3))
                 
-                # Add to console_logs error category
-                result["console_logs"]["error"].append(error_msg)
+                logging.error(f"PAGEERROR Handler: Type={error_type}, Msg='{error_message}', File={source_file}, Line={line_number}")
                 
-                # Create structured error
+                if is_syntax_error:
+                    result["parse_errors"].append(f"{error_name}: {error_message}")
+                else:
+                    result["js_exceptions"].append(f"{error_name}: {error_message}")
+                
+                result["console_errors"].append(f"{error_name}: {error_message}")  # For backward compatibility
+                result["console_logs"]["error"].append(f"[PageError] {error_name}: {error_message}")
+                
                 structured_error = self._create_structured_error(
-                    message=str(error),
+                    message=error_message,
                     error_type=error_type,
                     source_file=source_file,
                     line_number=line_number,
                     column_number=column_number,
-                    stack=getattr(error, 'stack', None),
-                    context="page_error"
+                    stack=error_stack,
+                    context="page_error_listener"
                 )
                 result["structured_errors"].append(structured_error)
                 
-                # Check for common runtime errors like "X is undefined"
-                error_text = str(error).lower()
-                runtime_error_patterns = [
-                    "is not defined",
-                    "is undefined",
-                    "cannot read property",
-                    "cannot read properties of undefined",
-                    "null is not an object",
-                    "is not a function"
-                ]
-                
-                # Special handling for runtime errors to preserve the full stack trace
-                if any(pattern in error_text for pattern in runtime_error_patterns):
-                    # Get the original error message with stack trace
-                    full_error = str(error)
-                    # Add this as a special entry to ensure it's captured in feedback
-                    result["console_logs"]["error"].append(full_error)
+                # Specific handling for redeclaration errors
+                if "redeclaration" in error_message_lower:
+                    redeclaration_error = f"Syntax Error: {error_message}"
+                    if source_file and line_number:
+                        redeclaration_error += f" at {source_file}:{line_number}"
                     
-                    # Extract the variable name if possible
-                    for pattern in runtime_error_patterns:
-                        if pattern in error_text:
-                            # Try to extract the variable name
-                            var_match = re.search(r'([a-zA-Z0-9_$]+) is (not defined|undefined)', error_text)
-                            if var_match:
-                                var_name = var_match.group(1)
-                                # Add a clearer message highlighting the variable name and source file
-                                source_info = f" [Source: {filename}]" if source_file else ""
-                                clear_msg = f"Runtime Error: Variable '{var_name}' {pattern}. Check variable initialization and spelling.{source_info}"
-                                result["js_exceptions"].append(clear_msg)
-                                result["console_errors"].append(clear_msg)
-                                result["console_logs"]["error"].append(clear_msg)
-                                
-                                # Add more specific structured error for variable errors
-                                var_error = self._create_structured_error(
-                                    message=f"Variable '{var_name}' {pattern}",
-                                    error_type="reference_error",
-                                    source_file=source_file,
-                                    line_number=line_number,
-                                    column_number=column_number,
-                                    stack=getattr(error, 'stack', None),
-                                    context="undefined_variable"
-                                )
-                                result["structured_errors"].append(var_error)
-                                
-                                # Log this clearly for debugging
-                                logging.error(f"VARIABLE ERROR: {clear_msg}")
-                            break
-                
-                # Check if it's a parse/syntax error
-                syntax_error_patterns = [
-                    "syntaxerror", 
-                    "parseerror", 
-                    "syntax error", 
-                    "parse error", 
-                    "unexpected token", 
-                    "is an invalid identifier",
-                    "invalid identifier", 
-                    "unexpected identifier", 
-                    "unexpected end of input"
-                ]
-                
-                if any(pattern in error_text for pattern in syntax_error_patterns):
-                    # Include source file in the syntax error message if available
-                    source_info = f" [Source: {filename}]" if source_file else ""
-                    parse_error_msg = f"{error_msg}{source_info}"
-                    result["parse_errors"].append(parse_error_msg)
-                    logging.error(f"Syntax error detected in page: {parse_error_msg}")
+                    result["parse_errors"].append(redeclaration_error)
+                    result["js_exceptions"].append(redeclaration_error)
+                    result["console_errors"].append(redeclaration_error)
+                    result["console_logs"]["error"].append(redeclaration_error)
+                    logging.error(f"REDECLARATION ERROR: {redeclaration_error}")
                     
-                    # Add structured syntax error
-                    syntax_error = self._create_structured_error(
-                        message=str(error),
-                        error_type="syntax_error",
-                        source_file=source_file,
-                        line_number=line_number,
-                        column_number=column_number,
-                        stack=getattr(error, 'stack', None),
-                        context="syntax"
-                    )
-                    result["structured_errors"].append(syntax_error)
-                    
-                    # For SyntaxError, add a cleaner message to parse_errors
-                    if "syntaxerror" in error_text:
-                        # Try to extract just the syntax error message without stack trace
-                        error_str = str(error)
-                        if ": " in error_str:
-                            error_message = error_str.split(": ", 1)[1].split("\n")[0].strip()
-                            clean_error = f"Uncaught SyntaxError: {error_message}{source_info}"
-                            result["parse_errors"].append(clean_error)
-                            logging.error(f"Uncaught SyntaxError: {clean_error}")
-                
-                # Explicit check for "false is an invalid identifier" error
-                if "false is an invalid identifier" in error_str:
-                    source_info = f" [Source: {filename}]" if source_file else ""
-                    error_msg = f"Uncaught SyntaxError: false is an invalid identifier{source_info}"
-                    result["parse_errors"].append(error_msg)
-                    logging.error(f"Special syntax error detected in page: {error_msg}")
-                    
-                    # Add structured invalid identifier error
-                    invalid_id_error = self._create_structured_error(
-                        message="false is an invalid identifier",
-                        error_type="syntax_error",
-                        source_file=source_file,
-                        line_number=line_number,
-                        column_number=column_number,
-                        context="invalid_identifier"
-                    )
-                    result["structured_errors"].append(invalid_id_error)
-            
-            # Listen for uncaught exceptions
-            async def handle_exception(exception):
-                # Try to extract source file information from the error message
-                error_str = str(exception)
-                source_file = None
-                
-                # More comprehensive matching for source file patterns in error messages
-                # 1. First try to match the common pattern: "at Function (file.js:123:45)"
-                file_match = re.search(r'at (?:.*?)(?:\()?([a-zA-Z0-9._\-/]+\.(js|mjs|ts|jsx|tsx)):[0-9]+(?::[0-9]+)?(?:\))?', error_str)
-                if file_match:
-                    source_file = file_match.group(1)
-                else:
-                    # 2. Try to match module import patterns: "Error loading module from "file.js""
-                    module_match = re.search(r'(?:loading|importing|from|module) ["\']([a-zA-Z0-9._\-/]+\.(js|mjs|ts|jsx|tsx))["\']', error_str)
-                    if module_match:
-                        source_file = module_match.group(1)
-                    else:
-                        # 3. Try to match filename patterns in the error message
-                        filename_match = re.search(r'(?:in|at|from) ["\']?([a-zA-Z0-9._\-/]+\.(js|mjs|ts|jsx|tsx))["\']?', error_str)
-                        if filename_match:
-                            source_file = filename_match.group(1)
-                
-                # Extract just the filename without full path for cleaner display
-                if source_file and '/' in source_file:
-                    source_filename = source_file.split('/')[-1]
-                else:
-                    source_filename = source_file
-                
-                # Format the error message with source file if available
-                if source_file:
-                    error_msg = f"Uncaught exception: {exception} [Source: {source_filename}]"
-                else:
-                    error_msg = f"Uncaught exception: {exception}"
-                
-                result["js_exceptions"].append(error_msg)
-                logging.error(error_msg)
-                
-                # Add to console_errors for backwards compatibility
-                result["console_errors"].append(error_msg)
-                
-                # Add to console_logs error category
-                result["console_logs"]["error"].append(error_msg)
-                
-                # Create structured error
-                structured_error = self._create_structured_error(
-                    message=str(exception),
-                    error_type="exception",
-                    source_file=source_file,
-                    stack=getattr(exception, 'stack', None),
-                    context="uncaught_exception"
-                )
-                result["structured_errors"].append(structured_error)
-                
-                # Check if it's our target syntax error
-                if "false is an invalid identifier" in str(exception):
-                    source_info = f" [Source: {source_filename}]" if source_file else ""
-                    error_msg = f"Uncaught SyntaxError: false is an invalid identifier{source_info}"
-                    result["parse_errors"].append(error_msg)
-                    result["js_exceptions"].append(error_msg)
-                    result["console_errors"].append(error_msg)
-                    result["console_logs"]["error"].append(error_msg)
-                    
-                    # Add structured invalid identifier error
-                    invalid_id_error = self._create_structured_error(
-                        message="false is an invalid identifier",
-                        error_type="syntax_error",
-                        source_file=source_file,
-                        line_number=line_number,
-                        column_number=column_number,
-                        context="invalid_identifier"
-                    )
-                    result["structured_errors"].append(invalid_id_error)
-                
-                # Check for runtime errors like undefined variables
-                error_text = str(exception).lower()
-                runtime_error_patterns = [
+                # Specific handling for undefined variables
+                if any(pattern in error_message_lower for pattern in [
                     "is not defined",
                     "is undefined",
                     "cannot read property",
                     "cannot read properties of undefined"
-                ]
-                
-                # Handle runtime errors
-                for pattern in runtime_error_patterns:
-                    if pattern in error_text:
-                        # Try to extract the variable name
-                        var_match = re.search(r'([a-zA-Z0-9_$]+) is (not defined|undefined)', error_text)
-                        if var_match:
-                            var_name = var_match.group(1)
-                            # Add clearer message with source file
-                            source_info = f" [Source: {source_filename}]" if source_file else ""
-                            clear_msg = f"Runtime Error: Variable '{var_name}' {pattern}. Check variable initialization and spelling.{source_info}"
-                            result["js_exceptions"].append(clear_msg)
-                            result["console_errors"].append(clear_msg)
-                            result["console_logs"]["error"].append(clear_msg)
-                            logging.error(f"VARIABLE ERROR: {clear_msg}")
-                        # Always keep the full error with stack trace
-                        result["console_logs"]["error"].append(str(exception))
-                        break
+                ]):
+                    # Try to extract the variable name
+                    var_match = re.search(r'([a-zA-Z0-9_$]+) is (not defined|undefined)', error_message_lower)
+                    if var_match:
+                        var_name = var_match.group(1)
+                        # Add a clearer message highlighting the variable name and source file
+                        source_info = f" [Source: {os.path.basename(source_file) if source_file else 'unknown'}]"
+                        clear_msg = f"Runtime Error: Variable '{var_name}' is undefined. Check initialization and spelling.{source_info}"
+                        result["js_exceptions"].append(clear_msg)
+                        result["console_errors"].append(clear_msg)
+                        result["console_logs"]["error"].append(clear_msg)
+                        logging.error(f"VARIABLE ERROR: {clear_msg}")
             
             # Listen for failed network requests
             async def handle_request_failed(request):
@@ -906,272 +582,126 @@ class GameBrowserController:
                 )
                 result["structured_errors"].append(network_error)
             
-            # Listen for resource loading errors (CSS, images, etc.)
-            async def handle_response(response):
-                if response.status >= 400:  # HTTP error codes
-                    url = response.url
-                    status = response.status
-                    error_msg = f"Resource loading error: {url} (Status: {status})"
-                    result["resource_errors"].append(error_msg)
-                    logging.error(error_msg)
-                    
-                    # Add to console errors
-                    result["console_errors"].append(error_msg)
-                    result["console_logs"]["error"].append(error_msg)
-                    
-                    # Add structured resource error
-                    resource_error = self._create_structured_error(
-                        message=error_msg,
-                        error_type="resource_error",
-                        source_file=url,  # Use URL as the source
-                        context="http_error",
-                        stack={"status": status}
-                    )
-                    result["structured_errors"].append(resource_error)
-            
             # Set up all event listeners
             page.on("console", handle_console)
             page.on("pageerror", handle_page_error)
             page.on("crash", lambda: logging.error("Page crashed"))
             page.on("requestfailed", handle_request_failed)
-            page.on("response", handle_response)
-            
-            # Custom error extraction function
-            await page.evaluate("""() => {
-                // Report all syntax errors immediately
-                window.checkForSyntaxErrors = function() {
-                    try {
-                        // Try to find any syntax errors in inline scripts
-                        const scripts = document.querySelectorAll('script:not([src])');
-                        scripts.forEach((script, index) => {
-                            try {
-                                // Try to compile the script content to check for syntax errors
-                                new Function(script.textContent);
-                            } catch (e) {
-                                if (e instanceof SyntaxError) {
-                                    console.error(`Syntax error in inline script #${index}: ${e.message}`);
-                                    // Check specifically for "false is an invalid identifier"
-                                    if (e.message.includes("false is an invalid identifier")) {
-                                        console.error("Detected critical syntax error: false is an invalid identifier");
-                                    }
-                                }
-                            }
-                        });
-                    } catch (e) {
-                        console.error("Error checking for syntax errors:", e);
-                    }
-                };
-                
-                // Run syntax check after a short delay
-                setTimeout(window.checkForSyntaxErrors, 500);
-                
-                // Add additional error listeners
-                window.addEventListener('error', (event) => {
-                    // Get source file and line information
-                    const sourceInfo = event.filename ? ` [Source: ${event.filename.split('/').pop()}]` : '';
-                    console.error(`JS Error: ${event.message}${sourceInfo}`, 'at line', event.lineno);
-                    
-                    // Special handling for syntax errors
-                    if (event.error instanceof SyntaxError) {
-                        console.error(`SyntaxError details: ${event.error.message}${sourceInfo}`);
-                        
-                        // Special check for our target error
-                        if (event.error.message.includes("false is an invalid identifier")) {
-                            console.error(`Detected 'false is an invalid identifier' error${sourceInfo}`);
-                        }
-                    }
-                    
-                    // Specific handling for undefined variables
-                    if (event.message && (
-                        event.message.includes("is not defined") || 
-                        event.message.includes("is undefined") ||
-                        event.message.includes("cannot read property") ||
-                        event.message.includes("Cannot read properties of undefined")
-                    )) {
-                        // Try to extract the variable name
-                        const varMatch = event.message.match(/([a-zA-Z0-9_$]+) is (not defined|undefined)/);
-                        if (varMatch) {
-                            const varName = varMatch[1];
-                            console.error(`Runtime Error: Variable '${varName}' is undefined/not defined${sourceInfo}. Check variable initialization and spelling.`);
-                        }
-                    }
-                });
-                
-                // Add handler for unhandled promise rejections with source tracking
-                window.addEventListener('unhandledrejection', (event) => {
-                    // Try to extract source information from stack trace if available
-                    let sourceInfo = '';
-                    if (event.reason && event.reason.stack) {
-                        const stackMatch = event.reason.stack.match(/at (?:.*?)([a-zA-Z0-9._\-/]+\.(js|mjs|ts|jsx|tsx)):[0-9]+(?::[0-9]+)?/);
-                        if (stackMatch) {
-                            sourceInfo = ` [Source: ${stackMatch[1]}]`;
-                        }
-                    }
-                    console.error(`Unhandled Promise Rejection: ${event.reason}${sourceInfo}`);
-                });
-                
-                // Track resource loading errors
-                const originalCreateElement = document.createElement;
-                document.createElement = function() {
-                    const element = originalCreateElement.apply(document, arguments);
-                    
-                    if (arguments[0].toLowerCase() === 'script') {
-                        element.addEventListener('error', (e) => {
-                            console.error(`Script load error: ${e.target.src} [Source: ${e.target.src.split('/').pop()}]`);
-                        });
-                    }
-                    
-                    if (arguments[0].toLowerCase() === 'link' && element.rel === 'stylesheet') {
-                        element.addEventListener('error', (e) => {
-                            console.error(`Stylesheet load error: ${e.target.href} [Source: ${e.target.href.split('/').pop()}]`);
-                        });
-                    }
-                    
-                    if (arguments[0].toLowerCase() === 'img') {
-                        element.addEventListener('error', (e) => {
-                            console.error(`Image load error: ${e.target.src} [Source: ${e.target.src.split('/').pop()}]`);
-                        });
-                    }
-                    
-                    return element;
-                };
-            }""")
+            page.on("response", lambda response: logging.error(f"Resource error: {response.url}") if response.status >= 400 else None)
             
             try:
                 # Navigate to the page
                 await page.goto(url, wait_until="networkidle", timeout=3000)
                 logging.info(f"Page loaded: {url}")
                 
-                # Wait for the page to be fully loaded and run our custom error checker
+                # Wait for the page to be fully loaded
                 await page.wait_for_timeout(2000)
-                
-                # Direct evaluation to check for specific syntax error
-                try:
-                    await page.evaluate("""() => {
-                        // Run syntax check again
-                        if (window.checkForSyntaxErrors) {
-                            window.checkForSyntaxErrors();
-                        }
-                        
-                        // Check page source for specific error patterns
-                        const pageSource = document.documentElement.outerHTML;
-                        if (pageSource.includes("false is an invalid identifier")) {
-                            console.error("Found 'false is an invalid identifier' in page source");
-                        }
-                    }""")
-                except Exception as e:
-                    logging.error(f"Error running syntax check script: {e}")
-                    # If we got a syntax error here, it's likely what we're looking for
-                    if "false is an invalid identifier" in str(e):
-                        error_msg = "Uncaught SyntaxError: false is an invalid identifier"
-                        result["parse_errors"].append(error_msg)
-                        result["js_exceptions"].append(error_msg)
-                        result["console_errors"].append(error_msg)
-                        result["console_logs"]["error"].append(error_msg)
-                        logging.error(f"Syntax error confirmed: {error_msg}")
-                
-                # Collect detailed JavaScript errors from our enhanced tracking
-                try:
-                    js_errors = await page.evaluate("window.jsErrors || []")
-                    if js_errors and len(js_errors) > 0:
-                        logging.info(f"Collected {len(js_errors)} JavaScript errors from enhanced tracking")
-                        for error in js_errors:
-                            # Format the error message
-                            error_msg = f"JavaScript Error: {error.get('message', 'Unknown error')}"
-                            if 'source' in error and error['source']:
-                                error_msg += f" (Source: {error['source']}:{error.get('lineno', '?')})"
-                            # if 'stack' in error and error['stack']:
-                            #     error_msg += f"\nStack: {error['stack']}"
-                                
-                            # Add to appropriate error collections
-                            result["js_exceptions"].append(error_msg)
-                            result["console_errors"].append(error_msg)
-                            result["console_logs"]["error"].append(error_msg)
-                            logging.error(f"Enhanced JS error: {error_msg}")
-                    
-                    # Collect module-specific errors
-                    module_errors = await page.evaluate("window.moduleErrors || []")
-                    if module_errors and len(module_errors) > 0:
-                        logging.info(f"Collected {len(module_errors)} module/import errors")
-                        
-                        # Add a specific category for module errors
-                        if "module_errors" not in result:
-                            result["module_errors"] = []
-                            
-                        for error in module_errors:
-                            # Format the module error message
-                            error_msg = f"Module/Import Error: {error.get('message', 'Unknown module error')}"
-                            if 'source' in error and error['source']:
-                                # Extract the file name from the source path
-                                if 'source' in error and error['source']:
-                                    source_path = error['source']
-                                    file_name = source_path.split('/')[-1].split(':')[0] if '/' in source_path else source_path.split('\\')[-1].split(':')[0] if '\\' in source_path else source_path
-                                    error['fileName'] = file_name
-                                error_msg += f" (Source: {file_name}:{error.get('lineno', '?')})"
-                            if 'modulePath' in error:
-                                error_msg += f" (Module: {error['modulePath']})"
-                            # if 'stack' in error and error['stack']:
-                            #     error_msg += f"\nStack: {error['stack']}"
-                                
-                            # Add to module errors and general error collections
-                            result["module_errors"].append(error_msg)
-                            result["js_exceptions"].append(error_msg)
-                            result["console_errors"].append(error_msg)
-                            result["console_logs"]["error"].append(error_msg)
-                            logging.error(f"Module error: {error_msg}")
-                    
-                    # Collect undefined variable errors
-                    undefined_vars = await page.evaluate("window.undefinedVars || []")
-                    if undefined_vars and len(undefined_vars) > 0:
-                        logging.info(f"Collected {len(undefined_vars)} undefined variable errors")
-                        
-                        # Add a specific category for undefined variables
-                        if "undefined_vars" not in result:
-                            result["undefined_vars"] = []
-                            
-                        for error in undefined_vars:
-                            # Format the undefined variable error message
-                            var_name = error.get('variableName', 'unknown')
-                            error_msg = f"Undefined Variable: '{var_name}'"
-                            if 'source' in error and error['source']:
-                                # Extract the file name from the source path
-                                if 'source' in error and error['source']:
-                                    source_path = error['source']
-                                    file_name = source_path.split('/')[-1].split(':')[0] if '/' in source_path else source_path.split('\\')[-1].split(':')[0] if '\\' in source_path else source_path
-                                    error['fileName'] = file_name
-                                error_msg += f" (Source: {file_name}:{error.get('lineno', '?')})"
-                            # if 'stack' in error and error['stack']:
-                            #     error_msg += f"\nStack: {error['stack']}"
-                                
-                            # Add to undefined vars and general error collections
-                            result["undefined_vars"].append(error_msg)
-                            result["js_exceptions"].append(error_msg)
-                            result["console_errors"].append(error_msg)
-                            result["console_logs"]["error"].append(error_msg)
-                            logging.error(f"Undefined variable: {error_msg}")
-                    
-                except Exception as e:
-                    logging.error(f"Error collecting enhanced error data: {e}")
                 
                 # Take initial screenshot
                 screenshot_path = await self._save_screenshot(page, screenshots_dir, "state_initial_load.png")
                 if screenshot_path:
                     result["screenshots"].append(screenshot_path)
                 
+                # Retrieve early errors from add_init_script
+                try:
+                    early_errors = await page.evaluate("window.earlyJsErrorEvents || []")
+                    if early_errors:
+                        logging.info(f"Retrieved {len(early_errors)} errors from add_init_script's listeners.")
+                        for err_event in early_errors:
+                            logging.error(
+                                f"EARLY JS ERROR (add_init_script): Type: {err_event.get('error_type')}, "
+                                f"Msg: \"{err_event.get('message')}\", "
+                                f"Src: {err_event.get('filename')}:{err_event.get('lineno')}"
+                            )
+                            
+                            # Determine if it's a syntax error
+                            is_syntax_err = "syntaxerror" in str(err_event.get('error_type', '')).lower() or \
+                                            "syntaxerror" in str(err_event.get('message', '')).lower() or \
+                                            "redeclaration" in str(err_event.get('message', '')).lower()
+                            
+                            error_type_to_report = "syntax_error" if is_syntax_err else err_event.get('error_type', 'js_exception').lower()
+                            
+                            if is_syntax_err:
+                                result["parse_errors"].append(f"Early SyntaxError: {err_event.get('message')} at {err_event.get('filename')}:{err_event.get('lineno')}")
+                            else:
+                                result["js_exceptions"].append(f"Early JS Error: {err_event.get('message')} at {err_event.get('filename')}:{err_event.get('lineno')}")
+                            
+                            structured_error = self._create_structured_error(
+                                message=err_event.get('message'),
+                                error_type=error_type_to_report,
+                                source_file=err_event.get('filename'),
+                                line_number=err_event.get('lineno'),
+                                column_number=err_event.get('colno'),
+                                stack=err_event.get('error_stack'),
+                                context="add_init_script_listener"
+                            )
+                            result["structured_errors"].append(structured_error)
+                            result["console_logs"]["error"].append(f"[EarlyError] {err_event.get('message')}")
+                
+                except Exception as e:
+                    logging.error(f"Error retrieving or processing earlyJsErrorEvents: {e}")
+                
+                # Collect additional error data from enhanced tracking
+                try:
+                    # Get regular JS errors
+                    js_errors = await page.evaluate("window.jsErrors || []")
+                    if js_errors and len(js_errors) > 0:
+                        logging.info(f"Retrieved {len(js_errors)} errors from enhanced error tracking.")
+                        for error in js_errors:
+                            error_msg = f"JS Error: {error.get('message', 'Unknown error')}"
+                            if 'source' in error and error['source']:
+                                error_msg += f" at {error.get('source')}:{error.get('lineno', '?')}"
+                            
+                            result["js_exceptions"].append(error_msg)
+                            result["console_errors"].append(error_msg)
+                            result["console_logs"]["error"].append(error_msg)
+                            logging.error(f"Enhanced tracking: {error_msg}")
+                            
+                            # Check for redeclaration errors specifically
+                            if "redeclaration" in str(error.get('message', '')).lower():
+                                redeclaration_error = f"Syntax Error: {error.get('message')}"
+                                if error.get('source') and error.get('lineno'):
+                                    redeclaration_error += f" at {error.get('source')}:{error.get('lineno')}"
+                                
+                                result["parse_errors"].append(redeclaration_error)
+                                logging.error(f"REDECLARATION ERROR: {redeclaration_error}")
+                    
+                    # Get module errors
+                    module_errors = await page.evaluate("window.moduleErrors || []")
+                    if module_errors and len(module_errors) > 0:
+                        logging.info(f"Retrieved {len(module_errors)} module errors.")
+                        for error in module_errors:
+                            error_msg = f"Module Error: {error.get('message', 'Unknown module error')}"
+                            if 'source' in error and error['source']:
+                                error_msg += f" at {error.get('source')}:{error.get('lineno', '?')}"
+                            
+                            result["js_exceptions"].append(error_msg)
+                            result["console_errors"].append(error_msg)
+                            result["console_logs"]["error"].append(error_msg)
+                            logging.error(f"Module error: {error_msg}")
+                    
+                    # Get undefined variable errors
+                    undefined_vars = await page.evaluate("window.undefinedVars || []")
+                    if undefined_vars and len(undefined_vars) > 0:
+                        logging.info(f"Retrieved {len(undefined_vars)} undefined variable errors.")
+                        for error in undefined_vars:
+                            var_name = error.get('variableName', 'unknown')
+                            error_msg = f"Undefined Variable: '{var_name}'"
+                            if 'source' in error and error['source']:
+                                error_msg += f" at {error.get('source')}:{error.get('lineno', '?')}"
+                            
+                            result["js_exceptions"].append(error_msg)
+                            result["console_errors"].append(error_msg)
+                            result["console_logs"]["error"].append(error_msg)
+                            logging.error(f"Undefined variable: {error_msg}")
+                
+                except Exception as e:
+                    logging.error(f"Error retrieving enhanced error tracking data: {e}")
+                
                 # Check for canvas elements
                 canvas_count = await page.evaluate("document.querySelectorAll('canvas').length")
                 result["canvas_found"] = canvas_count > 0
                 result["canvas_count"] = canvas_count
-                
-                # Get page content and manually check for syntax errors
-                page_content = await page.content()
-                if "false is an invalid identifier" in page_content:
-                    error_msg = "Uncaught SyntaxError: false is an invalid identifier"
-                    result["parse_errors"].append(error_msg)
-                    result["js_exceptions"].append(error_msg)
-                    result["console_errors"].append(error_msg)
-                    result["console_logs"]["error"].append(error_msg)
-                    logging.error(f"Found syntax error in page content: {error_msg}")
                 
                 # Look for "error" in any console message type
                 has_error_messages = False
@@ -1194,22 +724,6 @@ class GameBrowserController:
                         has_error_messages = True
                         error_messages.append(exception)
                 
-                # Log network errors separately
-                if result["network_errors"]:
-                    logging.error("Network request errors:")
-                    for error in result["network_errors"]:
-                        logging.error(f"  - {error}")
-                        has_error_messages = True
-                        error_messages.append(error)
-                
-                # Log resource errors separately
-                if result["resource_errors"]:
-                    logging.error("Resource loading errors:")
-                    for error in result["resource_errors"]:
-                        logging.error(f"  - {error}")
-                        has_error_messages = True
-                        error_messages.append(error)
-                
                 # Log parse errors separately
                 if result["parse_errors"]:
                     logging.error("JavaScript parse/syntax errors:")
@@ -1231,7 +745,33 @@ class GameBrowserController:
                     for err in error_messages:
                         logging.error(f"  - {err}")
                 elif not result["test_result"] and not result["canvas_found"]:
-                    result["error"] = "Game load test failed: No canvas element found."
+                    # Enhanced error message for missing canvas - suggesting syntax errors in imports
+                    result["error"] = "Game load test failed: No canvas element found. This could be caused by syntax errors in imported JavaScript modules that prevent canvas creation."
+                    
+                    # Check specifically for redeclaration errors
+                    redeclaration_errors = [err for err in result["console_errors"] if "redeclaration of" in err.lower()]
+                    if redeclaration_errors:
+                        result["error"] += f"\n\nDetected specific syntax error: {redeclaration_errors[0]}"
+                        result["console_error_message"] = "\n".join(redeclaration_errors)
+                    
+                    # Check for other common syntax errors that might prevent canvas creation
+                    common_syntax_errors = [
+                        err for err in result["console_errors"] 
+                        if any(pattern in err.lower() for pattern in [
+                            "syntaxerror", 
+                            "unexpected token",
+                            "unexpected identifier",
+                            "is not defined",
+                            "missing",
+                            "cannot access",
+                            "redeclaration"
+                        ])
+                    ]
+                    
+                    if common_syntax_errors and not redeclaration_errors:
+                        result["error"] += f"\n\nDetected syntax errors that may be preventing canvas creation: {common_syntax_errors[0]}"
+                        if not "console_error_message" in result:
+                            result["console_error_message"] = "\n".join(common_syntax_errors)
                 
                 # Add additional information
                 result["page_title"] = await page.title()
@@ -1242,15 +782,6 @@ class GameBrowserController:
             except Exception as e:
                 logging.error(f"Error in browser interaction: {e}")
                 result["error"] = f"Browser interaction error: {e}"
-                
-                # Check if the exception is related to our target syntax error
-                if "false is an invalid identifier" in str(e):
-                    error_msg = "Uncaught SyntaxError: false is an invalid identifier"
-                    result["parse_errors"].append(error_msg)
-                    result["js_exceptions"].append(error_msg)
-                    result["console_errors"].append(error_msg)
-                    result["console_logs"]["error"].append(error_msg)
-                    logging.error(f"Syntax error found in exception: {error_msg}")
             finally:
                 await browser.close()
                 
@@ -1408,7 +939,7 @@ class GameBrowserController:
         os.makedirs(screenshots_dir, exist_ok=True)
         
         async with async_playwright() as p:
-            browser = await p.firefox.launch(headless=True)
+            browser = await p.firefox.launch(headless=False)
             context = await browser.new_context()
             page = await context.new_page()
             
@@ -1477,14 +1008,15 @@ class GameBrowserController:
                     "parseerror", 
                     "syntax error", 
                     "syntaxerror", 
-                    "unexpected token", 
+                    "unexpected token",
                     "is an invalid identifier",
                     "invalid identifier", 
                     "unexpected identifier", 
                     "unexpected end of input", 
                     "missing )", 
                     "missing }", 
-                    "missing ]"
+                    "missing ]",
+                    "redeclaration"
                 ]
                 
                 if any(pattern in lower_text for pattern in syntax_error_patterns):
@@ -1640,7 +1172,8 @@ class GameBrowserController:
                     "is an invalid identifier",
                     "invalid identifier", 
                     "unexpected identifier", 
-                    "unexpected end of input"
+                    "unexpected end of input",
+                    "redeclaration"
                 ]
                 
                 if any(pattern in error_text for pattern in syntax_error_patterns):
@@ -1860,6 +1393,10 @@ class GameBrowserController:
                                     if (e.message.includes("false is an invalid identifier")) {
                                         console.error("Detected critical syntax error: false is an invalid identifier");
                                     }
+                                    // Check specifically for redeclaration errors
+                                    if (e.message.includes("redeclaration")) {
+                                        console.error(`Detected redeclaration error: ${e.message}`);
+                                    }
                                 }
                             }
                         });
@@ -1884,6 +1421,11 @@ class GameBrowserController:
                         // Special check for our target error
                         if (event.error.message.includes("false is an invalid identifier")) {
                             console.error(`Detected 'false is an invalid identifier' error${sourceInfo}`);
+                        }
+                        
+                        // Special check for redeclaration errors
+                        if (event.error.message.includes("redeclaration")) {
+                            console.error(`Detected redeclaration error: ${event.error.message}${sourceInfo}`);
                         }
                     }
                     
@@ -2782,9 +2324,126 @@ class GameBrowserController:
             "test_name": test_name,
             "diff_score": 0,
             "screenshot": "",
+            "errors": [],
+            "js_exceptions": [],
+            "parse_errors": []
         }
         
         try:
+            # Monitor for errors during key press
+            error_monitor = {"errors": []}
+            
+            # Setup error listeners for this specific key press
+            async def key_press_error_handler(error):
+                error_message = getattr(error, 'message', str(error))
+                error_name = getattr(error, 'name', type(error).__name__)
+                error_stack = getattr(error, 'stack', None)
+                
+                error_info = {
+                    "type": "page_error",
+                    "name": error_name,
+                    "message": error_message,
+                    "stack": error_stack,
+                    "key": key,
+                    "test_name": test_name
+                }
+                
+                # Check for redeclaration errors
+                if "redeclaration" in error_message.lower():
+                    error_info["error_type"] = "redeclaration_error"
+                    logging.error(f"Redeclaration error during key press '{key}': {error_message}")
+                    result["parse_errors"].append(error_message)
+                # Check for syntax errors
+                elif "syntax" in error_name.lower() or "syntax" in error_message.lower():
+                    error_info["error_type"] = "syntax_error"
+                    logging.error(f"Syntax error during key press '{key}': {error_message}")
+                    result["parse_errors"].append(error_message)
+                else:
+                    error_info["error_type"] = "runtime_error"
+                    logging.error(f"Runtime error during key press '{key}': {error_message}")
+                    result["js_exceptions"].append(error_message)
+                
+                error_monitor["errors"].append(error_info)
+                result["errors"].append(error_message)
+            
+            async def key_press_console_handler(msg):
+                msg_type = msg.type().lower()
+                msg_text = msg.text()
+                
+                if msg_type == "error":
+                    error_info = {
+                        "type": "console_error",
+                        "message": msg_text,
+                        "key": key,
+                        "test_name": test_name
+                    }
+                    
+                    # Check for redeclaration errors in console messages
+                    if "redeclaration" in msg_text.lower():
+                        error_info["error_type"] = "redeclaration_error"
+                        logging.error(f"Redeclaration console error during key press '{key}': {msg_text}")
+                        result["parse_errors"].append(msg_text)
+                    # Check for syntax errors
+                    elif any(pattern in msg_text.lower() for pattern in [
+                        "syntax error", "syntaxerror", "unexpected token", "invalid identifier", 
+                        "unexpected identifier", "unexpected end of input", "missing", "redeclaration"
+                    ]):
+                        error_info["error_type"] = "syntax_error"
+                        logging.error(f"Syntax console error during key press '{key}': {msg_text}")
+                        result["parse_errors"].append(msg_text)
+                    else:
+                        error_info["error_type"] = "console_error"
+                        logging.error(f"Console error during key press '{key}': {msg_text}")
+                        
+                    error_monitor["errors"].append(error_info)
+                    result["errors"].append(msg_text)
+            
+            # Attach temporary event listeners for this key press
+            page.on("pageerror", key_press_error_handler)
+            page.on("console", key_press_console_handler)
+            
+            # First, check for any existing errors in JS error tracking
+            try:
+                before_js_errors_count = await page.evaluate("window.jsErrors ? window.jsErrors.length : 0")
+                before_early_errors_count = await page.evaluate("window.earlyJsErrorEvents ? window.earlyJsErrorEvents.length : 0")
+            except Exception:
+                before_js_errors_count = 0
+                before_early_errors_count = 0
+            
+            # Add script to track errors during key press
+            await page.evaluate(f"""() => {{
+                // Mark the beginning of errors for this key press
+                window.lastKeyPressed = "{key}";
+                window.lastKeyPressTime = new Date().getTime();
+                
+                // Create specialized container for this key press if needed
+                if (!window.keyPressErrors) window.keyPressErrors = {{}};
+                window.keyPressErrors["{key}_{test_name}"] = [];
+                
+                // Add listener for this key press
+                const errorHandler = (event) => {{
+                    // Only handle recent errors (within last 500ms)
+                    if (new Date().getTime() - window.lastKeyPressTime < 500) {{
+                        window.keyPressErrors["{key}_{test_name}"].push({{
+                            message: event.message,
+                            filename: event.filename,
+                            lineno: event.lineno,
+                            colno: event.colno,
+                            error_type: event.error ? event.error.name : 'Unknown',
+                            error_stack: event.error ? event.error.stack : null,
+                            timestamp: new Date().toISOString(),
+                            key: "{key}",
+                            test_name: "{test_name}"
+                        }});
+                    }}
+                }};
+                
+                // Add temporary listener for this specific key press
+                window.addEventListener('error', errorHandler);
+                // Store reference to remove later
+                window.lastKeyPressErrorHandler = errorHandler;
+            }}""")
+            
             # Ensure the canvas is properly focused before sending key
             await page.evaluate("""() => {
                 document.body.click();
@@ -2831,16 +2490,91 @@ class GameBrowserController:
                 }}""")
                         
             # Wait for visual changes
-            await page.wait_for_timeout(50)
+            await page.wait_for_timeout(100)
+            
+            # Check for errors that occurred during key press
+            try:
+                # Check JS error tracker
+                after_js_errors_count = await page.evaluate("window.jsErrors ? window.jsErrors.length : 0")
+                if after_js_errors_count > before_js_errors_count:
+                    new_js_errors = await page.evaluate(f"window.jsErrors.slice({before_js_errors_count})")
+                    for error in new_js_errors:
+                        error_msg = f"JS Error during key press '{key}': {error.get('message', 'Unknown error')}"
+                        if 'source' in error and error['source']:
+                            error_msg += f" at {error.get('source')}:{error.get('lineno', '?')}"
+                        result["errors"].append(error_msg)
+                        result["js_exceptions"].append(error_msg)
+                        logging.error(error_msg)
+                        
+                        # Check specifically for redeclaration errors
+                        if "redeclaration" in str(error.get('message', '')).lower():
+                            redeclaration_error = f"Syntax Error during key press '{key}': {error.get('message')}"
+                            result["parse_errors"].append(redeclaration_error)
+                
+                # Check early error tracker
+                after_early_errors_count = await page.evaluate("window.earlyJsErrorEvents ? window.earlyJsErrorEvents.length : 0")
+                if after_early_errors_count > before_early_errors_count:
+                    new_early_errors = await page.evaluate(f"window.earlyJsErrorEvents.slice({before_early_errors_count})")
+                    for error in new_early_errors:
+                        error_msg = f"Early JS Error during key press '{key}': {error.get('message')}"
+                        if error.get('filename'):
+                            error_msg += f" at {error.get('filename')}:{error.get('lineno', '?')}"
+                        result["errors"].append(error_msg)
+                        
+                        # Check if it's a syntax error
+                        if "syntaxerror" in str(error.get('error_type', '')).lower() or "syntaxerror" in str(error.get('message', '')).lower():
+                            result["parse_errors"].append(error_msg)
+                        else:
+                            result["js_exceptions"].append(error_msg)
+                        logging.error(error_msg)
+                
+                # Check key press specific errors
+                key_press_errors = await page.evaluate(f"window.keyPressErrors ? window.keyPressErrors['{key}_{test_name}'] || [] : []")
+                if key_press_errors and len(key_press_errors) > 0:
+                    for error in key_press_errors:
+                        error_msg = f"Error during key press '{key}': {error.get('message')}"
+                        if error.get('filename'):
+                            error_msg += f" at {error.get('filename')}:{error.get('lineno', '?')}"
+                        result["errors"].append(error_msg)
+                        
+                        # Check if it's a syntax error
+                        if "syntaxerror" in str(error.get('error_type', '')).lower() or "syntaxerror" in str(error.get('message', '')).lower() or "redeclaration" in str(error.get('message', '')).lower():
+                            result["parse_errors"].append(error_msg)
+                        else:
+                            result["js_exceptions"].append(error_msg)
+                        logging.error(error_msg)
+                
+                # Remove the temporary error handler
+                await page.evaluate("""() => {
+                    if (window.lastKeyPressErrorHandler) {
+                        window.removeEventListener('error', window.lastKeyPressErrorHandler);
+                        window.lastKeyPressErrorHandler = null;
+                    }
+                }""")
+                
+            except Exception as e:
+                logging.error(f"Error checking for JavaScript errors during key press '{key}': {e}")
             
             # Take a single screenshot after the key press
             screenshot_filename = f"frame_{self.frame_counter:05d}_action_{key}.png"
             screenshot = await self._save_screenshot(page, screenshots_dir, screenshot_filename)
             result["screenshot"] = screenshot
             
+            # Remove the temporary event listeners
+            page.remove_listener("pageerror", key_press_error_handler)
+            page.remove_listener("console", key_press_console_handler)
+            
+            # Check if any errors were detected
+            if error_monitor["errors"] or result["errors"] or result["js_exceptions"] or result["parse_errors"]:
+                result["had_errors"] = True
+                logging.warning(f"Detected {len(result['errors'])} errors during key press '{key}'")
+            else:
+                result["had_errors"] = False
+            
         except Exception as e:
             logging.error(f"Error testing key {key}: {e}")
             result["error"] = str(e)
+            result["had_errors"] = True
             
         return result
     

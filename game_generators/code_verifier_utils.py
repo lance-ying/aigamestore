@@ -19,6 +19,7 @@ def generate_feedback_from_results(results: Dict[str, Any], mode: str) -> str:
     Returns:
         Formatted feedback string for the code improver
     """
+
     feedback = ""
     if mode == "basic_test":
         feedback = """

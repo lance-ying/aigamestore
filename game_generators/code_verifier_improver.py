@@ -61,7 +61,7 @@ def run_verification(game_path: str, output_file: str = None) -> Dict[str, Any]:
     """
     tester = BasicTesting()
     results, load_logs, interaction_logs = tester.verify_game(game_path, output_file)
-
+    
     # Print results
     for key, value in results.items():
         if key != "feedback":  # Skip printing the detailed feedback
@@ -237,7 +237,8 @@ def main():
         if not results["overall_result"]:
             # Generate feedback based on the verification results
             feedback = generate_feedback_from_results(results, args.mode)
-
+            print(feedback)
+            exit()
             logging.info("Game verification failed. Improving game code...")
             # Initialize the code improver
             improver = CodeFeedbackIterator(

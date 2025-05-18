@@ -279,7 +279,8 @@ class BasicTesting:
                     "is an invalid identifier",
                     "invalid identifier", 
                     "unexpected identifier", 
-                    "unexpected end of input"
+                    "unexpected end of input",
+                    "redeclaration"
                 ]):
                     # Keep the full message for syntax errors
                     syntax_errors.append(msg)
@@ -312,7 +313,8 @@ class BasicTesting:
                     "syntax error", 
                     "unexpected token", 
                     "is an invalid identifier",
-                    "invalid identifier"
+                    "invalid identifier",
+                    "redeclaration"
                 ])
                 
                 if not is_syntax_error:
