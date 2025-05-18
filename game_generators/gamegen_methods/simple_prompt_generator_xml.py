@@ -241,11 +241,11 @@ Implement a fun and playable game based on the game concept input from the user.
 Output the code plan and game files in this format with NO OTHER TEXT:
 
 <game_description>
-... (Decscribe the game to the player, the objective, what they need to know to play and enjoy the game. Don't mention the controls here. Keep it short and concise.)
+... (Decscribe the game to the player, the objective, what they need to know to play and enjoy the game. Do not mention the controls here. Keep it short and informative.)
 </game_description>
 
 <game_controls>
-... (Game controls as a list of key bindings, Key: Action)
+... (Game controls as a list to specify the key bindings and the action they perform. Key: Action. Be specific and informative like Arrow key UP: Move up, Arrow key RIGHT: Move right, SPACE: Jump, SHIFT: Sprint, etc.)
 </game_controls>
 
 Write the automated testing plan:
@@ -255,7 +255,7 @@ Write the automated testing plan:
 <strategy_description>(write in 1-2 sentences "What is your gameplay strategy to test it?")</strategy_description>
 <expected_outcome>(write in 1-2 sentences "What is the expected outcome? When do you consider the test successful?")</expected_outcome>
 </TEST_1>
-// Add more tests (<=5) as needed
+// Add more tests (up to 7)
 </automated_testing>
 
 For the javascript files:
