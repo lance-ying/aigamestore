@@ -617,7 +617,9 @@ Current html code:
         try:
             if (self.mode == "guided_iteration" or self.mode == "basic_test_fix") and not feedback:
                 raise ValueError(f"Feedback is required for {self.mode} mode")
-                
+            
+            print(feedback)
+            exit()
             # Generate user prompt
             user_prompt = self.generate_user_prompt(game_dir, feedback)
             print(feedback)
@@ -827,7 +829,7 @@ Based on the feedback, write the plan for changing the game code. Describe chang
 ... (file_name: Plan of changes to the file and reason for the change)
 </code_change_plan>
 
-Based on the updated game code:
+Based on the updated game code (only if you updated the automated_testing_controller.js file):
 <updated_automated_testing>
 <TEST_1>
 <test_description>(write in 1-2 sentences "What are you testing and the intent of the test?")</test_description>

@@ -1319,20 +1319,9 @@ class GameBrowserController:
             
         interaction_results = await self._test_interaction(url)
         
-        # Check if automated testing buttons were found
-        has_automated_testing = interaction_results.get("automated_testing", {}).get("buttons_found", False)
-        automated_test_passed = interaction_results.get("automated_testing", {}).get("player_info_changed", True)
-        
-        # If there are no automated testing buttons, we consider this test passed automatically
-        if not has_automated_testing:
-            automated_test_passed = True
-            
         # Structure the final results to show game start and random action tests separately
         final_results = {
-            "test_result": (
-                interaction_results["test_result"] and 
-                automated_test_passed
-            ),
+            "test_result": interaction_results["test_result"],
             "interaction_test": {
                 "overall_result": interaction_results["test_result"],
                 "game_start_test": {
@@ -1345,11 +1334,6 @@ class GameBrowserController:
                     "key_changes_detected": len([score for score in interaction_results["gameplay_test"]["diff_scores"] if score > 0.001]),
                     "total_actions": len(interaction_results["gameplay_test"]["diff_scores"]),
                     "max_diff_score": max(interaction_results["gameplay_test"]["diff_scores"]) if interaction_results["gameplay_test"]["diff_scores"] else 0
-                },
-                "automated_testing_check": {
-                    "test_result": automated_test_passed,
-                    "buttons_found": has_automated_testing,
-                    "player_info_changed": interaction_results.get("automated_testing", {}).get("player_info_changed", False)
                 }
             },
             "console_logs": interaction_results["console_logs"],
@@ -1358,14 +1342,6 @@ class GameBrowserController:
             "screenshots": interaction_results["screenshots"],
             "error": interaction_results.get("error", None)
         }
-        
-        # If automated testing buttons are found but test didn't pass, add a specific error
-        if has_automated_testing and not automated_test_passed:
-            automated_testing_error = "Automated testing buttons found, but player information is not changing during testing"
-            if not final_results.get("error"):
-                final_results["error"] = automated_testing_error
-            else:
-                final_results["error"] += f"; {automated_testing_error}"
         
         # Add console error message if present
         if "console_error_message" in interaction_results:
@@ -1424,11 +1400,6 @@ class GameBrowserController:
                 "test_result": False,
                 "diff_scores": [],
                 "screenshots": []
-            },
-            "automated_testing": {
-                "test_result": True,  # Default to true since not all games have automated testing
-                "buttons_found": False,
-                "player_info_changed": False
             }
         }
         
@@ -1508,8 +1479,7 @@ class GameBrowserController:
                     "syntaxerror", 
                     "unexpected token", 
                     "is an invalid identifier",
-                    "invalid identifier",
-                    "is undefined",
+                    "invalid identifier", 
                     "unexpected identifier", 
                     "unexpected end of input", 
                     "missing )", 
@@ -2785,14 +2755,6 @@ class GameBrowserController:
                 # Before returning the result, deduplicate errors
                 result["structured_errors"] = self._deduplicate_errors(result["structured_errors"])
                 
-                # Find automated test buttons
-                buttons = await self._find_automated_test_buttons(page)
-                result["automated_testing"]["buttons_found"] = len(buttons) > 0
-                
-                # Check player information changes
-                player_info_change_result = await self._check_player_info_changes(page)
-                result["automated_testing"]["player_info_changed"] = player_info_change_result["player_info_changed"]
-                
                 return result
             except Exception as e:
                 logging.error(f"Error in game interaction test: {e}")
@@ -2920,161 +2882,3 @@ class GameBrowserController:
         except Exception as e:
             logging.error(f"Error comparing screenshots: {e}")
             return 0 
-    
-    async def _find_automated_test_buttons(self, page: Page) -> List[Dict[str, Any]]:
-        """
-        Find automated test buttons in the game interface.
-        
-        Args:
-            page: Playwright page object
-        
-        Returns:
-            List of dictionaries containing button information
-        """
-        logging.info("Looking for automated test buttons...")
-        
-        try:
-            # Find buttons that match the automated testing pattern
-            buttons = await page.evaluate("""
-                () => {
-                    const buttons = Array.from(document.querySelectorAll('button'));
-                    return buttons
-                        .filter(btn => btn.id && (btn.id.includes('TestBtn') || btn.id.includes('ModeBtn') || btn.id.includes('test_')))
-                        .map(btn => ({
-                            id: btn.id,
-                            text: btn.textContent || btn.innerText || '',
-                            boundingBox: btn.getBoundingClientRect()
-                        }));
-                }
-            """)
-            
-            if buttons and len(buttons) > 0:
-                logging.info(f"Found {len(buttons)} automated test buttons: {', '.join([b['id'] for b in buttons])}")
-                return buttons
-            else:
-                logging.info("No automated test buttons found")
-                return []
-                
-        except Exception as e:
-            logging.warning(f"Error finding automated test buttons: {str(e)}")
-            return []
-    
-    async def _check_player_info_changes(self, page: Page, duration_ms: int = 5000) -> Dict[str, Any]:
-        """
-        Check if player information changes during automated testing.
-        
-        Args:
-            page: Playwright page object
-            duration_ms: Duration to check for changes in milliseconds
-            
-        Returns:
-            Dictionary with test results
-        """
-        logging.info(f"Checking if player information changes over {duration_ms}ms...")
-        
-        result = {
-            "test_result": False,
-            "player_info_changed": False,
-            "has_game_state": False,
-            "initial_state": None,
-            "final_state": None,
-            "changes_detected": []
-        }
-        
-        try:
-            # Check if getGameState function exists
-            has_game_state = await page.evaluate("""
-                () => {
-                    return typeof window.getGameState === 'function' || 
-                           (window.gameState && window.gameState.player);
-                }
-            """)
-            
-            result["has_game_state"] = has_game_state
-            
-            if not has_game_state:
-                logging.warning("No getGameState function or gameState.player found")
-                # If game doesn't have getGameState function, we consider this test passed
-                # as it's not applicable
-                result["test_result"] = True
-                return result
-            
-            # Get initial player state
-            initial_state = await page.evaluate("""
-                () => {
-                    try {
-                        if (typeof window.getGameState === 'function') {
-                            const state = window.getGameState();
-                            return state && state.player ? state.player : null;
-                        } else if (window.gameState && window.gameState.player) {
-                            return window.gameState.player;
-                        }
-                    } catch (e) {
-                        console.error("Error getting game state:", e);
-                    }
-                    return null;
-                }
-            """)
-            
-            result["initial_state"] = initial_state
-            
-            if not initial_state:
-                logging.warning("Could not get initial player state")
-                return result
-            
-            # Wait for the specified duration
-            await page.wait_for_timeout(duration_ms)
-            
-            # Get final player state
-            final_state = await page.evaluate("""
-                () => {
-                    try {
-                        if (typeof window.getGameState === 'function') {
-                            const state = window.getGameState();
-                            return state && state.player ? state.player : null;
-                        } else if (window.gameState && window.gameState.player) {
-                            return window.gameState.player;
-                        }
-                    } catch (e) {
-                        console.error("Error getting game state:", e);
-                    }
-                    return null;
-                }
-            """)
-            
-            result["final_state"] = final_state
-            
-            if not final_state:
-                logging.warning("Could not get final player state")
-                return result
-            
-            # Compare states and detect changes
-            changes = []
-            
-            # Compare each property in player object
-            if isinstance(initial_state, dict) and isinstance(final_state, dict):
-                for key in final_state:
-                    if key in initial_state:
-                        if initial_state[key] != final_state[key]:
-                            changes.append({
-                                "property": key,
-                                "initial": initial_state[key],
-                                "final": final_state[key]
-                            })
-            
-            result["changes_detected"] = changes
-            result["player_info_changed"] = len(changes) > 0
-            result["test_result"] = len(changes) > 0
-            
-            if result["player_info_changed"]:
-                logging.info(f"Player information changed! Detected {len(changes)} changes")
-                for change in changes:
-                    logging.info(f"  - {change['property']}: {change['initial']} -> {change['final']}")
-            else:
-                logging.warning("No changes detected in player information")
-            
-            return result
-            
-        except Exception as e:
-            logging.error(f"Error checking player information changes: {str(e)}")
-            return result

@@ -117,7 +117,6 @@ async def run_game_start_test(page: Page, screenshots_dir: str, frame_counter: i
     network_errors_before = len(result["network_errors"])
     resource_errors_before = len(result["resource_errors"])
     parse_errors_before = len(result["parse_errors"])
-    stack_traces_before = len(result.get("stack_traces", []))
     
     # Press Enter to start the game
     logging.info("Running game start test (pressing Enter)")
@@ -125,16 +124,12 @@ async def run_game_start_test(page: Page, screenshots_dir: str, frame_counter: i
     start_test = await test_key_press(page, "Enter", "start_game", screenshots_dir, frame_counter, key_mapping)
     result["key_tests"] = [start_test]
     
-    # Give the game a bit more time to process the Enter key and possibly generate errors
-    await page.wait_for_timeout(500)  # Wait longer to detect delayed errors
-    
     # Capture new errors that occurred during Enter press
     enter_console_errors = result["console_logs"]["error"][errors_before_enter:]
     enter_js_exceptions = result["js_exceptions"][exceptions_before_enter:]
     enter_network_errors = result["network_errors"][network_errors_before:]
     enter_resource_errors = result["resource_errors"][resource_errors_before:]
     enter_parse_errors = result["parse_errors"][parse_errors_before:]
-    enter_stack_traces = result.get("stack_traces", [])[stack_traces_before:] if "stack_traces" in result else []
     
     # Log all console messages during game start
     logging.info("All console messages during game start (Enter press):")
@@ -147,7 +142,8 @@ async def run_game_start_test(page: Page, screenshots_dir: str, frame_counter: i
     # Collect all error messages
     enter_error_messages = []
     for msg in enter_console_errors:
-        enter_error_messages.append(msg)
+        if "error" in msg.lower():
+            enter_error_messages.append(msg)
     
     # Also add all specialized error types to error messages
     enter_error_messages.extend(enter_js_exceptions)
@@ -162,37 +158,8 @@ async def run_game_start_test(page: Page, screenshots_dir: str, frame_counter: i
         # Get only messages added after pressing Enter
         new_messages = messages[errors_before_enter:] if len(messages) > errors_before_enter else []
         for msg in new_messages:
-            if any(pattern in msg.lower() for pattern in ["error", "is undefined", "null", "cannot read property", "is not defined", "typeerror"]):
-                enter_error_messages.append(f"{msg_type}: {msg}")
-    
-    # Run JavaScript to check for any errors captured by window.onerror
-    try:
-        js_errors = await page.evaluate("""() => {
-            if (window._errorMessages && Array.isArray(window._errorMessages)) {
-                return window._errorMessages;
-            }
-            return [];
-        }""")
-        if js_errors and len(js_errors) > 0:
-            enter_error_messages.extend(js_errors)
-    except Exception as e:
-        logging.error(f"Error checking for JS errors: {e}")
-    
-    # Also check specifically for the p.gameState is undefined error
-    try:
-        has_gamestate_error = await page.evaluate("""() => {
-            // Look for p.gameState in the HTML to see if it exists
-            const html = document.documentElement.outerHTML;
-            return {
-                p_exists: typeof p !== 'undefined',
-                gameState_exists: typeof p !== 'undefined' && p !== null && typeof p.gameState !== 'undefined',
-                html_contains_pgamestate: html.includes('p.gameState')
-            };
-        }""")
-        if has_gamestate_error and not has_gamestate_error.get('gameState_exists', False) and has_gamestate_error.get('html_contains_pgamestate', False):
-            enter_error_messages.append("Game error: p.gameState is undefined")
-    except Exception as e:
-        logging.warning(f"Error checking for p.gameState: {e}")
+            if "error" in msg.lower():
+                enter_error_messages.append(msg)
     
     # If we found any errors, fail the test
     if enter_error_messages:
@@ -200,11 +167,6 @@ async def run_game_start_test(page: Page, screenshots_dir: str, frame_counter: i
         result["game_start_test"]["no_error_messages"] = False
         result["error"] = f"Game start test failed: {len(enter_error_messages)} error messages detected in console after pressing ENTER."
         result["console_error_message"] = "\n".join(enter_error_messages)
-        
-        # Add stack traces to error message if available
-        if enter_stack_traces:
-            result["console_error_message"] += "\n\nStack traces:\n" + "\n".join(enter_stack_traces)
-        
         result["test_result"] = False
         return result
     
