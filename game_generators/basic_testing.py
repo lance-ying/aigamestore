@@ -449,13 +449,23 @@ class BasicTesting:
         # Calculate overall result
         load_test_passed = results["load_test"].get("test_result", False)
         interaction_test_passed = results["interaction_test"].get("test_result", False)
-        results["overall_result"] = load_test_passed and interaction_test_passed
+        
+        # Check if the restart test passed as well
+        restart_test_passed = True  # Default to True if not present
+        if (isinstance(results["interaction_test"], dict) and 
+            "interaction_test" in results["interaction_test"] and 
+            "game_restart_test" in results["interaction_test"]["interaction_test"]):
+            restart_test_passed = results["interaction_test"]["interaction_test"]["game_restart_test"].get("test_result", True)
+        
+        # Update overall result to include restart test
+        results["overall_result"] = load_test_passed and interaction_test_passed and restart_test_passed
         
         # Print overall result
         print("\n" + "="*50)
         print("OVERALL TEST RESULTS")
         print("="*50)
         print(f"Load Test: {'✅ PASSED' if load_test_passed else '❌ FAILED'}")
+        print(f"Interaction Test: {'✅ PASSED' if interaction_test_passed else '❌ FAILED'}")
         
         # Access and display detailed interaction test results
         try:
@@ -465,18 +475,19 @@ class BasicTesting:
                     # Display game start test results
                     if "game_start_test" in interaction_detail:
                         game_start_test = interaction_detail["game_start_test"]
-                        print(f"Game Start Test: {'✅ PASSED' if game_start_test.get('test_result', False) else '❌ FAILED'}")
+                        print(f"\t- Game Start Test: {'✅ PASSED' if game_start_test.get('test_result', False) else '❌ FAILED'}")
                     
                     # Display gameplay test results
                     if "gameplay_test" in interaction_detail:
                         gameplay_test = interaction_detail["gameplay_test"]
-                        print(f"Gameplay Test: {'✅ PASSED' if gameplay_test.get('test_result', False) else '❌ FAILED'}")
-            else:
-                # Fallback if structure doesn't match expected format
-                print(f"Interaction Test: {'✅ PASSED' if interaction_test_passed else '❌ FAILED'}")
+                        print(f"\t- Gameplay Test: {'✅ PASSED' if gameplay_test.get('test_result', False) else '❌ FAILED'}")
+                    
+                    # Display game restart test results
+                    if "game_restart_test" in interaction_detail:
+                        game_restart_test = interaction_detail["game_restart_test"]
+                        print(f"\t- Game Restart Test: {'✅ PASSED' if game_restart_test.get('test_result', False) else '❌ FAILED'}")
         except Exception as e:
             logging.warning(f"Error displaying detailed interaction results: {e}")
-            print(f"Interaction Test: {'✅ PASSED' if interaction_test_passed else '❌ FAILED'}")
         
         print("-"*50)
         print(f"Overall Result: {'✅ PASSED' if results['overall_result'] else '❌ FAILED'}")

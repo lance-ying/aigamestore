@@ -62,10 +62,10 @@ def run_verification(game_path: str, output_file: str = None) -> Dict[str, Any]:
     tester = BasicTesting()
     results, load_logs, interaction_logs = tester.verify_game(game_path, output_file)
 
-    # Print results
-    for key, value in results.items():
-        if key != "feedback":  # Skip printing the detailed feedback
-            print(f"{key}: {value}")
+    # # Print results
+    # for key, value in results.items():
+    #     if key != "feedback":  # Skip printing the detailed feedback
+    #         print(f"{key}: {value}")
 
     # Check for runtime errors like "X is undefined" and display them prominently
     runtime_error_patterns = [

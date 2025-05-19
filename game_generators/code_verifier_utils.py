@@ -400,7 +400,7 @@ The game loads but fails the interaction test. Expected output is that random ke
                         feedback += "\n"
 
                     # If error is about visual changes, add specific feedback
-                    if "error" in results["interaction_test"] and "visual" in results["interaction_test"]["error"].lower():
+                    if "error" in results["interaction_test"] and results["interaction_test"]["error"] and "visual" in results["interaction_test"]["error"].lower():
                         feedback += "GAMEPLAY VISUAL ERROR:\n"
                         feedback += f"- {results['interaction_test']['error']}\n\n"
                         feedback += "Check your key event handlers and ensure they're properly updating the game state and rendering.\n\n"
@@ -498,7 +498,7 @@ The game loads but fails the interaction test. Expected output is that random ke
                         for error in results["feedback"]["interaction_test"]["errors"]:
                             # Make sure each error is on its own line
                             feedback += f"{error}\n"
-
+            print(results["interaction_test"])
             if "error" in results["interaction_test"] and "restart" in results["interaction_test"]["error"].lower():
                 restart_test_failed = True
                 feedback += f"\nGAME RESTART TEST FAILED: {results['interaction_test']['error']}\n\n"
@@ -529,7 +529,7 @@ The game loads but fails the interaction test. Expected output is that random ke
                     # Check for gameplay test error with restart failures
                     if "gameplay_test" in interaction_detail:
                         gameplay_test = interaction_detail["gameplay_test"]
-                        if not gameplay_test.get("test_result", True) and isinstance(gameplay_test.get("detailed_actions", []), list):
+                        if not gameplay_test.get("test_result", True) and "detailed_actions" in gameplay_test and isinstance(gameplay_test["detailed_actions"], list):
                             for action in gameplay_test["detailed_actions"]:
                                 if isinstance(action, dict) and action.get("restart_failed"):
                                     feedback += f"\nGAME RESTART DURING GAMEPLAY FAILED: {action.get('error', 'Unknown restart error')}\n"
@@ -545,12 +545,17 @@ Please consider what might be causing this issue and update the game code accord
 <important>
 The error messages are based on the first error that was found. There might be other implementation bugs which might lead to similar issues preventing a error-free gameplay experience. Please review the code and fix all the errors.
 Some of the common causes of errors are:
-- incorrect or missing imports and exports,
-- syntax errors,
+- incorrect or missing imports and exports
+- syntax errors
 - incorrect conditional statements for setting the color in p5. Use ternary operator to set colors for conditional rendering: Example: `p.fill(...(CONDITION ? [255, 220, 150] : [40, 30, 20]));`
-- undefined variables,
-- redeclaration of variables,
-- p5 functions not being called correctly,
+- undefined variables
+- redeclaration of variables
+- p5 functions not being called correctly
+
+Check for the phase transition key event handling in the game code:
+- Game must load without errors caused by issues listed above
+- Game must start when ENTER is pressed
+- Game must restart when R is pressed. On pressing R, the game should restart from the start screen. The must start on pressing ENTER again and be playable.
 
 You can rewrite, add, or remove code to fix the issue. Be careful while making changes to the code, and make sure you are not introducing any new errors. 
 Make sure it loads without errors, starts when ENTER is pressed, and pressing control keys leads to changes in the game state and update the rendering.
