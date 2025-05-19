@@ -1741,7 +1741,7 @@ class GameBrowserController:
                 logging.info("Running gameplay test (random key presses)")
                 
                 # Now perform random actions for gameplay test
-                logging.info("Starting random action sequence (32 initial keys + 256 sticky keys)")
+                logging.info("Starting random action sequence (32 initial keys + 128 sticky keys)")
                 random_action_results = []
                 
                 # Initial 32 random key presses
@@ -1856,7 +1856,7 @@ class GameBrowserController:
                     await page.wait_for_timeout(50)
                 
                 # Now perform 128 "sticky keys" actions
-                total_actions = 64
+                total_actions = 128
                 current_action = 0
                 while current_action < total_actions:
                     # Choose a random key and stick with it for 4-16 consecutive presses
@@ -1939,7 +1939,7 @@ class GameBrowserController:
                         
                         # Wait between actions
                         await page.wait_for_timeout(50)
-                    current_action += 1
+                        current_action += 1
                 
                 # Add random action results to the overall results
                 result["random_actions"] = random_action_results

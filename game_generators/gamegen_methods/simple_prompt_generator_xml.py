@@ -44,8 +44,6 @@ Implement a fun and playable game based on the game concept input from the user.
 </game_concept>
 </task>"""
         prompt = instructions + task + output_format
-        print(prompt)
-        exit()
         return prompt
 
     def generate_game(self, game_concept: str, concept_path: Optional[str] = None) -> Dict[str, Any]:

@@ -272,6 +272,11 @@ def main():
                         parent_dir = game_dir_path.parent
                         failed_dir = parent_dir / f"failed_attempt_{attempt}"
                         
+                        # remove the game_dir/game_check_results/screenshots
+                        game_check_results_dir = game_dir_path / "game_check_results/screenshots"
+                        if game_check_results_dir.exists():
+                            shutil.rmtree(game_check_results_dir)
+
                         # Move the directory
                         shutil.move(str(game_dir_path), str(failed_dir))
                         print(f"Moved failed game from {result['game_dir']} to {failed_dir}")
