@@ -2109,7 +2109,7 @@ class GameBrowserController:
                             const gameState = getGameState();
                             if (gameState) {
                                 gameState.gamePhase = "PLAYING";
-                                console.error("Game does not start after pressing ENTER after getting to the start screen to restart the game. This can happen if the game state is not properly reset when the game is restarted from the start screen. Note: Do not update the p.logs.");
+                                console.error("Game does not start after pressing ENTER after getting to the start screen by pressing R to restart the game. This can happen if the game state is not properly reset when the game is restarted from the start screen. Note: Do not update the p.logs.");
                                 console.log("Game state manually set to PLAYING for gameplay test");
                             }
                         }""")
@@ -2121,8 +2121,8 @@ class GameBrowserController:
                         game_phase = game_state.get("gamePhase")
                         logging.info(f"Current game phase after reset attempt {attempts}: {game_phase}")
                         if game_phase != "PLAYING":
-                            logging.error(f"Game did not reach PLAYING state after {max_attempts} attempts. Manually setting gamePhase to PLAYING.")
-                            result["game_restart_test"]["error"] = f"Game did not reach PLAYING state after pressing ENTER after we had pressed R to restart the game."
+                            logging.error(f"Game did not reach PLAYING state after pressing ENTER on the start screen when we reach the start screen after pressing R to restart the game.")
+                            result["game_restart_test"]["error"] = f"Game did not reach PLAYING state after pressing ENTER on the start screen when we reach the start screen after pressing R to restart the game."
                             result["game_restart_test"]["test_result"] = False
                         else:
                             # Check if game state properties were properly reset

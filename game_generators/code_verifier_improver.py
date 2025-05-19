@@ -245,7 +245,6 @@ def main():
             feedback = generate_feedback_from_results(results, args.mode)
             logging.info("Game verification failed. Improving game code...")
             print(feedback)
-            exit()
             # Initialize the code improver
 
             improver = CodeFeedbackIterator(
