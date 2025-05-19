@@ -76,6 +76,17 @@ def report_interaction_test(results: Dict[str, Any]) -> None:
     print("GAME INTERACTION TEST RESULTS")
     print("="*50)
     print(summary)
+    
+    # Print details about game restart test if available
+    if "interaction_test" in results and "game_restart_test" in results["interaction_test"]:
+        restart_test = results["interaction_test"]["game_restart_test"]
+        print("\nGAME RESTART TEST:")
+        print(f"  Result: {'✅ PASSED' if restart_test.get('test_result', False) else '❌ FAILED'}")
+        if not restart_test.get('test_result', False) and restart_test.get('error'):
+            print(f"  Error: {restart_test['error']}")
+        if restart_test.get('game_phase_after_restart'):
+            print(f"  Game Phase After Restart: {restart_test['game_phase_after_restart']}")
+    
     print("="*50 + "\n")
 
 if __name__ == "__main__":

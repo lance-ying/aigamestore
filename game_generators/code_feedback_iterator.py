@@ -14,7 +14,7 @@ class CodeFeedbackIterator(GameGenerator):
     A class that iterates on game code based on feedback using LLM calls.
     """
 
-    def __init__(self, *args, mode: str = "guided_iteration", temperature: float = 0.7, **kwargs):
+    def __init__(self, *args, mode: str = "guided_iteration", temperature: float = 0.6, **kwargs):
         super().__init__(*args, **kwargs)
         self.mode = mode
         self.temperature = temperature
@@ -125,11 +125,6 @@ class CodeFeedbackIterator(GameGenerator):
                 if filename in js_files_dict:
                     sorted_js_files.append((filename, content))
             js_files = sorted_js_files
-
-        # Read the html file
-        html_file = os.path.join(game_dir, "index.html")
-        with open(html_file, 'r') as f:
-            html_code = f.read()
             
         formatted_code = self.format_code_for_prompt(js_files)
         
@@ -139,37 +134,62 @@ class CodeFeedbackIterator(GameGenerator):
             # For basic_test_fix mode, use the provided feedback directly
             # The feedback string is expected to come from another program
             pass  # No need to modify the feedback
-
-        output_instructions = self.get_output_instructions()
         prompt = f"""
 <task>
 Please update the current game code based on the feedback:
 {feedback}
 </task>
 
-Current game description:
+Game description:
 <game_description>
 {game_description}
 </game_description>
 
-Current game controls:
+Game controls:
 <game_controls>
 {game_controls}
 </game_controls>
 
-Current game code:
+Current code:
 <current_code>
 {formatted_code}
 </current_code>
 
-Current html code:
-<current_html>
-{html_code}
-</current_html>
+<output_instructions>
+Output the code change plan, the updated code, and tags for changes to address the feedback. 
+You can update the structure of the code or file structure if you think it helps in addressing the feedback. 
+Do not rewrite files that don't need changes.
 
-{output_instructions}
+<game_description>
+... (Decscribe the game to the player, the objective, what they need to know to play and enjoy the game. Don't mention the controls here. Keep it short and concise.)
+</game_description>
+
+<game_controls>
+... (Game controls as a list of key bindings, Key: Action)
+</game_controls>
+
+Based on the game code, write the automated testing plan:
+<automated_testing>
+<TEST_1>
+<test_description>(write in 1-2 sentences "What are you testing and the intent of the test?")</test_description>
+<strategy_description>(write in 1-2 sentences "What is your gameplay strategy to test it?")</strategy_description>
+<expected_outcome>(write in 1-2 sentences "What is the expected outcome? When do you consider the test successful?")</expected_outcome>
+</TEST_1>
+// Add more tests (<=5) as needed
+</automated_testing>
+
+For the javascript files:
+<updated_code filename="{{name}}.{{extension}}">
+... (code)
+</updated_code>
+
+HTML following the <example_html> template (output last):
+<updated_html filename="index.html">
+... (html code)
+</updated_html>
+
+</output_instructions>
 """
-
         return prompt
     
     def extract_updated_code(self, response: str) -> Dict[str, str]:
@@ -186,7 +206,7 @@ Current html code:
         code_blocks = re.findall(
             r"<updated_code filename=\"(.*?)\">(.*?)</updated_code>", response, re.DOTALL
         )
-        print("code_blocks: ", code_blocks)
+        
         js_files = {}
         for filename, code in code_blocks:
             if filename.endswith(".js"):
@@ -204,62 +224,14 @@ Current html code:
                 
         return js_files
 
-
-    
-    def extract_updated_game_description(self, response: str) -> str:
-        """
-        Extract updated game description from LLM response
-        """
-        # Extract game description using the format specified in the system prompt
-        game_description_matches = re.findall(
-            r"<updated_game_description>(.*?)</updated_game_description>", response, re.DOTALL
-        )
-        
-        # Return the content of the first match if found, otherwise empty string
-        if game_description_matches and len(game_description_matches) > 0:
-            return game_description_matches[0][1].strip()
-        return ""
-    
-    def extract_updated_game_controls(self, response: str) -> str:
-        """
-        Extract updated game controls from LLM response
-        """
-        # Extract game controls using the format specified in the system prompt
-        game_controls_matches = re.findall(
-            r"<updated_game_controls>(.*?)</updated_game_controls>", response, re.DOTALL
-        )
-        
-        # Return the content of the first match if found, otherwise empty string
-        if game_controls_matches and len(game_controls_matches) > 0:
-            return game_controls_matches[0][1].strip()
-        return ""
-
     def extract_updated_html(self, response: str) -> str:
-        """
-        Extract updated HTML code from LLM response
-        """
-        # Extract HTML code using the format specified in the system prompt
-        html_matches = re.findall(
-            r"<updated_html>(.*?)</updated_html>", response, re.DOTALL
-        )
-        
-        # Return the content of the first match if found, otherwise empty string
-        if html_matches and len(html_matches) > 0:
-            return html_matches[0][1].strip()
-        return ""
-    
-    def extract_updated_automated_testing(self, response: str) -> str:
-    
-        # Extract automated testing using the format specified in the system prompt
-        automated_testing_matches = re.findall(
-            r"<updated_automated_testing>(.*?)</updated_automated_testing>", response, re.DOTALL
-        )
 
-        # Return the content of the first match if found, otherwise empty string
-        if automated_testing_matches and len(automated_testing_matches) > 0:
-            return automated_testing_matches[0][1].strip()
-        return ""
-    
+        # Extract HTML code using the format specified in the system prompt
+        html_code = re.findall(
+            r"<updated_html filename=\"(.*?)\">(.*?)</updated_html>", response, re.DOTALL
+        )
+        return html_code
+
     def extract_explanation_sections(self, response: str) -> Dict[str, str]:
         """
         Extract code_change_plan and explain_edits sections from LLM response
@@ -341,35 +313,32 @@ Current html code:
             
             # Get list of filenames that will be updated
             updated_filenames = set(updated_files.keys())
-            print("updated_filenames: ", updated_filenames)
             
             # Copy only specific files from source directory, excluding those that will be updated
-            if output_dir != game_dir:
-                for item in os.listdir(game_dir):
-                    source = os.path.join(game_dir, item)
-                    destination = os.path.join(iteration_dir, item)
+            for item in os.listdir(game_dir):
+                source = os.path.join(game_dir, item)
+                destination = os.path.join(iteration_dir, item)
+                
+                # Skip directories like vibe_coding_updates to avoid recursive copying
+                if item.endswith("_updates") or item.endswith("_orig_files"):
+                    continue
                     
-                    # Skip directories like vibe_coding_updates to avoid recursive copying
-                    if item.endswith("_updates") or item.endswith("_orig_files"):
-                        continue
-                        
-                    if os.path.isdir(source):
-                        # Copy directories recursively
-                        if not os.path.exists(destination):
-                            shutil.copytree(source, destination)
-                    elif item not in updated_filenames:
-                        # Only copy HTML files and other non-JS, non-JSON files (assets)
-                        # Skip JSON files as we'll generate new metadata
-                        _, ext = os.path.splitext(item)
-                        if ext.lower() != '.json':  # Skip JSON files
-                            shutil.copy2(source, destination)
+                if os.path.isdir(source):
+                    # Copy directories recursively
+                    if not os.path.exists(destination):
+                        shutil.copytree(source, destination)
+                elif item not in updated_filenames:
+                    # Only copy HTML files and other non-JS, non-JSON files (assets)
+                    # Skip JSON files as we'll generate new metadata
+                    _, ext = os.path.splitext(item)
+                    if ext.lower() != '.json':  # Skip JSON files
+                        shutil.copy2(source, destination)
             
             # Save the updated JavaScript files
             for filename, content in updated_files.items():
                 file_path = iteration_dir / filename
                 # Ensure the parent directory exists
                 file_path.parent.mkdir(parents=True, exist_ok=True)
-                
                 with open(file_path, 'w', encoding='utf-8') as f:
                     f.write(content)
             
@@ -601,7 +570,7 @@ Current html code:
         try:
             if (self.mode == "guided_iteration" or self.mode == "basic_test_fix") and not feedback:
                 raise ValueError(f"Feedback is required for {self.mode} mode")
-            
+                
             # Generate user prompt
             user_prompt = self.generate_user_prompt(game_dir, feedback)
             print(feedback)
@@ -611,6 +580,7 @@ Current html code:
             if self.verbose:
                 print(f"Calling LLM to improve code using {self.mode} mode...")
             
+
             response = self.model_api.call(
                 user_prompt=user_prompt,
                 system_prompt=system_prompt if self.mode != "vibe_coding" else None,
@@ -625,33 +595,15 @@ Current html code:
                 {"role": "user", "content": user_prompt},
                 {"role": "assistant", "content": response}
             ]
-
-
-            # Read metadata from the original game directory
-            metadata_path = os.path.join(game_dir, "metadata.json")
-            metadata = None
-            if os.path.exists(metadata_path):
-                with open(metadata_path, 'r') as f:
-                    metadata = json.load(f)
             
-            # Extract updated game description and game controls from response
-            updated_game_description = self.extract_updated_game_description(response)
-            updated_game_controls = self.extract_updated_game_controls(response)
-            updated_html = self.extract_updated_html(response)
-            updated_automated_testing = self.extract_updated_automated_testing(response)
-
-            # update the metadata with the new game description and game controls
-            if updated_game_description != "":
-                metadata["game_info"]["description"] = updated_game_description
-            if updated_game_controls != "":
-                metadata["game_info"]["controls"] = updated_game_controls
-            if updated_automated_testing != "":
-                metadata["game_info"]["automated_testing"] = updated_automated_testing
-
+            # Check if token usage information is available from the model API
+            token_usage = None
+            if hasattr(self.model_api, 'get_token_usage'):
+                token_usage = self.model_api.get_token_usage()
+            
             # Extract updated code from response
             updated_files = self.extract_updated_code(response)
-            if updated_html != "":
-                updated_files["index.html"] = updated_html
+            updated_files["index.html"] = self.extract_updated_html(response)
             
             # Extract explanation sections
             explanation_sections = self.extract_explanation_sections(response)
@@ -689,15 +641,20 @@ Current html code:
                     else:
                         shutil.copy2(source, destination)
             
-            if self.mode == "basic_test_fix":
-                # only write the updated the files in the original directory and the metadata
+            # Save the updated code in the original location (except when output_dir is specified)
+            if not output_dir:
                 self.save_updated_code(game_dir, updated_files)
-                with open(os.path.join(game_dir, "metadata.json"), 'w') as f:
-                    json.dump(metadata, f, indent=2)
-                iteration_dir = game_dir
-            else:
-                # Save files in the new structure (or in output_dir if specified)
-                # Always save metadata for all modes
+            
+            # Read metadata from the original game directory
+            metadata_path = os.path.join(game_dir, "metadata.json")
+            metadata = None
+            if os.path.exists(metadata_path):
+                with open(metadata_path, 'r') as f:
+                    metadata = json.load(f)
+            
+            # Save files in the new structure (or in output_dir if specified)
+            iteration_dir = None
+            if self.mode != "basic_test_fix" or output_dir:
                 iteration_dir = self.save_file(
                     game_dir,
                     updated_files,
@@ -707,17 +664,25 @@ Current html code:
                     explanation_sections,
                     output_dir
                 )
-
+            
             # Save the conversation log in the original directory too (unless output_dir is specified)
             if not output_dir:
                 log_path = os.path.join(game_dir, f"code_iteration_{self.mode}.json")
                 with open(log_path, 'w') as f:
                     json.dump(conversation_log, f, indent=2)
             
+            # Save token usage information if available
+            if token_usage and iteration_dir:
+                token_usage_path = os.path.join(iteration_dir, "token_usage.json")
+                with open(token_usage_path, 'w') as f:
+                    json.dump(token_usage, f, indent=2)
+                if self.verbose:
+                    print(f"Saved token usage information to {token_usage_path}")
+            
             if self.verbose:
                 print(f"Code updated successfully in: {output_dir or game_dir}")
             
-            return {
+            result = {
                 "game_dir": game_dir,
                 "iteration_dir": iteration_dir,
                 "updated_files": list(updated_files.keys()),
@@ -725,6 +690,12 @@ Current html code:
                 "mode": self.mode,
                 "backup_folder": backup_folder
             }
+            
+            # Add token usage to result if available
+            if token_usage:
+                result["token_usage"] = token_usage
+                
+            return result
             
         except Exception as e:
             if self.verbose:
@@ -758,165 +729,5 @@ Current html code:
         """
         Get the vibe coding feedback
         """
-        vibe_coding_feedback = "Improve the game. Ensure the game compiles with no errors, starts on pressing ENTER, key inputs work, and the game is still playable."
+        vibe_coding_feedback = "Improve the game code. Ensure the game loads, start on pressing ENTER, key inputs work, and the game is still playable."
         return vibe_coding_feedback
-
-
-    def get_output_instructions(self) -> str:
-        """
-        Get the output format for the code feedback iterator
-        """
-        if self.mode == "basic_test_fix":
-            output_format = """
-# HTML REFERENCE TEMPLATE
-<example_html>
-<!DOCTYPE html>
-<html>
-  <head>
-    <meta charset="UTF-8" />
-    <style>
-      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
-      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
-      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; }
-      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
-      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
-      .control-button.active { background: #007bff; } /* active button for current control mode */
-    </style>
-  </head>
-  <body>
-    <div style="text-align: center; margin-bottom: 20px;">
-      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">{game_title}</h1>
-      <div class="control-buttons">
-        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
-        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Win)</button>
-        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (NAME OF TEST)</button>
-        <!-- Add more test buttons with correct ID convention and click handlers -->
-      </div>
-      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">{game_description}</p>
-      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">{game_controls}</p>
-    </div>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
-    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
-    <script type="module" src="game.js"></script>
-  </body>
-</html>
-</example_html>
-
-<output_instructions>
-Output the code change plan, the updated code, and finally explain the changes in their respective tags for changes to address the feedback.
-Do not rewrite files unless you want to make any changes. Any file that is not updated will be left unchanged from the original game code.
-
-Based on the feedback and your code review, write the plan for changing the game code. Describe changes to each file that you will be updating and the reason for the change.
-<code_change_plan>
-... (file_name: Plan of changes to the file and reason for the change)
-</code_change_plan>
-
-Based on the updated game code (only if you updated the automated_testing_controller.js file):
-<updated_automated_testing>
-<TEST_1>
-<test_description>(write in 1-2 sentences "What are you testing and the intent of the test?")</test_description>
-<strategy_description>(write in 1-2 sentences "What is your gameplay strategy to test it?")</strategy_description>
-<expected_outcome>(write in 1-2 sentences "What is the expected outcome? When do you consider the test successful?")</expected_outcome>
-</TEST_1>
-// Add more tests (up to 7)
-</updated_automated_testing>
-
-For any javascript files that you update:
-<updated_code filename="{{name}}.{{extension}}">
-... (code)
-</updated_code>
-
-HTML following the <example_html> template (output last):
-<updated_html filename="index.html">
-... (html code)
-</updated_html>
-
-// Explain the changes in their respective tags for changes to address the feedback.
-<explain_edits>
-... (Explain the changes in 1-2 sentences for each file that was updated. Specify changes to each file as list items starting with `-`.)
-</explain_edits>
-</output_instructions>
-"""
-        else:  # vibe_coding, guided_iteration
-            output_format = """
-# HTML REFERENCE TEMPLATE (for the updated html file)
-<example_html>
-<!DOCTYPE html>
-<html>
-  <head>
-    <meta charset="UTF-8" />
-    <style>
-      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
-      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
-      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; }
-      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
-      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
-      .control-button.active { background: #007bff; } /* active button for current control mode */
-    </style>
-  </head>
-  <body>
-    <div style="text-align: center; margin-bottom: 20px;">
-      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">{game_title}</h1>
-      <div class="control-buttons">
-        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
-        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Basic testing)</button>
-        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Win)</button>
-        <button id="test_3_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_3')">TEST (Switching between tests)</button>
-        // Add more test buttons with correct ID convention and click handlers
-      </div>
-      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">{game_description}</p>
-      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">{game_controls}</p>
-    </div>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
-    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
-    <script type="module" src="game.js"></script>
-  </body>
-</html>
-</example_html>
-
-<output_instructions>
-Output the code change plan, followed by the updated game description and game controls (if needed), updated automated testing plan, the updated code, and finally explain the changes in their respective tags for changes to address the feedback.
-Do not rewrite files unless you want to make any changes. Any file that is not updated will be left unchanged from the original game code.
-
-// Based on the feedback, write the plan for changing the game code. Describe changes to each file and the reason for the change.
-<code_change_plan>
-... (file_name: Changes to the file, reason for the change)
-</code_change_plan>
-
-// Update the game description and game controls to address the feedback (if necessary):
-<updated_game_description>
-... (Decscribe the game to the player, the objective, what they need to know to play and enjoy the game. Do not mention the controls here. Keep it short and informative.)
-</updated_game_description>
-
-<updated_game_controls>
-... (Game controls as a list to specify the key bindings and the action they perform. Key: Action. Be specific and informative like Arrow key UP: Move up, Arrow key RIGHT: Move right, SPACE: Jump, SHIFT: Sprint, etc.)
-</updated_game_controls>
-
-Based on the updated game code, write the updated automated testing plan:
-<updated_automated_testing>
-<TEST_1>
-<test_description>(write in 1-2 sentences "What are you testing and the intent of the test?")</test_description>
-<strategy_description>(write in 1-2 sentences "What is your gameplay strategy to test it?")</strategy_description>
-<expected_outcome>(write in 1-2 sentences "What is the expected outcome? When do you consider the test successful?")</expected_outcome>
-</TEST_1>
-// Add more tests (up to 7)
-</updated_automated_testing>
-
-For any javascript files that you update (must update `automated_testing_controller.js` to include the new updated tests based on the updated code):
-<updated_code filename="{{name}}.{{extension}}">
-... (code)
-</updated_code>
-
-HTML following the <example_html> template (output last):
-<updated_html filename="index.html">
-... (html code)
-</updated_html>
-
-// Explain the changes in their respective tags for changes to address the feedback.
-<explain_edits>
-... (Explain the changes in 1-2 sentences for each file that was updated. Specify changes to each file as list items starting with `-`.)
-</explain_edits>
-
-</output_instructions>
-"""
-        return output_format

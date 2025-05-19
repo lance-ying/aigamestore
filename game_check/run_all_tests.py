@@ -124,6 +124,14 @@ def run_all_tests(game_path: str, output_file: str = None) -> Dict[str, Any]:
             game_start_test = interaction_test['game_start_test']
             gameplay_test = interaction_test['gameplay_test']
             print(f"Game Start Test: {'✅ PASSED' if game_start_test['test_result'] else '❌ FAILED'}")
+            
+            # Display game restart test if available
+            if 'game_restart_test' in interaction_test:
+                game_restart_test = interaction_test['game_restart_test']
+                print(f"Game Restart Test: {'✅ PASSED' if game_restart_test['test_result'] else '❌ FAILED'}")
+                if not game_restart_test['test_result'] and 'error' in game_restart_test:
+                    print(f"  Error: {game_restart_test['error']}")
+            
             print(f"Gameplay Test: {'✅ PASSED' if gameplay_test['test_result'] else '❌ FAILED'}")
         else:
             # Simple pass/fail case
@@ -279,6 +287,14 @@ def main():
                 game_start_test = interaction_test['game_start_test']
                 gameplay_test = interaction_test['gameplay_test']
                 print(f"Game Start Test: {'✅ PASSED' if game_start_test['test_result'] else '❌ FAILED'}")
+                
+                # Display game restart test if available
+                if 'game_restart_test' in interaction_test:
+                    game_restart_test = interaction_test['game_restart_test']
+                    print(f"Game Restart Test: {'✅ PASSED' if game_restart_test['test_result'] else '❌ FAILED'}")
+                    if not game_restart_test['test_result'] and 'error' in game_restart_test:
+                        print(f"  Error: {game_restart_test['error']}")
+                
                 print(f"Gameplay Test: {'✅ PASSED' if gameplay_test['test_result'] else '❌ FAILED'}")
             else:
                 # Simple pass/fail case

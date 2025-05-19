@@ -30,6 +30,14 @@ class GeminiEvaluator:
         # Initialize the Gemini client
         self.client = genai.Client(api_key=self.api_key)
         self.model_name = "gemini-2.5-flash-preview-04-17"  # Use the latest available model
+        
+        # Initialize token tracking
+        self.token_usage = {
+            "total_prompt_tokens": 0,
+            "total_completion_tokens": 0,
+            "total_tokens": 0,
+            "requests": []
+        }
     
     def wait_for_file_processing(self, uploaded_file):
         """
@@ -66,6 +74,118 @@ class GeminiEvaluator:
             error_msg = f"File is in unexpected state: {uploaded_file.state}"
             logging.error(error_msg)
             raise Exception(error_msg)
+    
+    def _track_token_usage(self, response, request_info: Dict[str, Any]):
+        """
+        Track token usage from a response.
+        
+        Args:
+            response: The response from the Gemini API
+            request_info: Information about the request
+        """
+        try:
+            # Get token usage information if available
+            usage_metadata = None
+            if hasattr(response, 'usage_metadata'):
+                usage_metadata = response.usage_metadata
+            elif hasattr(response, 'usage'):
+                usage_metadata = response.usage
+            
+            if usage_metadata:
+                prompt_tokens = getattr(usage_metadata, 'prompt_token_count', 0)
+                completion_tokens = getattr(usage_metadata, 'candidates_token_count', 0)
+                total_tokens = prompt_tokens + completion_tokens
+                
+                # Update token counts
+                self.token_usage["total_prompt_tokens"] += prompt_tokens
+                self.token_usage["total_completion_tokens"] += completion_tokens
+                self.token_usage["total_tokens"] += total_tokens
+                
+                # Store individual request info
+                request_record = {
+                    "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "request_type": request_info.get("request_type", "unknown"),
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": total_tokens
+                }
+                
+                # Add other request info if available
+                for key, value in request_info.items():
+                    if key != "request_type":
+                        request_record[key] = value
+                
+                self.token_usage["requests"].append(request_record)
+                
+                logging.info(f"Token usage: {prompt_tokens} prompt + {completion_tokens} completion = {total_tokens} total")
+            else:
+                # If no token usage info found, log a simpler record
+                request_record = {
+                    "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "request_type": request_info.get("request_type", "unknown"),
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0,
+                    "note": "Token usage information not available"
+                }
+                self.token_usage["requests"].append(request_record)
+                
+                logging.warning("Token usage information not available in response")
+        except Exception as e:
+            logging.error(f"Error tracking token usage: {str(e)}")
+            
+            # Add a record of the attempt
+            request_record = {
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "request_type": request_info.get("request_type", "unknown"),
+                "error": str(e)
+            }
+            self.token_usage["requests"].append(request_record)
+    
+    def get_token_usage(self) -> Dict[str, Any]:
+        """
+        Get the current token usage statistics.
+        
+        Returns:
+            Dictionary with token usage information
+        """
+        return self.token_usage
+    
+    def reset_token_usage(self):
+        """Reset the token usage counters."""
+        self.token_usage = {
+            "total_prompt_tokens": 0,
+            "total_completion_tokens": 0,
+            "total_tokens": 0,
+            "requests": []
+        }
+    
+    def save_conversation_log(self, output_dir: str, filename: str = "gemini_conversation_log.json") -> str:
+        """
+        Save the conversation log and token usage to a file.
+        
+        Args:
+            output_dir: Directory to save the log
+            filename: Name of the log file
+            
+        Returns:
+            Path to the saved log file
+        """
+        log_path = os.path.join(output_dir, filename)
+        
+        log_data = {
+            "token_usage": self.token_usage,
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+        }
+        
+        try:
+            with open(log_path, 'w') as f:
+                json.dump(log_data, f, indent=2)
+            logging.info(f"Conversation log saved to {log_path}")
+            return log_path
+        except Exception as e:
+            logging.error(f"Error saving conversation log: {str(e)}")
+            return ""
     
     def evaluate_video_with_custom_prompt(self, video_path: str, custom_prompt: str) -> Optional[str]:
         """
@@ -119,6 +239,13 @@ class GeminiEvaluator:
                 contents=contents,
                 config=generate_content_config,
             )
+            
+            # Track token usage
+            self._track_token_usage(response, {
+                "request_type": "video_evaluation",
+                "video_path": video_path,
+                "prompt_length": len(custom_prompt)
+            })
             
             if not response or not hasattr(response, 'text'):
                 logging.error("No valid response from Gemini API")
@@ -199,24 +326,7 @@ class GeminiEvaluator:
         for key, value in result.items():
             print(f"{key}: {value}")
             print("\n")
-        # Try to extract numerical rating from overall assessment
-        # try:
-        #     assessment = result.get("overall_assessment", "")
-        #     import re
-        #     rating_match = re.search(r"(\d+(\.\d+)?)/10", assessment)
-        #     if rating_match:
-        #         result["rating"] = float(rating_match.group(1))
-        #     else:
-        #         # Try to find just a number from 1-10
-        #         rating_match = re.search(r"(?:rating|rate|score|give).*?(\d+)(?:/10)?", 
-        #                                  assessment.lower())
-        #         if rating_match:
-        #             rating = int(rating_match.group(1))
-        #             if 1 <= rating <= 10:
-        #                 result["rating"] = rating
-            # except Exception as e:
-            #     logging.warning(f"Failed to extract rating: {str(e)}")
-            
+        
         return result
         
     def generate_text(self, prompt: str) -> Optional[str]:
@@ -253,6 +363,12 @@ class GeminiEvaluator:
                 contents=contents,
                 config=generate_content_config,
             )
+            
+            # Track token usage
+            self._track_token_usage(response, {
+                "request_type": "text_generation",
+                "prompt_length": len(prompt)
+            })
             
             if not response or not hasattr(response, 'text'):
                 logging.error("No valid response from Gemini API")

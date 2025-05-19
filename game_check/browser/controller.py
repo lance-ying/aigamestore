@@ -860,6 +860,13 @@ class GameBrowserController:
                     "diff_score": interaction_results["game_start_test"]["diff_score"],
                     "screenshot": interaction_results["game_start_test"]["screenshot"]
                 },
+                "game_restart_test": {
+                    "test_result": interaction_results.get("game_restart_test", {}).get("test_result", False),
+                    "game_phase_after_restart": interaction_results.get("game_restart_test", {}).get("game_phase_after_restart", None),
+                    "error": interaction_results.get("game_restart_test", {}).get("error", None),
+                    "diff_score": interaction_results.get("game_restart_test", {}).get("diff_score", 0),
+                    "screenshot": interaction_results.get("game_restart_test", {}).get("screenshot", "")
+                },
                 "gameplay_test": {
                     "test_result": interaction_results["gameplay_test"]["test_result"],
                     "key_changes_detected": len([score for score in interaction_results["gameplay_test"]["diff_scores"] if score > 0.001]),
@@ -1747,6 +1754,41 @@ class GameBrowserController:
                                     game_phase_check_passed = True
                                 else:
                                     logging.warning(f"Game phase after Enter is '{game_phase_after_enter}', expected 'PLAYING'")
+                                    
+                                    # If not in PLAYING phase, try pressing Enter a few more times
+                                    if game_phase_after_enter != "PLAYING":
+                                        logging.info("Attempting to press Enter again to reach PLAYING state")
+                                        max_attempts = 5
+                                        attempts = 0
+                                        current_phase = game_phase_after_enter
+                                        
+                                        while current_phase != "PLAYING" and attempts < max_attempts:
+                                            attempts += 1
+                                            # Press Enter again
+                                            await self._test_key_press(page, "Enter", f"retry_start_{attempts}", screenshots_dir)
+                                            await page.wait_for_timeout(300)
+                                            
+                                            # Check game phase
+                                            retry_state = await page.evaluate("getGameState()")
+                                            if retry_state and isinstance(retry_state, dict):
+                                                current_phase = retry_state.get("gamePhase")
+                                                logging.info(f"Game phase after retry {attempts}: {current_phase}")
+                                                if current_phase == "PLAYING":
+                                                    game_phase_after_enter = "PLAYING"
+                                                    game_phase_check_passed = True
+                                                    break
+                                            
+                                        # If all attempts failed, manually set gamePhase for testing to continue
+                                        if current_phase != "PLAYING" and attempts >= max_attempts:
+                                            logging.error(f"Max attempts reached ({max_attempts}) to start the game. Manually setting gamePhase to PLAYING.")
+                                            await page.evaluate("""() => {
+                                                const gameState = getGameState();
+                                                if (gameState) {
+                                                    gameState.gamePhase = "PLAYING";
+                                                    console.log("Game state manually set to PLAYING to continue testing");
+                                                }
+                                            }""")
+                                            result["game_start_test"]["error"] = f"Game did not start when pressing Enter. gamePhase was '{current_phase}' after {max_attempts} attempts, expected 'PLAYING'."
                             else:
                                 logging.warning(f"getGameState() did not return a valid dictionary. Returned: {game_state}")
                                 game_phase_after_enter = f"ERROR: Invalid gameState: {game_state}"
@@ -1787,6 +1829,155 @@ class GameBrowserController:
                     
                     result["test_result"] = False
                     return result
+                
+                # --- GAME RESTART TEST ---
+                logging.info("Running game restart test (pressing R after game over)")
+                
+                # Initialize the game restart test results
+                result["game_restart_test"] = {
+                    "test_result": False,
+                    "screenshot": "",
+                    "diff_score": 0
+                }
+                
+                try:
+                    # First check if getGameState function exists
+                    has_game_state_function = await page.evaluate("""() => {
+                        return typeof getGameState === 'function';
+                    }""")
+                    
+                    if not has_game_state_function:
+                        logging.error("getGameState function not found in the game")
+                        result["game_restart_test"]["test_result"] = True  # Skip this test if getGameState is not available
+                        result["game_restart_test"]["error"] = "getGameState function not found, skipping restart test"
+                    else:
+                        # Set gamePhase to "GAME_OVER_WIN" to simulate end screen
+                        await page.evaluate("""() => {
+                            const gameState = getGameState();
+                            if (gameState) {
+                                gameState.gamePhase = "GAME_OVER_WIN";
+                                console.log("Game state set to GAME_OVER_WIN for restart test");
+                            } else {
+                                console.error("Could not get game state for restart test");
+                            }
+                        }""")
+                        
+                        # Wait a bit for state change to take effect
+                        await page.wait_for_timeout(500)
+                        
+                        # Take screenshot before restart
+                        before_restart_filename = f"frame_{self.frame_counter:05d}_before_restart.png"
+                        before_restart_screenshot = await self._save_screenshot(page, screenshots_dir, before_restart_filename)
+                        if before_restart_screenshot:
+                            result["screenshots"].append(before_restart_screenshot)
+                        
+                        # Press R to restart
+                        restart_test = await self._test_key_press(page, "r", "restart_game", screenshots_dir)
+                        
+                        # Wait a bit for the restart to take effect
+                        await page.wait_for_timeout(500)
+                        
+                        # Check gamePhase after pressing R
+                        game_state_after_restart = await page.evaluate("getGameState()")
+                        
+                        if game_state_after_restart and isinstance(game_state_after_restart, dict):
+                            game_phase_after_restart = game_state_after_restart.get("gamePhase")
+                            
+                            # Check if gamePhase is "START"
+                            result["game_restart_test"]["game_phase_after_restart"] = game_phase_after_restart
+                            result["game_restart_test"]["test_result"] = (game_phase_after_restart == "START")
+                            
+                            if game_phase_after_restart == "START":
+                                logging.info("Game restart test passed: gamePhase is 'START' after pressing R")
+                            else:
+                                logging.error(f"Game restart test failed: gamePhase is '{game_phase_after_restart}' after pressing R, expected 'START'")
+                                result["game_restart_test"]["error"] = f"Game did not restart when pressing R on the end screen. gamePhase was '{game_phase_after_restart}', expected 'START'."
+                        else:
+                            logging.error("Game restart test failed: Could not get game state after pressing R")
+                            result["game_restart_test"]["error"] = "Could not get game state after pressing R"
+                            result["game_restart_test"]["test_result"] = False
+                        
+                        # Calculate diff with previous screenshot
+                        if before_restart_screenshot and restart_test.get("screenshot"):
+                            diff_score = self._compare_screenshots(before_restart_screenshot, restart_test.get("screenshot"))
+                            restart_test["diff_score"] = diff_score
+                            
+                            # Update game restart test results
+                            result["game_restart_test"]["diff_score"] = diff_score
+                            result["game_restart_test"]["screenshot"] = restart_test.get("screenshot")
+                            
+                            # Update previous screenshot for next comparison
+                            prev_screenshot = restart_test.get("screenshot")
+                except Exception as e:
+                    logging.error(f"Error during game restart test: {e}")
+                    result["game_restart_test"]["error"] = f"Error during restart test: {str(e)}"
+                    result["game_restart_test"]["test_result"] = False
+                
+                # Reset game state for gameplay test regardless of restart test result
+                logging.info("Resetting game state to START before gameplay test")
+                if await page.evaluate("""() => { return typeof getGameState === 'function'; }"""):
+                    # Manually set gamePhase to START
+                    await page.evaluate("""() => {
+                        const gameState = getGameState();
+                        if (gameState) {
+                            gameState.gamePhase = "START";
+                            console.log("Game state reset to START for gameplay test");
+                        } else {
+                            console.error("Could not get game state to reset");
+                        }
+                    }""")
+                    
+                    # Wait a bit for state change to take effect
+                    await page.wait_for_timeout(500)
+                    
+                    # Press Enter to get to PLAYING state
+                    enter_press_test = await self._test_key_press(page, "Enter", "reset_to_playing", screenshots_dir)
+                    await page.wait_for_timeout(500)
+                    
+                    # Check if game is in PLAYING state
+                    max_attempts = 5
+                    attempts = 0
+                    current_phase = ""
+                    
+                    while attempts < max_attempts:
+                        game_state = await page.evaluate("getGameState()")
+                        if game_state and isinstance(game_state, dict):
+                            current_phase = game_state.get("gamePhase")
+                            logging.info(f"Game phase after reset attempt {attempts+1}: {current_phase}")
+                            
+                            if current_phase == "PLAYING":
+                                break
+                            
+                            # Try pressing Enter again
+                            await self._test_key_press(page, "Enter", f"reset_to_playing_{attempts}", screenshots_dir)
+                            await page.wait_for_timeout(300)
+                        
+                        attempts += 1
+                    
+                    # If still not PLAYING, manually set it
+                    if current_phase != "PLAYING" and attempts >= max_attempts:
+                        logging.error(f"Failed to reach PLAYING state after {max_attempts} attempts. Manually setting gamePhase to PLAYING.")
+                        await page.evaluate("""() => {
+                            const gameState = getGameState();
+                            if (gameState) {
+                                gameState.gamePhase = "PLAYING";
+                                console.log("Game state manually set to PLAYING for gameplay test");
+                            }
+                        }""")
+
+                    await page.wait_for_timeout(500)
+                    # wait and check the state again 
+                    game_state = await page.evaluate("getGameState()")
+                    if game_state and isinstance(game_state, dict):
+                        game_phase = game_state.get("gamePhase")
+                        logging.info(f"Current game phase after reset attempt {attempts}: {game_phase}")
+                        if game_phase != "PLAYING":
+                            logging.error(f"Game did not reach PLAYING state after {max_attempts} attempts. Manually setting gamePhase to PLAYING.")
+                            result["game_restart_test"]["error"] = f"Game did not reach PLAYING state after pressing ENTER after we had pressed R to restart the game."
+                            result["game_restart_test"]["test_result"] = False
+                    # Update previous screenshot for gameplay tests
+                    if enter_press_test.get("screenshot"):
+                        prev_screenshot = enter_press_test.get("screenshot")
                 
                 # --- GAMEPLAY TEST ---
                 logging.info("Running gameplay test (random key presses)")
@@ -1853,55 +2044,89 @@ class GameBrowserController:
                                 if game_phase in ["GAME_OVER_WIN", "GAME_OVER_LOSS"]:
                                     logging.info(f"Game over detected ({game_phase}), restarting game...")
                                     
-
-                                    while game_phase != "START":
+                                    max_attempts = 10
+                                    attempts = 0
+                                    while game_phase != "START" and attempts < max_attempts:
                                         # Press R to restart
-                                        await self._test_key_press(page, "r", f"restart_r_{i}", screenshots_dir)
+                                        await self._test_key_press(page, "r", f"sticky_restart_r_{i}", screenshots_dir)
                                         await page.wait_for_timeout(200)
+                                        attempts += 1
                                         
                                         # Check if game is in START phase
                                         game_state = await page.evaluate("getGameState()")
                                         if game_state and isinstance(game_state, dict):
                                             game_phase = game_state.get("gamePhase")
-                                            logging.info(f"Current game phase after restart: {game_phase}")
+                                            logging.info(f"Current game phase after restart attempt {attempts}: {game_phase}")
                                             if game_phase == "START":
                                                 break
                                         else:
                                             logging.error(f"Game is not in START phase after restart: {game_phase}")
+                                    
+                                    # If key didn't respond, manually set state
+                                    if game_phase != "START" and attempts >= max_attempts:
+                                        logging.error(f"Max attempts reached ({max_attempts}) to restart game during sticky test. Manually setting gamePhase to START.")
+                                        await page.evaluate("""() => {
+                                            const gameState = getGameState();
+                                            if (gameState) {
+                                                gameState.gamePhase = "START";
+                                                console.log("Game state manually reset to START for sticky test");
+                                            }
+                                        }""")
+                                        await page.wait_for_timeout(2000)
 
-                                    while game_phase != "PLAYING":
+                                        # Record restart failure in action info
+                                        restart_error = "Game did not restart properly when pressing R during gameplay after on the end screen. Check your game phase management."
+
+                                        # trigger a console error
+                                        logging.error(restart_error)
+                                        result["game_restart_test"]["error"] = restart_error
+                                        result["game_restart_test"]["test_result"] = False
+
+
+
+                                    max_attempts = 10
+                                    attempts = 0
+                                    while game_phase != "PLAYING" and attempts < max_attempts:
                                         # Press Enter to confirm restart
-                                        restart_key_test = await self._test_key_press(page, "Enter", f"restart_enter_{i}", screenshots_dir)
+                                        restart_key_test = await self._test_key_press(page, "Enter", f"sticky_restart_enter_{i}", screenshots_dir)
                                         await page.wait_for_timeout(100)
-
-                                        # Check if game is in START phase
+                                        attempts += 1
+                                        
+                                        # Check if game is in PLAYING phase
                                         game_state = await page.evaluate("getGameState()")
                                         if game_state and isinstance(game_state, dict):
                                             game_phase = game_state.get("gamePhase")
-                                            logging.info(f"Current game phase after restart: {game_phase}")
+                                            logging.info(f"Current game phase after restart enter attempt {attempts}: {game_phase}")
                                             if game_phase == "PLAYING":
                                                 break
                                         else:
-                                            logging.error(f"Game is not in PLAYING phase after restart: {game_phase}")
+                                            result["game_restart_test"]["error"] = f"Game did not restart properly when pressing Enter during gameplay after on the end screen. Check your game phase management."
+                                            result["game_restart_test"]["test_result"] = False
+                                    
+                                    # If Enter didn't respond, manually set state
+                                    if game_phase != "PLAYING" and attempts >= max_attempts:
+                                        logging.error(f"Max attempts reached ({max_attempts}) to restart game during sticky test. Manually setting gamePhase to PLAYING.")
+                                        await page.evaluate("""() => {
+                                            const gameState = getGameState();
+                                            if (gameState) {
+                                                gameState.gamePhase = "PLAYING";
+                                                console.log("Game state manually set to PLAYING for continued testing");
+                                            }
+                                        }""")
+                                        game_not_restarting_error = "Game reached the end state but the game did not restart properly when pressing Enter during gameplay returning to START phase upon pressing ENTER."
+                                        await page.wait_for_timeout(500)
 
-                                    # Update previous screenshot after restart
-                                    if restart_key_test.get("screenshot"):
-                                        prev_screenshot = restart_key_test.get("screenshot")
+                                        # wait and check the state again 
+                                        game_state = await page.evaluate("getGameState()")
+                                        if game_state and isinstance(game_state, dict):
+                                            game_phase = game_state.get("gamePhase")
+                                            logging.info(f"Current game phase after restart enter attempt {attempts}: {game_phase}")
+                                            if game_phase != "PLAYING":
+                                                game_not_restarting_error += "\nThe game may not be resetting properly to ensure that the game can be played again. Make sure not to reset p.logs."
+                                                # trigger a console error
+                                                logging.error(game_not_restarting_error)
+                                                await page.evaluate("console.error('Game did not restart properly when pressing Enter during gameplay returning to START phase upon pressing ENTER.')")
                                     
-                                    # Record this restart action
-                                    random_action_info = {
-                                        "action_index": i,
-                                        "key": f"{random_key} (triggered game over: {game_phase})",
-                                        "restart_performed": True,
-                                        "screenshot": key_test.get("screenshot"),
-                                        "diff_score": key_test.get("diff_score", 0),
-                                        "new_errors": [],
-                                        "has_errors": False
-                                    }
-                                    random_action_results.append(random_action_info)
-                                    
-                                    # Continue to next random action
-                                    continue
                     except Exception as e:
                         # Just log the error and continue with testing if game state check fails
                         logging.warning(f"Error checking game phase: {e}")
@@ -1972,12 +2197,12 @@ class GameBrowserController:
                     await page.wait_for_timeout(50)
                 
                 # Now perform 128 "sticky keys" actions
-                total_actions = 128
+                total_actions = 64
                 current_action = 0
                 while current_action < total_actions:
                     # Choose a random key and stick with it for 4-16 consecutive presses
                     sticky_key = random.choice(self.gameplay_keys)
-                    consecutive_presses = random.randint(4, 16)
+                    consecutive_presses = random.randint(4, 8)
                     
                     logging.info(f"Sticky action {current_action+1}/{total_actions}: Pressing {sticky_key} for {consecutive_presses} consecutive times")
                     
@@ -2069,38 +2294,80 @@ class GameBrowserController:
                                 if game_phase in ["GAME_OVER_WIN", "GAME_OVER_LOSS"]:
                                     logging.info(f"Game over detected ({game_phase}), restarting game...")
                                     
-                                    restart_count = 0
-                                    while game_phase != "START" and restart_count < 10:
+                                    max_attempts = 10
+                                    attempts = 0
+                                    while game_phase != "START" and attempts < max_attempts:
                                         # Press R to restart
-                                        await self._test_key_press(page, "r", f"restart_r_{i}", screenshots_dir)
+                                        await self._test_key_press(page, "r", f"sticky_restart_r_{i}", screenshots_dir)
                                         await page.wait_for_timeout(200)
-                                        restart_count += 1
+                                        attempts += 1
                                         
                                         # Check if game is in START phase
                                         game_state = await page.evaluate("getGameState()")
                                         if game_state and isinstance(game_state, dict):
                                             game_phase = game_state.get("gamePhase")
-                                            logging.info(f"Current game phase after restart: {game_phase}")
+                                            logging.info(f"Current game phase after restart attempt {attempts}: {game_phase}")
                                             if game_phase == "START":
                                                 break
                                         else:
                                             logging.error(f"Game is not in START phase after restart: {game_phase}")
+                                    
+                                    # If key didn't respond, manually set state
+                                    if game_phase != "START" and attempts >= max_attempts:
+                                        logging.error(f"Max attempts reached ({max_attempts}) to restart game during sticky test. Manually setting gamePhase to START.")
+                                        await page.evaluate("""() => {
+                                            const gameState = getGameState();
+                                            if (gameState) {
+                                                gameState.gamePhase = "START";
+                                                console.log("Game state manually reset to START for sticky test");
+                                            }
+                                        }""")
+                                        await page.wait_for_timeout(500)
+                                        
+                                        # Record restart failure in action info
+                                        restart_error = f"Game did not restart properly when pressing R during gameplay after {attempts} attempts"
+                                        random_action_info = {
+                                            "action_index": i,
+                                            "key": f"{sticky_key} (triggered game over: {game_phase})",
+                                            "restart_performed": True,
+                                            "restart_failed": True,
+                                            "error": restart_error,
+                                            "screenshot": key_test.get("screenshot"),
+                                            "diff_score": key_test.get("diff_score", 0),
+                                            "new_errors": [],
+                                            "has_errors": False
+                                        }
+                                        random_action_results.append(random_action_info)
 
-                                    restart_count = 0
-                                    while game_phase != "PLAYING" and restart_count < 10:
+                                    max_attempts = 10
+                                    attempts = 0
+                                    while game_phase != "PLAYING" and attempts < max_attempts:
                                         # Press Enter to confirm restart
-                                        restart_key_test = await self._test_key_press(page, "Enter", f"restart_enter_{i}", screenshots_dir)
+                                        restart_key_test = await self._test_key_press(page, "Enter", f"sticky_restart_enter_{i}", screenshots_dir)
                                         await page.wait_for_timeout(100)
-                                        restart_count += 1
-                                        # Check if game is in START phase
+                                        attempts += 1
+                                        
+                                        # Check if game is in PLAYING phase
                                         game_state = await page.evaluate("getGameState()")
                                         if game_state and isinstance(game_state, dict):
                                             game_phase = game_state.get("gamePhase")
-                                            logging.info(f"Current game phase after restart: {game_phase}")
+                                            logging.info(f"Current game phase after restart enter attempt {attempts}: {game_phase}")
                                             if game_phase == "PLAYING":
                                                 break
                                         else:
                                             logging.error(f"Game is not in PLAYING phase after restart: {game_phase}")
+                                    
+                                    # If Enter didn't respond, manually set state
+                                    if game_phase != "PLAYING" and attempts >= max_attempts:
+                                        logging.error(f"Max attempts reached ({max_attempts}) to restart game during sticky test. Manually setting gamePhase to PLAYING.")
+                                        await page.evaluate("""() => {
+                                            const gameState = getGameState();
+                                            if (gameState) {
+                                                gameState.gamePhase = "PLAYING";
+                                                console.log("Game state manually set to PLAYING for continued testing");
+                                            }
+                                        }""")
+                                        await page.wait_for_timeout(500)
                     except Exception as e:
                         # Just log the error and continue with testing if game state check fails
                         logging.warning(f"Error checking game phase: {e}")

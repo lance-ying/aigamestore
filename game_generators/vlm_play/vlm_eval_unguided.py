@@ -9,7 +9,6 @@ This module provides a more free-form approach to evaluate games using VLM with:
 """
 
 import os
-import re
 import sys
 import json
 import logging
@@ -140,32 +139,63 @@ class VLMPlayEvaluationUnguided:
         game_info = self.metadata['game_info']
         automated_testing = game_info['automated_testing']
         
-        try:          
-            # Parsing test info for format like:
-            # <TEST_1>
-            # <test_description>...</test_description>
-            # <strategy_description>...</strategy_description>
-            # <expected_outcome>...</expected_outcome>
-            # </TEST_1>
+        try:
+            # Check if the XML is properly formatted
+            if not automated_testing.strip().startswith("<TEST_"):
+                logging.warning("Automated testing info does not start with <TEST_. Format may be incorrect.")
                 
-            # Find all TEST blocks
-            test_blocks = re.findall(r'<(TEST_\d+)>(.*?)</\1>', automated_testing, re.DOTALL)
+            # Parse the XML-formatted automated testing information
+            # First, clean up the string to ensure it's valid XML
+            # Remove any potential extra whitespace between tags
+            xml_str = f"<root>{automated_testing}</root>"
             
-            for test_name, test_content in test_blocks:
-                # Extract the inner content
-                test_description_match = re.search(r'<test_description>(.*?)</test_description>', test_content, re.DOTALL)
-                strategy_match = re.search(r'<strategy_description>(.*?)</strategy_description>', test_content, re.DOTALL)
-                outcome_match = re.search(r'<expected_outcome>(.*?)</expected_outcome>', test_content, re.DOTALL)
+            try:
+                # First try standard XML parsing
+                root = ET.fromstring(xml_str)
                 
-                test_info[test_name] = {
-                    "test_description": test_description_match.group(1).strip() if test_description_match else "",
-                    "strategy_description": strategy_match.group(1).strip() if strategy_match else "",
-                    "expected_outcome": outcome_match.group(1).strip() if outcome_match else ""
-                }
-            
+                # Process each test
+                for test_elem in root.findall("./TEST_*"):
+                    test_name = test_elem.tag
+                    
+                    test_description = test_elem.find("test_description")
+                    strategy_description = test_elem.find("strategy_description")
+                    expected_outcome = test_elem.find("expected_outcome")
+                    
+                    test_info[test_name] = {
+                        "test_description": test_description.text.strip() if test_description is not None and test_description.text else "",
+                        "strategy_description": strategy_description.text.strip() if strategy_description is not None and strategy_description.text else "",
+                        "expected_outcome": expected_outcome.text.strip() if expected_outcome is not None and expected_outcome.text else ""
+                    }
+            except ET.ParseError as xml_error:
+                # If standard parsing fails, try manual parsing
+                logging.warning(f"XML parsing failed: {str(xml_error)}. Trying manual parsing...")
+                
+                # Manual parsing for format like:
+                # <TEST_1>
+                # <test_description>...</test_description>
+                # <strategy_description>...</strategy_description>
+                # <expected_outcome>...</expected_outcome>
+                # </TEST_1>
+                
+                import re
+                
+                # Find all TEST blocks
+                test_blocks = re.findall(r'<(TEST_\d+)>(.*?)</\1>', automated_testing, re.DOTALL)
+                
+                for test_name, test_content in test_blocks:
+                    # Extract the inner content
+                    test_description_match = re.search(r'<test_description>(.*?)</test_description>', test_content, re.DOTALL)
+                    strategy_match = re.search(r'<strategy_description>(.*?)</strategy_description>', test_content, re.DOTALL)
+                    outcome_match = re.search(r'<expected_outcome>(.*?)</expected_outcome>', test_content, re.DOTALL)
+                    
+                    test_info[test_name] = {
+                        "test_description": test_description_match.group(1).strip() if test_description_match else "",
+                        "strategy_description": strategy_match.group(1).strip() if strategy_match else "",
+                        "expected_outcome": outcome_match.group(1).strip() if outcome_match else ""
+                    }
+                
         except Exception as e:
             logging.error(f"Error parsing automated testing info: {str(e)}")
-            exit(0)
         
         return test_info
     
@@ -182,7 +212,8 @@ class VLMPlayEvaluationUnguided:
             "errors": [],
             "console_errors": {},
             "success": False,
-            "aggregated_feedback": None
+            "aggregated_feedback": None,
+            "token_usage": None  # Will store token usage data
         }
         
         try:
@@ -386,6 +417,21 @@ class VLMPlayEvaluationUnguided:
                 
                 logging.info(f"Saved aggregated feedback to {feedback_file_path}")
             
+            # Save token usage and conversation logs
+            token_usage = self.gemini_evaluator.get_token_usage()
+            results["token_usage"] = token_usage
+            
+            # Save token usage separately
+            token_usage_path = os.path.join(self.output_dir, "token_usage.json")
+            with open(token_usage_path, 'w') as f:
+                json.dump(token_usage, f, indent=2)
+            
+            logging.info(f"Saved token usage to {token_usage_path}")
+            
+            # Save conversation log
+            conversation_log_path = self.gemini_evaluator.save_conversation_log(self.output_dir)
+            results["conversation_log_path"] = conversation_log_path
+            
             # Generate a combined report
             self._generate_combined_report(results)
             
@@ -415,11 +461,6 @@ class VLMPlayEvaluationUnguided:
             Dictionary with evaluation results or None if failed
         """
         try:
-            print("Printing in _evaluate_test_video_unstructured")
-            print(f"Test mode: {test_mode}")
-            print(f"Button info: {button_info}")
-            print(f"Test info: {self.test_info}")
-
             # Get test information from metadata
             test_info = self.test_info.get(test_mode, {})
             test_description = test_info.get("test_description", "")
@@ -435,14 +476,14 @@ class VLMPlayEvaluationUnguided:
             prompt = f"""{instructions}
 
 <task>
-You are evaluating a gameplay video testing the game for the following: {test_description}
-They followed the following strategy: {strategy_description}
-They expected the following outcome of the test: {expected_outcome}
+You are evaluating a gameplay video where the player is testing the game for the following: {test_description}. 
+They followed the following strategy: {strategy_description}. 
+They expected the following would happen: {expected_outcome}.
 
-Analyze this video and provide feedback to make the game more fun, interesting, and engaging for players.
+Analyze this video and provide feedback to make the game more fun, entertaining, and engaging for players.
 </task>
 """
-
+            
             # Send video to Gemini for evaluation
             response = self.gemini_evaluator.evaluate_video_with_custom_prompt_sync(video_path, prompt)
             
@@ -560,12 +601,12 @@ Analyze this video and provide feedback to make the game more fun, interesting, 
 {instructions}
 
 <task>
-Here are your feedbacks from analyzing all gameplay testing videos.
+Here are your feedbacks from all gameplay testing videos.
 <tests_summary>
 {all_tests_summary}
 </tests_summary>
 
-Please aggregate this feedback into actionable feedback for the game developer to make the game more fun, interesting, and playable for a first time player.
+Please aggregate this feedback into actionable feedback for the game developer based on all gameplay testing videos.
 </task>
 """
             
@@ -611,7 +652,12 @@ Please aggregate this feedback into actionable feedback for the game developer t
                 .evaluation-section {{ margin: 15px 0; padding: 10px; background: #f9f9f9; border-left: 3px solid #333; }}
                 .aggregated-feedback {{ margin: 20px 0; padding: 15px; background: #f0f7ff; border-left: 3px solid #0066cc; }}
                 .console-errors {{ margin: 15px 0; padding: 10px; background: #fff8f8; border-left: 3px solid #f00; font-family: monospace; }}
+                .token-usage {{ margin: 20px 0; padding: 15px; background: #f0fff0; border-left: 3px solid #00cc66; }}
                 pre {{ background-color: #f3f3f3; padding: 8px; overflow-x: auto; }}
+                table {{ border-collapse: collapse; width: 100%; margin: 10px 0; }}
+                th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+                th {{ background-color: #f2f2f2; }}
+                tr:nth-child(even) {{ background-color: #f9f9f9; }}
             </style>
         </head>
         <body>
@@ -624,6 +670,54 @@ Please aggregate this feedback into actionable feedback for the game developer t
             }</span></p>
             <p>Total evaluations: {len(results["evaluations"])}</p>
             
+            <!-- Token Usage Section -->
+            <h2>Token Usage</h2>
+        """
+        
+        # Add token usage if available
+        if results.get("token_usage"):
+            token_usage = results["token_usage"]
+            html_content += f"""
+            <div class="token-usage">
+                <h3>Gemini API Token Usage</h3>
+                <p>Total tokens used: {token_usage.get("total_tokens", 0)}</p>
+                <p>Prompt tokens: {token_usage.get("total_prompt_tokens", 0)}</p>
+                <p>Completion tokens: {token_usage.get("total_completion_tokens", 0)}</p>
+                
+                <h4>Request Details</h4>
+                <table>
+                    <tr>
+                        <th>Timestamp</th>
+                        <th>Request Type</th>
+                        <th>Prompt Tokens</th>
+                        <th>Completion Tokens</th>
+                        <th>Total</th>
+                    </tr>
+            """
+            
+            # Add each request
+            for request in token_usage.get("requests", []):
+                html_content += f"""
+                    <tr>
+                        <td>{request.get("timestamp", "")}</td>
+                        <td>{request.get("request_type", "")}</td>
+                        <td>{request.get("prompt_tokens", 0)}</td>
+                        <td>{request.get("completion_tokens", 0)}</td>
+                        <td>{request.get("total_tokens", 0)}</td>
+                    </tr>
+                """
+            
+            html_content += """
+                </table>
+                <p>Full token usage data saved in token_usage.json</p>
+                <p>Full conversation log saved in gemini_conversation_log.json</p>
+            </div>
+            """
+        else:
+            html_content += "<p>No token usage information recorded.</p>"
+            
+        # Add console errors section
+        html_content += """
             <!-- Console Errors Section -->
             <h2>Console Errors</h2>
         """
@@ -717,30 +811,22 @@ Please aggregate this feedback into actionable feedback for the game developer t
         Get the instructions for the game play tester.
         """
         return f"""
-You are an expert JavaScript game developer and game tester who is known for making games more fun, interesting, and playable for a general audience with varied gaming experience with no prior knowledge of this game.
-You will be analyzing games developed by a game developer for a given game concept. Provide actionable feedback by evaluating gameplay videos of 2D video games to the game developer who will improve the game based on your feedback.
-
+You are a professional JavaScript game developer and tester known for providing precise feedback by evaluating gameplay videos of 2D video games.
 The game developer developed for the following input game concept: {self.game_concept}
-Suggest changes and additions to the game including all aspects of the game, its description, and controls.
+Please suggest improvements, updates, and additions to the game including all aspects of the game, its description, and controls.
+Game iterated with your feedback must respect the game concept and improves the game to make it more fun, interesting, and playable for a general audience with varied gaming experience with no prior knowledge of this game.
 
-# Game information presented to the player:
-Game description: {self.game_description}
-Game controls:
+The game is explained to the player as follows: {self.game_description}
+It is played with the following controls:
 {self.game_controls}
 
-# Hard constraints on the game developer when implementing the game code:
-- Keyboard inputs only. No mouse control. Allowed keyboard keys:
-  - Allowed gameplay control keys: Arrow keys (37-40), SPACE (32), SHIFT (16), Z (90)
-  - Game phase specific controls: 
-    - ENTER (13) to start the game at the start screen
-    - ESC (27) to pause the game
-    - R (82) to restart the game. Pressing R takes you back to the start screen when the game is over so that the game can be played again.
-- Allowed libraries: p5.js, p5.collide2D.
-- Graphics and animations only using p5.
-- No external images, sprites, fonts, or other assets. 
-- No audio or sound effects.
+Following were the constraints on the game development:
+- Use keyboard keys for controls. No mouse controls. Only allowed keys: [Arrow keys (37-40), SPACE (32), Z (90), SHIFT (16), ENTER to start the game (13), R to restart the game after a win/loss (82), ESC to pause the game (27).]
+- The game must start on pressing ENTER key, pauses when ESC key is pressed, and restart on pressing R key at the end of the game.
+- No external images, sprites, or assets. No sound or music effects.
+- All graphics and animations are created using p5.js primitives.
 """
-    
+
 # Async function for easy API
 async def evaluate_game_async(game_path: str, output_dir: Optional[str] = None, api_key: Optional[str] = None) -> Dict[str, Any]:
     """

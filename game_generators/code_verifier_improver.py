@@ -73,6 +73,12 @@ def run_verification(game_path: str, output_file: str = None) -> Dict[str, Any]:
         "is undefined",
         "cannot read property",
         "cannot read properties of undefined",
+        "ReferenceError",
+        "TypeError",
+        "SyntaxError",
+        "URIError",
+        "EvalError",
+        "RangeError"
     ]
 
     # Check both load and interaction logs for runtime errors
@@ -238,9 +244,12 @@ def main():
             # Generate feedback based on the verification results
             feedback = generate_feedback_from_results(results, args.mode)
             logging.info("Game verification failed. Improving game code...")
+            print(feedback)
+            exit()
             # Initialize the code improver
+
             improver = CodeFeedbackIterator(
-                verbose=args.verbose, mode="basic_test_fix", temperature=0.1
+                verbose=args.verbose, mode="basic_test_fix", temperature=args.temperature if args.temperature < 0.3 else 0.1
             )
 
             # Improve the code based on the feedback

@@ -85,7 +85,7 @@ The game failed to load properly.
                         if error.get("source") and error["source"].get("filename"):
                             filename = error["source"]["filename"].split("/")[-1]
                             source_info = f" in {filename}"
-                    feedback += f"- {error.get('message', 'Unknown module error')}{source_info}\n"
+                        feedback += f"- {error.get('message', 'Unknown module error')}{source_info}\n"
                     feedback += "\nThese errors indicate problems with ES6 modules or file imports. Fix these first.\n\n"
 
                 # Check for undefined variable/reference errors
@@ -163,7 +163,6 @@ The game failed to load properly.
                         feedback += "\n"
             else:
                 # Fallback to the old error handling if structured errors are not available
-                print(results["feedback"])
                 # First check for module/import errors as they're often the root cause
                 module_errors_found = False
                 if (
@@ -258,7 +257,21 @@ The game failed to load properly.
                             # Make sure each error is on its own line
                             feedback += f"{error}\n"
 
+                    if "errors" in results["feedback"]["load_test"]:
+                        feedback += "Here are the errors: \n"
+                        for error in results["feedback"]["load_test"]["errors"]:
+                            # Make sure each error is on its own line
+                            feedback += f"{error}\n"
+
             feedback += "Please fix these errors and related errors to make the game playable.\n - The interaction test was not possible. Ensure that the game starts when ENTER is pressed and pressing control keys leads to changes in the game state and update the rendering. Also, check for syntax errors. The game should be playable by pressing ENTER and using control keys to move around after your changes."
+
+            # Display game restart test results
+            if "interaction_test" in results and isinstance(results["interaction_test"], dict):
+                if "game_restart_test" in results["interaction_test"]:
+                    game_restart_test = results["interaction_test"]["game_restart_test"]
+                    if not game_restart_test.get("test_result", False) and "error" in game_restart_test:
+                        feedback += f"\nGAME RESTART TEST FAILED: {game_restart_test.get('error', 'Unknown restart error')}\n\n"
+                        feedback += "The game should restart when R is pressed at the end screen. Please check the game_restart_test in the results.\n"
 
         # Check if interaction test failed (but load test passed)
         elif not results["interaction_test"].get("test_result", False):
@@ -266,6 +279,15 @@ The game failed to load properly.
 The game loads but fails the interaction test. Expected output is that random key presses must change the game state and update the rendered output in the canvas. Following are the error messages: 
 """
 
+            # Check if game restart test specifically failed
+            restart_test_failed = False
+            if "interaction_test" in results and isinstance(results["interaction_test"], dict):
+                if "game_restart_test" in results["interaction_test"]:
+                    restart_test = results["interaction_test"]["game_restart_test"]
+                    if not restart_test.get("test_result", True) and "error" in restart_test:
+                        restart_test_failed = True
+                        feedback += f"\nGAME RESTART TEST FAILED: {restart_test.get('error', 'Unknown restart error')}\n\n"
+            
             # Get structured errors if available
             structured_errors = []
             if "structured_errors" in results:
@@ -378,9 +400,9 @@ The game loads but fails the interaction test. Expected output is that random ke
                         feedback += "\n"
 
                     # If error is about visual changes, add specific feedback
-                    if "error" in results and "visual" in results["error"].lower():
+                    if "error" in results["interaction_test"] and "visual" in results["interaction_test"]["error"].lower():
                         feedback += "GAMEPLAY VISUAL ERROR:\n"
-                        feedback += f"- {results['error']}\n\n"
+                        feedback += f"- {results['interaction_test']['error']}\n\n"
                         feedback += "Check your key event handlers and ensure they're properly updating the game state and rendering.\n\n"
             else:
                 # Fallback to the old error handling if structured errors are not available
@@ -476,6 +498,43 @@ The game loads but fails the interaction test. Expected output is that random ke
                         for error in results["feedback"]["interaction_test"]["errors"]:
                             # Make sure each error is on its own line
                             feedback += f"{error}\n"
+
+            if "error" in results["interaction_test"] and "restart" in results["interaction_test"]["error"].lower():
+                restart_test_failed = True
+                feedback += f"\nGAME RESTART TEST FAILED: {results['interaction_test']['error']}\n\n"
+            
+            # Check for specific test failures and add appropriate messages to feedback
+            if "interaction_test" in results and isinstance(results["interaction_test"], dict):
+                # Check for game start test failure
+                if "interaction_test" in results["interaction_test"]:
+                    interaction_detail = results["interaction_test"]["interaction_test"]
+                    
+                    # Check for game start test error
+                    if "game_start_test" in interaction_detail:
+                        start_test = interaction_detail["game_start_test"]
+                        if not start_test.get("test_result", True):
+                            start_error = start_test.get("error", "Game did not properly start on pressing Enter")
+                            feedback += f"\nGAME START TEST FAILED: {start_error}\n"
+                            feedback += "The game should start when Enter is pressed. Press Enter should change game state to PLAYING.\n\n"
+                    
+                    # Check for game restart test error
+                    if "game_restart_test" in interaction_detail:
+                        restart_test = interaction_detail["game_restart_test"]
+                        if not restart_test.get("test_result", True):
+                            restart_error = restart_test.get("error", "Game did not properly restart on pressing R")
+                            restart_test_failed = True
+                            feedback += f"\nGAME RESTART TEST FAILED: {restart_error}\n"
+                            feedback += "The game should restart when R is pressed at the end screen. Please check the game_restart_test in the results.\n\n"
+                    
+                    # Check for gameplay test error with restart failures
+                    if "gameplay_test" in interaction_detail:
+                        gameplay_test = interaction_detail["gameplay_test"]
+                        if not gameplay_test.get("test_result", True) and isinstance(gameplay_test.get("detailed_actions", []), list):
+                            for action in gameplay_test["detailed_actions"]:
+                                if isinstance(action, dict) and action.get("restart_failed"):
+                                    feedback += f"\nGAME RESTART DURING GAMEPLAY FAILED: {action.get('error', 'Unknown restart error')}\n"
+                                    feedback += "The game should correctly restart during gameplay when R is pressed after game over.\n\n"
+                                    break
 
             feedback += """
 Please consider what might be causing this issue and update the game code accordingly.

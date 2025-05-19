@@ -563,6 +563,9 @@ class BasicTesting:
                     for item in results["feedback"][test_type][category]:
                         if item:  # Skip empty messages
                             aggregated_feedback[category].add(item)
+                            if "error" in item and category == "logs":
+                                aggregated_feedback["errors"].append(item)
+                                
         
         # Convert sets to sorted lists for the final output
         return {category: sorted(list(items)) for category, items in aggregated_feedback.items()}
@@ -606,4 +609,7 @@ class BasicTesting:
             if category in aggregated_feedback and aggregated_feedback[category]:
                 print(f"\n{category.upper()}:")
                 for item in aggregated_feedback[category]:
-                    print(f"- {item}") 
+                    print(f"- {item}")
+                    if "error" in item and category == "logs":
+                        aggregated_feedback["errors"].append(item)
+                        aggregated_feedback["test"]

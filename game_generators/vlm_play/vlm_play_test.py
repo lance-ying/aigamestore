@@ -213,7 +213,8 @@ class VLMPlayEvaluation:
             "errors": [],
             "console_errors": {},
             "success": False,
-            "aggregated_feedback": None
+            "aggregated_feedback": None,
+            "token_usage": None  # Will store token usage data
         }
         
         try:
@@ -404,6 +405,21 @@ class VLMPlayEvaluation:
                     json.dump(aggregated_feedback, f, indent=2)
                 
                 logging.info(f"Saved aggregated feedback to {feedback_file_path}")
+            
+            # Save token usage and conversation logs
+            token_usage = self.gemini_evaluator.get_token_usage()
+            results["token_usage"] = token_usage
+            
+            # Save token usage separately
+            token_usage_path = os.path.join(self.output_dir, "token_usage.json")
+            with open(token_usage_path, 'w') as f:
+                json.dump(token_usage, f, indent=2)
+            
+            logging.info(f"Saved token usage to {token_usage_path}")
+            
+            # Save conversation log
+            conversation_log_path = self.gemini_evaluator.save_conversation_log(self.output_dir)
+            results["conversation_log_path"] = conversation_log_path
             
             # Generate a combined report
             self._generate_combined_report(results)
@@ -736,135 +752,66 @@ class VLMPlayEvaluation:
             await page.close()
             await context.close()
             
-            # Record at a reasonable size
-            recording_context = await browser.new_context(
-                viewport={"width": 800, "height": 600},
-                record_video_dir=test_videos_dir,
-                record_video_size={"width": 800, "height": 600}
-            )
+            # Record for 20 seconds
+            logging.info(f"Recording for {test_name} for 20 seconds")
             
-            recording_page = await recording_context.new_page()
+            # Check game phase every second and restart if needed
+            start_time = asyncio.get_event_loop().time()
+            end_time = start_time + 20
             
-            try:
-                await recording_page.goto(url, wait_until="networkidle", timeout=15000)
-                
-                # Hide everything except canvas
-                await recording_page.evaluate("""
+            while asyncio.get_event_loop().time() < end_time:
+                # Check game phase
+                game_phase = await page.evaluate("""
                     () => {
-                        const canvas = document.querySelector('canvas');
-                        if (!canvas) return;
-                        
-                        // Style canvas
-                        canvas.style.position = 'absolute';
-                        canvas.style.left = '50%';
-                        canvas.style.top = '50%';
-                        canvas.style.transform = 'translate(-50%, -50%)';
-                        
-                        // Hide other elements for clean recording
-                        document.body.style.margin = '0';
-                        document.body.style.padding = '0';
-                        document.body.style.background = '#000';
-                        
-                        Array.from(document.body.children).forEach(el => {
-                            if (el !== canvas && !el.contains(canvas)) {
-                                el.style.display = 'none';
+                        try {
+                            // Try to get game state via getGameState function
+                            if (typeof window.getGameState === 'function') {
+                                const state = window.getGameState();
+                                if (state && state.gamePhase) {
+                                    return state.gamePhase;
+                                }
                             }
-                        });
+                            // Fall back to direct gameState access
+                            else if (window.gameState && window.gameState.gamePhase) {
+                                return window.gameState.gamePhase;
+                            }
+                            return 'unknown';
+                        } catch (e) {
+                            console.error('Error checking game phase:', e);
+                            return 'error';
+                        }
                     }
                 """)
                 
-                # Set the control mode in this new context
-                await recording_page.evaluate(f"""
-                    () => {{
-                        try {{
-                            // Try setting control mode via function call first
-                            if (typeof window.setControlMode === 'function') {{
-                                window.setControlMode('{test_mode}');
-                            }}
-                            // Try direct setting if function not available
-                            else if (window.gameState) {{
-                                window.gameState.controlMode = '{test_mode}';
-                            }}
-                            // Try clicking button if available
-                            else {{
-                                const button = document.getElementById('{button_id}');
-                                if (button) button.click();
-                            }}
-                        }} catch (e) {{
-                            console.error("Error setting test mode:", e);
-                        }}
-                    }}
-                """)
-                
-                # Press ENTER again to start the game
-                await recording_page.keyboard.press("Enter")
-                
-                # Record for 10 seconds
-                logging.info(f"Recording for {test_name} for 10 seconds")
-                
-                # Check game phase every second and restart if needed
-                start_time = asyncio.get_event_loop().time()
-                end_time = start_time + 15
-                
-                while asyncio.get_event_loop().time() < end_time:
-                    # Check game phase
-                    game_phase = await recording_page.evaluate("""
-                        () => {
-                            try {
-                                // Try to get game state via getGameState function
-                                if (typeof window.getGameState === 'function') {
-                                    const state = window.getGameState();
-                                    if (state && state.gamePhase) {
-                                        return state.gamePhase;
-                                    }
-                                }
-                                // Fall back to direct gameState access
-                                else if (window.gameState && window.gameState.gamePhase) {
-                                    return window.gameState.gamePhase;
-                                }
-                                return 'unknown';
-                            } catch (e) {
-                                console.error('Error checking game phase:', e);
-                                return 'error';
-                            }
-                        }
-                    """)
+                # If game is not in playing phase, restart it
+                if game_phase and game_phase.lower() != 'playing':
+                    logging.info(f"Game phase is {game_phase}, restarting game...")
                     
-                    # If game is not in playing phase, restart it
-                    if game_phase and game_phase.lower() != 'playing':
-                        logging.info(f"Game phase is {game_phase}, restarting game...")
-                        
-                        # Press R to restart
-                        await recording_page.keyboard.press('r')
-                        await recording_page.wait_for_timeout(500)
-                        
-                        # Press ENTER to confirm restart
-                        await recording_page.keyboard.press('Enter')
-                        await recording_page.wait_for_timeout(500)
-                        
-                        # Reset test mode again in case it was lost
-                        await recording_page.evaluate(f"""
-                            () => {{
-                                try {{
-                                    if (typeof window.setControlMode === 'function') {{
-                                        window.setControlMode('{test_mode}');
-                                    }} else if (window.gameState) {{
-                                        window.gameState.controlMode = '{test_mode}';
-                                    }}
-                                }} catch (e) {{
-                                    console.error('Error resetting test mode:', e);
+                    # Press R to restart
+                    await page.keyboard.press('r')
+                    await page.wait_for_timeout(500)
+                    
+                    # Press ENTER to confirm restart
+                    await page.keyboard.press('Enter')
+                    await page.wait_for_timeout(500)
+                    
+                    # Reset test mode again in case it was lost
+                    await page.evaluate(f"""
+                        () => {{
+                            try {{
+                                if (typeof window.setControlMode === 'function') {{
+                                    window.setControlMode('{test_mode}');
+                                }} else if (window.gameState) {{
+                                    window.gameState.controlMode = '{test_mode}';
                                 }}
+                            }} catch (e) {{
+                                console.error('Error resetting test mode:', e);
                             }}
-                        """)
-                    
-                    # Wait a second before checking again
-                    await recording_page.wait_for_timeout(1000)
+                        }}
+                    """)
                 
-            except Exception as e:
-                logging.error(f"Error during recording: {str(e)}")
-            finally:
-                # Close recording context to finalize the video
-                await recording_context.close()
+                # Check more frequently (every 100ms instead of every second)
+                await page.wait_for_timeout(100)
             
             # 6. Process the recorded video with improved error handling
             video_files = [f for f in os.listdir(test_videos_dir) if f.endswith(".webm")]
@@ -1371,7 +1318,12 @@ Write your feedback inside the section tags for each section, formatting each li
                 .evaluation-section {{ margin: 15px 0; padding: 10px; background: #f9f9f9; border-left: 3px solid #333; }}
                 .aggregated-feedback {{ margin: 20px 0; padding: 15px; background: #f0f7ff; border-left: 3px solid #0066cc; }}
                 .console-errors {{ margin: 15px 0; padding: 10px; background: #fff8f8; border-left: 3px solid #f00; font-family: monospace; }}
+                .token-usage {{ margin: 20px 0; padding: 15px; background: #f0fff0; border-left: 3px solid #00cc66; }}
                 pre {{ background-color: #f3f3f3; padding: 8px; overflow-x: auto; }}
+                table {{ border-collapse: collapse; width: 100%; margin: 10px 0; }}
+                th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+                th {{ background-color: #f2f2f2; }}
+                tr:nth-child(even) {{ background-color: #f9f9f9; }}
             </style>
         </head>
         <body>
@@ -1384,6 +1336,54 @@ Write your feedback inside the section tags for each section, formatting each li
             }</span></p>
             <p>Total evaluations: {len(results["evaluations"])}</p>
             
+            <!-- Token Usage Section -->
+            <h2>Token Usage</h2>
+        """
+        
+        # Add token usage if available
+        if results.get("token_usage"):
+            token_usage = results["token_usage"]
+            html_content += f"""
+            <div class="token-usage">
+                <h3>Gemini API Token Usage</h3>
+                <p>Total tokens used: {token_usage.get("total_tokens", 0)}</p>
+                <p>Prompt tokens: {token_usage.get("total_prompt_tokens", 0)}</p>
+                <p>Completion tokens: {token_usage.get("total_completion_tokens", 0)}</p>
+                
+                <h4>Request Details</h4>
+                <table>
+                    <tr>
+                        <th>Timestamp</th>
+                        <th>Request Type</th>
+                        <th>Prompt Tokens</th>
+                        <th>Completion Tokens</th>
+                        <th>Total</th>
+                    </tr>
+            """
+            
+            # Add each request
+            for request in token_usage.get("requests", []):
+                html_content += f"""
+                    <tr>
+                        <td>{request.get("timestamp", "")}</td>
+                        <td>{request.get("request_type", "")}</td>
+                        <td>{request.get("prompt_tokens", 0)}</td>
+                        <td>{request.get("completion_tokens", 0)}</td>
+                        <td>{request.get("total_tokens", 0)}</td>
+                    </tr>
+                """
+            
+            html_content += """
+                </table>
+                <p>Full token usage data saved in token_usage.json</p>
+                <p>Full conversation log saved in gemini_conversation_log.json</p>
+            </div>
+            """
+        else:
+            html_content += "<p>No token usage information recorded.</p>"
+            
+        # Add console errors section
+        html_content += """
             <!-- Console Errors Section -->
             <h2>Console Errors</h2>
         """
