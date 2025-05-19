@@ -44,6 +44,8 @@ Implement a fun and playable game based on the game concept input from the user.
 </game_concept>
 </task>"""
         prompt = instructions + task + output_format
+        print(prompt)
+        exit()
         return prompt
 
     def generate_game(self, game_concept: str, concept_path: Optional[str] = None) -> Dict[str, Any]:
@@ -242,11 +244,11 @@ Implement a fun and playable game based on the game concept input from the user.
 Output the code plan and game files in this format with NO OTHER TEXT:
 
 <game_description>
-... (Decscribe the game to the player, the objective, what they need to know to play and enjoy the game. Do not mention the controls here. Keep it short and informative.)
+... (Describe the game to the player, the objective, what they need to know to play the game. Do not mention the controls here. Keep it short and informative.)
 </game_description>
 
 <game_controls>
-... (Game controls as a list to specify the key bindings and the action they perform. Key: Action. Be specific and informative like Arrow key UP: Move up, Arrow key RIGHT: Move right, SPACE: Jump, SHIFT: Sprint, etc.)
+... (Game controls as a list to specify the key bindings and the action they perform. Key: Action. Be specific about each key.)
 </game_controls>
 
 Write the automated testing plan:
@@ -260,7 +262,7 @@ Write the automated testing plan:
 </automated_testing>
 
 For the javascript files:
-<code filename="{{name}}.{{extension}}">
+<code filename="{name}.{extension}">
 ... (code)
 </code>
 
@@ -302,10 +304,18 @@ HTML following the <example_html> template (output last):
 </example_html>
 
 <output_instructions>
-Output the game files in this format with NO OTHER TEXT:
+Output the code plan and game files in this format with NO OTHER TEXT:
+
+<game_description>
+... (Describe the game to the player, the objective, what they need to know to play the game. Do not mention the controls here. Keep it short and informative.)
+</game_description>
+
+<game_controls>
+... (Game controls as a list to specify the key bindings and the action they perform. Key: Action. Be specific about each key.)
+</game_controls>
 
 For the javascript files:
-<code filename="{{name}}.{{extension}}">
+<code filename="{name}.{extension}">
 ... (code)
 </code>
 
