@@ -538,9 +538,8 @@ The game loads on the webpage but there were errors when interacting with the ga
                                     break
 
             feedback += """
-Please consider what might be causing this issue and update the game code accordingly.
-
-The error messages are based on the first error that was found. There might be other implementation bugs which might lead to similar issues preventing a error-free gameplay experience. Please review the code and fix all the errors.
+Please consider what might be causing the issues. The error messages are based on minimal testing. 
+There might be other implementation bugs which might lead to similar issues preventing a error-free gameplay experience. Please review the code and fix all the errors.
 Some of the common causes of errors are:
 - incorrect or missing imports and exports
 - syntax errors
@@ -554,8 +553,8 @@ Check for the phase transition key event handling in the game code:
 - Game must start when ENTER is pressed
 - Game must restart when R is pressed. On pressing R, the game should restart from the start screen. The must start on pressing ENTER again and be playable.
 
-You can rewrite, add, or remove code to fix the issue. Be careful while making changes to the code. Make sure you are not introducing any new errors. 
-Make sure it loads without errors, starts when ENTER is pressed, and pressing control keys leads to changes in the game state and update the rendering.
+You can rewrite, add, or remove code to fix the issue. Be careful while making changes to the code. Make sure you are not introducing any new errors.
+Make sure it loads without errors, starts when ENTER is pressed, pressing control keys leads to changes in the game state and updates the rendering, and the game can be restarted on pressing R on the end screen to return to the start screen.
 </feedback>
 """
 
