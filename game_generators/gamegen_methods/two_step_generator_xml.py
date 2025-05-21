@@ -82,7 +82,7 @@ Implement an interesting game based on this game design:
                 system_prompt=system_prompt_game_design,
                 verbose=self.verbose,
                 temperature=0.9,
-                # top_p=0.9,
+                top_p=0.9,
             )
             game_design = self.extract_game_design(response_game_design)
 
@@ -93,7 +93,7 @@ Implement an interesting game based on this game design:
                 system_prompt=system_prompt_game_code,
                 verbose=self.verbose,
                 temperature=0.6,
-                # top_p=0.9,
+                top_p=0.9,
             )
             # Prepare conversation log for saving
             conversation_log = [
@@ -113,13 +113,11 @@ Implement an interesting game based on this game design:
             html_code = self.extract_code_block(response, "html") or ""
             
             automated_testing_list = self.extract_automated_testing(response)
-            automated_testing_code = self.extract_automated_testing_code(response)
             # Get JavaScript files
             js_code_dict = self.extract_code_block(response, "javascript")
             js_files = []
             for filename, code in js_code_dict.items():
                 js_files.append((filename, code))
-            js_files.append(("automated_testing_code.js", automated_testing_code))
             
             # Parse genre from concept file if available
             genre = None
@@ -259,36 +257,30 @@ Output format:
 </example_html>
 
 <output_instructions>
-Output the code plan and game files in this format with NO OTHER TEXT:
+Output the code plan and game files in this format with NO OTHER TEXT in less than 35000 tokens:
 
 <game_description>
-... (Tell the user what the game is about, what they need to do, and the objective. Keep it short and concise.)
+... (Decscribe the game to the player, the objective, what they need to know to play and enjoy the game. Don't mention the controls here. Keep it short and concise.)
 </game_description>
 
 <game_controls>
-... (game controls as a list of key bindings, Key: Action)
+... (Game controls as a list of key bindings, Key: Action)
 </game_controls>
-
-For the javascript files:
-Write fully functional code (except automated_testing_code.js)
-<code filename="{{name}}.{{extension}}">
-... (code)
-</code>
 
 Based on the game code, write the automated testing plan:
 <automated_testing>
 <TEST_1>
-<test_description>(write in 1-2 sentences "What are you testing?")</test_description>
-<strategy_description>(write in 1-2 sentences "How are you testing it?" )</strategy_description>
-<expected_outcome>(write in 1-2 sentences "What is the expected outcome?")</expected_outcome>
+<test_description>(write in 1-2 sentences "What are you testing and the intent of the test?")</test_description>
+<strategy_description>(write in 1-2 sentences "What is your gameplay strategy to test it?")</strategy_description>
+<expected_outcome>(write in 1-2 sentences "What is the expected outcome? When do you consider the test successful?")</expected_outcome>
 </TEST_1>
-// Add tests (<=5) as needed along with the expected outcome, strategy, and testing
+// Add more tests (<=5) as needed
 </automated_testing>
 
-Based on the code and your automated testing plan, write the automated_testing_code.js to validate the game:
-<automated_testing_code filename="automated_testing_code.js">
-... (automated testing code)
-</automated_testing_code>
+For the javascript files:
+<code filename="{{name}}.{{extension}}">
+... (code)
+</code>
 
 HTML following the <example_html> template (output last):
 <code filename="index.html">

@@ -168,6 +168,15 @@ def format_test_summary(results: Dict[str, Any]) -> str:
     if "random_actions" in results:
         actions_with_changes = sum(1 for action in results["random_actions"] if action.get('diff_score', 0) > 0.001)
         summary.append(f"Random actions with visual changes: {actions_with_changes}/16")
+        
+        # Add information about game restarts if any occurred
+        restarts = [action for action in results["random_actions"] if action.get('restart_performed', False)]
+        if restarts:
+            summary.append(f"Game restarts performed: {len(restarts)}")
+            for restart in restarts[:3]:  # Show first few restarts
+                summary.append(f"  - After action #{restart['action_index']}: {restart['key']}")
+            if len(restarts) > 3:
+                summary.append(f"  - ... and {len(restarts) - 3} more restarts")
     
     # Add screenshots information if present
     if "screenshots" in results:

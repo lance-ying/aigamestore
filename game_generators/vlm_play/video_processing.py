@@ -27,6 +27,10 @@ class VideoRecorder:
         self.output_dir = output_dir
         os.makedirs(self.output_dir, exist_ok=True)
         
+        # Create a dedicated directory for test videos
+        self.test_videos_dir = os.path.join(self.output_dir, "test_videos")
+        os.makedirs(self.test_videos_dir, exist_ok=True)
+        
     async def record_gameplay(
         self, page: Page, button_id: str, duration: int = 10
     ) -> Tuple[bool, Optional[str]]:
@@ -50,49 +54,21 @@ class VideoRecorder:
             url = page.url
             await context.close()
             
-            # Create a temporary context to get canvas dimensions
-            setup_context = await browser.new_context()
-            setup_page = await setup_context.new_page()
-            await setup_page.goto(url, wait_until="networkidle", timeout=15000)
-            await setup_page.wait_for_timeout(1000)
-            
-            # Get canvas dimensions from the page
-            canvas_dimensions = await setup_page.evaluate("""
-                () => {
-                    const canvas = document.querySelector('canvas');
-                    if (!canvas) return null;
-                    
-                    const rect = canvas.getBoundingClientRect();
-                    return {
-                        width: Math.round(canvas.width || rect.width),
-                        height: Math.round(canvas.height || rect.height),
-                        x: Math.round(rect.left),
-                        y: Math.round(rect.top)
-                    };
-                }
-            """)
-            
-            if not canvas_dimensions:
-                logging.error("Canvas element not found on the page")
-                await setup_context.close()
-                return False, None
-            
-            logging.info(f"Canvas dimensions: {canvas_dimensions}")
+            # Use fixed canvas dimensions of 600x400
+            canvas_width = 600
+            canvas_height = 400
             
             # Add some padding to ensure we capture the full canvas
             padding = 10
-            canvas_width = canvas_dimensions['width'] + padding * 2
-            canvas_height = canvas_dimensions['height'] + padding * 2
-            
-            # Clean up the setup context
-            await setup_context.close()
+            viewport_width = canvas_width + padding * 2
+            viewport_height = canvas_height + padding * 2
             
             # Create a new context with video recording enabled
             # Set viewport size to match canvas size plus padding
             recording_context = await browser.new_context(
-                record_video_dir=self.output_dir,
-                record_video_size={"width": canvas_width, "height": canvas_height},
-                viewport={"width": canvas_width, "height": canvas_height}
+                record_video_dir=self.test_videos_dir,
+                record_video_size={"width": viewport_width, "height": viewport_height},
+                viewport={"width": viewport_width, "height": viewport_height}
             )
             
             # Create a new page in the recording context
@@ -120,6 +96,10 @@ class VideoRecorder:
                     // Get the canvas element
                     const canvas = document.querySelector('canvas');
                     if (!canvas) return;
+                    
+                    // Set the fixed canvas size
+                    canvas.width = 600;
+                    canvas.height = 400;
                     
                     // Position the canvas in the center of the viewport
                     canvas.style.position = 'absolute';
@@ -191,6 +171,10 @@ class VideoRecorder:
                     // Hide everything except the canvas
                     const canvas = document.querySelector('canvas');
                     if (!canvas) return;
+                    
+                    // Set the fixed canvas size
+                    canvas.width = 600;
+                    canvas.height = 400;
                     
                     // Hide all elements except canvas
                     document.querySelectorAll('body > *:not(canvas)').forEach(el => {
@@ -290,9 +274,9 @@ class VideoRecorder:
             
             # Find the most recently created video file
             video_files = []
-            for file in os.listdir(self.output_dir):
+            for file in os.listdir(self.test_videos_dir):
                 if file.endswith(".webm"):
-                    video_files.append(os.path.join(self.output_dir, file))
+                    video_files.append(os.path.join(self.test_videos_dir, file))
             
             if not video_files:
                 logging.error("No video files found after recording")
@@ -302,13 +286,13 @@ class VideoRecorder:
             latest_video = max(video_files, key=os.path.getctime)
             
             # Rename to our standard format
-            webm_path = os.path.join(self.output_dir, f"{button_id}.webm")
+            webm_path = os.path.join(self.test_videos_dir, f"{button_id}.webm")
             if os.path.exists(webm_path):
                 os.remove(webm_path)
             os.rename(latest_video, webm_path)
             
             # Convert to MP4
-            mp4_path = os.path.join(self.output_dir, f"{button_id}.mp4")
+            mp4_path = os.path.join(self.test_videos_dir, f"{button_id}.mp4")
             success = await self._convert_to_mp4(webm_path, mp4_path)
             
             if success:
@@ -423,15 +407,15 @@ class VideoRecorder:
         try:
             # Clean up any temporary files
             for ext in ["webm", "tmp"]:
-                temp_file = os.path.join(self.output_dir, f"{button_id}.{ext}")
+                temp_file = os.path.join(self.test_videos_dir, f"{button_id}.{ext}")
                 if os.path.exists(temp_file):
                     os.remove(temp_file)
                     logging.info(f"Removed temp file: {temp_file}")
                     
             # Clean up any other webm files that might be left over
-            for file in os.listdir(self.output_dir):
+            for file in os.listdir(self.test_videos_dir):
                 if file.endswith(".webm") and not file.startswith(button_id):
-                    os.remove(os.path.join(self.output_dir, file))
+                    os.remove(os.path.join(self.test_videos_dir, file))
                     logging.info(f"Removed temporary webm file: {file}")
         except Exception as e:
-            logging.warning(f"Error cleaning up video files: {str(e)}") 
+            logging.warning(f"Error cleaning up video files: {str(e)}")

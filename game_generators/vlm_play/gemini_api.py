@@ -29,7 +29,15 @@ class GeminiEvaluator:
             
         # Initialize the Gemini client
         self.client = genai.Client(api_key=self.api_key)
-        self.model_name = "gemini-2.0-flash"  # Use the latest available model
+        self.model_name = "gemini-2.5-flash-preview-04-17"  # Use the latest available model
+        
+        # Initialize token tracking
+        self.token_usage = {
+            "total_prompt_tokens": 0,
+            "total_completion_tokens": 0,
+            "total_tokens": 0,
+            "requests": []
+        }
     
     def wait_for_file_processing(self, uploaded_file):
         """
@@ -66,89 +74,118 @@ class GeminiEvaluator:
             error_msg = f"File is in unexpected state: {uploaded_file.state}"
             logging.error(error_msg)
             raise Exception(error_msg)
-        
-    def evaluate_video(self, video_path: str) -> Optional[str]:
+    
+    def _track_token_usage(self, response, request_info: Dict[str, Any]):
         """
-        Evaluate a game video using Gemini Vision.
+        Track token usage from a response.
         
         Args:
-            video_path: Path to the MP4 video file
+            response: The response from the Gemini API
+            request_info: Information about the request
+        """
+        try:
+            # Get token usage information if available
+            usage_metadata = None
+            if hasattr(response, 'usage_metadata'):
+                usage_metadata = response.usage_metadata
+            elif hasattr(response, 'usage'):
+                usage_metadata = response.usage
+            
+            if usage_metadata:
+                prompt_tokens = getattr(usage_metadata, 'prompt_token_count', 0)
+                completion_tokens = getattr(usage_metadata, 'candidates_token_count', 0)
+                total_tokens = prompt_tokens + completion_tokens
+                
+                # Update token counts
+                self.token_usage["total_prompt_tokens"] += prompt_tokens
+                self.token_usage["total_completion_tokens"] += completion_tokens
+                self.token_usage["total_tokens"] += total_tokens
+                
+                # Store individual request info
+                request_record = {
+                    "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "request_type": request_info.get("request_type", "unknown"),
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": total_tokens
+                }
+                
+                # Add other request info if available
+                for key, value in request_info.items():
+                    if key != "request_type":
+                        request_record[key] = value
+                
+                self.token_usage["requests"].append(request_record)
+                
+                logging.info(f"Token usage: {prompt_tokens} prompt + {completion_tokens} completion = {total_tokens} total")
+            else:
+                # If no token usage info found, log a simpler record
+                request_record = {
+                    "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "request_type": request_info.get("request_type", "unknown"),
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0,
+                    "note": "Token usage information not available"
+                }
+                self.token_usage["requests"].append(request_record)
+                
+                logging.warning("Token usage information not available in response")
+        except Exception as e:
+            logging.error(f"Error tracking token usage: {str(e)}")
+            
+            # Add a record of the attempt
+            request_record = {
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "request_type": request_info.get("request_type", "unknown"),
+                "error": str(e)
+            }
+            self.token_usage["requests"].append(request_record)
+    
+    def get_token_usage(self) -> Dict[str, Any]:
+        """
+        Get the current token usage statistics.
+        
+        Returns:
+            Dictionary with token usage information
+        """
+        return self.token_usage
+    
+    def reset_token_usage(self):
+        """Reset the token usage counters."""
+        self.token_usage = {
+            "total_prompt_tokens": 0,
+            "total_completion_tokens": 0,
+            "total_tokens": 0,
+            "requests": []
+        }
+    
+    def save_conversation_log(self, output_dir: str, filename: str = "gemini_conversation_log.json") -> str:
+        """
+        Save the conversation log and token usage to a file.
+        
+        Args:
+            output_dir: Directory to save the log
+            filename: Name of the log file
             
         Returns:
-            Gemini's evaluation response or None if failed
+            Path to the saved log file
         """
-        if not os.path.exists(video_path):
-            logging.error(f"Video file not found: {video_path}")
-            return None
-            
+        log_path = os.path.join(output_dir, filename)
+        
+        log_data = {
+            "token_usage": self.token_usage,
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+        }
+        
         try:
-            logging.info(f"Sending video to Gemini for evaluation: {video_path}")
-            
-            # Prepare prompt for evaluation
-            prompt = """
-            You are a game tester evaluating an HTML5/JavaScript game.
-            Your task is to analyze this gameplay video and provide comprehensive feedback on the following aspects:
-            
-            1. Gameplay: Describe the basic mechanics and goal of the game based on what you observe.
-            2. User Experience: Comment on the game's controls, responsiveness, and overall playability.
-            3. Visual Design: Evaluate the visual aesthetics, clarity, and appeal.
-            4. Bugs & Issues: Note any glitches, unexpected behaviors, or potential problems.
-            5. Strengths & Weaknesses: Identify what works well and what could be improved.
-            6. Overall Assessment: Rate the game on a scale of 1-10 and explain your rating.
-            
-            Format your response using XML tags for each section:
-            <gameplay>Your analysis here</gameplay>
-            <user_experience>Your analysis here</user_experience>
-            <visual_design>Your analysis here</visual_design>
-            <bugs_issues>Your analysis here</bugs_issues>
-            <strengths_weaknesses>Your analysis here</strengths_weaknesses>
-            <overall_assessment>Your rating and explanation</overall_assessment>
-            """
-            
-            # Upload the video file to the API
-            logging.info(f"Uploading video file: {video_path}")
-            video_file = self.client.files.upload(file=video_path)
-            logging.info(f"Video file uploaded with URI: {video_file.uri}, State: {video_file.state}")
-            
-            # Wait for the file to be processed before using it
-            video_file = self.wait_for_file_processing(video_file)
-            
-            # Prepare content with video and prompt
-            contents = [
-                types.Content(
-                    role="user",
-                    parts=[
-                        types.Part.from_uri(
-                            file_uri=video_file.uri,
-                            mime_type=video_file.mime_type,
-                        ),
-                        types.Part.from_text(text=prompt),
-                    ],
-                ),
-            ]
-            
-            # Configure response format
-            generate_content_config = types.GenerateContentConfig(
-                response_mime_type="text/plain",
-            )
-            
-            # Generate content using the model
-            logging.info(f"Generating content with model: {self.model_name}")
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=contents,
-                config=generate_content_config,
-            )
-            
-            if not response or not hasattr(response, 'text'):
-                logging.error("No valid response from Gemini API")
-                return None
-                
-            return response.text
-            
+            with open(log_path, 'w') as f:
+                json.dump(log_data, f, indent=2)
+            logging.info(f"Conversation log saved to {log_path}")
+            return log_path
         except Exception as e:
-            logging.error(f"Error evaluating video with Gemini: {str(e)}")
-            return None
+            logging.error(f"Error saving conversation log: {str(e)}")
+            return ""
     
     def evaluate_video_with_custom_prompt(self, video_path: str, custom_prompt: str) -> Optional[str]:
         """
@@ -203,6 +240,13 @@ class GeminiEvaluator:
                 config=generate_content_config,
             )
             
+            # Track token usage
+            self._track_token_usage(response, {
+                "request_type": "video_evaluation",
+                "video_path": video_path,
+                "prompt_length": len(custom_prompt)
+            })
+            
             if not response or not hasattr(response, 'text'):
                 logging.error("No valid response from Gemini API")
                 return None
@@ -253,6 +297,8 @@ class GeminiEvaluator:
         
         # Helper function to extract XML tags content
         def extract_section(content, tag):
+            print("content:\n", content)
+            print("tag:\n", tag)
             start_tag = f"<{tag}>"
             end_tag = f"</{tag}>"
             
@@ -275,25 +321,12 @@ class GeminiEvaluator:
                 result[section] = section_content
             else:
                 result[section] = ""
-                
-        # Try to extract numerical rating from overall assessment
-        try:
-            assessment = result.get("overall_assessment", "")
-            import re
-            rating_match = re.search(r"(\d+(\.\d+)?)/10", assessment)
-            if rating_match:
-                result["rating"] = float(rating_match.group(1))
-            else:
-                # Try to find just a number from 1-10
-                rating_match = re.search(r"(?:rating|rate|score|give).*?(\d+)(?:/10)?", 
-                                         assessment.lower())
-                if rating_match:
-                    rating = int(rating_match.group(1))
-                    if 1 <= rating <= 10:
-                        result["rating"] = rating
-        except Exception as e:
-            logging.warning(f"Failed to extract rating: {str(e)}")
-            
+
+        print("Results:\n")
+        for key, value in result.items():
+            print(f"{key}: {value}")
+            print("\n")
+        
         return result
         
     def generate_text(self, prompt: str) -> Optional[str]:
@@ -330,6 +363,12 @@ class GeminiEvaluator:
                 contents=contents,
                 config=generate_content_config,
             )
+            
+            # Track token usage
+            self._track_token_usage(response, {
+                "request_type": "text_generation",
+                "prompt_length": len(prompt)
+            })
             
             if not response or not hasattr(response, 'text'):
                 logging.error("No valid response from Gemini API")

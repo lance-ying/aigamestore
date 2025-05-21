@@ -297,6 +297,80 @@ async def run_gameplay_test(page: Page, screenshots_dir: str, frame_counter: int
             # Update previous screenshot for next comparison
             prev_screenshot = key_test.get("screenshot")
         
+        # Check game phase after key press
+        try:
+            # First check if getGameState function exists
+            has_game_state_function = await page.evaluate(r"""() => {
+                return typeof getGameState === 'function';
+            }""")
+            
+            if has_game_state_function:
+                game_state = await page.evaluate("getGameState()")
+                if game_state and isinstance(game_state, dict):
+                    game_phase = game_state.get("gamePhase")
+                    logging.info(f"Current game phase after key {random_key}: {game_phase}")
+                    
+                    # If game is over, restart it by pressing R followed by Enter
+                    if game_phase in ["GAME_OVER_WIN", "GAME_OVER_LOSS"]:
+                        logging.info(f"Game over detected ({game_phase}), restarting game...")
+                        restart_count = 0
+                        while game_phase != "START" and restart_count < 10:
+                            # Press R to restart
+                            result = await test_key_press(page, "r", f"restart_r_{i}", screenshots_dir, frame_counter, key_mapping)
+                            await page.wait_for_timeout(200)
+                            restart_count += 1
+                            frame_counter += 1
+                            
+                            # Check if game is in START phase
+                            game_state = await page.evaluate("getGameState()")
+                            if game_state and isinstance(game_state, dict):
+                                game_phase = game_state.get("gamePhase")
+                                logging.info(f"Current game phase after restart: {game_phase}")
+                                if game_phase == "START":
+                                    break
+                            else:
+                                logging.error(f"Game is not in START phase after restart: {game_phase}")
+
+                        restart_count = 0
+                        while game_phase != "PLAYING" and restart_count < 10:
+                            # Press Enter to confirm restart
+                            restart_key_test = await test_key_press(page, "Enter", f"restart_enter_{i}", screenshots_dir, frame_counter, key_mapping)
+                            await page.wait_for_timeout(100)
+                            restart_count += 1
+                            frame_counter += 1
+                            
+                            # Check if game is in START phase
+                            game_state = await page.evaluate("getGameState()")
+                            if game_state and isinstance(game_state, dict):
+                                game_phase = game_state.get("gamePhase")
+                                logging.info(f"Current game phase after restart: {game_phase}")
+                                if game_phase == "PLAYING":
+                                    break
+                            else:
+                                logging.error(f"Game is not in PLAYING phase after restart: {game_phase}")
+                        
+                        # Update previous screenshot after restart
+                        if restart_key_test.get("screenshot"):
+                            prev_screenshot = restart_key_test.get("screenshot")
+                        
+                        # Record this restart action
+                        random_action_info = {
+                            "action_index": i,
+                            "key": f"{random_key} (triggered game over: {game_phase})",
+                            "restart_performed": True,
+                            "screenshot": key_test.get("screenshot"),
+                            "diff_score": key_test.get("diff_score", 0),
+                            "new_errors": [],
+                            "has_errors": False
+                        }
+                        random_action_results.append(random_action_info)
+                        
+                        # Continue to next random action
+                        continue
+        except Exception as e:
+            # Just log the error and continue with testing if game state check fails
+            logging.warning(f"Error checking game phase: {e}")
+        
         # Check for new errors of all types
         new_errors = result["console_logs"]["error"][errors_before:]
         new_exceptions = result["js_exceptions"][exceptions_before:]

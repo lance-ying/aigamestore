@@ -70,7 +70,7 @@ class BrowserManager:
             
         # Setup browser
         playwright = await async_playwright().start()
-        browser = await playwright.firefox.launch(headless=False)
+        browser = await playwright.firefox.launch(headless=True)
         
         # Determine URL based on game path
         if os.path.isdir(self.game_path):
@@ -85,12 +85,15 @@ class BrowserManager:
                 html_files[0],
             )
             
+            # Find an available port
+            port = await self._find_available_port(start_port=8000, max_attempts=300)
+            
             # Use local HTTP server to serve the directory
             self.server_process = await asyncio.create_subprocess_exec(
                 "python",
                 "-m",
                 "http.server",
-                "8000",
+                str(port),
                 cwd=self.game_path,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -98,12 +101,46 @@ class BrowserManager:
             
             # Wait for server to start
             await asyncio.sleep(1)
-            url = f"http://localhost:8000/{html_file.name}"
+            url = f"http://localhost:{port}/{html_file.name}"
         else:
             # Direct file path
             url = f"file://{self.game_path}"
             
         return browser, url
+        
+    async def _find_available_port(self, start_port: int = 8000, max_attempts: int = 20) -> int:
+        """
+        Find an available port starting from start_port.
+        
+        Args:
+            start_port: Port to start checking from
+            max_attempts: Maximum number of ports to check
+            
+        Returns:
+            Available port number
+            
+        Raises:
+            RuntimeError: If no available port is found after max_attempts
+        """
+        import socket
+        
+        for port in range(start_port, start_port + max_attempts):
+            try:
+                # Try to create a socket with the port
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                    sock.settimeout(0.1)  # Short timeout for quick check
+                    # If bind succeeds, the port is available
+                    sock.bind(('127.0.0.1', port))
+                    logging.info(f"Found available port: {port}")
+                    return port
+            except socket.error:
+                logging.debug(f"Port {port} is in use, trying next port")
+                continue
+                
+        # If we get here, we couldn't find an available port
+        error_msg = f"Could not find an available port after {max_attempts} attempts starting from {start_port}"
+        logging.error(error_msg)
+        raise RuntimeError(error_msg)
         
     async def find_game_test_buttons(self, page: Page) -> List[Dict[str, Any]]:
         """

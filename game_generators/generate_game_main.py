@@ -2,6 +2,7 @@ import os
 import json
 import argparse
 import sys
+import shutil
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -40,7 +41,7 @@ def parse_args():
         "--method",
         type=str,
         default="simple_prompt",
-        choices=["baseline", "simple_prompt", "simple_prompt_exp", "simple_prompt_xml", "two_step_xml", "template_based", "template_based_form", "multi_step_xml"], # TODO: "guide_complexity", "template", "template_character_driven", "template_with_critic", "template_with_play"],
+        choices=["baseline", "simple_prompt_basic", "simple_prompt", "simple_prompt_exp", "simple_prompt_xml", "two_step_xml", "template_based", "template_based_form", "multi_step_xml"], # TODO: "guide_complexity", "template", "template_character_driven", "template_with_critic", "template_with_play"],
         help="Game generation method to use",
     )
 
@@ -74,6 +75,21 @@ def parse_args():
         default=4,
         help="Number of passes to use for multi-step game generation",
     )
+
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=1.0,
+        help="Temperature for the LLM",
+    )
+
+    parser.add_argument(
+        "--top_p",
+        type=float,
+        default=0.9,
+        help="Top P for the LLM",
+    )
+    
     return parser.parse_args()
 
 
@@ -154,6 +170,15 @@ def main():
                 use_ecs=not args.no_ecs,
                 use_baseline=True,
             )
+        elif args.method == "simple_prompt_basic":
+            generator = SimplePromptXMLGenerator(
+                model_name=args.model,
+                verbose=args.verbose,
+                use_ecs=not args.no_ecs,
+                use_basic=True,
+                temperature=args.temperature if args.temperature else 1.0,
+                top_p=args.top_p if args.top_p else 0.9,
+            )
         elif args.method == "simple_prompt":
             generator = SimplePromptGenerator(
                 model_name=args.model,
@@ -209,27 +234,64 @@ def main():
         else:
             raise ValueError(f"Unknown method: {args.method}")
 
-        # Generate the game
-        result = generator.generate_game(
-            game_concept=game_concept,
-            concept_path=args.concept_path,
-        )
+        # Generate the game with resampling for failed tests
+        max_attempts = 3  # Maximum number of attempts to generate a passing game
+        attempt = 1
+        game_passed = False
+        result = None
 
-        print(f"Game generated successfully: {result['title']}")
-        print(f"Saved to: {result['game_dir']}")
+        while attempt <= max_attempts and not game_passed:
+            if attempt > 1:
+                print(f"\nAttempt {attempt}/{max_attempts} to generate a passing game...")
+            
+            # Generate the game
+            result = generator.generate_game(
+                game_concept=game_concept,
+                concept_path=args.concept_path,
+            )
 
-        # Test the game
-        print("\nTesting game functionality...")
-        game_passed = test_game(result["game_dir"], args.verbose)
+            print(f"Game generated successfully: {result['title']}")
+            print(f"Saved to: {result['game_dir']}")
 
-        if game_passed:
-            print("\n✅ Game passed all tests!")
-        else:
-            print("\n❌ Game failed some tests.")
+            # Test the game
+            print("\nTesting game functionality...")
+            game_passed = test_game(result["game_dir"], args.verbose)
+
+            if game_passed:
+                print("\nGame passed all tests!")
+            else:
+                print("\nGame failed some tests.")
+                
+                if attempt < max_attempts:
+                    print(f"Moving failed game and resampling...")
+                    
+                    # Move the failed game directory instead of deleting it
+                    try:
+                        # Determine the parent directory and create the failed attempt path
+                        game_dir_path = Path(result["game_dir"])
+                        parent_dir = game_dir_path.parent
+                        failed_dir = parent_dir / f"failed_attempt_{attempt}"
+                        
+                        # remove the game_dir/game_check_results/screenshots
+                        game_check_results_dir = game_dir_path / "game_check_results/screenshots"
+                        if game_check_results_dir.exists():
+                            shutil.rmtree(game_check_results_dir)
+
+                        # Move the directory
+                        shutil.move(str(game_dir_path), str(failed_dir))
+                        print(f"Moved failed game from {result['game_dir']} to {failed_dir}")
+                    except Exception as e:
+                        print(f"Warning: Failed to move directory: {e}")
+                
+                attempt += 1
 
         # Final outcome
-        print(f"\nGame title: {result['title']}")
-        print(f"Game location: {result['game_dir']}")
+        if result:
+            print(f"\nGame title: {result['title']}")
+            print(f"Game location: {result['game_dir']}")
+            if not game_passed:
+                print(f"Warning: Could not generate a passing game after {max_attempts} attempts.")
+        
 
     except Exception as e:
         print(f"Error generating game: {type(e).__name__}: {str(e)}")

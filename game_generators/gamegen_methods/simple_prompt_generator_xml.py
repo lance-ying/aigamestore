@@ -13,7 +13,9 @@ class SimplePromptXMLGenerator(GameGenerator):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.use_baseline = kwargs.get('use_baseline', False)
-
+        self.use_basic = kwargs.get('use_basic', False)
+        self.temperature = kwargs.get('temperature', 1.0)
+        self.top_p = kwargs.get('top_p', 0.9)
     def generate_user_prompt(self, game_concept: str) -> str:
         """
         Generate user prompt from game concept for the simple prompt method
@@ -28,13 +30,15 @@ class SimplePromptXMLGenerator(GameGenerator):
         if self.use_baseline:
             instructions = self.get_baseline_instructions()
             output_format = self.get_baseline_output_format()
+        elif self.use_basic:
+            instructions = self.get_basic_non_ecs_instructions()
         elif self.use_ecs:
             instructions = self.get_ecs_instructions()
         else:
             instructions = self.get_non_ecs_instructions()
         task = f"""
 <task>
-Implement an interesting game based on the game concept input from the user.
+Implement a fun and playable game based on the game concept input from the user.
 <game_concept>
 {game_concept}
 </game_concept>
@@ -56,7 +60,10 @@ Implement an interesting game based on the game concept input from the user.
         try:
             # Generate user prompt
             user_prompt = self.generate_user_prompt(game_concept)
-            system_prompt = self.get_system_prompt()
+            if self.use_basic:
+                system_prompt = self.get_basic_system_prompt()
+            else:
+                system_prompt = self.get_system_prompt()
             # Call the LLM with the combined system prompt and user prompt
             if self.verbose:
                 print(f"Calling LLM with game concept: {game_concept[:100]}...")
@@ -65,16 +72,16 @@ Implement an interesting game based on the game concept input from the user.
                 response = self.model_api.call(
                     user_prompt=user_prompt,
                     verbose=self.verbose,
-                    temperature=0.8,
-                    top_p=0.9,
+                    temperature=self.temperature,
+                    top_p=self.top_p,
                 )
             else:
                 response = self.model_api.call(
                     user_prompt=user_prompt,
                     system_prompt=system_prompt,
                     verbose=self.verbose,
-                    temperature=0.8,
-                    top_p=0.9,
+                    temperature=self.temperature,
+                    top_p=self.top_p,
                 )
             
             # Prepare conversation log for saving
@@ -162,6 +169,13 @@ Implement an interesting game based on the game concept input from the user.
         instructions = open("game_generators/system_prompts/single_prompt_instructions_noecs.txt", "r").read()
         return instructions
     
+    def get_basic_non_ecs_instructions(self) -> str:
+        """
+        Get the instructions for the non-ECS architecture
+        """
+        instructions = open("game_generators/system_prompts/single_prompt_basic_instructions.txt", "r").read()
+        return instructions
+    
     def get_baseline_instructions(self) -> str:
         """
         Get the instructions for the baseline architecture
@@ -169,6 +183,13 @@ Implement an interesting game based on the game concept input from the user.
         instructions = open("game_generators/system_prompts/baseline_instructions.txt", "r").read()
         return instructions
     
+    def get_basic_system_prompt(self) -> str:
+        """
+        Get the system prompt for the basic architecture
+        """
+        system_prompt = open("game_generators/system_prompts/single_prompt_basic_sysprompt.txt", "r").read()
+        return system_prompt
+
     def get_system_prompt(self) -> str:
         """
         Get the system prompt
@@ -202,9 +223,10 @@ Implement an interesting game based on the game concept input from the user.
       <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">{game_title}</h1>
       <div class="control-buttons">
         <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
-        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Win)</button>
-        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (NAME OF TEST)</button>
-        <!-- Add more test buttons with correct ID convention -->
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Basic testing)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Win)</button>
+        <button id="test_3_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_3')">TEST (Switching between tests)</button>
+        // Add more test buttons with correct ID convention and click handlers
       </div>
       <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">{game_description}</p>
       <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">{game_controls}</p>
@@ -220,25 +242,25 @@ Implement an interesting game based on the game concept input from the user.
 Output the code plan and game files in this format with NO OTHER TEXT:
 
 <game_description>
-... (Tell the user what the game is about, what they need to do, and the objective. Keep it short and concise.)
+... (Describe the game to the player, the objective, what they need to know to play the game. Do not mention the controls here. Keep it short and informative.)
 </game_description>
 
 <game_controls>
-... (game controls as a list of key bindings, Key: Action)
+... (Game controls as a list to specify the key bindings and the action they perform. Key: Action. Be specific about each key.)
 </game_controls>
 
-Based on the game code, write the automated testing plan:
+Write the automated testing plan:
 <automated_testing>
 <TEST_1>
-<test_description>(write in 1-2 sentences "What are you testing?")</test_description>
-<strategy_description>(write in 1-2 sentences "How are you testing it?")</strategy_description>
-<expected_outcome>(write in 1-2 sentences "What is the expected outcome?")</expected_outcome>
+<test_description>(write in 1-2 sentences "What are you testing and the intent of the test?")</test_description>
+<strategy_description>(write in 1-2 sentences "What is your gameplay strategy to test it?")</strategy_description>
+<expected_outcome>(write in 1-2 sentences "What is the expected outcome? When do you consider the test successful?")</expected_outcome>
 </TEST_1>
-// Add tests (<=5) as needed along with the expected outcome, strategy, and testing
+// Add more tests (up to 7)
 </automated_testing>
 
 For the javascript files:
-<code filename="{{name}}.{{extension}}">
+<code filename="{name}.{extension}">
 ... (code)
 </code>
 
@@ -280,10 +302,18 @@ HTML following the <example_html> template (output last):
 </example_html>
 
 <output_instructions>
-Output the game files in this format with NO OTHER TEXT:
+Output the code plan and game files in this format with NO OTHER TEXT:
+
+<game_description>
+... (Describe the game to the player, the objective, what they need to know to play the game. Do not mention the controls here. Keep it short and informative.)
+</game_description>
+
+<game_controls>
+... (Game controls as a list to specify the key bindings and the action they perform. Key: Action. Be specific about each key.)
+</game_controls>
 
 For the javascript files:
-<code filename="{{name}}.{{extension}}">
+<code filename="{name}.{extension}">
 ... (code)
 </code>
 
@@ -294,3 +324,4 @@ HTML following the <example_html> template (output last):
 </output_instructions>
 """
         return output_format
+    

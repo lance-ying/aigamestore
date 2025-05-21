@@ -18,6 +18,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor
+import time
 
 # Fix imports to handle both direct execution and module import
 if __name__ == "__main__" or not __package__:
@@ -93,9 +94,11 @@ class VLMPlayEvaluation:
         
         # Load metadata if available
         self.metadata = self._load_metadata()
-        self.game_description = self.metadata['game_info']['game_description']
-        self.game_controls = self.metadata['game_info']['game_controls']
-        self.game_code = self.metadata['game_info']['game_code']
+        print(f"Metadata: {self.metadata}")
+        self.game_concept = self.metadata['game_info']['concept']
+        self.game_description = self.metadata['game_info']['description']
+        self.game_controls = self.metadata['game_info']['controls']
+        # self.game_code = self.metadata['game_info']['game_code']
         # Parse automated testing info from metadata
         self.test_info = self._parse_automated_testing_info()
     
@@ -131,8 +134,8 @@ class VLMPlayEvaluation:
             logging.warning(f"No automated testing info found in metadata: {self.metadata}")
             return test_info
         game_info = self.metadata['game_info']
-        game_description = game_info['game_description']
-        game_controls = game_info['game_controls']
+        game_description = game_info['description']
+        game_controls = game_info['controls']
 
         # TODO: Add code to the input to the LLM to include the game description and controls
         automated_testing = game_info['automated_testing']
@@ -210,12 +213,15 @@ class VLMPlayEvaluation:
             "errors": [],
             "console_errors": {},
             "success": False,
-            "aggregated_feedback": None
+            "aggregated_feedback": None,
+            "token_usage": None  # Will store token usage data
         }
         
         try:
             # Setup browser to find TEST buttons
             browser_manager = BrowserManager(self.game_path)
+            # Store as instance attribute for later use
+            self.browser_manager = browser_manager
             browser, url = await browser_manager.setup_browser()
             context = await browser.new_context()
             page = await context.new_page()
@@ -339,10 +345,18 @@ class VLMPlayEvaluation:
             if num_videos > 0:
                 logging.info(f"Successfully recorded {num_videos}/{len(test_buttons)} videos in {recording_time:.2f} seconds")
             else:
-                error_msg = "No gameplay videos were recorded"
-                logging.error(error_msg)
-                results["errors"].append(error_msg)
-                return results
+                # If parallel approach failed completely, try sequential as fallback
+                logging.warning("Parallel recording failed. Falling back to sequential recording")
+                video_paths = await self._record_test_videos_sequential(test_buttons)
+                num_videos = len(video_paths)
+                
+                if num_videos == 0:
+                    error_msg = "No gameplay videos were recorded after both parallel and sequential attempts"
+                    logging.error(error_msg)
+                    results["errors"].append(error_msg)
+                    return results
+                    
+                logging.info(f"Sequential recording produced {num_videos}/{len(test_buttons)} videos")
             
             # Process each test video sequentially to avoid parallel Gemini API calls
             logging.info("Starting sequential evaluation of recorded videos with Gemini")
@@ -392,6 +406,21 @@ class VLMPlayEvaluation:
                 
                 logging.info(f"Saved aggregated feedback to {feedback_file_path}")
             
+            # Save token usage and conversation logs
+            token_usage = self.gemini_evaluator.get_token_usage()
+            results["token_usage"] = token_usage
+            
+            # Save token usage separately
+            token_usage_path = os.path.join(self.output_dir, "token_usage.json")
+            with open(token_usage_path, 'w') as f:
+                json.dump(token_usage, f, indent=2)
+            
+            logging.info(f"Saved token usage to {token_usage_path}")
+            
+            # Save conversation log
+            conversation_log_path = self.gemini_evaluator.save_conversation_log(self.output_dir)
+            results["conversation_log_path"] = conversation_log_path
+            
             # Generate a combined report
             self._generate_combined_report(results)
             
@@ -410,6 +439,10 @@ class VLMPlayEvaluation:
         video_paths = {}  # Use button_id as key instead of button_info dictionary
         tasks = []
         
+        # Create a single test_videos directory for all recordings
+        test_videos_dir = os.path.join(self.output_dir, "test_videos")
+        os.makedirs(test_videos_dir, exist_ok=True)
+        
         # Setup browser once
         browser_manager = BrowserManager(self.game_path)
         browser, url = await browser_manager.setup_browser()
@@ -417,11 +450,21 @@ class VLMPlayEvaluation:
         try:
             # Create tasks for each button
             for button_info in test_buttons:
-                task = self._record_single_video(browser, url, button_info)
+                task = self._record_single_video(browser, url, button_info, test_videos_dir)
                 tasks.append(task)
             
-            # Run all tasks in parallel
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+            # Run tasks with a limit on concurrency to avoid overwhelming the system
+            # Use smaller batches to reduce potential resource contention
+            batch_size = min(3, len(tasks))  # Process at most 3 recordings at once
+            results = []
+            
+            for i in range(0, len(tasks), batch_size):
+                batch_tasks = tasks[i:i+batch_size]
+                batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
+                results.extend(batch_results)
+                # Add a small delay between batches to let system resources settle
+                if i + batch_size < len(tasks):
+                    await asyncio.sleep(1)
             
             # Process results
             for i, result in enumerate(results):
@@ -435,7 +478,36 @@ class VLMPlayEvaluation:
                     video_paths[button_id] = (button_info, video_path)
                     logging.info(f"Successfully recorded video for {button_id}: {video_path}")
                 else:
-                    logging.warning(f"Failed to record video for {button_id}")
+                    # If video path is None or file doesn't exist, retry once with sequential approach
+                    if i < len(test_buttons):
+                        logging.warning(f"Retrying video recording for {button_id} with sequential approach")
+                        try:
+                            # Create new browser for retry to avoid context issues
+                            retry_browser_manager = BrowserManager(self.game_path)
+                            retry_browser, _ = await retry_browser_manager.setup_browser()
+                            
+                            # Retry recording
+                            button_info, video_path = await self._record_single_video(
+                                retry_browser, 
+                                url, 
+                                test_buttons[i],
+                                test_videos_dir
+                            )
+                            
+                            if video_path and os.path.exists(video_path):
+                                video_paths[button_id] = (button_info, video_path)
+                                logging.info(f"Successfully recorded video on retry for {button_id}: {video_path}")
+                            else:
+                                logging.warning(f"Failed to record video for {button_id} even after retry")
+                            
+                            # Close retry browser
+                            await retry_browser.close()
+                            await retry_browser_manager.close()
+                            
+                        except Exception as retry_error:
+                            logging.error(f"Retry recording failed for {button_id}: {str(retry_error)}")
+                    else:
+                        logging.warning(f"Failed to record video for {button_id}")
         
         finally:
             # Close browser
@@ -444,7 +516,7 @@ class VLMPlayEvaluation:
         
         return video_paths
     
-    async def _record_single_video(self, browser, url, button_info) -> Tuple[Dict[str, Any], Optional[str]]:
+    async def _record_single_video(self, browser, url, button_info, test_videos_dir) -> Tuple[Dict[str, Any], Optional[str]]:
         """Record a single video for a test button, focusing only on the canvas."""
         button_id = button_info["id"]
         test_mode = button_info.get("testMode", "")
@@ -456,6 +528,8 @@ class VLMPlayEvaluation:
         
         # Set up console error tracking
         browser_manager = BrowserManager(self.game_path)
+        # Save this as an instance attribute for later use in evaluation
+        self.browser_manager = browser_manager
         await browser_manager.setup_console_error_tracking(page)
         
         try:
@@ -464,41 +538,88 @@ class VLMPlayEvaluation:
             logging.info(f"Page loaded for test button: {button_id}")
             await page.wait_for_timeout(2000)
             
-            # 2. First try to find and focus on the canvas
-            canvas_found = await page.evaluate("""
-                () => {
-                    const canvas = document.querySelector('canvas');
-                    if (!canvas) return false;
-                    
-                    // Make sure canvas is visible and focused
-                    canvas.scrollIntoView();
-                    canvas.focus();
-                    
-                    // Apply styling to only show the canvas
-                    document.body.style.margin = '0';
-                    document.body.style.padding = '0';
-                    document.body.style.overflow = 'hidden';
-                    document.body.style.background = '#000';
-                    
-                    // Hide all other elements
-                    Array.from(document.body.children).forEach(el => {
-                        if (el !== canvas && !el.contains(canvas)) {
-                            el.style.visibility = 'hidden';
+            # 2. Try to find and focus on the canvas with multiple approaches and retries
+            canvas_found = False
+            retry_count = 0
+            max_retries = 3
+            
+            while not canvas_found and retry_count < max_retries:
+                canvas_found = await page.evaluate("""
+                    () => {
+                        // Try multiple ways to find canvas
+                        let canvas = document.querySelector('canvas');
+                        
+                        // If not found, try other common patterns
+                        if (!canvas) {
+                            // Try by ID
+                            const possibleIds = ['gameCanvas', 'game-canvas', 'canvas', 'mainCanvas'];
+                            for (const id of possibleIds) {
+                                const byId = document.getElementById(id);
+                                if (byId && byId.tagName === 'CANVAS') {
+                                    canvas = byId;
+                                    break;
+                                }
+                            }
+                            
+                            // Try by class
+                            if (!canvas) {
+                                const possibleClasses = ['game-canvas', 'main-canvas', 'canvas'];
+                                for (const className of possibleClasses) {
+                                    const byClass = document.getElementsByClassName(className)[0];
+                                    if (byClass && byClass.tagName === 'CANVAS') {
+                                        canvas = byClass;
+                                        break;
+                                    }
+                                }
+                            }
+                            
+                            // Last resort: any canvas in the DOM
+                            if (!canvas) {
+                                const allCanvases = document.getElementsByTagName('canvas');
+                                if (allCanvases.length > 0) {
+                                    canvas = allCanvases[0];
+                                }
+                            }
                         }
-                    });
-                    
-                    // Center the canvas
-                    canvas.style.position = 'absolute';
-                    canvas.style.left = '50%';
-                    canvas.style.top = '50%';
-                    canvas.style.transform = 'translate(-50%, -50%)';
-                    
-                    return true;
-                }
-            """)
+                        
+                        if (!canvas) return false;
+                        
+                        // Make sure canvas is visible and focused
+                        canvas.scrollIntoView();
+                        canvas.focus();
+                        
+                        // Apply styling to only show the canvas
+                        document.body.style.margin = '0';
+                        document.body.style.padding = '0';
+                        document.body.style.overflow = 'hidden';
+                        document.body.style.background = '#000';
+                        
+                        // Hide all other elements
+                        Array.from(document.body.children).forEach(el => {
+                            if (el !== canvas && !el.contains(canvas)) {
+                                el.style.visibility = 'hidden';
+                            }
+                        });
+                        
+                        // Center the canvas
+                        canvas.style.position = 'absolute';
+                        canvas.style.left = '50%';
+                        canvas.style.top = '50%';
+                        canvas.style.transform = 'translate(-50%, -50%)';
+                        
+                        return true;
+                    }
+                """)
+                
+                if not canvas_found:
+                    retry_count += 1
+                    if retry_count < max_retries:
+                        logging.warning(f"Canvas not found on attempt {retry_count}, waiting and retrying...")
+                        # Wait a bit longer for possible dynamic canvas creation
+                        await page.wait_for_timeout(2000)
             
             if not canvas_found:
-                logging.error("Canvas element not found on the page")
+                logging.error("Canvas element not found on the page after multiple attempts")
                 # Get console errors
                 console_errors = browser_manager.get_console_errors_summary()
                 logging.error(f"Console errors for {test_mode}: {json.dumps(console_errors, indent=2)}")
@@ -631,177 +752,161 @@ class VLMPlayEvaluation:
             await page.close()
             await context.close()
             
-            # Record at a reasonable size
-            recording_context = await browser.new_context(
-                viewport={"width": 800, "height": 600},
-                record_video_dir=self.output_dir,
-                record_video_size={"width": 800, "height": 600}
-            )
+            # Record for 20 seconds
+            logging.info(f"Recording for {test_name} for 20 seconds")
             
-            recording_page = await recording_context.new_page()
+            # Check game phase every second and restart if needed
+            start_time = asyncio.get_event_loop().time()
+            end_time = start_time + 20
             
-            try:
-                await recording_page.goto(url, wait_until="networkidle", timeout=15000)
-                
-                # Hide everything except canvas
-                await recording_page.evaluate("""
+            while asyncio.get_event_loop().time() < end_time:
+                # Check game phase
+                game_phase = await page.evaluate("""
                     () => {
-                        const canvas = document.querySelector('canvas');
-                        if (!canvas) return;
-                        
-                        // Style canvas
-                        canvas.style.position = 'absolute';
-                        canvas.style.left = '50%';
-                        canvas.style.top = '50%';
-                        canvas.style.transform = 'translate(-50%, -50%)';
-                        
-                        // Hide other elements for clean recording
-                        document.body.style.margin = '0';
-                        document.body.style.padding = '0';
-                        document.body.style.background = '#000';
-                        
-                        Array.from(document.body.children).forEach(el => {
-                            if (el !== canvas && !el.contains(canvas)) {
-                                el.style.display = 'none';
+                        try {
+                            // Try to get game state via getGameState function
+                            if (typeof window.getGameState === 'function') {
+                                const state = window.getGameState();
+                                if (state && state.gamePhase) {
+                                    return state.gamePhase;
+                                }
                             }
-                        });
+                            // Fall back to direct gameState access
+                            else if (window.gameState && window.gameState.gamePhase) {
+                                return window.gameState.gamePhase;
+                            }
+                            return 'unknown';
+                        } catch (e) {
+                            console.error('Error checking game phase:', e);
+                            return 'error';
+                        }
                     }
                 """)
                 
-                # Set the control mode in this new context
-                await recording_page.evaluate(f"""
-                    () => {{
-                        try {{
-                            // Try setting control mode via function call first
-                            if (typeof window.setControlMode === 'function') {{
-                                window.setControlMode('{test_mode}');
-                            }}
-                            // Try direct setting if function not available
-                            else if (window.gameState) {{
-                                window.gameState.controlMode = '{test_mode}';
-                            }}
-                            // Try clicking button if available
-                            else {{
-                                const button = document.getElementById('{button_id}');
-                                if (button) button.click();
-                            }}
-                        }} catch (e) {{
-                            console.error("Error setting test mode:", e);
-                        }}
-                    }}
-                """)
-                
-                # Press ENTER again to start the game
-                await recording_page.keyboard.press("Enter")
-                
-                # Record for 10 seconds
-                logging.info(f"Recording for {test_name} for 10 seconds")
-                
-                # Check game phase every second and restart if needed
-                start_time = asyncio.get_event_loop().time()
-                end_time = start_time + 10
-                
-                while asyncio.get_event_loop().time() < end_time:
-                    # Check game phase
-                    game_phase = await recording_page.evaluate("""
-                        () => {
-                            try {
-                                // Try to get game state via getGameState function
-                                if (typeof window.getGameState === 'function') {
-                                    const state = window.getGameState();
-                                    if (state && state.gamePhase) {
-                                        return state.gamePhase;
-                                    }
-                                }
-                                // Fall back to direct gameState access
-                                else if (window.gameState && window.gameState.gamePhase) {
-                                    return window.gameState.gamePhase;
-                                }
-                                return 'unknown';
-                            } catch (e) {
-                                console.error('Error checking game phase:', e);
-                                return 'error';
-                            }
-                        }
-                    """)
+                # If game is not in playing phase, restart it
+                if game_phase and game_phase.lower() != 'playing':
+                    logging.info(f"Game phase is {game_phase}, restarting game...")
                     
-                    # If game is not in playing phase, restart it
-                    if game_phase and game_phase.lower() != 'playing':
-                        logging.info(f"Game phase is {game_phase}, restarting game...")
-                        
-                        # Press R to restart
-                        await recording_page.keyboard.press('r')
-                        await recording_page.wait_for_timeout(500)
-                        
-                        # Press ENTER to confirm restart
-                        await recording_page.keyboard.press('Enter')
-                        await recording_page.wait_for_timeout(500)
-                        
-                        # Reset test mode again in case it was lost
-                        await recording_page.evaluate(f"""
-                            () => {{
-                                try {{
-                                    if (typeof window.setControlMode === 'function') {{
-                                        window.setControlMode('{test_mode}');
-                                    }} else if (window.gameState) {{
-                                        window.gameState.controlMode = '{test_mode}';
-                                    }}
-                                }} catch (e) {{
-                                    console.error('Error resetting test mode:', e);
+                    # Press R to restart
+                    await page.keyboard.press('r')
+                    await page.wait_for_timeout(500)
+                    
+                    # Press ENTER to confirm restart
+                    await page.keyboard.press('Enter')
+                    await page.wait_for_timeout(500)
+                    
+                    # Reset test mode again in case it was lost
+                    await page.evaluate(f"""
+                        () => {{
+                            try {{
+                                if (typeof window.setControlMode === 'function') {{
+                                    window.setControlMode('{test_mode}');
+                                }} else if (window.gameState) {{
+                                    window.gameState.controlMode = '{test_mode}';
                                 }}
+                            }} catch (e) {{
+                                console.error('Error resetting test mode:', e);
                             }}
-                        """)
-                    
-                    # Wait a second before checking again
-                    await recording_page.wait_for_timeout(1000)
+                        }}
+                    """)
                 
-            except Exception as e:
-                logging.error(f"Error during recording: {str(e)}")
-            finally:
-                # Close recording context to finalize the video
-                await recording_context.close()
+                # Check more frequently (every 100ms instead of every second)
+                await page.wait_for_timeout(100)
             
-            # 6. Process the recorded video
-            video_files = [f for f in os.listdir(self.output_dir) if f.endswith(".webm")]
+            # 6. Process the recorded video with improved error handling
+            video_files = [f for f in os.listdir(test_videos_dir) if f.endswith(".webm")]
             if video_files:
-                latest_video = max(video_files, key=lambda f: os.path.getmtime(os.path.join(self.output_dir, f)))
-                webm_path = os.path.join(self.output_dir, latest_video)
+                latest_video = max(video_files, key=lambda f: os.path.getmtime(os.path.join(test_videos_dir, f)))
+                webm_path = os.path.join(test_videos_dir, latest_video)
                 
-                # Convert to MP4
-                mp4_path = os.path.join(self.output_dir, f"{test_name}.mp4")
+                # Ensure the webm file actually has content
+                webm_size = os.path.getsize(webm_path)
+                if webm_size < 1000:  # Less than 1KB is probably empty/invalid
+                    logging.error(f"Recorded webm file is too small ({webm_size} bytes), likely invalid")
+                    return button_info, None
                 
-                # Use FFmpeg to convert
+                # Generate a unique filename for the final MP4 in the test_videos dir
+                final_mp4_path = os.path.join(test_videos_dir, f"{test_name}_{int(time.time())}.mp4")
+                
+                # Use FFmpeg to convert with better parameters for reliability
                 ffmpeg_cmd = [
                     "ffmpeg", "-y", "-i", webm_path, 
-                    "-c:v", "libx264", "-crf", "23", "-preset", "medium",
-                    mp4_path
+                    "-c:v", "libx264", "-crf", "23", "-preset", "ultrafast",  # Use ultrafast preset for speed
+                    "-pix_fmt", "yuv420p",  # Ensure compatibility
+                    final_mp4_path
                 ]
                 
-                process = await asyncio.create_subprocess_exec(
-                    *ffmpeg_cmd,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE
-                )
-                
-                stdout, stderr = await process.communicate()
-                
-                if process.returncode == 0 and os.path.exists(mp4_path):
-                    video_path = mp4_path
-                    logging.info(f"Successfully converted video to {mp4_path}")
+                try:
+                    process = await asyncio.create_subprocess_exec(
+                        *ffmpeg_cmd,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE
+                    )
                     
-                    # Delete the webm file
-                    os.remove(webm_path)
-                else:
-                    logging.error(f"Failed to convert video: {stderr.decode()}")
-                    video_path = None
+                    stdout, stderr = await process.communicate()
+                    
+                    if process.returncode == 0 and os.path.exists(final_mp4_path) and os.path.getsize(final_mp4_path) > 0:
+                        logging.info(f"Successfully converted video to {final_mp4_path}")
+                        
+                        # Delete the webm file to save space
+                        try:
+                            os.remove(webm_path)
+                        except Exception as e:
+                            logging.warning(f"Failed to delete webm file: {str(e)}")
+                            
+                        return button_info, final_mp4_path
+                    else:
+                        logging.error(f"FFmpeg conversion failed with return code {process.returncode}")
+                        logging.error(f"FFmpeg stderr: {stderr.decode()}")
+                        
+                        # Try alternative conversion approach if main one fails
+                        logging.warning("Trying alternative FFmpeg conversion approach")
+                        alt_ffmpeg_cmd = [
+                            "ffmpeg", "-y", "-i", webm_path,
+                            "-vcodec", "copy",  # Just copy the video stream without re-encoding
+                            final_mp4_path
+                        ]
+                        
+                        alt_process = await asyncio.create_subprocess_exec(
+                            *alt_ffmpeg_cmd,
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE
+                        )
+                        
+                        alt_stdout, alt_stderr = await alt_process.communicate()
+                        
+                        if alt_process.returncode == 0 and os.path.exists(final_mp4_path) and os.path.getsize(final_mp4_path) > 0:
+                            logging.info(f"Alternative conversion succeeded for {final_mp4_path}")
+                            return button_info, final_mp4_path
+                        else:
+                            logging.error(f"Alternative FFmpeg conversion also failed: {alt_stderr.decode()}")
+                            
+                            # As a last resort, just copy the webm file to output as is
+                            webm_output = os.path.join(test_videos_dir, f"{test_name}.webm")
+                            import shutil
+                            shutil.copy2(webm_path, webm_output)
+                            logging.warning(f"Copied webm file as-is to {webm_output}")
+                            return button_info, webm_output
+                except Exception as ffmpeg_error:
+                    logging.error(f"Error during FFmpeg conversion: {str(ffmpeg_error)}")
+                    
+                    # As a last resort, just copy the webm file to output
+                    try:
+                        webm_output = os.path.join(test_videos_dir, f"{test_name}.webm")
+                        import shutil
+                        shutil.copy2(webm_path, webm_output)
+                        logging.warning(f"Copied webm file as-is to {webm_output}")
+                        return button_info, webm_output
+                    except Exception as copy_error:
+                        logging.error(f"Failed to copy webm file: {str(copy_error)}")
+                    
+                    return button_info, None
             else:
                 logging.error("No recorded video file found")
                 # Get console errors
                 console_errors = browser_manager.get_console_errors_summary()
                 logging.error(f"Console errors for {test_mode}: {json.dumps(console_errors, indent=2)}")
-                video_path = None
-            
-            return button_info, video_path
+                return button_info, None
             
         except Exception as e:
             logging.error(f"Error recording video for {button_id}: {str(e)}")
@@ -814,6 +919,47 @@ class VLMPlayEvaluation:
                     await recording_context.close()
             except:
                 pass
+    
+    async def _record_test_videos_sequential(self, test_buttons: List[Dict[str, Any]]) -> Dict[str, Tuple[Dict[str, Any], str]]:
+        """Record videos for all test buttons sequentially as a fallback approach."""
+        video_paths = {}  # Use button_id as key
+        
+        # Create a single test_videos directory for all recordings
+        test_videos_dir = os.path.join(self.output_dir, "test_videos")
+        os.makedirs(test_videos_dir, exist_ok=True)
+        
+        # Create a new browser for sequential recording
+        browser_manager = BrowserManager(self.game_path)
+        browser, url = await browser_manager.setup_browser()
+        
+        try:
+            # Process each button sequentially
+            for button_info in test_buttons:
+                button_id = button_info["id"]
+                logging.info(f"Sequential recording for button {button_id}")
+                
+                try:
+                    # Record single video with longer timeouts
+                    button_info, video_path = await self._record_single_video(browser, url, button_info, test_videos_dir)
+                    
+                    if video_path and os.path.exists(video_path):
+                        video_paths[button_id] = (button_info, video_path)
+                        logging.info(f"Sequential recording successful for {button_id}: {video_path}")
+                    else:
+                        logging.warning(f"Sequential recording failed for {button_id}")
+                        
+                    # Add a delay between recordings to ensure resources are freed
+                    await asyncio.sleep(2)
+                    
+                except Exception as e:
+                    logging.error(f"Error in sequential recording for {button_id}: {str(e)}")
+        
+        finally:
+            # Close browser
+            await browser.close()
+            await browser_manager.close()
+        
+        return video_paths
     
     async def _evaluate_test_video(self, 
                                  video_path: str, 
@@ -836,6 +982,7 @@ class VLMPlayEvaluation:
             test_description = test_info.get("test_description", "")
             strategy_description = test_info.get("strategy_description", "")
             expected_outcome = test_info.get("expected_outcome", "")
+            instructions = self.get_instructions()
             
             # If no test info found in metadata, use button text as a fallback
             if not test_description:
@@ -843,22 +990,37 @@ class VLMPlayEvaluation:
             
             # Create prompt for Gemini using test information
             prompt = f"""
-            <task>
-            The player is trying to test the game for the following: {test_description}. 
-            Following was their strategy: {strategy_description}. 
-            They expected the following would happen: {expected_outcome}.
-            </task>
-            Can you evaluate the video and answer the following questions:
-            
-            1. Was the expected outcome reached? If not, do you think the player was making progress towards the intended goal for the test?
-            2. Do you think that their strategy is bad?
-            3. If not, what is broken in the game and can be improved based on this test?
-            
-            Output your response in the following format:
-            <outcome_reached>Your detailed answer about whether the expected outcome was reached</outcome_reached>
-            <strategy_evaluation>Your detailed evaluation of the testing strategy</strategy_evaluation>
-            <improvements>Your detailed suggestions on what is broken and how to improve the game</improvements>
-            """
+{instructions}
+<task>
+Please analyze the following gameplay video and provide feedback based on test description, strategy, and expected outcome of the test.
+The player is trying to test the game for the following: {test_description}. 
+They followed the following strategy: {strategy_description}. 
+They expected the following would happen: {expected_outcome}.
+</task>
+
+<output_instructions>
+Addressing the questions in each section tag within the tags, write your analysis and feedback as a list with each line starting with `-`.
+<outcome_reached>
+... // Was the expected test outcome achieved? If not, do you think the player was making progress towards the intended goal for the test?
+</outcome_reached>
+
+<strategy_evaluation>
+... // Was the correct strategy chosen for this test? Was the strategy executed correctly? How can they improve their testing strategy?
+</strategy_evaluation>
+
+<test_evaluation>
+... // What does the result of this test suggest about the game aspect which was tested? Keep it limited to the scope of the description of the test.
+</test_evaluation>
+
+<game_assessment>
+... // Based on the gameplay video, provide a comprehensive analysis of all game aspects beyond this specific test.
+</game_assessment>
+
+<suggestions>
+... // What game aspects require improvements and what changes, updates, and additions do you recommend?
+</suggestions>
+</output_instructions>
+"""
             
             # Send video to Gemini for evaluation using the synchronous method
             # This avoids the error with generate_content_async
@@ -883,6 +1045,11 @@ class VLMPlayEvaluation:
             evaluation["strategy_description"] = strategy_description
             evaluation["expected_outcome"] = expected_outcome
             
+            # Find console errors for this test from global results
+            # Retrieve from parent's browser_manager if available
+            if hasattr(self, 'browser_manager') and hasattr(self.browser_manager, 'get_console_errors_summary'):
+                evaluation["console_errors"] = self.browser_manager.get_console_errors_summary()
+            
             return evaluation
             
         except Exception as e:
@@ -901,11 +1068,12 @@ class VLMPlayEvaluation:
         """
         result = {}
         
-        # Define the sections to extract
         sections = [
             "outcome_reached",
             "strategy_evaluation",
-            "improvements"
+            "test_evaluation",
+            "game_assessment",
+            "suggested_improvements",
         ]
         
         # Helper function to extract XML tags content
@@ -948,36 +1116,135 @@ class VLMPlayEvaluation:
         try:
             # Create a summary of all evaluations
             test_summaries = []
+            
+            # Collect all console errors
+            all_console_errors = []
+            
+            # Check if we have console errors in the main results
+            if hasattr(self, 'browser_manager') and hasattr(self.browser_manager, 'get_console_errors_summary'):
+                main_errors = self.browser_manager.get_console_errors_summary()
+                if main_errors and main_errors.get("has_errors", False):
+                    all_console_errors.extend(main_errors.get("errors", []))
+            
+            # Process each evaluation
             for eval in evaluations:
                 test_mode = eval.get("test_mode", "")
                 test_description = eval.get("test_description", "")
                 outcome_reached = eval.get("outcome_reached", "")
-                improvements = eval.get("improvements", "")
+                strategy_evaluation = eval.get("strategy_evaluation", "")
+                test_evaluation = eval.get("test_evaluation", "")
+                game_assessment = eval.get("game_assessment", "")
+                suggested_improvements = eval.get("suggested_improvements", "")
+                
+                # Get console errors specific to this test if available
+                console_errors = ""
+                if "console_errors" in eval and eval["console_errors"]:
+                    errors = eval["console_errors"]
+                    if isinstance(errors, dict) and errors.get("has_errors", False):
+                        console_errors = f"Console errors: {errors.get('error_count', 0)} errors detected."
+                        if errors.get("errors"):
+                            error_list = [f"- {err}" for err in errors.get("errors", [])[:5]]  # Limit to first 5 errors
+                            console_errors += "\n" + "\n".join(error_list)
+                            if len(errors.get("errors", [])) > 5:
+                                console_errors += f"\n(+ {len(errors.get('errors', [])) - 5} more errors)"
+                            all_console_errors.extend(errors.get("errors", []))
                 
                 summary = f"Test: {test_mode} - {test_description}\n"
-                summary += f"Outcome: {outcome_reached}\n"
-                summary += f"Improvements: {improvements}\n"
+                summary += f"Outcome: \n{outcome_reached}\n"
+                summary += f"Strategy: \n{strategy_evaluation}\n"
+                summary += f"Test: \n{test_evaluation}\n"
+                summary += f"Assessment: \n{game_assessment}\n"
+                summary += f"Improvements: \n{suggested_improvements}\n"
+                if console_errors:
+                    summary += f"{console_errors}\n"
                 
                 test_summaries.append(summary)
             
             all_tests_summary = "\n\n".join(test_summaries)
             
+            # Add a summary of all console errors found
+            if all_console_errors:
+                # Count error frequency
+                error_counts = {}
+                for error in all_console_errors:
+                    error_str = str(error)
+                    if error_str in error_counts:
+                        error_counts[error_str] += 1
+                    else:
+                        error_counts[error_str] = 1
+                
+                # Sort by frequency
+                sorted_errors = sorted(error_counts.items(), key=lambda x: x[1], reverse=True)
+                
+                # Add to the summary
+                console_summary = "\n\nAggregated Console Errors:\n"
+                console_summary += f"Total unique errors: {len(sorted_errors)}\n"
+                console_summary += f"Total error instances: {sum(error_counts.values())}\n"
+                
+                # Add most frequent errors
+                if sorted_errors:
+                    console_summary += "\nMost frequent errors:\n"
+                    for error, count in sorted_errors[:5]:  # Top 5 most frequent errors
+                        console_summary += f"- ({count}x) {error}\n"
+                    
+                    if len(sorted_errors) > 5:
+                        console_summary += f"(+ {len(sorted_errors) - 5} more unique errors)"
+                
+                all_tests_summary += console_summary
+            print(f"All tests summary: {all_tests_summary}")
+            instructions = self.get_instructions()
             # Create prompt for Gemini to aggregate feedback
             prompt = f"""
-            Here are the evaluations of several automated tests for a JavaScript game:
-            
-            {all_tests_summary}
-            
-            As a game development expert, please aggregate all this feedback into a comprehensive assessment for the game developer.
-            Focus on the most important issues that need to be fixed and provide actionable recommendations.
-            
-            Format your response using XML tags:
-            <critical_issues>List and explain the most important issues that need immediate attention</critical_issues>
-            <gameplay_assessment>Overall assessment of game mechanics and player experience</gameplay_assessment>
-            <technical_assessment>Technical issues that need to be addressed</technical_assessment>
-            <recommendations>Prioritized list of actionable recommendations for the developer</recommendations>
-            <conclusion>Brief overall conclusion about the game's state and potential</conclusion>
-            """
+{instructions}
+
+<task>
+Here is the test summary on all gameplay testing videos. Please aggregate this feedback into actionable feedback for the game developer based on all gameplay testing videos.
+Please suggest improvements or changes to the game that are aligned with the game concept and improves the game to make it more fun, interesting, and playable for a general audience with varied gaming experience with no prior knowledge of this game.
+
+Test Summary:
+{all_tests_summary}
+</task>
+
+<output_instructions>
+Format your response in an instructive and actionable format answering the questions within each section. Keep the feedback concise and to the point within the section tags.
+Write your feedback inside the section tags for each section, formatting each line with `-`.
+<critical_issues>
+... // What are the most critical issues that need to be fixed?
+</critical_issues>
+
+<playability_feedback>
+... // How can we improve the playability of the game?
+</playability_feedback>
+
+<game_progression_feedback>
+... // How can we improve the game progression?
+</game_progression_feedback>
+
+<game_mechanics_feedback>
+... // How can we improve the game mechanics?
+</game_mechanics_feedback>
+
+<graphics_and_animation_feedback>
+... // How can we improve the graphics and animation?
+</graphics_and_animation_feedback>
+
+<console_errors_feedback>
+... // Based on the console errors (if any), what would you suggest the game developer to do to fix the errors?
+</console_errors_feedback>
+
+<automated_testing_feedback>
+... // Feedback on the automated testing. What should be the updates on the automated tests? Other tests to add?
+</automated_testing_feedback>
+
+<other_feedback>
+... // What else do you think the game developer can do to make the game better?
+</other_feedback>
+
+<proposed_enhancements>
+... // What are the proposed enhancements to the game?
+</proposed_enhancements>
+</output_instructions>
+"""
             
             # Use Gemini to generate the aggregated feedback
             response = self.gemini_evaluator.generate_text(prompt)
@@ -988,7 +1255,17 @@ class VLMPlayEvaluation:
             
             # Parse the XML response
             aggregated_feedback = {}
-            sections = ["critical_issues", "gameplay_assessment", "technical_assessment", "recommendations", "conclusion"]
+            sections = [
+                "critical_issues", 
+                "playability_feedback",
+                "game_progression_feedback", 
+                "game_mechanics_feedback", 
+                "graphics_and_animation_feedback", 
+                "console_errors_feedback",
+                "automated_testing_feedback",
+                "other_feedback",
+                "proposed_enhancements"
+            ]
             
             # Helper function to extract XML tags content
             def extract_section(content, tag):
@@ -1002,9 +1279,6 @@ class VLMPlayEvaluation:
                 start_pos += len(start_tag)
                 end_pos = content.find(end_tag, start_pos)
                 
-                if end_pos == -1:
-                    return None
-                    
                 return content[start_pos:end_pos].strip()
             
             # Extract each section
@@ -1014,7 +1288,6 @@ class VLMPlayEvaluation:
                     aggregated_feedback[section] = section_content
                 else:
                     aggregated_feedback[section] = ""
-            
             return aggregated_feedback
             
         except Exception as e:
@@ -1045,7 +1318,12 @@ class VLMPlayEvaluation:
                 .evaluation-section {{ margin: 15px 0; padding: 10px; background: #f9f9f9; border-left: 3px solid #333; }}
                 .aggregated-feedback {{ margin: 20px 0; padding: 15px; background: #f0f7ff; border-left: 3px solid #0066cc; }}
                 .console-errors {{ margin: 15px 0; padding: 10px; background: #fff8f8; border-left: 3px solid #f00; font-family: monospace; }}
+                .token-usage {{ margin: 20px 0; padding: 15px; background: #f0fff0; border-left: 3px solid #00cc66; }}
                 pre {{ background-color: #f3f3f3; padding: 8px; overflow-x: auto; }}
+                table {{ border-collapse: collapse; width: 100%; margin: 10px 0; }}
+                th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+                th {{ background-color: #f2f2f2; }}
+                tr:nth-child(even) {{ background-color: #f9f9f9; }}
             </style>
         </head>
         <body>
@@ -1058,6 +1336,54 @@ class VLMPlayEvaluation:
             }</span></p>
             <p>Total evaluations: {len(results["evaluations"])}</p>
             
+            <!-- Token Usage Section -->
+            <h2>Token Usage</h2>
+        """
+        
+        # Add token usage if available
+        if results.get("token_usage"):
+            token_usage = results["token_usage"]
+            html_content += f"""
+            <div class="token-usage">
+                <h3>Gemini API Token Usage</h3>
+                <p>Total tokens used: {token_usage.get("total_tokens", 0)}</p>
+                <p>Prompt tokens: {token_usage.get("total_prompt_tokens", 0)}</p>
+                <p>Completion tokens: {token_usage.get("total_completion_tokens", 0)}</p>
+                
+                <h4>Request Details</h4>
+                <table>
+                    <tr>
+                        <th>Timestamp</th>
+                        <th>Request Type</th>
+                        <th>Prompt Tokens</th>
+                        <th>Completion Tokens</th>
+                        <th>Total</th>
+                    </tr>
+            """
+            
+            # Add each request
+            for request in token_usage.get("requests", []):
+                html_content += f"""
+                    <tr>
+                        <td>{request.get("timestamp", "")}</td>
+                        <td>{request.get("request_type", "")}</td>
+                        <td>{request.get("prompt_tokens", 0)}</td>
+                        <td>{request.get("completion_tokens", 0)}</td>
+                        <td>{request.get("total_tokens", 0)}</td>
+                    </tr>
+                """
+            
+            html_content += """
+                </table>
+                <p>Full token usage data saved in token_usage.json</p>
+                <p>Full conversation log saved in gemini_conversation_log.json</p>
+            </div>
+            """
+        else:
+            html_content += "<p>No token usage information recorded.</p>"
+            
+        # Add console errors section
+        html_content += """
             <!-- Console Errors Section -->
             <h2>Console Errors</h2>
         """
@@ -1084,27 +1410,22 @@ class VLMPlayEvaluation:
             <h2>Aggregated Feedback</h2>
         """
         
-        # Add aggregated feedback if available
+        # Add aggregated feedback if available - dynamically based on keys
         if results.get("aggregated_feedback"):
             aggregated = results["aggregated_feedback"]
-            html_content += f"""
-            <div class="aggregated-feedback">
-                <h3>Critical Issues</h3>
-                <div>{aggregated.get("critical_issues", "")}</div>
-                
-                <h3>Gameplay Assessment</h3>
-                <div>{aggregated.get("gameplay_assessment", "")}</div>
-                
-                <h3>Technical Assessment</h3>
-                <div>{aggregated.get("technical_assessment", "")}</div>
-                
-                <h3>Recommendations</h3>
-                <div>{aggregated.get("recommendations", "")}</div>
-                
-                <h3>Conclusion</h3>
-                <div>{aggregated.get("conclusion", "")}</div>
-            </div>
-            """
+            html_content += '<div class="aggregated-feedback">'
+            
+            # Dynamically add sections based on keys in the aggregated feedback dictionary
+            for key, value in aggregated.items():
+                if value:  # Only add sections with content
+                    # Format the section title (convert snake_case to Title Case)
+                    section_title = key.replace('_', ' ').title()
+                    html_content += f"""
+                    <h3>{section_title}</h3>
+                    <div>{value}</div>
+                    """
+            
+            html_content += '</div>'
         else:
             html_content += "<p>No aggregated feedback available.</p>"
         
@@ -1127,15 +1448,28 @@ class VLMPlayEvaluation:
                 <p>Button ID: {button_id}</p>
                 
                 <h4>Test Information</h4>
-                <p><strong>What:</strong> {eval.get("test_description", "")}</p>
-                <p><strong>How:</strong> {eval.get("strategy_description", "")}</p>
-                <p><strong>Expected Outcome:</strong> {eval.get("expected_outcome", "")}</p>
-                
-                <h4>Evaluation</h4>
                 <p><strong>Outcome Reached:</strong> {eval.get("outcome_reached", "")}</p>
                 <p><strong>Strategy Evaluation:</strong> {eval.get("strategy_evaluation", "")}</p>
-                <p><strong>Improvements:</strong> {eval.get("improvements", "")}</p>
-                
+                <p><strong>Test Evaluation:</strong> {eval.get("test_evaluation", "")}</p>
+                <p><strong>Game Assessment:</strong> {eval.get("game_assessment", "")}</p>                
+                <p><strong>Suggested Improvements:</strong> {eval.get("suggested_improvements", "")}</p>
+                <h4>Evaluation</h4>
+            """
+            
+            # Dynamically add evaluation sections based on keys
+            for key, value in eval.items():
+                # Skip certain keys that we've already handled or are metadata
+                if key not in ["button_id", "button_text", "test_mode", "video_path", 
+                              "test_description", "strategy_description", "expected_outcome", 
+                              "console_errors"]:
+                    if value and isinstance(value, str):  # Only add string values with content
+                        # Format the section title (convert snake_case to Title Case)
+                        section_title = key.replace('_', ' ').title()
+                        html_content += f"""
+                        <p><strong>{section_title}:</strong> {value}</p>
+                        """
+            
+            html_content += f"""
                 <div class="video-container">
                     <h4>Gameplay Video</h4>
                     {video_html}
@@ -1164,16 +1498,23 @@ class VLMPlayEvaluation:
         """
         Get the instructions for the game play tester.
         """
-        return f"""
-You are a part of a team of game play testers. you are testing a game developed in JavaScript.
-<game_description>
-{self.game_description}
-</game_description>
-<game_controls>
+        instructions = f"""
+You are a professional JavaScript game developer and tester known for providing precise feedback by evaluating gameplay videos of 2D video games.
+The game developer developed for the following input game concept: {self.game_concept}
+Please suggest improvements, updates, and additions to the game including all aspects of the game, its description, and controls.
+Game iterated with your feedback must respect the game concept and improves the game to make it more fun, interesting, and playable for a general audience with varied gaming experience with no prior knowledge of this game.
+
+The game developer implemented the game with the following description: {self.game_description}
+It is played with the following controls:
 {self.game_controls}
-</game_controls>
-You are given a video of a game developed in JavaScript.
+
+Following were the constraints on the game development:
+- Use keyboard keys for controls. No mouse controls. Only allowed keys: [Arrow keys (37-40), SPACE (32), Z (90), SHIFT (16), ENTER to start the game (13), R to restart the game after a win/loss (82), ESC to pause the game (27).]
+- The game must start on pressing ENTER key, pauses when ESC key is pressed, and restart on pressing R key at the end of the game.
+- No external images, sprites, or assets. No sound or music effects.
+- All graphics and animations are created using p5.js primitives.
 """
+        return instructions
 
 # Async function for easy API
 async def evaluate_game_async(game_path: str, output_dir: Optional[str] = None, api_key: Optional[str] = None) -> Dict[str, Any]:
