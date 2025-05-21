@@ -9,14 +9,7 @@ from utils import generate, code_from_dir
 from gen_minigame_batch_new_prompts import run_game
 
 
-prompt_improve_game = """Task: Make this minigame even more fun by adding audio
-
-<instructions>
-* Create synthesizers. Don't use external audio files or URLs.
-* Important: Only add audio. Don't change anything else.
-* Make sure the background music is simple and not too prominent.
-* Don't use p5.js to synthesize audio.
-</instructions>
+prompt_improve_game = """Task: Add more depth to this game.
 
 <game_code>
 {game_code}
@@ -61,7 +54,7 @@ Format your answer in the following format for the files that need to be updated
 
 
 thinking = False
-thinking_tokens = 20000
+thinking_tokens = 2000
 
 model = "claude-3-7-sonnet-20250219"
 
@@ -79,7 +72,7 @@ SAVE_DIR = SAVE_DIR / run_name
 if __name__ == "__main__":
     num_themes = 50
 
-    games_dir = Path(__file__).parent / "results" / "gen_minigame_improve_batch_new_prompts" / "run1" / "claude-3-7-sonnet-20250219" / "thinking"
+    games_dir = Path(__file__).parent / "results" / "gen_minigame_audio_batch_new_prompts" / "run1" / "claude-3-7-sonnet-20250219" / "no_thinking"
 
 
     prompts = []
@@ -89,7 +82,10 @@ if __name__ == "__main__":
     theme_dirs = theme_dirs[:num_themes]
 
     for theme_dir in theme_dirs:
-        theme_code_dir = theme_dir / "improve_iter1"
+        if theme_dir.name != "theme_25":
+            continue
+
+        theme_code_dir = theme_dir / "code_with_audio"
         sample_dirs = sorted(theme_code_dir.glob("sample_*"), key=lambda d: int(d.name.split("_")[-1]))
         sample_dir = sample_dirs[-1]
 
@@ -112,7 +108,7 @@ if __name__ == "__main__":
 
         game_code, game_code_str = code_from_dir(new_dir / "code_original", return_str=True)
 
-        _save_dir = new_dir / f"code_with_audio" / "sample_0"
+        _save_dir = new_dir / f"code_improved" / "sample_0"
         _save_dir.mkdir(parents=True, exist_ok=True)
 
         # copy original game code
@@ -182,49 +178,3 @@ if __name__ == "__main__":
 
         prompts = resample_prompts
         save_dirs = resample_save_dirs
-
-
-    GAME_CONCEPTS_DIR = Path(__file__).parent.parent / "game_prompts" / "generative_games" / "final_concepts"
-
-    final_games_dir = SAVE_DIR.parent / "final_games" / ('thinking' if thinking else 'no_thinking')
-    final_games_dir.mkdir(parents=True, exist_ok=True)
-
-    theme_dirs = sorted(SAVE_DIR.glob("theme_*"), key=lambda d: int(d.name.split("_")[-1]))
-    for theme_dir in theme_dirs:
-        code_dir = theme_dir / "code_with_audio"
-        sample_dirs = sorted(code_dir.glob("sample_*"), key=lambda d: int(d.name.split("_")[-1]))
-        sample_dir = sample_dirs[-1]
-
-        # convert theme_1 to game_0001
-        theme_num = int(theme_dir.name.split("_")[-1])
-        game_name = f"game_{theme_num:04d}"
-
-        code = code_from_dir(sample_dir)
-        initial_game_concept = json.load(open(GAME_CONCEPTS_DIR / (game_name + ".json")))
-
-        (final_games_dir / game_name).mkdir(parents=True, exist_ok=True)
-
-        for file_path, file_content in code.items():
-            (final_games_dir / game_name / file_path).write_text(file_content, encoding="utf-8")
-
-        with open(final_games_dir / game_name / "game_concept.json", "w") as f:
-            json.dump(initial_game_concept, f, indent=4)
-
-
-    games_with_audio = sorted(final_games_dir.glob("game_*"), key=lambda d: int(d.name.split("_")[-1]))
-    improve_visuals_dir = final_games_dir.parent / "improve_visuals"
-    improve_visuals_dir.mkdir(parents=True, exist_ok=True)
-
-    for game_dir in games_with_audio[:10]:
-        game_code, game_code_str = code_from_dir(game_dir, return_str=True)
-
-        _save_dir = improve_visuals_dir / game_dir.name
-        _save_dir.mkdir(parents=True, exist_ok=True)
-        
-        # copy game code to agent save dir
-        for file_path, code in game_code.items():
-            (_save_dir / file_path).write_text(code)
-        prompt = prompt_visuals.format(
-            game_code=game_code_str
-        )
-        generate(model, prompt, _save_dir, thinking=True, thinking_tokens=5000)

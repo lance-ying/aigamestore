@@ -872,7 +872,9 @@ if __name__ == "__main__":
     sorted_fun_ratings = avg_results["avg_fun_rating"].iloc[sorted_indices]
     sorted_fun_std = avg_results["std_fun_rating"].iloc[sorted_indices]
     
-    plt.bar(range(len(sorted_game_ids)), sorted_fun_ratings, yerr=sorted_fun_std, alpha=0.7, color='mediumseagreen')
+    # plt.bar(range(len(sorted_game_ids)), sorted_fun_ratings, yerr=sorted_fun_std, alpha=0.7, color='mediumseagreen')
+    num_ratings = num_ratings_per_game[sorted_game_ids]
+    plt.bar(range(len(sorted_game_ids)), sorted_fun_ratings, yerr=sorted_fun_std / np.sqrt(num_ratings), alpha=0.7, color='mediumseagreen')
     plt.xlabel("Game")
     plt.ylabel("Average fun rating")
     plt.xticks(range(len(sorted_game_ids)), [""] * len(sorted_game_ids))

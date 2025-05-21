@@ -30,7 +30,8 @@ agent_thinking_tokens = 20000
 revise_thinking = True
 revise_thinking_tokens = 5000
 
-headless = True
+# headless = True
+headless = False
 
 model = "claude-3-7-sonnet-20250219"
 
@@ -449,15 +450,25 @@ Current version of the game code:
 """
 
 
-prompt_visuals = """Task: Fix and polish the graphics of the game.
+prompt_visuals = """Task: Improve the visuals of this game to make it more professional.
+
+Role: you are a professional graphics designer and someone asked you to rethink the visuals for a game. You have total creative freedom.
 
 <instructions>
-* Make sure object parts are connected correctly.
-* Make sure objects are properly positioned and oriented.
-* Make sure text doesn't overlap or overflow.
-* Make sure the graphics are visually coherent and appealing.
-</instructions>
+* Create your own color palette and visual style for this game.
+* Make the game more visually coherent and appealing.
+* Make the visuals more polished and professional.
+* Keep the design minimal and clean.
 
+Check that:
+* object parts are connected correctly
+* objects are properly positioned and oriented
+* text doesn't overlap or overflow
+
+* Make sure there is no flickering in the graphics. IMPORTANT: Do NOT randomly generate visual properties (colors, sizes, positions) inside draw functions that run every frame. Instead:
+    * Generate random visual properties only ONCE during initialization/setup
+    * Store these properties as object attributes
+    * Use the stored properties when drawing, don't regenerate them each frame
 <game_code>
 {game_code}
 </game_code>
@@ -996,6 +1007,16 @@ def text2game(text, save_dir):
         game_dir = save_dir / f"sample{sample_idx}_iter{revision_iter}"             
         # generate game (no agent)
         game_code = generate_game(text, game_dir / "no_agent")
+
+        # # copy game code to agent save dir
+        # (game_dir / "visuals").mkdir(parents=True, exist_ok=True)
+        # for file_path, code in game_code.items():
+        #     (game_dir / "visuals" / file_path).write_text(code)
+        # prompt = prompt_visuals.format(
+        #     game_code=code_from_dir(game_dir / "no_agent", return_str=True)[1]
+        # )
+        # generate(model, prompt, game_dir / "visuals", thinking=True, thinking_tokens=5000)
+        # breakpoint()
         
         # game_code is updated at each iteration
         while revision_iter <= max_iterations:
@@ -1090,6 +1111,8 @@ if __name__ == "__main__":
     themes = themes[:num_themes]
 
     for idx, theme in enumerate(themes):
+        if idx != 2:
+            continue
         res = text2game(theme, save_dir / f"theme_{idx}")
 
         # plot coverage scores
@@ -1099,10 +1122,13 @@ if __name__ == "__main__":
         res["sample_revision"] = res.apply(lambda row: f"sample{row['sample_idx']}_iter{row['revision_iter']}", axis=1)
         plt.figure(figsize=(4, 3), dpi=150)
         # sns.scatterplot(data=res, x="sample_revision", y="coverage_score", hue="agent_idx")
-        sns.stripplot(data=res, x="sample_revision", y="coverage_score", hue="sample_idx")
-        plt.xticks(rotation=45, ha="right")
+        sns.stripplot(data=res, x="sample_revision", y="coverage_score", hue="sample_idx", legend=False)
+        plt.xticks(rotation=45, ha="right", fontsize=8)
+        
         ax = plt.gca()
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
+        # Add horizontal line at y=1 (100% coverage)
+        plt.axhline(y=1, color='grey', linestyle='--', alpha=0.7)
         plt.tight_layout()
         plt.savefig(save_dir / f"theme_{idx}_coverage_scores.png", dpi=300)
