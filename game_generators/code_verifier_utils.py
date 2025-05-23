@@ -542,11 +542,14 @@ Please consider what might be causing the issues. The error messages are based o
 There might be other implementation bugs which might lead to similar issues preventing a error-free gameplay experience. Please review the code and fix all the errors.
 Some of the common causes of errors are:
 - incorrect or missing imports and exports
+- importing variables or functions that are not exported or defined in the imported file
 - syntax errors
-- incorrect conditional statements for setting the color in p5. Use ternary operator to set colors for conditional rendering: Example: `p.fill(...(CONDITION ? [255, 220, 150] : [40, 30, 20]));`
+- function calls with incorrect arguments
 - undefined variables
 - redeclaration of variables
 - p5 functions not being called correctly
+- incorrect conditional statements for setting the color in p5. Use ternary operator to set colors for conditional rendering: Example: `p.fill(...(CONDITION ? [255, 220, 150] : [40, 30, 20]));`
+- incorrect key event handling in the game code
 
 Check for the phase transition key event handling in the game code:
 - Game must load without errors caused by issues listed above

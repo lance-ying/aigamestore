@@ -1745,7 +1745,7 @@ class GameBrowserController:
                 random_action_results = []
                 
                 # Initial 32 random key presses
-                for i in range(32):
+                for i in range(16):
                     # Choose a random key from gameplay keys
                     random_key = random.choice(self.gameplay_keys)
                     logging.info(f"Initial random action {i+1}/32: Pressing key {random_key}")

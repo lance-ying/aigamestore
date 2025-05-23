@@ -92,7 +92,7 @@ p5js_guidelines = """
 - Set the canvas size to 600x400 pixels.
 - Ensure full reproducibility by setting the random seed to a fixed value.
 - Use a finite state machine for the player character.
-- Make sure the player's controls and parameters are coherent with the gameplay and physics.
+- Make surethe player's controls and parameters are coherent with the gameplay and physics.
 - Make sure the game has a clear goal and win state.
 - Implement professional-looking and polished graphics.
 - IMPORTANT: Don't draw elements that are randomly sampled at every frame as this causes flickering.
