@@ -1,0 +1,766 @@
+import os
+import logging
+import asyncio
+import re
+import time
+from typing import Dict, Any, List, Optional, Tuple
+from pathlib import Path
+
+# Import Playwright
+try:
+    from playwright.async_api import async_playwright, Page, ElementHandle, Browser, BrowserContext, ConsoleMessage
+    PLAYWRIGHT_ENABLED = True
+except ImportError:
+    logging.error(
+        "Playwright not found. Install with: pip install playwright && python -m playwright install firefox"
+    )
+    PLAYWRIGHT_ENABLED = False
+
+
+class BrowserManager:
+    """Class to manage browser interactions for game evaluation with enhanced error handling."""
+    
+    def __init__(self, game_path: str):
+        """
+        Initialize the browser manager.
+        
+        Args:
+            game_path: Path to the game directory or HTML file
+        """
+        self.game_path = os.path.abspath(game_path)
+        
+        # Game controls
+        self.game_keys = {
+            "ArrowLeft",
+            "ArrowRight",
+            "ArrowUp",
+            "ArrowDown",
+            " ",  # Space
+            "Shift",
+            "z",
+            "Enter",
+            "r",  # For restarting games
+        }
+        
+        # HTTP server process
+        self.server_process = None
+        
+        # Console logs storage
+        self.console_logs = {
+            "error": [],
+            "warning": [],
+            "info": [],
+            "log": [],
+            "debug": [],
+            "other": []
+        }
+        self.js_exceptions = []
+        self.network_errors = []
+        self.resource_errors = []
+        self.parse_errors = []
+        
+        # Enhanced error tracking
+        self.structured_errors = []
+        
+        # Mapping for key codes
+        self.key_mapping = {
+            "ArrowLeft": 37,
+            "ArrowUp": 38,
+            "ArrowRight": 39,
+            "ArrowDown": 40,
+            " ": 32,
+            "Shift": 16,
+            "z": 90,
+            "Enter": 13,
+            "r": 82
+        }
+        
+        # List of gameplay keys (all allowed keys except 'r' and 'Enter')
+        self.gameplay_keys = [
+            "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown",
+            " ", "Shift", "z"
+        ]
+        
+    def _create_structured_error(self, message, error_type="error", source_file=None, line_number=None, column_number=None, stack=None, context=None):
+        """
+        Create a structured error dictionary with standardized fields.
+        
+        Args:
+            message: The error message text
+            error_type: Type of error (error, syntaxerror, referenceerror, etc.)
+            source_file: Source file where the error occurred
+            line_number: Line number in the source file
+            column_number: Column number in the source file
+            stack: Stack trace if available
+            context: Additional context about where/when the error happened
+            
+        Returns:
+            Dictionary with structured error information
+        """
+        # Extract filename without path if full path is provided
+        filename = None
+        if source_file:
+            if '/' in source_file:
+                filename = source_file.split('/')[-1]
+            elif '\\' in source_file:
+                filename = source_file.split('\\')[-1]
+            else:
+                filename = source_file
+                
+        return {
+            "message": message,
+            "type": error_type.lower(),
+            "source": {
+                "file": source_file,
+                "filename": filename,
+                "line": line_number,
+                "column": column_number
+            },
+            "stack": stack,
+            "context": context,
+            "timestamp": time.time()
+        }
+        
+    def _deduplicate_errors(self, errors):
+        """
+        Remove duplicate errors based on source file and line number.
+        
+        Args:
+            errors: List of structured error dictionaries
+            
+        Returns:
+            List of deduplicated error dictionaries
+        """
+        unique_errors = {}
+        
+        for error in errors:
+            # Create a unique key based on filename and line number
+            source = error.get("source", {})
+            filename = source.get("filename")
+            line = source.get("line")
+            
+            # If we don't have filename and line, use the error message as the key
+            if not filename or not line:
+                key = error.get("message", "")
+            else:
+                key = f"{filename}:{line}"
+                
+            # Only add if this key doesn't exist yet
+            if key not in unique_errors:
+                unique_errors[key] = error
+                
+        # Return list of unique errors
+        return list(unique_errors.values())
+    
+    async def setup_browser(self) -> Tuple[Browser, str]:
+        """
+        Set up the browser and return the URL to access the game.
+        
+        Returns:
+            Tuple of (browser instance, URL to access the game)
+        """
+        if not PLAYWRIGHT_ENABLED:
+            raise ImportError("Playwright is not installed or properly configured")
+            
+        # Setup browser
+        playwright = await async_playwright().start()
+        browser = await playwright.firefox.launch(headless=True)
+        
+        # Determine URL based on game path
+        if os.path.isdir(self.game_path):
+            # Find HTML file
+            html_files = list(Path(self.game_path).glob("*.html"))
+            if not html_files:
+                raise FileNotFoundError(f"No HTML file found in {self.game_path}")
+                
+            # Default to index.html if it exists
+            html_file = next(
+                (f for f in html_files if f.name.lower() == "index.html"),
+                html_files[0],
+            )
+            
+            # Find an available port
+            port = await self._find_available_port(start_port=8000, max_attempts=300)
+            
+            # Use local HTTP server to serve the directory
+            self.server_process = await asyncio.create_subprocess_exec(
+                "python",
+                "-m",
+                "http.server",
+                str(port),
+                cwd=self.game_path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            
+            # Wait for server to start
+            await asyncio.sleep(1)
+            url = f"http://localhost:{port}/{html_file.name}"
+        else:
+            # Direct file path
+            url = f"file://{self.game_path}"
+            
+        return browser, url
+        
+    async def _find_available_port(self, start_port: int = 8000, max_attempts: int = 20) -> int:
+        """
+        Find an available port starting from start_port.
+        
+        Args:
+            start_port: Port to start checking from
+            max_attempts: Maximum number of ports to check
+            
+        Returns:
+            Available port number
+            
+        Raises:
+            RuntimeError: If no available port is found after max_attempts
+        """
+        import socket
+        
+        for port in range(start_port, start_port + max_attempts):
+            try:
+                # Try to create a socket with the port
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                    sock.settimeout(0.1)  # Short timeout for quick check
+                    # If bind succeeds, the port is available
+                    sock.bind(('127.0.0.1', port))
+                    logging.info(f"Found available port: {port}")
+                    return port
+            except socket.error:
+                logging.debug(f"Port {port} is in use, trying next port")
+                continue
+                
+        # If we get here, we couldn't find an available port
+        error_msg = f"Could not find an available port after {max_attempts} attempts starting from {start_port}"
+        logging.error(error_msg)
+        raise RuntimeError(error_msg)
+        
+    async def find_game_test_buttons(self, page: Page) -> List[Dict[str, Any]]:
+        """
+        Find all TEST buttons on the page with the new format.
+        
+        Args:
+            page: Playwright page object
+            
+        Returns:
+            List of button information dictionaries
+        """
+        # Check for canvas
+        canvas_count = await page.evaluate(
+            "document.querySelectorAll('canvas').length"
+        )
+        if not canvas_count:
+            raise ValueError("No canvas element found on the page")
+            
+        # Find all test buttons with the new format
+        test_buttons = await page.evaluate(
+            """
+            () => {
+                const buttons = Array.from(document.querySelectorAll('button, input[type="button"]'));
+                return buttons
+                    .filter(btn => btn.id && btn.id.toLowerCase().includes('test_') && btn.id.toLowerCase().includes('modebtn'))
+                    .map(btn => ({
+                        id: btn.id,
+                        text: btn.innerText || btn.value || '',
+                        testMode: (btn.onclick && btn.onclick.toString().match(/setControlMode\\(['"]([^'"]+)['"]\\)/)?.[1]) || ''
+                    }))
+                    .sort((a, b) => {
+                        // Sort by test number if available
+                        const numA = parseInt(a.id.match(/test_(\d+)/i)?.[1] || '0');
+                        const numB = parseInt(b.id.match(/test_(\d+)/i)?.[1] || '0');
+                        return numA - numB;
+                    });
+            }
+            """
+        )
+        
+        if not test_buttons:
+            logging.warning(
+                "No buttons with id containing 'test_' found. Looking for any buttons..."
+            )
+            
+            # Try to find any buttons as a fallback
+            test_buttons = await page.evaluate(
+                """
+                () => {
+                    const buttons = Array.from(document.querySelectorAll('button, input[type="button"]'));
+                    return buttons.map((btn, index) => ({
+                        id: btn.id || `button_${index}`,
+                        text: btn.innerText || btn.value || '',
+                        testMode: (btn.onclick && btn.onclick.toString().match(/setControlMode\\(['"]([^'"]+)['"]\\)/)?.[1]) || ''
+                    }));
+                }
+                """
+            )
+            
+        return test_buttons
+        
+    async def perform_automated_gameplay(self, page: Page, duration: int = 30) -> None:
+        """
+        Perform automated gameplay by sending random key presses.
+        
+        Args:
+            page: Playwright page object
+            duration: Duration in seconds to play the game
+        """
+        import random
+        
+        logging.info(f"Starting automated gameplay for {duration} seconds")
+        
+        start_time = asyncio.get_event_loop().time()
+        end_time = start_time + duration
+        
+        try:
+            while asyncio.get_event_loop().time() < end_time:
+                # Press a random key from the game keys
+                key = random.choice(list(self.gameplay_keys))  # Only use gameplay keys
+                
+                # Decide between key press or key hold
+                if random.random() < 0.7:
+                    # Short press
+                    await page.keyboard.press(key)
+                else:
+                    # Hold for a short time
+                    await page.keyboard.down(key)
+                    await page.wait_for_timeout(random.randint(100, 500))
+                    await page.keyboard.up(key)
+                    
+                # Wait a short time between inputs
+                await page.wait_for_timeout(random.randint(50, 200))
+                
+                # Check for game over state and restart if needed
+                await self._check_and_handle_game_over_state(page)
+                
+        except Exception as e:
+            logging.error(f"Error during automated gameplay: {str(e)}")
+            
+    async def _check_and_handle_game_over_state(self, page: Page) -> None:
+        """
+        Check if game is in game over state and handle restart if needed.
+        
+        Args:
+            page: Playwright page object
+        """
+        try:
+            # Check if getGameState function exists
+            has_game_state_function = await page.evaluate(r"""() => {
+                return typeof getGameState === 'function';
+            }""")
+            
+            if has_game_state_function:
+                game_state = await page.evaluate("getGameState()")
+                if game_state and isinstance(game_state, dict):
+                    game_phase = game_state.get("gamePhase")
+                    
+                    # If game is over, restart it by pressing R followed by Enter
+                    if game_phase in ["GAME_OVER_WIN", "GAME_OVER_LOSS"]:
+                        logging.info(f"Game is in {game_phase} state. Restarting game.")
+                        
+                        # Press R to restart
+                        await page.keyboard.press("r")
+                        await page.wait_for_timeout(500)
+                        
+                        # Press Enter to confirm restart
+                        await page.keyboard.press("Enter")
+                        await page.wait_for_timeout(500)
+        except Exception as e:
+            logging.error(f"Error checking game state: {str(e)}")
+            
+    async def close(self) -> None:
+        """Clean up resources, including HTTP server if running."""
+        if self.server_process:
+            self.server_process.terminate()
+            await self.server_process.wait()
+            self.server_process = None
+
+    async def setup_console_error_tracking(self, page: Page):
+        """
+        Set up tracking of console errors in the browser.
+        
+        Args:
+            page: Playwright page object
+        """
+        # Reset console logs
+        self.console_logs = {
+            "error": [],
+            "warning": [],
+            "info": [],
+            "log": [],
+            "debug": [],
+            "other": []
+        }
+        self.js_exceptions = []
+        self.network_errors = []
+        self.resource_errors = []
+        self.parse_errors = []
+        self.structured_errors = []
+        
+        # Inject error capturing script
+        await page.evaluate("""
+            // Create global collections for errors
+            window.moduleErrors = [];
+            window.syntaxErrors = [];
+            window.runtimeErrors = [];
+            window.resourceErrors = [];
+            
+            // Override the original console.error
+            const originalConsoleError = console.error;
+            console.error = function() {
+                // Call the original console.error
+                originalConsoleError.apply(console, arguments);
+                
+                // Get the error message
+                const args = Array.from(arguments);
+                const message = args.join(' ');
+                
+                // Try to extract error information
+                let errorInfo = {
+                    message: message,
+                    type: 'error',
+                    location: null,
+                    stack: null
+                };
+                
+                // Try to extract location information
+                const locationMatch = message.match(/at\s+([^\s]+)\s+\(([^:]+):(\d+):(\d+)\)/);
+                if (locationMatch) {
+                    errorInfo.location = {
+                        function: locationMatch[1],
+                        file: locationMatch[2],
+                        line: parseInt(locationMatch[3]),
+                        column: parseInt(locationMatch[4])
+                    };
+                }
+                
+                // Check if it's a syntax error
+                if (message.toLowerCase().includes('syntax error') || 
+                    message.toLowerCase().includes('unexpected token') ||
+                    message.toLowerCase().includes('invalid identifier')) {
+                    errorInfo.type = 'syntaxError';
+                    window.syntaxErrors.push(errorInfo);
+                } else {
+                    window.runtimeErrors.push(errorInfo);
+                }
+            };
+        """)
+        
+        # Listen for console messages
+        page.on("console", lambda msg: self._handle_console_message(msg))
+        
+        # Listen for page errors
+        page.on("pageerror", lambda err: self._handle_page_error(err))
+        
+        # Listen for request failures
+        page.on("requestfailed", lambda request: self._handle_request_failed(request))
+    
+    def _handle_console_message(self, msg: ConsoleMessage):
+        """
+        Handle console messages from the browser with enhanced tracking.
+        
+        Args:
+            msg: Console message object
+        """
+        msg_type = msg.type.lower()
+        msg_text = f"{msg.text}"
+        
+        # Get location data for better source tracking
+        loc = msg.location()
+        source_file = loc.get('url')
+        line_number = loc.get('lineNumber')
+        column_number = loc.get('columnNumber')
+        
+        # Store in the appropriate category
+        if msg_type in self.console_logs:
+            self.console_logs[msg_type].append(msg_text)
+        else:
+            self.console_logs["other"].append(f"{msg_type}: {msg_text}")
+        
+        # Check for specific error patterns
+        lower_text = msg_text.lower()
+        
+        # Debug log for all error messages
+        if msg_type == "error" or "error" in lower_text:
+            logging.error(f"BROWSER ERROR: {msg_text}")
+            
+            # Create structured error for console errors
+            error_type = "generic_error"
+            
+            # Define expanded syntax error patterns from game_check
+            syntax_error_patterns = [
+                "parseerror", 
+                "syntax error", 
+                "syntaxerror", 
+                "unexpected token",
+                "is an invalid identifier",
+                "invalid identifier", 
+                "unexpected identifier", 
+                "unexpected end of input", 
+                "missing )", 
+                "missing }", 
+                "missing ]", 
+                "missing :",
+                "redeclaration"
+            ]
+            
+            # Check for syntax errors specifically
+            if any(pattern in lower_text for pattern in syntax_error_patterns):
+                error_type = "syntax_error"
+                self.parse_errors.append(msg_text)
+            
+            structured_error = self._create_structured_error(
+                message=msg_text,
+                error_type=error_type,
+                source_file=source_file,
+                line_number=line_number,
+                column_number=column_number,
+                context="console_message"
+            )
+            self.structured_errors.append(structured_error)
+        
+        # Check for network errors
+        if "failed to load resource" in lower_text or "net::" in lower_text:
+            self.network_errors.append(msg_text)
+            network_error = self._create_structured_error(
+                message=msg_text,
+                error_type="network_error",
+                source_file=source_file,
+                line_number=line_number,
+                context="resource_loading"
+            )
+            self.structured_errors.append(network_error)
+        
+        # Check for syntax errors
+        syntax_error_patterns = [
+            "parseerror", 
+            "syntax error", 
+            "syntaxerror", 
+            "unexpected token", 
+            "is an invalid identifier",
+            "invalid identifier", 
+            "unexpected identifier", 
+            "unexpected end of input", 
+            "missing )", 
+            "missing }", 
+            "missing ]"
+        ]
+        
+        if any(pattern in lower_text for pattern in syntax_error_patterns):
+            self.parse_errors.append(msg_text)
+            logging.error(f"Syntax error detected: {msg_text}")
+    
+    def _handle_page_error(self, error):
+        """
+        Handle page errors from the browser with enhanced tracking.
+        
+        Args:
+            error: Error object
+        """
+        error_str = str(error)
+        error_message = getattr(error, 'message', str(error))
+        error_name = getattr(error, 'name', type(error).__name__)
+        error_stack = getattr(error, 'stack', None)
+        
+        error_message_lower = error_message.lower()
+        error_name_lower = error_name.lower()
+        
+        # Default to runtime error
+        error_type = "runtime_error"
+        
+        # Format the error message
+        error_msg = f"Page error: {error}"
+        
+        self.js_exceptions.append(error_msg)
+        logging.error(f"PAGE ERROR: {error}")
+        
+        # Add to console_logs error category
+        self.console_logs["error"].append(error_msg)
+        
+        # Try to extract source file, line, and column from the stack or message
+        source_file = None
+        line_number = None
+        column_number = None
+        
+        # Extract from stack trace
+        if error_stack:
+            # Try pattern: "at http://localhost:8000/file.js:287:11"
+            match = re.search(r'at (?:.*?)(?:\()?([^\s(]+?):([0-9]+):([0-9]+)(?:\))?', 
+                              error_stack.split('\n')[0] if '\n' in error_stack else error_stack)
+            if not match:
+                # Try another common pattern if first fails
+                match = re.search(r'([^\s@]+):([0-9]+):([0-9]+)', 
+                                  error_stack.split('\n')[0] if '\n' in error_stack else error_stack)
+            
+            if match:
+                source_file = match.group(1)
+                try:
+                    line_number = int(match.group(2))
+                    column_number = int(match.group(3))
+                except ValueError:
+                    pass
+        
+        # Check if it's a syntax error
+        if "syntaxerror" in error_name_lower or any(pattern in error_message_lower for pattern in [
+            "syntax error", 
+            "unexpected token", 
+            "invalid identifier", 
+            "unexpected identifier", 
+            "unexpected end of input", 
+            "missing", 
+            "redeclaration"
+        ]):
+            error_type = "syntax_error"
+            self.parse_errors.append(f"{error_name}: {error_message}")
+        
+        # Create structured error object
+        structured_error = self._create_structured_error(
+            message=str(error),
+            error_type=error_type,
+            source_file=source_file,
+            line_number=line_number,
+            column_number=column_number,
+            stack=error_stack,
+            context="page_error_listener"
+        )
+        self.structured_errors.append(structured_error)
+    
+    def _handle_request_failed(self, request):
+        """
+        Handle failed network requests with enhanced tracking.
+        
+        Args:
+            request: Failed request object
+        """
+        failure = request.failure()
+        url = request.url
+        
+        error_msg = f"Request failed: {url} - {failure}"
+        self.network_errors.append(error_msg)
+        self.console_logs["error"].append(error_msg)
+        
+        # Create structured error for network failure
+        structured_error = self._create_structured_error(
+            message=error_msg,
+            error_type="network_error",
+            source_file=url,
+            context="request_failed"
+        )
+        self.structured_errors.append(structured_error)
+    
+    def get_console_errors_summary(self) -> Dict[str, Any]:
+        """
+        Get a summary of all console errors captured with enhanced information.
+        
+        Returns:
+            Dictionary with comprehensive console error information
+        """
+        # Gather all error messages from different sources
+        all_errors = []
+        
+        # Add explicit error logs
+        all_errors.extend(self.console_logs["error"])
+        
+        # Add JS exceptions
+        all_errors.extend(self.js_exceptions)
+        
+        # Add network errors
+        all_errors.extend(self.network_errors)
+        
+        # Add resource errors
+        all_errors.extend(self.resource_errors)
+        
+        # Add parse errors
+        all_errors.extend(self.parse_errors)
+        
+        # Check for error text in other message types
+        for msg_type, messages in self.console_logs.items():
+            if msg_type != "error":  # Skip error type as we already processed it
+                for msg in messages:
+                    if "error" in msg.lower():
+                        all_errors.append(msg)
+        
+        # Remove duplicates while preserving order
+        unique_errors = []
+        for error in all_errors:
+            if error not in unique_errors:
+                unique_errors.append(error)
+        
+        # Get deduplicated structured errors
+        deduplicated_structured_errors = self._deduplicate_errors(self.structured_errors)
+        
+        return {
+            "has_errors": len(unique_errors) > 0,
+            "error_count": len(unique_errors),
+            "errors": unique_errors,
+            "console_logs": self.console_logs,
+            "js_exceptions": self.js_exceptions,
+            "network_errors": self.network_errors,
+            "parse_errors": self.parse_errors,
+            "structured_errors": deduplicated_structured_errors
+        }
+        
+    async def verify_game_state_integrity(self, page: Page) -> Dict[str, Any]:
+        """
+        Verify the integrity of the game state, checking for game over states.
+        
+        Args:
+            page: Playwright page object
+            
+        Returns:
+            Dictionary with verification results
+        """
+        result = {
+            "verified": False,
+            "current_phase": None,
+            "issues": []
+        }
+        
+        try:
+            # Check if getGameState function exists
+            has_game_state_function = await page.evaluate(r"""() => {
+                return typeof getGameState === 'function';
+            }""")
+            
+            if not has_game_state_function:
+                result["issues"].append("getGameState function not found")
+                return result
+                
+            # Get current game state
+            game_state = await page.evaluate("getGameState()")
+            if not game_state or not isinstance(game_state, dict):
+                result["issues"].append("getGameState did not return a valid game state object")
+                return result
+                
+            # Get current game phase
+            game_phase = game_state.get("gamePhase")
+            result["current_phase"] = game_phase
+            
+            # If game is in game over state, attempt to restart and verify reset
+            if game_phase in ["GAME_OVER_WIN", "GAME_OVER_LOSS"]:
+                logging.info(f"Game in {game_phase} state, testing restart...")
+                
+                # Press R to restart
+                await page.keyboard.press("r")
+                await page.wait_for_timeout(500)
+                
+                # Press Enter to confirm restart
+                await page.keyboard.press("Enter")
+                await page.wait_for_timeout(500)
+                
+                # Check if game restarted properly
+                game_state = await page.evaluate("getGameState()")
+                if game_state and isinstance(game_state, dict):
+                    new_phase = game_state.get("gamePhase")
+                    if new_phase != "PLAYING":
+                        result["issues"].append(f"Game did not restart to PLAYING state (current: {new_phase})")
+            
+            # If no issues found, set verified to true
+            if not result["issues"]:
+                result["verified"] = True
+                
+            return result
+            
+        except Exception as e:
+            logging.error(f"Error verifying game state integrity: {str(e)}")
+            result["issues"].append(f"Error during verification: {str(e)}")
+            return result 
