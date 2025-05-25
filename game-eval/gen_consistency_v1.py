@@ -14,21 +14,20 @@ from utils import generate, code_from_dir
 
 thinking = False
 
-# model = "claude-3-7-sonnet-20250219"
-model = "claude-sonnet-4-20250514"
+model = "claude-3-7-sonnet-20250219"
 
 save_dir = Path(__file__).parent / "results" / Path(__file__).stem
 
 max_samples = 15
 
 run_name = datetime.now().strftime("%Y%m%d_%H%M%S")
-run_name = f"run1/{model}/{'thinking' if thinking else 'no_thinking'}"
+run_name = f"run3/{model}/{'thinking' if thinking else 'no_thinking'}"
 
 save_dir = save_dir / run_name
 
 
 prompt_game_code = """
-Task: Implement a fun 2D minigame in p5.js based on the following description:
+Task: Implement a 2D game in p5.js based on the following description:
 <description>
 {description}
 </description>
@@ -69,38 +68,16 @@ p5js_guidelines = """* Don't use any external assets.
     ...
     const p5 = window.p5
     let gameInstance = new p5(p => {
-        // Initialize the logs. Important: do not reset the logs at any point in the code! These logs are considered write-only!
-        p.logs = {{
-            // store player position
-            "player_positions": [],
-            // store the game status
-            "game_status": []
-        }};
         ...
     });
     // Expose the game instance globally
     window.gameInstance = gameInstance;
     ```
-* Log the player position at every frame. Store both the screen position (position on the canvas) and the game position (position in the game world). Use the following format:
-    * "screen_x": The x position of the player on the screen
-    * "screen_y": The y position of the player on the screen
-    * "game_x": The x position of the player in the game world
-    * "game_y": The y position of the player in the game world
-    * "framecount": The framecount of the event accessed via `p.frameCount`
-* Log the game status using the following format:
-    * "game_status": "start", "reset", "win", or "fail"
-    * "timestamp": The timestamp of the event
-    * "framecount": The framecount of the event accessed via `p.frameCount`
-    * "data": Additional data specific to the game status. For example, the player's score when win the game. Leave empty if not applicable.
 * Use p5.collide2D for ALL collision detection. Available functions: collidePointPoint, collidePointCircle, collidePointEllipse, collidePointRect, collidePointLine, collidePointArc, collideRectRect, collideCircleCircle, collideRectCircle, collideLineLine, collideLineCircle, collideLineRect, collidePointPoly, collideCirclePoly, collideRectPoly, collideLinePoly, collidePolyPoly, collidePointTriangle. These functions are accessible through the `p` object. Note that the specific order of the words in the function name matters. For example, 'collideCircleRect' is not available.
 * Make sure variables are ALWAYS properly defined and accessible from the scope they are used!
 * Set the canvas size to 600x400 pixels.
 * Ensure full reproducibility by setting the random seed to a fixed value.
-* Use a finite state machine for the player character.
-* Make sure the player's controls and parameters are coherent with the gameplay and physics.
-* Make sure the game has a clear goal and win state.
 * Make sure the game is playable only with the keyboard. Use the arrow keys for player movement.
-* Implement professional-looking and polished graphics.
 * Start the game with clear instructions on how to play (the player has to press Enter to start the game).
 * Make sure the player can restart the game at any time by pressing 'R'.
 
@@ -111,6 +88,61 @@ IMPORTANT: Common pitfalls to avoid
     * Generate random visual properties only ONCE during initialization/setup
     * Store these properties as object attributes
     * Use the stored properties when drawing, don't regenerate them each frame
+
+Docs p5.collide2d:
+* collidePointPoint(x, y, x2, y2, [buffer])
+    Point to point collision with an optional buffer zone.    
+
+* collidePointCircle(pointX, pointY, circleX, circleY, diameter)
+    Point to circle collision in 2D. Assumes ellipseMode(CENTER);    
+
+* collidePointEllipse(pointX, pointY, ellipseX, ellipseY, ellipseWidth, ellipseHeight)
+    Point to ellipse collision. Takes the point coordinates and the center, width and height of the ellipse.
+
+* collidePointRect(pointX, pointY, x, y, width, height)
+    Point to rectangle collision in 2D. Assumes rectMode(CORNER).
+
+* collidePointLine(pointX, pointY, x1, y1, x2, y2, [buffer])
+    Point to line collision in 2D. Includes an optional buffer which expands the hit zone on the line (default buffer is 0.1).
+
+* collidePointArc(pointX, pointY, arcCenterX, arcCenterY, arcRadius, arcRotationAngle, arcAngle, [buffer])
+    Point to arc collision in 2D. Takes point coordinates, arc center, radius, rotation angle, arc angle and optional buffer.
+
+* collideRectRect(x1, y1, width1, height1, x2, y2, width2, height2)
+    Rectangle to rectangle collision in 2D. Assumes rectMode(CORNER).
+
+* collideCircleCircle(circleX1, circleY1, circleDiameter1, circleX2, circleY2, circleDiameter2)
+    Circle to circle collision in 2D. Assumes ellipseMode(CENTER).
+
+* collideRectCircle(x1, y1, width1, height1, cx, cy, diameter)
+    Rectangle to circle collision in 2D. Assumes rectMode(CORNER) and ellipseMode(CENTER).
+
+* collideLineLine(x1, y1, x2, y2, x3, y3, x4, y4, [calcIntersection])
+    Line to line collision in 2D. Optional calcIntersection parameter returns intersection point coordinates.
+
+* collideLineCircle(x1, y1, x2, y2, cx, cy, diameter)
+    Line to circle collision in 2D. Has debug mode for visualization.
+
+* collideLineRect(x1, y1, x2, y2, rx, ry, rw, rh, [calcIntersection])
+    Line to rectangle collision in 2D. Optional calcIntersection returns intersection points.
+
+* collidePointPoly(pointX, pointY, vectorArray)
+    Point to polygon collision in 2D. Takes point coordinates and array of p5.Vector points defining polygon.
+
+* collideCirclePoly(x, y, diameter, vectorArray, [interiorCollision])
+    Circle to polygon collision in 2D. Optional interiorCollision parameter enables detection when circle is inside polygon.
+
+* collideRectPoly(x, y, width, height, vectorArray, [interiorCollision])
+    Rectangle to polygon collision in 2D. Optional interiorCollision parameter enables detection when rectangle is inside polygon.
+
+* collideLinePoly(x1, y1, x2, y2, vertices)
+    Line to polygon collision in 2D. Takes line endpoints and array of p5.Vector points defining polygon.
+
+* collidePolyPoly(polygon1, polygon2, [interiorCollision])
+    Polygon to polygon collision in 2D. Takes two arrays of p5.Vector points. Optional interiorCollision parameter.
+
+* collidePointTriangle(px, py, x1, y1, x2, y2, x3, y3)
+    Point to triangle collision in 2D. More efficient than using collidePointPoly for triangles.
 """
 
 
@@ -265,73 +297,73 @@ def run_game(game_code: dict[str, str], headless: bool = True,
                 page.wait_for_timeout(100)
                 page.keyboard.up("Enter")
                 
-                # Wait to see if player dies without any input
-                page.wait_for_timeout(2000)
+                # # Wait to see if player dies without any input
+                # page.wait_for_timeout(2000)
 
-                # Check game status and player position
-                game_status = page.evaluate("window.gameInstance.logs.game_status")[-1]
+                # # Check game status and player position
+                # game_status = page.evaluate("window.gameInstance.logs.game_status")[-1]
                 
-                # Check if player died during idle period
-                if game_status["game_status"] == "fail":
-                    message = f"Player dies without any player input at time {current_time}ms"
-                    if add_issue(message):
-                        return
+                # # Check if player died during idle period
+                # if game_status["game_status"] == "fail":
+                #     message = f"Player dies without any player input at time {current_time}ms"
+                #     if add_issue(message):
+                #         return
                     
-                # Restart the game and check again
-                page.keyboard.down("r")
-                page.wait_for_timeout(100)
-                page.keyboard.up("r")
-                page.wait_for_timeout(100)
-                page.keyboard.down("Enter")
-                page.wait_for_timeout(100)
-                page.keyboard.up("Enter")
-                # Wait to see if player dies without any input
-                page.wait_for_timeout(2000)
+                # # Restart the game and check again
+                # page.keyboard.down("r")
+                # page.wait_for_timeout(100)
+                # page.keyboard.up("r")
+                # page.wait_for_timeout(100)
+                # page.keyboard.down("Enter")
+                # page.wait_for_timeout(100)
+                # page.keyboard.up("Enter")
+                # # Wait to see if player dies without any input
+                # page.wait_for_timeout(2000)
 
-                # Check game status and player position
-                game_status = page.evaluate("window.gameInstance.logs.game_status")[-1]
+                # # Check game status and player position
+                # game_status = page.evaluate("window.gameInstance.logs.game_status")[-1]
                 
-                # Check if player died during idle period
-                if game_status["game_status"] == "fail":
-                    message = f"Player dies without any player input at time {current_time}ms"
-                    if add_issue(message):
-                        return
+                # # Check if player died during idle period
+                # if game_status["game_status"] == "fail":
+                #     message = f"Player dies without any player input at time {current_time}ms"
+                #     if add_issue(message):
+                #         return
 
 
-                # Check 2: Test if arrow keys change player position
+                # # Check 2: Test if arrow keys change player position
                 
-                # Get initial player position
-                initial_pos = page.evaluate("window.gameInstance.logs.player_positions")[-1]
+                # # Get initial player position
+                # initial_pos = page.evaluate("window.gameInstance.logs.player_positions")[-1]
                 
-                # Test each arrow key
-                arrow_keys = ["ArrowRight", "ArrowLeft", "ArrowUp", "ArrowDown"]
-                position_changed = False
+                # # Test each arrow key
+                # arrow_keys = ["ArrowRight", "ArrowLeft", "ArrowUp", "ArrowDown"]
+                # position_changed = False
                 
-                print(initial_pos)
-                for key in arrow_keys:
-                    # Press the key for a moment
-                    page.keyboard.down(key)
-                    page.wait_for_timeout(500)
-                    page.keyboard.up(key)
-                    page.wait_for_timeout(100)
+                # print(initial_pos)
+                # for key in arrow_keys:
+                #     # Press the key for a moment
+                #     page.keyboard.down(key)
+                #     page.wait_for_timeout(500)
+                #     page.keyboard.up(key)
+                #     page.wait_for_timeout(100)
                     
-                    # Get new positions after key press
-                    latest_pos = page.evaluate("window.gameInstance.logs.player_positions")[-1]
-                    print("latest_pos", latest_pos)
+                #     # Get new positions after key press
+                #     latest_pos = page.evaluate("window.gameInstance.logs.player_positions")[-1]
+                #     print("latest_pos", latest_pos)
                     
-                    # TODO: sometimes screen position should be fixed (e.g. camera following the player) but not world position
-                    # Check if position actually changed
-                    # epsilon = 5  # TODO: what should epsilon be for game position (don't know what the units are)
-                    epsilon = 1
-                    if (abs(latest_pos.get("game_x") - initial_pos.get("game_x")) > epsilon or
-                        abs(latest_pos.get("game_y") - initial_pos.get("game_y")) > epsilon):
-                        position_changed = True
+                #     # TODO: sometimes screen position should be fixed (e.g. camera following the player) but not world position
+                #     # Check if position actually changed
+                #     # epsilon = 5  # TODO: what should epsilon be for game position (don't know what the units are)
+                #     epsilon = 1
+                #     if (abs(latest_pos.get("game_x") - initial_pos.get("game_x")) > epsilon or
+                #         abs(latest_pos.get("game_y") - initial_pos.get("game_y")) > epsilon):
+                #         position_changed = True
                 
-                print(position_changed)
-                if not position_changed:
-                    message = f"Player doesn't move with any of the arrow keys at time {current_time}ms"
-                    if add_issue(message):
-                        return
+                # print(position_changed)
+                # if not position_changed:
+                #     message = f"Player doesn't move with any of the arrow keys at time {current_time}ms"
+                #     if add_issue(message):
+                #         return
                 
                 import random
                 
@@ -351,37 +383,37 @@ def run_game(game_code: dict[str, str], headless: bool = True,
                             page.keyboard.up(current_action)
                             current_action = None
                         
-                        game_status = page.evaluate("window.gameInstance.logs.game_status")[-1]
-                        print("Game status:", game_status)
+                        # game_status = page.evaluate("window.gameInstance.logs.game_status")[-1]
+                        # print("Game status:", game_status)
                         # If not in fail state, test if player is stuck before reset
-                        if game_status["game_status"] != "fail":
-                            print("Checking if player is stuck before reset...")
+                        # if game_status["game_status"] != "fail":
+                        #     print("Checking if player is stuck before reset...")
 
-                            # Quick check to see if player can still move before reset
-                            reset_initial_pos = page.evaluate("window.gameInstance.logs.player_positions")[-1]
-                            reset_position_changed = False
+                        #     # Quick check to see if player can still move before reset
+                        #     reset_initial_pos = page.evaluate("window.gameInstance.logs.player_positions")[-1]
+                        #     reset_position_changed = False
                             
-                            # Test movement in each direction before reset
-                            for key in arrow_keys:
-                                page.keyboard.down(key)
-                                page.wait_for_timeout(300)
-                                page.keyboard.up(key)
-                                page.wait_for_timeout(50)
+                        #     # Test movement in each direction before reset
+                        #     for key in arrow_keys:
+                        #         page.keyboard.down(key)
+                        #         page.wait_for_timeout(300)
+                        #         page.keyboard.up(key)
+                        #         page.wait_for_timeout(50)
                                 
-                                reset_latest_pos = page.evaluate("window.gameInstance.logs.player_positions")[-1]
-                                print("reset_latest_pos", reset_latest_pos)
-                                # Check if position changed with epsilon threshold
-                                # epsilon = 5
-                                epsilon = 1
-                                if (abs(reset_latest_pos.get("game_x") - reset_initial_pos.get("game_x")) > epsilon or
-                                    abs(reset_latest_pos.get("game_y") - reset_initial_pos.get("game_y")) > epsilon):
-                                    reset_position_changed = True
-                                    break  # Found movement, no need to check other keys
+                        #         reset_latest_pos = page.evaluate("window.gameInstance.logs.player_positions")[-1]
+                        #         print("reset_latest_pos", reset_latest_pos)
+                        #         # Check if position changed with epsilon threshold
+                        #         # epsilon = 5
+                        #         epsilon = 1
+                        #         if (abs(reset_latest_pos.get("game_x") - reset_initial_pos.get("game_x")) > epsilon or
+                        #             abs(reset_latest_pos.get("game_y") - reset_initial_pos.get("game_y")) > epsilon):
+                        #             reset_position_changed = True
+                        #             break  # Found movement, no need to check other keys
                             
-                            if not reset_position_changed:
-                                message = f"Player appears to be stuck at time {current_time}ms"
-                                if add_issue(message):
-                                    return
+                        #     if not reset_position_changed:
+                        #         message = f"Player appears to be stuck at time {current_time}ms"
+                        #         if add_issue(message):
+                        #             return
                         
                         print("Resetting game...")
                         # Reset sequence: press R to reset
@@ -398,18 +430,18 @@ def run_game(game_code: dict[str, str], headless: bool = True,
                         last_reset_time = current_time
                         page.wait_for_timeout(100)  # Additional wait for game to restart
                         
-                        # Check if player dies shortly after reset (within 2s)
-                        page.wait_for_timeout(2000)
-                        post_reset_status = page.evaluate("window.gameInstance.logs.game_status")[-1]
+                        # # Check if player dies shortly after reset (within 2s)
+                        # page.wait_for_timeout(2000)
+                        # post_reset_status = page.evaluate("window.gameInstance.logs.game_status")[-1]
                         
-                        # Check for any fail status since the reset
-                        if post_reset_status["game_status"] == "fail":
-                            message = f"Player dies shortly after game reset without any input at time {current_time}ms"
-                            if add_issue(message):
-                                return
+                        # # Check for any fail status since the reset
+                        # if post_reset_status["game_status"] == "fail":
+                        #     message = f"Player dies shortly after game reset without any input at time {current_time}ms"
+                        #     if add_issue(message):
+                        #         return
                         
                         # Update game status for next check
-                        game_status = post_reset_status
+                        # game_status = post_reset_status
                         
                         current_time += 2200  # Account for the reset time + wait time
                         continue
@@ -436,6 +468,9 @@ def run_game(game_code: dict[str, str], headless: bool = True,
                 
                 # Wait for game to process final inputs
                 page.wait_for_timeout(100)
+
+                # Retrieve logs
+                logs = page.evaluate("window.gameInstance.logs")
 
                 # Retrieve any JavaScript errors collected by the injected script
                 js_errors = page.evaluate("window.jsErrors")
@@ -468,7 +503,7 @@ def run_game(game_code: dict[str, str], headless: bool = True,
                 # TemporaryDirectory is cleaned up automatically upon exiting the 'with' block
 
         # Send back results
-        result_queue.put((errors, issues))
+        result_queue.put((errors, issues, logs))
 
     # Run test in a separate process because it's rare but some games can completely freeze the browser
 
@@ -506,7 +541,7 @@ def run_game(game_code: dict[str, str], headless: bool = True,
     
     # Process finished - get results if available
     if not result_queue.empty():
-        errors, issues = result_queue.get()
+        errors, issues, logs = result_queue.get()
     else:
         errors = ["Test completed but no results were returned"]
         issues = []
@@ -520,16 +555,133 @@ def run_game(game_code: dict[str, str], headless: bool = True,
         print("Issues detected during run_game:")
         for issue in issues:
             print(f"- {issue}")
-            
-    return (errors, issues)
+    
+    return (errors, issues, logs)
 
+
+# prompt_features = """
+# We formalize our objective as finding a game generator $g_\theta$ that maximizes:
+# $$J(\theta) = \mathbb{E}[r(y, x)] = \int r_{human}(y, x)g_\theta(y | x) p(x) dy dx$$
+# where $y$ is a game sampled from $g_\theta$ conditioned on a game description $x$, and $r(y, x)$ is a reward function that captures how good the game is on average when judged by humans.
+
+# Issue: $r_{human}$ is costly to evaluate.
+
+# We define a reward function to approximate $r_{human}$ based on the idea of code-simulation consistency.
+# $$F_1(y) = F_2(\text{simulate}(y))$$
+
+# where
+# $$\text{simulate}(y) = \mathbb{E}[\text{simulate}(y, \pi)] = \int h(\pi| y) d\pi$$
+
+# The projections $F_1$ and $F_2$ define a mapping to a common feature space where discrepancy can be measured.
+# \begin{align}
+# F_1&: y \mapsto (f^{(1)}_1, \ldots, f^{(1)}_K) \notag \\
+# F_2&: \text{simulate}(y) \mapsto (f^{(2)}_{1}, \ldots, f^{(2)}_{K}) \label{eq:F_2}
+# \end{align}
+
+# We define our proxy reward function by measuring the discrepancy $d$ between to two feature vectors:
+# $$r(y) = 1 - d\left(F_1(y), F_2(\text{simulate}(y))\right)$$
+
+# Propose features f_1, ..., f_k such that r approximates r_human when humans are asked to evaluate the level of fun and playability of the games after playing for at least 30s.
+# """
+
+prompt_features = r"""
+We formalize our objective as finding a game generator $g_\theta$ that maximizes:
+$$J(\theta) = \mathbb{E}[r_{human}(y)] = \int r_{human}(y)g_\theta(y | x) p(x) dy dx$$
+where $y$ is a game sampled from $g_\theta$ conditioned on a game description $x$, and $r(y, x)$ is a reward function that captures how good the game is on average when judged by humans.
+
+Since $r_{human}$ is expensive to evaluate, we aim to substitute it with a computable proxy reward function.
+
+We define a reward function to approximate $r_{human}$ based on the idea of code-simulation consistency.
+$$F_1(y) = F_2(\text{simulate}(y))$$
+
+where
+$$\text{simulate}(y) = \text{aggregate}_{\pi \sim h_\phi} [\text{simulate}(y, \pi)]$$
+$\text{simulate}(y, \pi)$ outputs gameplay traces when playing the game $y$ with policy $\pi$.
+
+The projections $F_1$ and $F_2$ define a mapping to a common feature space where discrepancy can be measured.
+\begin{align}
+F_1&: y \mapsto (f^{(1)}_1, \ldots, f^{(1)}_K) \notag \\
+F_2&: \text{simulate}(y) \mapsto (f^{(2)}_{1}, \ldots, f^{(2)}_{K}) \label{eq:F_2}
+\end{align}
+
+We define our proxy reward function by measuring the discrepancy $d$ between to two feature vectors:
+$$r(y) = 1 - d\left(F_1(y), F_2(\text{simulate}(y))\right)$$
+
+We aim to find a feature space $\mathcal{F}$ such that:
+$$\text{min}_{\mathcal{F}} \ \mathbb{E}[(r_{human}(y) - r(y))^2]$$
+
+Propose binary features $f_1, ..., f_k$ such that $r$ approximates $r_{human}$, which corresponds to the average fun and playability score humans would give to the games when playing for 30s - 60s.
+Note that $r$ needs to be computable without a human in the loop. It relies on automated policies $\pi$ to generate the gameplay traces (e.g. random actions).
+"""
+
+prompt_example_code = """
+1. Log relevant gameplay traces during game execution.
+    Important: for the automated evaluation, the game will be played with a random policy for a fixed number of steps ({total_test_steps} game steps).
+    ```javascript
+    ...
+    let gameInstance = new p5(p => {{
+        // Initialize the logs. Important: do not reset the logs at any point in the code. These logs are considered write-only.
+        p.logs = {{
+            ...
+        }};
+        ...
+    }});
+    ```
+
+    Write a python function that takes the game code as input and insert all the log statements in the code.
+    Format your answer as follows:
+    <add_logs_code>
+    def add_logs(game_code: dict[str, str]) -> list[dict]:
+        '''
+        Args:
+            game_code: Dictionary mapping file paths to their content
+            
+        Returns:
+            Updated game code with the log statements inserted
+        '''
+        ...
+    </add_logs_code>
+
+2. Write a python function to compute the binary features from the gameplay traces stored in logs. It takes recorded logs as input and returns the score for the proxy reward function and a list with text descriptions of the game evaluation.
+    Format your answer as follows:
+    <score_game_code>
+    def score_game(logs):
+        ...
+    </score_game_code>
+
+
+Game code:
+<game_code>
+{game_code}
+</game_code>
+"""
+
+prompt_improve = """Improve this computer game.
+Don't include any other content in the index.html file than the p5.js and p5.collide2D imports and the game scripts.
+Don't change the canvas size (must be 600x400).
+Don't change the keys to start and reset the game.
+
+Think thoroughly about the problem definition and how to improve the game based on the feedback (the binary features)
+<problem_definition>
+{problem_definition}
+</problem_definition>
+
+<feedback>
+{feedback}
+</feedback>
+
+<game_code>
+{game_code}
+</game_code>
+
+Use the following format to write your improved game code (only html and javascript):
+<code filename="{{name}}.{{extension}}">
+...
+</code>
+"""
 
 if __name__ == "__main__":
-    # TODO: make sure reuse exactly same prompt as no_thinking in gen_game_topdown
-    # theme_path = Path(__file__).parent / "results" / "gen_game_topdown" / perspective / "run1_claude-3-7-sonnet-20250219" / "themes" / "answer.txt"
-    # with open(theme_path, "r", encoding="utf-8") as f:
-    #     answer_themes = f.read()
-    # themes = re.findall(r"<theme>(.*?)</theme>", answer_themes, re.DOTALL)
+    total_test_steps = 500
 
     theme_path = Path(__file__).parent.parent / "game_prompts" / "generative_games" / "final_concepts"
     themes = {}
@@ -547,7 +699,7 @@ if __name__ == "__main__":
     themes = themes[:num_themes]
 
     for idx, theme in enumerate(themes):
-        _save_dir = save_dir / f"theme_{idx}" / "sample_0"
+        _save_dir = save_dir / f"theme_{idx}" / "sample_0" / "code_original"
         _prompt = prompt_game_code.format(
             description=theme,
             p5js_guidelines=p5js_guidelines,
@@ -556,53 +708,74 @@ if __name__ == "__main__":
         prompts.append(_prompt)
         save_dirs.append(_save_dir)
 
-    games_dir = Path(__file__).parent / "results" / "gen_game_topdown" / "run1_claude-3-7-sonnet-20250219" / "no_thinking" / "games"
-
     print("Number of prompts:", len(prompts))
     for i in range(len(prompts)):
         generate(model, prompts[i], save_dirs[i], thinking=thinking)
 
-    # generate(model, prompts, save_dirs, thinking=thinking)
 
-    breakpoint()
-    # test the games and resample if necessary
-    for _ in range(max_samples-1):
-        resample_prompts = []
-        resample_save_dirs = []
-        for i, save_dir in enumerate(save_dirs):
-            if not (save_dir / "run_check.json").exists():
-                errors, issues = run_game(code_from_dir(save_dir), headless=True, total_test_time=60000)
+    for idx, theme in enumerate(themes):
+        code_dir = save_dir / f"theme_{idx}" / "sample_0" / "code_original"
+        _save_dir = save_dir / f"theme_{idx}" / "sample_0" / "features"
 
-                run_check = {"status": "passed", "errors": [], "issues": []}
-                if errors:
-                    run_check["status"] = "failed"
-                    run_check["errors"] = errors
-                if issues:
-                    run_check["status"] = "failed"
-                    run_check["issues"] = issues
+        game_code, game_code_str = code_from_dir(code_dir, return_str=True)
 
-                with open(save_dir / "run_check.json", "w") as f:
-                    json.dump(run_check, f, indent=4)
-            else:
-                with open(save_dir / "run_check.json", "r") as f:
-                    run_check = json.load(f)
+        prompt = prompt_features + prompt_example_code.format(
+            game_code=game_code_str,
+            total_test_steps=total_test_steps
+        )
+        answer = generate(model, prompt, _save_dir, thinking=True, thinking_tokens=2000)
+        # answer = generate(model, prompt, _save_dir, thinking=False)
+        add_logs_code = answer.split("<add_logs_code>")[1].split("</add_logs_code>")[0]
+        score_game_code = answer.split("<score_game_code>")[1].split("</score_game_code>")[0]
 
-            if run_check["status"] == "failed":
-                # resample
-                current_sample_idx = int(save_dir.name.split("_")[-1])
-                new_save_dir = save_dir.parent / f"sample_{current_sample_idx + 1}"
-                resample_prompts.append(prompts[i])
-                resample_save_dirs.append(new_save_dir)
+        # save add_logs.py and score_game.py
+        (_save_dir / "add_logs.py").write_text(add_logs_code)
+        (_save_dir / "score_game.py").write_text(score_game_code)
+        
+        # Execute the extracted Python code to get mechanics
+        local_vars = {}
+        exec(add_logs_code, globals(), local_vars)
+        code_with_logs = local_vars['add_logs'](game_code)
 
-        if len(resample_prompts) == 0:
-            break
+        _updated_save_dir = _save_dir / "code_with_logs"
+        _updated_save_dir.mkdir(parents=True, exist_ok=True)
+        for file_path, file_content in code_with_logs.items():
+            (_updated_save_dir / file_path).write_text(file_content)
 
-        print(f"Resampling {len(resample_prompts)} games")
-        # generate(model, resample_prompts, resample_save_dirs, thinking=thinking)
+        if not (_updated_save_dir / "logs" / "logs.json").exists():
+            errors, issues, logs = run_game(code_with_logs, headless=False, total_test_time=total_test_steps * 60)
 
-        for i in range(len(resample_prompts)):
-            generate(model, resample_prompts[i], resample_save_dirs[i], thinking=thinking)
+            (_updated_save_dir / "logs").mkdir(parents=True, exist_ok=True)
+            (_updated_save_dir / "logs" / "logs.json").write_text(json.dumps(logs))
+        else:
+            with open(_updated_save_dir / "logs" / "logs.json", "r", encoding="utf-8") as f:
+                logs = json.load(f)
 
-        prompts = resample_prompts
-        save_dirs = resample_save_dirs
+        local_vars = {}
+        exec(score_game_code, globals(), local_vars)
+        score, feedback = local_vars['score_game'](logs)
+        print("Score:", score)
 
+        with open(_save_dir / "score.json", "w", encoding="utf-8") as f:
+            json.dump({"score": score, "feedback": feedback}, f, indent=4)
+        breakpoint()
+
+
+    for idx, theme in enumerate(themes):
+        code_dir = save_dir / f"theme_{idx}" / "sample_0" / "code_original"
+        _save_dir = save_dir / f"theme_{idx}" / "sample_0" / "code_improved"
+
+        game_code, game_code_str = code_from_dir(code_dir, return_str=True)
+
+        feedback_dir = save_dir / f"theme_{idx}" / "sample_0" / "features" / "score.json"
+        with open(feedback_dir, "r", encoding="utf-8") as f:
+            feedback = json.load(f)["feedback"]
+        breakpoint()
+
+        prompt = prompt_improve.format(
+            problem_definition=prompt_features,
+            game_code=game_code_str,
+            feedback=feedback
+        )
+        generate(model, prompt, _save_dir, thinking=True, thinking_tokens=2000)
+        

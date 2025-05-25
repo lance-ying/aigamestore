@@ -390,7 +390,8 @@ Use the following format to write your improved game code (only html and javascr
 
 
 policy_descriptions = [
-    "Play the game to WIN. Use a behavior tree.",
+    # "Play the game to WIN. Use a behavior tree.",
+    "Play the game to WIN. Use a MCTS.",
     "Thoroughly explore ALL the mechanics of the game. Don't try to win. Try all the controls and try all the possible interactions with the game objects.",
 ]
 # * Make sure it is robust and never gets stuck in an infinite loop (e.g. always restart when game over)
@@ -416,6 +417,7 @@ prompt_policy = """Task: Implement an agent for the game based on the following 
 * Use standard DOM KeyboardEvent.key values (e.g., "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Enter", "Space")
 * Make sure to instantiate the Agent and expose getAction function via `window.agent.getAction`
 * Make sure to access the game state via the window.gameInstance object
+* Make sure to start the game by pressing the 'Enter' key
 * ALWAYS reset the game when the game is over
     * Check the game state to see if the game is over and make sure the game starts again
     * Wait a few steps before restarting to let the win screen appear
@@ -423,6 +425,7 @@ prompt_policy = """Task: Implement an agent for the game based on the following 
 
 <thinking_instructions>
 Think thoroughly about how to implement the agent. Don't include any code during the thinking phase.
+Path planning is a crucial component for the agent to successfully navigate the game.
 </thinking_instructions>
 </instructions>
 
@@ -1160,16 +1163,16 @@ if __name__ == "__main__":
 
 
     max_samples = 5
-    max_agent_samples = 4
-    max_iterations = 4
+    max_agent_samples = 1
+    max_iterations = 1
     num_eval_steps = 10000
     # num_eval_steps = 5000
 
-    num_themes = 4
+    num_themes = 5
     themes = themes[:num_themes]
 
     for idx, theme in enumerate(themes):
-        if idx != 2:
+        if idx != 1:
             continue
         res = text2game(theme, save_dir / f"theme_{idx}")
 

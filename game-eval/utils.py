@@ -183,8 +183,9 @@ def get_completion(model, prompt, thinking=False, thinking_tokens=10000):
             answer = ""
             print(f"Thinking with {thinking_tokens} tokens")
             with anthropic_client.messages.stream(
-                model=model,
-                max_tokens=40000,
+                    model=model,
+                # max_tokens=40000,
+                max_tokens=32000,
                 system=SYSTEM_PROMPT,
                 thinking={
                     "type": "enabled",
@@ -439,16 +440,15 @@ def generate(model, prompt, save_dir, code_dir=None, thinking=False, thinking_to
 
 def extract_code_blocks(model, answer: str, code_dir: Path):
     if "gemini" in model:
-        # Gemini format: ```<block_type> filename="..."
+        # Gemini format: 
+        # filename="..."
+        # ```<block_type>
         # ...
         # ```
         code_blocks = []
-        # Regex to match: ```blocktype filename="..."
-        # ...
-        # ```
-        pattern = r'```([a-zA-Z0-9_+-]+) filename="([^"]+)"\n(.*?)```'
+        pattern = r'filename="([^"]+)"\n```([a-zA-Z0-9_+-]+)\n(.*?)```'
         matches = re.findall(pattern, answer, re.DOTALL)
-        for block_type, filename, code in matches:
+        for filename, block_type, code in matches:
             code_blocks.append((filename, code))
     else:
         code_blocks = re.findall(r"<code filename=\"(.*?)\">(.*?)</code>", answer, re.DOTALL)
