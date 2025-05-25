@@ -89,6 +89,19 @@ def parse_args():
         default=0.9,
         help="Top P for the LLM",
     )
+
+    parser.add_argument(
+        "--thinking",
+        action="store_true",
+        help="Enable thinking mode for supported models",
+    )
+
+    parser.add_argument(
+        "--thinking_budget",
+        type=int,
+        default=10000,
+        help="Number of tokens to allocate for thinking (default: 10000)",
+    )
     
     return parser.parse_args()
 
@@ -169,6 +182,8 @@ def main():
                 verbose=args.verbose,
                 use_ecs=not args.no_ecs,
                 use_baseline=True,
+                thinking=args.thinking,
+                thinking_budget=args.thinking_budget,
             )
         elif args.method == "simple_prompt_basic":
             generator = SimplePromptXMLGenerator(
@@ -178,6 +193,8 @@ def main():
                 use_basic=True,
                 temperature=args.temperature if args.temperature else 1.0,
                 top_p=args.top_p if args.top_p else 0.9,
+                thinking=args.thinking,
+                thinking_budget=args.thinking_budget,
             )
         elif args.method == "simple_prompt":
             generator = SimplePromptGenerator(
@@ -185,12 +202,16 @@ def main():
                 verbose=args.verbose,
                 use_ecs=not args.no_ecs,
                 generate_with_ai=args.generate_with_ai,
+                thinking=args.thinking,
+                thinking_budget=args.thinking_budget,
             )
         elif args.method == "simple_prompt_exp":
             generator = SimplePromptEXPGenerator(
                 model_name=args.model,
                 verbose=args.verbose,
                 use_ecs=not args.no_ecs,
+                thinking=args.thinking,
+                thinking_budget=args.thinking_budget,
             )
         elif args.method == "simple_prompt_xml":
             generator = SimplePromptXMLGenerator(
@@ -198,6 +219,8 @@ def main():
                 verbose=args.verbose,
                 use_ecs=not args.no_ecs,
                 use_baseline=args.baseline,
+                thinking=args.thinking,
+                thinking_budget=args.thinking_budget,
             )
         elif args.method == "template_based":
             # Will be implemented in the future
@@ -205,12 +228,16 @@ def main():
                 model_name=args.model,
                 verbose=args.verbose,
                 use_ecs=not args.no_ecs,
+                thinking=args.thinking,
+                thinking_budget=args.thinking_budget,
             )
         elif args.method == "two_step_xml":
             generator = TwoStepXMLGenerator(
                 model_name=args.model,
                 verbose=args.verbose,
                 use_ecs=not args.no_ecs,
+                thinking=args.thinking,
+                thinking_budget=args.thinking_budget,
             )
         elif args.method == "multi_step_xml":
             generator = MultiPassXMLGenerator(
@@ -218,12 +245,16 @@ def main():
                 verbose=args.verbose,
                 use_ecs=not args.no_ecs,
                 num_passes=args.num_passes,
+                thinking=args.thinking,
+                thinking_budget=args.thinking_budget,
             )
         elif args.method == "template_based_form":
             generator = TemplateBasedFormGenerator(
                 model_name=args.model,
                 verbose=args.verbose,
                 use_ecs=not args.no_ecs,
+                thinking=args.thinking,
+                thinking_budget=args.thinking_budget,
             )
         elif args.method == "template_with_critic":
             # Will be implemented in the future

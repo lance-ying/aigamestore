@@ -57,6 +57,7 @@ class ModelAPI:
     CLAUDE_MODELS = {
         "claude-3.5-sonnet": "claude-3-5-sonnet-20241022",
         "claude-3.7-sonnet": "claude-3-7-sonnet-20250219",
+        "claude-4-sonnet": "claude-sonnet-4-20250514",
     }
 
     def __init__(self, model_name: str = "openai:gpt-3.5-turbo"):
@@ -131,11 +132,13 @@ class ModelAPI:
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
         top_p: Optional[float] = None,
+        thinking: bool = False,
+        thinking_budget: Optional[int] = None,
         verbose: bool = False,
         max_retries: int = 3,
         image: Optional[Dict[str, Any]] = None,
         **kwargs,
-    ) -> str:
+    ) -> Union[str, Dict[str, Any]]:
         """
         Make an API call to the selected model
 
@@ -145,11 +148,16 @@ class ModelAPI:
             chat_history: Optional list of previous messages in the conversation
             max_tokens: Optional maximum number of tokens in response
             temperature: Optional temperature parameter for response randomness
+            top_p: Optional top_p parameter for response randomness
+            thinking: Whether to enable thinking mode
+            thinking_budget: Number of tokens to allocate for thinking (if thinking is enabled)
             verbose: Whether to print verbose information
+            max_retries: Maximum number of retries for API calls
+            image: Optional image data for multimodal models
             **kwargs: Additional model-specific parameters
 
         Returns:
-            str: The model's response text
+            str or Dict[str, Any]: The model's response text, or a dict with thinking and response if thinking is enabled
         """
         # Construct messages list
         messages = []
@@ -163,6 +171,7 @@ class ModelAPI:
             "anthropic": {
                 "claude-3.5-sonnet": 8192,
                 "claude-3-7-sonnet-20250219": 128000,
+                "claude-sonnet-4-20250514": 128000,
             },
             "google": {
                 "gemini-2.0-flash": 8192,
@@ -176,6 +185,13 @@ class ModelAPI:
             max_tokens = model_max_tokens[self.model_provider][self.model]
 
         max_tokens = min(MAX_ALLOWED_TOKENS, max_tokens)
+        
+        # Adjust max_tokens if thinking is enabled
+        if thinking and thinking_budget:
+            # Reserve tokens for thinking, reduce response tokens accordingly
+            max_tokens = max_tokens - thinking_budget
+            if max_tokens <= 0:
+                raise ValueError(f"thinking_budget ({thinking_budget}) is too large for max_tokens. Reduce thinking_budget or increase max_tokens.")
 
         # Add system prompt if provided
         if system_prompt:
@@ -239,12 +255,20 @@ class ModelAPI:
                 # Add system prompt if provided
                 if system_prompt:
                     claude_params["system"] = system_prompt
+                
+                # Add thinking configuration if enabled
+                if thinking and thinking_budget:
+                    claude_params["thinking"] = {
+                        "type": "enabled",
+                        "budget_tokens": thinking_budget
+                    }
 
                 if verbose:
                     print(f"\n{BLUE}---> Using streaming for Anthropic API call{RESET}")
 
                 # Use streaming with retries
                 result = ""
+                thinking_content = ""
                 retry_count = 0
 
                 while retry_count < max_retries:
@@ -275,7 +299,20 @@ class ModelAPI:
                                 )
                             # Fallback to non-streaming API call
                             response = self.client.messages.create(**claude_params)
-                            result = response.content[0].text
+                            
+                            # Handle thinking content in non-streaming response
+                            if thinking and hasattr(response, 'content'):
+                                for block in response.content:
+                                    if hasattr(block, 'type'):
+                                        if block.type == "thinking":
+                                            thinking_content = getattr(block, 'thinking', '')
+                                        elif block.type == "text":
+                                            result = getattr(block, 'text', '')
+                                    else:
+                                        # Fallback for older response format
+                                        result = getattr(block, 'text', '')
+                            else:
+                                result = response.content[0].text
 
                 if verbose:
                     print(f"\n{BLUE}API call complete{RESET}")
@@ -288,20 +325,140 @@ class ModelAPI:
                     "model": f"{self.model_provider}:{self.model}",
                     "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 }
+                
+                # Add thinking content to call record if available
+                if thinking and thinking_content:
+                    call_record["thinking"] = thinking_content.strip()
+                
                 self.call_history.append(call_record)
 
-                return result
+                # Return thinking and response if thinking is enabled, otherwise just response
+                if thinking:
+                    return {
+                        "thinking": thinking_content,
+                        "response": result,
+                        "model": f"{self.model_provider}:{self.model}"
+                    }
+                else:
+                    return result
 
             elif self.model_provider == "openai":
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    max_completion_tokens=max_tokens,
+                openai_params = {
+                    "model": self.model,
+                    "messages": messages,
+                    "max_completion_tokens": max_tokens,
                     **kwargs,
-                )
+                }
+                
+                # Add thinking configuration if enabled (for reasoning models like o4-mini)
+                if thinking and thinking_budget:
+                    # For OpenAI reasoning models, use the responses API
+                    if self.model in ["o4-mini", "o3-mini"]:
+                        # Convert messages to input format for responses API
+                        input_messages = []
+                        for msg in messages:
+                            if msg["role"] != "system":  # responses API handles system differently
+                                input_messages.append(msg)
+                        
+                        response = self.client.responses.create(
+                            model=self.model,
+                            reasoning={"effort": "medium"},
+                            input=input_messages,
+                            max_output_tokens=max_tokens,
+                        )
+                        
+                        # Handle incomplete responses
+                        if response.status == "incomplete" and response.incomplete_details.reason == "max_output_tokens":
+                            if verbose:
+                                print(f"{YELLOW}Warning: Response was truncated due to max_output_tokens{RESET}")
+                        
+                        # Extract thinking and response
+                        thinking_content = getattr(response, 'reasoning', '') if hasattr(response, 'reasoning') else ''
+                        result = getattr(response, 'output_text', '') if hasattr(response, 'output_text') else ''
+                        
+                        # Return structured response for thinking mode
+                        return {
+                            "thinking": thinking_content,
+                            "response": result,
+                            "model": f"{self.model_provider}:{self.model}"
+                        }
+                    else:
+                        # For non-reasoning models, just use regular API (thinking not supported)
+                        if verbose:
+                            print(f"{YELLOW}Warning: Thinking mode not supported for model {self.model}, using regular API{RESET}")
+                
+                response = self.client.chat.completions.create(**openai_params)
                 result = response.choices[0].message.content
 
             elif self.model_provider == "google":
+                # For thinking mode, use the newer google-genai client
+                if thinking and thinking_budget:
+                    try:
+                        from google import genai as new_genai
+                        from google.genai import types
+                        
+                        client = new_genai.Client(api_key=os.environ.get("GOOGLE_API_KEY"))
+                        
+                        # Convert messages to contents format
+                        contents = []
+                        for msg in messages:
+                            if msg["role"] == "user":
+                                contents.append(types.Content(
+                                    role="user",
+                                    parts=[types.Part.from_text(text=msg["content"])]
+                                ))
+                            elif msg["role"] == "assistant":
+                                contents.append(types.Content(
+                                    role="model",
+                                    parts=[types.Part.from_text(text=msg["content"])]
+                                ))
+                            # System messages are handled in the generation config
+                        
+                        # Create generation config with thinking
+                        generate_content_config = types.GenerateContentConfig(
+                            thinking_config=types.ThinkingConfig(thinking_budget=thinking_budget),
+                            response_mime_type="text/plain",
+                            max_output_tokens=max_tokens,
+                        )
+                        
+                        if temperature is not None:
+                            generate_content_config.temperature = temperature
+                        
+                        # Add system prompt to the first user message if present
+                        if system_prompt and contents:
+                            first_user_content = contents[0]
+                            if first_user_content.role == "user":
+                                original_text = first_user_content.parts[0].text
+                                first_user_content.parts[0] = types.Part.from_text(
+                                    text=f"Instructions: {system_prompt}\n\n{original_text}"
+                                )
+                        
+                        # Generate content with thinking
+                        response_text = ""
+                        thinking_content = ""
+                        
+                        for chunk in client.models.generate_content_stream(
+                            model=self.model,
+                            contents=contents,
+                            config=generate_content_config,
+                        ):
+                            if hasattr(chunk, 'text') and chunk.text:
+                                response_text += chunk.text
+                                if verbose:
+                                    print(chunk.text, end="", flush=True)
+                        
+                        # Return structured response for thinking mode
+                        return {
+                            "thinking": thinking_content,  # Gemini thinking is internal, not exposed
+                            "response": response_text,
+                            "model": f"{self.model_provider}:{self.model}"
+                        }
+                        
+                    except ImportError:
+                        if verbose:
+                            print(f"{YELLOW}Warning: google-genai package not available for thinking mode, falling back to regular API{RESET}")
+                
+                # Regular generation without thinking
                 model = self.client.GenerativeModel(model_name=self.model)
 
                 if image:  # Handle video/image content
@@ -351,7 +508,15 @@ class ModelAPI:
                     f"{BLUE}Call recorded (Total calls: {len(self.call_history)}){RESET}"
                 )
 
-            return result
+            # Return thinking and response if thinking is enabled, otherwise just response
+            if thinking:
+                return {
+                    "thinking": "",  # Non-Claude models don't expose thinking content
+                    "response": result,
+                    "model": f"{self.model_provider}:{self.model}"
+                }
+            else:
+                return result
 
         except Exception as e:
             error_msg = f"Error calling {self.model_provider} API: {str(e)}"

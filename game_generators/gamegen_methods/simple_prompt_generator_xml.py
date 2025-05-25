@@ -74,6 +74,8 @@ Implement a fun and playable game based on the game concept input from the user.
                     verbose=self.verbose,
                     temperature=self.temperature,
                     top_p=self.top_p,
+                    thinking=self.thinking,
+                    thinking_budget=self.thinking_budget,
                 )
             else:
                 response = self.model_api.call(
@@ -82,14 +84,33 @@ Implement a fun and playable game based on the game concept input from the user.
                     verbose=self.verbose,
                     temperature=self.temperature,
                     top_p=self.top_p,
+                    thinking=self.thinking,
+                    thinking_budget=self.thinking_budget,
                 )
             
-            # Prepare conversation log for saving
-            conversation_log = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-                {"role": "assistant", "content": response}
-            ]
+            # Handle thinking mode response
+            if isinstance(response, dict) and "response" in response:
+                # Thinking mode enabled - extract the actual response
+                thinking_content = response.get("thinking", "")
+                actual_response = response["response"]
+                
+                # Prepare conversation log for saving (include thinking if available)
+                conversation_log = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                    {"role": "assistant", "content": actual_response}
+                ]
+                if thinking_content:
+                    conversation_log.append({"role": "thinking", "content": thinking_content})
+                
+                response = actual_response  # Use the actual response for extraction
+            else:
+                # Regular mode - response is a string
+                conversation_log = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                    {"role": "assistant", "content": response}
+                ]
             
             # Extract game components from response
             title = self.extract_title(response)

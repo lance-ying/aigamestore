@@ -20,6 +20,8 @@ class GameGenerator(ABC):
         use_ecs: bool = True,
         use_baseline: bool = False,
         use_basic: bool = False,
+        thinking: bool = False,
+        thinking_budget: Optional[int] = None,
         game_design_system_prompt_path: str = "game_generators/system_prompts/game_design.txt",
         game_design_withai_system_prompt_path: str = "game_generators/system_prompts/game_design_withai.txt",
         code_generation_system_prompt_path: str = "game_generators/system_prompts/code_generation.txt",
@@ -33,13 +35,18 @@ class GameGenerator(ABC):
 
         Args:
             model_name: Name of the LLM model to use
+            temperature: Temperature for LLM generation
+            top_p: Top-p for LLM generation
             verbose: Whether to print verbose output
             use_ecs: Whether to use ECS architecture for game generation
             use_baseline: Whether to use baseline architecture for game generation
             use_basic: Whether to use basic instructions which include automated testing and user logging but no game design specifications for game generation
+            thinking: Whether to enable thinking mode for supported models
+            thinking_budget: Number of tokens to allocate for thinking
             game_design_system_prompt_path: Path to the game design system prompt
             code_generation_system_prompt_path: Path to the code generation system prompt
             code_generation_nonecs_system_prompt_path: Path to the code generation system prompt for non-ECS games
+            generate_with_ai: Whether to generate with AI assistance
         """
         self.model_name = model_name
         self.verbose = verbose
@@ -48,6 +55,8 @@ class GameGenerator(ABC):
         self.use_ecs = use_ecs
         self.use_baseline = use_baseline
         self.use_basic = use_basic
+        self.thinking = thinking
+        self.thinking_budget = thinking_budget
         self.generate_with_ai = generate_with_ai
         # Load system prompts
         with open(game_design_system_prompt_path, "r") as f:

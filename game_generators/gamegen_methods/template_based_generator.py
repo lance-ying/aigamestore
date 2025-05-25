@@ -61,6 +61,8 @@ Focus on creating an interesting and playable 2D game design that follows the co
             user_prompt=prompt,
             system_prompt=self.game_design_system_prompt,
             verbose=self.verbose,
+            thinking=self.thinking,
+            thinking_budget=self.thinking_budget,
         )
 
         game_design = self.extract_game_design(output)
@@ -129,7 +131,16 @@ HTML (output last):
                 user_prompt=design_prompt,
                 system_prompt=self.game_design_system_prompt,
                 verbose=self.verbose,
+                thinking=self.thinking,
+                thinking_budget=self.thinking_budget,
             )
+            
+            # Handle thinking mode response for game design
+            thinking_content_design = ""
+            if self.thinking and isinstance(game_design, dict):
+                # Thinking mode enabled - extract the actual response
+                thinking_content_design = game_design.get("thinking", "")
+                game_design = game_design.get("content", game_design)
             
             # Step 2: Generate the game code using the second LLM call
             code_generation_prompt = self.generate_code_generation_prompt(game_design)
@@ -141,9 +152,18 @@ HTML (output last):
                 user_prompt=code_generation_prompt,
                 system_prompt=self.code_generation_system_prompt,
                 verbose=self.verbose,
+                thinking=self.thinking,
+                thinking_budget=self.thinking_budget,
             )
             
-            # Prepare conversation log for saving
+            # Handle thinking mode response for code generation
+            thinking_content_code = ""
+            if self.thinking and isinstance(response, dict):
+                # Thinking mode enabled - extract the actual response
+                thinking_content_code = response.get("thinking", "")
+                response = response.get("content", response)
+            
+            # Prepare conversation log for saving (include thinking if available)
             conversation_log = [
                 {"role": "system", "content": self.game_design_system_prompt},
                 {"role": "user", "content": design_prompt},
@@ -152,6 +172,12 @@ HTML (output last):
                 {"role": "user", "content": code_generation_prompt},
                 {"role": "assistant", "content": response}
             ]
+            
+            # Add thinking content to conversation log if available
+            if thinking_content_design:
+                conversation_log.insert(3, {"role": "thinking", "content": thinking_content_design})
+            if thinking_content_code:
+                conversation_log.append({"role": "thinking", "content": thinking_content_code})
             
             # Extract game components from response
             title = self.extract_title(response)

@@ -187,7 +187,7 @@ class GeminiEvaluator:
             logging.error(f"Error saving conversation log: {str(e)}")
             return ""
     
-    def evaluate_video_with_custom_prompt(self, video_path: str, custom_prompt: str) -> Optional[str]:
+    def evaluate_video_with_custom_prompt(self, video_path: str, custom_prompt: str, thinking: bool = False, thinking_budget: Optional[int] = None) -> Optional[str]:
         """
         Evaluate a game video using Gemini Vision with a custom prompt.
         
@@ -232,6 +232,12 @@ class GeminiEvaluator:
                 response_mime_type="text/plain",
             )
             
+            # Add thinking configuration if enabled
+            if thinking and thinking_budget:
+                generate_content_config.thinking_config = types.ThinkingConfig(
+                    thinking_budget=thinking_budget
+                )
+            
             # Generate content using the model
             logging.info(f"Generating content with model: {self.model_name}")
             response = self.client.models.generate_content(
@@ -258,18 +264,20 @@ class GeminiEvaluator:
             return None
             
     # Keep the evaluate_video_with_custom_prompt_sync method for backward compatibility
-    def evaluate_video_with_custom_prompt_sync(self, video_path: str, custom_prompt: str) -> Optional[str]:
+    def evaluate_video_with_custom_prompt_sync(self, video_path: str, custom_prompt: str, thinking: bool = False, thinking_budget: Optional[int] = None) -> Optional[str]:
         """
         Evaluate a game video using Gemini Vision with a custom prompt.
         
         Args:
             video_path: Path to the MP4 video file
             custom_prompt: Custom prompt to send to Gemini
+            thinking: Whether to enable thinking mode
+            thinking_budget: Number of tokens to allocate for thinking
             
         Returns:
             Gemini's evaluation response or None if failed
         """
-        return self.evaluate_video_with_custom_prompt(video_path, custom_prompt)
+        return self.evaluate_video_with_custom_prompt(video_path, custom_prompt, thinking, thinking_budget)
             
     def parse_evaluation_response(self, response_text: str) -> Dict[str, Any]:
         """
@@ -329,7 +337,7 @@ class GeminiEvaluator:
         
         return result
         
-    def generate_text(self, prompt: str) -> Optional[str]:
+    def generate_text(self, prompt: str, thinking: bool = False, thinking_budget: Optional[int] = None) -> Optional[str]:
         """
         Generate text using Gemini with a text-only prompt.
         
@@ -357,6 +365,12 @@ class GeminiEvaluator:
                 response_mime_type="text/plain",
             )
             
+            # Add thinking configuration if enabled
+            if thinking and thinking_budget:
+                generate_content_config.thinking_config = types.ThinkingConfig(
+                    thinking_budget=thinking_budget
+                )
+            
             # Generate content using the model
             response = self.client.models.generate_content(
                 model=self.model_name,
@@ -381,14 +395,16 @@ class GeminiEvaluator:
             return None
     
     # Keep the generate_text_sync method for backward compatibility
-    def generate_text_sync(self, prompt: str) -> Optional[str]:
+    def generate_text_sync(self, prompt: str, thinking: bool = False, thinking_budget: Optional[int] = None) -> Optional[str]:
         """
         Generate text using Gemini with a text-only prompt (synchronous version).
         
         Args:
             prompt: Text prompt to send to Gemini
+            thinking: Whether to enable thinking mode
+            thinking_budget: Number of tokens to allocate for thinking
             
         Returns:
             Gemini's response text or None if failed
         """
-        return self.generate_text(prompt) 
+        return self.generate_text(prompt, thinking, thinking_budget) 

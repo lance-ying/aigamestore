@@ -62,14 +62,27 @@ Game Concept: {game_concept}
             response = self.model_api.call(
                 user_prompt=user_prompt,
                 verbose=self.verbose,
+                thinking=self.thinking,
+                thinking_budget=self.thinking_budget,
             )
             
-            # Prepare conversation log for saving
+            # Handle thinking mode response
+            thinking_content = ""
+            if self.thinking and isinstance(response, dict):
+                # Thinking mode enabled - extract the actual response
+                thinking_content = response.get("thinking", "")
+                response = response.get("content", response)
+            
+            # Prepare conversation log for saving (include thinking if available)
             conversation_log = [
                 {"role": "system", "content": ""},
                 {"role": "user", "content": user_prompt},
                 {"role": "assistant", "content": response}
             ]
+            
+            # Add thinking content to conversation log if available
+            if thinking_content:
+                conversation_log.append({"role": "thinking", "content": thinking_content})
             
             # Extract game components from response
             title = self.extract_title(response)

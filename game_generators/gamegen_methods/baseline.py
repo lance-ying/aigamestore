@@ -16,6 +16,9 @@ class BaselineGenerator(GameGenerator):
         model_name: str = "anthropic:claude-3.7-sonnet",
         verbose: bool = False,
         baseline_system_prompt_path: str = "game_generators/system_prompts/baseline_sysprompt.txt",
+        thinking: bool = False,
+        thinking_budget: Optional[int] = None,
+        **kwargs
     ):
         """
         Initialize the baseline generator
@@ -24,8 +27,11 @@ class BaselineGenerator(GameGenerator):
             model_name: Name of the LLM model to use
             verbose: Whether to print verbose output
             baseline_system_prompt_path: Path to the baseline system prompt
+            thinking: Whether to enable thinking mode for supported models
+            thinking_budget: Number of tokens to allocate for thinking
+            **kwargs: Additional keyword arguments to pass to the parent class
         """
-        super().__init__(model_name=model_name, verbose=verbose)
+        super().__init__(model_name=model_name, verbose=verbose, thinking=thinking, thinking_budget=thinking_budget, **kwargs)
         
         # Load baseline system prompt
         with open(baseline_system_prompt_path, "r") as f:
@@ -99,14 +105,27 @@ HTML (output last):
                 user_prompt=user_prompt,
                 system_prompt=self.baseline_system_prompt,
                 verbose=self.verbose,
+                thinking=self.thinking,
+                thinking_budget=self.thinking_budget,
             )
             
-            # Prepare conversation log for saving
+            # Handle thinking mode response
+            thinking_content = ""
+            if self.thinking and isinstance(response, dict):
+                # Thinking mode enabled - extract the actual response
+                thinking_content = response.get("thinking", "")
+                response = response.get("content", response)
+            
+            # Prepare conversation log for saving (include thinking if available)
             conversation_log = [
                 {"role": "system", "content": self.baseline_system_prompt},
                 {"role": "user", "content": user_prompt},
                 {"role": "assistant", "content": response}
             ]
+            
+            # Add thinking content to conversation log if available
+            if thinking_content:
+                conversation_log.append({"role": "thinking", "content": thinking_content})
             
             # Extract game components from response
             title = self.extract_title(response)

@@ -102,6 +102,8 @@ Implement the game following this game design and implementation plan:
                 verbose=self.verbose,
                 temperature=1.0,
                 top_p=0.9,
+                thinking=self.thinking,
+                thinking_budget=self.thinking_budget,
             )
 
             game_design = self.extract_game_design(response_game_design)

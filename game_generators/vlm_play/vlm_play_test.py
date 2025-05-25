@@ -43,7 +43,9 @@ class VLMPlayEvaluation:
     def __init__(self,
                  game_path: str, 
                  output_dir: Optional[str] = None,
-                 api_key: Optional[str] = None):
+                 api_key: Optional[str] = None,
+                 thinking: bool = False,
+                 thinking_budget: Optional[int] = None):
         """
         Initialize the VLM Play Evaluation.
         
@@ -51,6 +53,8 @@ class VLMPlayEvaluation:
             game_path: Path to the game directory or HTML file
             output_dir: Directory to save recorded videos and evaluation results
             api_key: Google API key for Gemini access
+            thinking: Whether to enable thinking mode for supported models
+            thinking_budget: Number of tokens to allocate for thinking
         """
         # Check if the game_path is a directory and find the index.html
         self.original_path = os.path.abspath(game_path)
@@ -87,6 +91,10 @@ class VLMPlayEvaluation:
                 self.output_dir = os.path.join(os.path.dirname(self.game_path), "vlm_evaluation")
         
         os.makedirs(self.output_dir, exist_ok=True)
+        
+        # Store thinking parameters
+        self.thinking = thinking
+        self.thinking_budget = thinking_budget
         
         # Initialize components
         self.video_recorder = VideoRecorder(self.output_dir)
@@ -1024,7 +1032,9 @@ Addressing the questions in each section tag within the tags, write your analysi
             
             # Send video to Gemini for evaluation using the synchronous method
             # This avoids the error with generate_content_async
-            response = self.gemini_evaluator.evaluate_video_with_custom_prompt_sync(video_path, prompt)
+            response = self.gemini_evaluator.evaluate_video_with_custom_prompt_sync(
+                video_path, prompt, thinking=self.thinking, thinking_budget=self.thinking_budget
+            )
             
             if not response:
                 logging.error(f"Failed to get evaluation for {test_mode}")
@@ -1517,7 +1527,7 @@ Following were the constraints on the game development:
         return instructions
 
 # Async function for easy API
-async def evaluate_game_async(game_path: str, output_dir: Optional[str] = None, api_key: Optional[str] = None) -> Dict[str, Any]:
+async def evaluate_game_async(game_path: str, output_dir: Optional[str] = None, api_key: Optional[str] = None, thinking: bool = False, thinking_budget: Optional[int] = None) -> Dict[str, Any]:
     """
     Evaluate a game asynchronously.
     
@@ -1525,15 +1535,17 @@ async def evaluate_game_async(game_path: str, output_dir: Optional[str] = None, 
         game_path: Path to the game directory or HTML file
         output_dir: Directory to save recorded videos and evaluation results
         api_key: Google API key for Gemini access
+        thinking: Whether to enable thinking mode for supported models
+        thinking_budget: Number of tokens to allocate for thinking
         
     Returns:
         Dictionary with evaluation results
     """
-    evaluator = VLMPlayEvaluation(game_path, output_dir, api_key)
+    evaluator = VLMPlayEvaluation(game_path, output_dir, api_key, thinking, thinking_budget)
     return await evaluator.evaluate_game()
 
 # Sync wrapper for easier use
-def evaluate_game(game_path: str, output_dir: Optional[str] = None, api_key: Optional[str] = None) -> Dict[str, Any]:
+def evaluate_game(game_path: str, output_dir: Optional[str] = None, api_key: Optional[str] = None, thinking: bool = False, thinking_budget: Optional[int] = None) -> Dict[str, Any]:
     """
     Evaluate a game synchronously.
     
@@ -1541,12 +1553,14 @@ def evaluate_game(game_path: str, output_dir: Optional[str] = None, api_key: Opt
         game_path: Path to the game directory or HTML file
         output_dir: Directory to save recorded videos and evaluation results
         api_key: Google API key for Gemini access
+        thinking: Whether to enable thinking mode for supported models
+        thinking_budget: Number of tokens to allocate for thinking
         
     Returns:
         Dictionary with evaluation results
     """
     print(f"Evaluating game: {game_path}")
-    return asyncio.run(evaluate_game_async(game_path, output_dir, api_key))
+    return asyncio.run(evaluate_game_async(game_path, output_dir, api_key, thinking, thinking_budget))
 
 
 # CLI entrypoint
@@ -1558,6 +1572,8 @@ def main():
     parser.add_argument("--output", "-o", help="Directory to save recorded videos and evaluation results")
     parser.add_argument("--api-key", help="Google API key for Gemini access")
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
+    parser.add_argument("--thinking", action="store_true", help="Enable thinking mode for supported models")
+    parser.add_argument("--thinking_budget", type=int, default=10000, help="Number of tokens to allocate for thinking (default: 10000)")
     
     args = parser.parse_args()
     
@@ -1569,7 +1585,7 @@ def main():
     )
     
     # Run evaluation
-    results = evaluate_game(args.game_path, args.output, args.api_key)
+    results = evaluate_game(args.game_path, args.output, args.api_key, args.thinking, args.thinking_budget)
     
     if results["success"]:
         print(f"Evaluation completed successfully. See results in {args.output or os.path.join(os.path.dirname(args.game_path), 'vlm_evaluation')}")

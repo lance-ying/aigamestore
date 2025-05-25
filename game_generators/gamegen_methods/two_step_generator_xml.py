@@ -83,7 +83,18 @@ Implement an interesting game based on this game design:
                 verbose=self.verbose,
                 temperature=0.9,
                 top_p=0.9,
+                thinking=self.thinking,
+                thinking_budget=self.thinking_budget,
             )
+            
+            # Handle thinking mode response for game design
+            thinking_content_design = ""
+            if isinstance(response_game_design, dict) and "response" in response_game_design:
+                # Thinking mode enabled - extract the actual response
+                thinking_content_design = response_game_design.get("thinking", "")
+                actual_response_design = response_game_design["response"]
+                response_game_design = actual_response_design  # Use the actual response for extraction
+            
             game_design = self.extract_game_design(response_game_design)
 
             game_code_prompt = self.generate_code_prompt(game_design)
@@ -94,8 +105,19 @@ Implement an interesting game based on this game design:
                 verbose=self.verbose,
                 temperature=0.6,
                 top_p=0.9,
+                thinking=self.thinking,
+                thinking_budget=self.thinking_budget,
             )
-            # Prepare conversation log for saving
+            
+            # Handle thinking mode response for code generation
+            thinking_content_code = ""
+            if isinstance(response, dict) and "response" in response:
+                # Thinking mode enabled - extract the actual response
+                thinking_content_code = response.get("thinking", "")
+                actual_response = response["response"]
+                response = actual_response  # Use the actual response for extraction
+            
+            # Prepare conversation log for saving (include thinking if available)
             conversation_log = [
                 {"role": "system", "content": system_prompt_game_design},
                 {"role": "user", "content": game_design_prompt},
@@ -104,6 +126,12 @@ Implement an interesting game based on this game design:
                 {"role": "user", "content": game_code_prompt},
                 {"role": "assistant", "content": response}
             ]
+            
+            # Add thinking content to conversation log if available
+            if thinking_content_design:
+                conversation_log.insert(3, {"role": "thinking", "content": thinking_content_design})
+            if thinking_content_code:
+                conversation_log.append({"role": "thinking", "content": thinking_content_code})
             
             # Extract game components from response
             title = self.extract_title(response)

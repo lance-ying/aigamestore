@@ -221,6 +221,17 @@ def main():
         "--only-button",
         help="Test only a specific button ID in vlm_play mode (e.g., 'test_1_ModeBtn')",
     )
+    parser.add_argument(
+        "--thinking",
+        action="store_true",
+        help="Enable thinking mode for supported models",
+    )
+    parser.add_argument(
+        "--thinking_budget",
+        type=int,
+        default=10000,
+        help="Number of tokens to allocate for thinking (default: 10000)",
+    )
 
     args = parser.parse_args()
 
@@ -348,7 +359,7 @@ def main():
                     evaluator_class = VLMPlayEvaluationUnguided
                 
                 evaluator = evaluator_class(
-                    args.game_path, output_dir=output_dir, api_key=args.api_key
+                    args.game_path, output_dir=output_dir, api_key=args.api_key, thinking=args.thinking, thinking_budget=args.thinking_budget
                 )
 
                 if args.skip_eval:

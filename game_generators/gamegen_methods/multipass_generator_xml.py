@@ -193,7 +193,16 @@ Remember to implement all the required automated tests based on the logic of the
                 system_prompt=system_prompt_game_design,
                 verbose=self.verbose,
                 temperature=0.9,
+                thinking=self.thinking,
+                thinking_budget=self.thinking_budget,
             )
+            
+            # Handle thinking mode response for game design
+            thinking_content_design = ""
+            if self.thinking and isinstance(response_game_design, dict):
+                # Thinking mode enabled - extract the actual response
+                thinking_content_design = response_game_design.get("thinking", "")
+                response_game_design = response_game_design.get("content", response_game_design)
             
             # Extract game design
             game_design = self.extract_game_design(response_game_design)
@@ -204,6 +213,10 @@ Remember to implement all the required automated tests based on the logic of the
                 {"role": "user", "content": game_design_prompt},
                 {"role": "assistant", "content": response_game_design}
             ])
+            
+            # Add thinking content to conversation log if available
+            if thinking_content_design:
+                conversation_log.insert(-1, {"role": "thinking", "content": thinking_content_design})
             
             # PASS 2: Generate code plan and function skeletons
             system_prompt_code_plan = self.get_system_prompt_code_plan()
@@ -217,7 +230,16 @@ Remember to implement all the required automated tests based on the logic of the
                 system_prompt=system_prompt_code_plan,
                 verbose=self.verbose,
                 temperature=0.8,
+                thinking=self.thinking,
+                thinking_budget=self.thinking_budget,
             )
+            
+            # Handle thinking mode response for code plan
+            thinking_content_plan = ""
+            if self.thinking and isinstance(response_code_plan, dict):
+                # Thinking mode enabled - extract the actual response
+                thinking_content_plan = response_code_plan.get("thinking", "")
+                response_code_plan = response_code_plan.get("content", response_code_plan)
             
             # Extract code plan and initial code
             code_plan_instructions = self.extract_code_plan(response_code_plan)
@@ -229,6 +251,10 @@ Remember to implement all the required automated tests based on the logic of the
                 {"role": "user", "content": code_plan_prompt},
                 {"role": "assistant", "content": response_code_plan}
             ])
+            
+            # Add thinking content to conversation log if available
+            if thinking_content_plan:
+                conversation_log.insert(-1, {"role": "thinking", "content": thinking_content_plan})
             
             # PASSES 3 to N-1: Implement each instruction
             code_so_far = js_files_dict.copy()
@@ -252,7 +278,16 @@ Remember to implement all the required automated tests based on the logic of the
                     system_prompt=system_prompt_implementation,
                     verbose=self.verbose,
                     temperature=0.7,
+                    thinking=self.thinking,
+                    thinking_budget=self.thinking_budget,
                 )
+                
+                # Handle thinking mode response for implementation
+                thinking_content_impl = ""
+                if self.thinking and isinstance(response_implementation, dict):
+                    # Thinking mode enabled - extract the actual response
+                    thinking_content_impl = response_implementation.get("thinking", "")
+                    response_implementation = response_implementation.get("content", response_implementation)
                 
                 # Extract updated code
                 new_js_files = self.extract_code_block(response_implementation, "javascript")
@@ -267,6 +302,10 @@ Remember to implement all the required automated tests based on the logic of the
                     {"role": "user", "content": implementation_prompt},
                     {"role": "assistant", "content": response_implementation}
                 ])
+                
+                # Add thinking content to conversation log if available
+                if thinking_content_impl:
+                    conversation_log.insert(-1, {"role": "thinking", "content": thinking_content_impl})
             
             # FINAL PASS: Generate ai_controller.js and index.html
             system_prompt_final = self.get_system_prompt_final_pass()
@@ -283,7 +322,16 @@ Remember to implement all the required automated tests based on the logic of the
                 system_prompt=system_prompt_final,
                 verbose=self.verbose,
                 temperature=0.6,
+                thinking=self.thinking,
+                thinking_budget=self.thinking_budget,
             )
+            
+            # Handle thinking mode response for final pass
+            thinking_content_final = ""
+            if self.thinking and isinstance(response_final, dict):
+                # Thinking mode enabled - extract the actual response
+                thinking_content_final = response_final.get("thinking", "")
+                response_final = response_final.get("content", response_final)
             
             # Extract final code
             final_js_files = self.extract_code_block(response_final, "javascript")
@@ -295,6 +343,10 @@ Remember to implement all the required automated tests based on the logic of the
                 {"role": "user", "content": final_pass_prompt},
                 {"role": "assistant", "content": response_final}
             ])
+            
+            # Add thinking content to conversation log if available
+            if thinking_content_final:
+                conversation_log.insert(-1, {"role": "thinking", "content": thinking_content_final})
             
             # Combine all code
             for filename, code in final_js_files.items():
