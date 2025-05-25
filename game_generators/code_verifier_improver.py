@@ -259,7 +259,8 @@ def main():
             # Initialize the code improver
 
             improver = CodeFeedbackIterator(
-                verbose=args.verbose, mode="basic_test_fix", temperature=args.temperature if args.temperature < 0.3 else 0.1
+                verbose=args.verbose, mode="basic_test_fix", temperature=args.temperature if args.temperature < 0.3 else 0.1,
+                thinking=args.thinking, thinking_budget=args.thinking_budget
             )
 
             # Improve the code based on the feedback
@@ -292,7 +293,8 @@ def main():
 
         # Initialize the code improver
         improver = CodeFeedbackIterator(
-            verbose=args.verbose, mode="vibe_coding", temperature=args.temperature
+            verbose=args.verbose, mode="vibe_coding", temperature=args.temperature,
+            thinking=args.thinking, thinking_budget=args.thinking_budget
         )
 
         # Improve the code using vibe coding framework
@@ -440,7 +442,8 @@ def main():
                         
                         # Initialize the code improver with appropriate settings
                         improver = CodeFeedbackIterator(
-                            verbose=args.verbose, mode="guided_feedback", temperature=args.temperature
+                            verbose=args.verbose, mode="guided_feedback", temperature=args.temperature,
+                            thinking=args.thinking, thinking_budget=args.thinking_budget
                         )
                         
                         # Format the aggregated feedback for the code improver

@@ -14,10 +14,12 @@ class CodeFeedbackIterator(GameGenerator):
     A class that iterates on game code based on feedback using LLM calls.
     """
 
-    def __init__(self, *args, mode: str = "guided_iteration", temperature: float = 0.7, **kwargs):
+    def __init__(self, *args, mode: str = "guided_iteration", temperature: float = 0.7, thinking: bool = False, thinking_budget: int = 10000, **kwargs):
         super().__init__(*args, **kwargs)
         self.mode = mode
         self.temperature = temperature
+        self.thinking = thinking
+        self.thinking_budget = thinking_budget
 
     def generate_game(self, game_description: str = "", game_controls: str = "", **kwargs) -> Dict[str, Any]:
         """
@@ -633,14 +635,29 @@ Current html code:
                 verbose=True,
                 temperature=self.temperature if self.mode != "basic_test_fix" else 0.1,
                 top_p=0.9,
+                thinking=self.thinking,
+                thinking_budget=self.thinking_budget,
             )
+            
+            # Handle thinking mode response format
+            thinking_content = ""
+            if isinstance(response, dict) and "response" in response:
+                # Extract thinking content if available
+                thinking_content = response.get("thinking", "")
+                response_text = response["response"]
+            else:
+                response_text = response
             
             # Prepare conversation log for saving
             conversation_log = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
-                {"role": "assistant", "content": response}
+                {"role": "assistant", "content": response_text}
             ]
+            
+            # Add thinking content to conversation log if available
+            if thinking_content:
+                conversation_log.append({"role": "thinking", "content": thinking_content})
 
 
             # Read metadata from the original game directory
@@ -651,10 +668,10 @@ Current html code:
                     metadata = json.load(f)
             
             # Extract updated game description and game controls from response
-            updated_game_description = self.extract_updated_game_description(response)
-            updated_game_controls = self.extract_updated_game_controls(response)
-            updated_html = self.extract_updated_html(response)
-            updated_automated_testing = self.extract_updated_automated_testing(response)
+            updated_game_description = self.extract_updated_game_description(response_text)
+            updated_game_controls = self.extract_updated_game_controls(response_text)
+            updated_html = self.extract_updated_html(response_text)
+            updated_automated_testing = self.extract_updated_automated_testing(response_text)
 
             # update the metadata with the new game description and game controls
             if updated_game_description != "":
@@ -665,12 +682,12 @@ Current html code:
                 metadata["game_info"]["automated_testing"] = updated_automated_testing
 
             # Extract updated code from response
-            updated_files = self.extract_updated_code(response)
+            updated_files = self.extract_updated_code(response_text)
             if updated_html != "":
                 updated_files["index.html"] = updated_html
             
             # Extract explanation sections
-            explanation_sections = self.extract_explanation_sections(response)
+            explanation_sections = self.extract_explanation_sections(response_text)
             
             # Special handling for basic_test_fix mode: backup original files before replacing
             backup_folder = None
