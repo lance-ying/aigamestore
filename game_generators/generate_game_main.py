@@ -33,7 +33,7 @@ def parse_args():
     parser.add_argument(
         "--model",
         type=str,
-        default="anthropic:claude-3.7-sonnet",
+        default="anthropic:claude-4-sonnet",
         help="LLM model to use (e.g., 'openai:gpt-4o', 'anthropic:claude-3.5-sonnet')",
     )
 
@@ -86,7 +86,7 @@ def parse_args():
     parser.add_argument(
         "--top_p",
         type=float,
-        default=0.9,
+        default=1.0,
         help="Top P for the LLM",
     )
 
@@ -266,7 +266,7 @@ def main():
             raise ValueError(f"Unknown method: {args.method}")
 
         # Generate the game with resampling for failed tests
-        max_attempts = 3  # Maximum number of attempts to generate a passing game
+        max_attempts = 1  # Maximum number of attempts to generate a passing game
         attempt = 1
         game_passed = False
         result = None

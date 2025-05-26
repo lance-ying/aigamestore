@@ -257,9 +257,12 @@ def main():
             logging.info("Game verification failed. Improving game code...")
             print(feedback)
             # Initialize the code improver
-
+            if args.thinking:
+                temperature = 1.0
+            else:
+                temperature = args.temperature if args.temperature < 0.3 else 0.1
             improver = CodeFeedbackIterator(
-                verbose=args.verbose, mode="basic_test_fix", temperature=args.temperature if args.temperature < 0.3 else 0.1,
+                verbose=args.verbose, mode="basic_test_fix", temperature=temperature,
                 thinking=args.thinking, thinking_budget=args.thinking_budget
             )
 
@@ -293,7 +296,8 @@ def main():
 
         # Initialize the code improver
         improver = CodeFeedbackIterator(
-            verbose=args.verbose, mode="vibe_coding", temperature=args.temperature,
+            verbose=args.verbose, mode="vibe_coding",
+            temperature=1.0 if args.thinking else args.temperature,
             thinking=args.thinking, thinking_budget=args.thinking_budget
         )
 
@@ -442,7 +446,7 @@ def main():
                         
                         # Initialize the code improver with appropriate settings
                         improver = CodeFeedbackIterator(
-                            verbose=args.verbose, mode="guided_feedback", temperature=args.temperature,
+                            verbose=args.verbose, mode="guided_feedback", temperature=1.0 if args.thinking else args.temperature,
                             thinking=args.thinking, thinking_budget=args.thinking_budget
                         )
                         

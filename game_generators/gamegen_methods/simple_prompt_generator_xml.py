@@ -15,7 +15,10 @@ class SimplePromptXMLGenerator(GameGenerator):
         self.use_baseline = kwargs.get('use_baseline', False)
         self.use_basic = kwargs.get('use_basic', False)
         self.temperature = kwargs.get('temperature', 1.0)
-        self.top_p = kwargs.get('top_p', 0.9)
+        self.top_p = kwargs.get('top_p', 1.0)
+        self.thinking = kwargs.get('thinking', False)
+        self.thinking_budget = kwargs.get('thinking_budget', 10000)
+
     def generate_user_prompt(self, game_concept: str) -> str:
         """
         Generate user prompt from game concept for the simple prompt method
@@ -273,9 +276,9 @@ Output the code plan and game files in this format with NO OTHER TEXT:
 Write the automated testing plan:
 <automated_testing>
 <TEST_1>
-<test_description>(write in 1-2 sentences "What are you testing and the intent of the test?")</test_description>
-<strategy_description>(write in 1-2 sentences "What is your gameplay strategy to test it?")</strategy_description>
-<expected_outcome>(write in 1-2 sentences "What is the expected outcome? When do you consider the test successful?")</expected_outcome>
+<test_description>(write in < 5 sentences "What are you testing and the intent of the test?")</test_description>
+<strategy_description>(write in < 5 sentences "What is your gameplay strategy to test it?")</strategy_description>
+<expected_outcome>(write in < 5 sentences "What is the expected outcome? When do you consider the test successful?")</expected_outcome>
 </TEST_1>
 // Add more tests (up to 7)
 </automated_testing>

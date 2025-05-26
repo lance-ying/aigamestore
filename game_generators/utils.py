@@ -68,7 +68,9 @@ class ModelAPI:
             model_name: String in format "provider:model"
                       (e.g., "openai:gpt-3.5-turbo", "anthropic:claude-3-haiku", "google:gemini-1.5-pro")
         """
+        print(f"Initializing ModelAPI with model_name: {model_name}")
         self.model_provider, self.model = self._parse_model_name(model_name)
+        print(f"ModelProvider: {self.model_provider}, Model: {self.model}")
         self.client = self._initialize_client()
         # Add call history list
         self.call_history = []
@@ -78,7 +80,7 @@ class ModelAPI:
         if ":" in model_name:
             provider, model = model_name.split(":", 1)
             provider = provider.lower()
-
+            print(f"Provider: {provider}, Model: {model}")
             # Handle Claude model names
             if provider == "anthropic":
                 # Convert shorthand names to full model names
@@ -86,14 +88,20 @@ class ModelAPI:
                     "claude-3.5-sonnet",
                     "claude-3.5-haiku",
                     "claude-3.7-sonnet",
+                    "claude-4-sonnet",
                 ]:
-                    model = self.CLAUDE_MODELS[model]
+                    new_model = self.CLAUDE_MODELS[model]
+                    print(f"Converted {model} to {new_model}")
+                    model = new_model           
                 elif not any(
-                    full_name in model for full_name in self.CLAUDE_MODELS.values()
+                    full_name in model for full_name in self.CLAUDE_MODELS.keys()
                 ):
                     # Default to sonnet if not specified correctly
-                    model = self.CLAUDE_MODELS["claude-3-5-sonnet"]
-
+                    model = self.CLAUDE_MODELS["claude-4-sonnet"]
+                else:
+                    raise ValueError(f"Unsupported model: {model}")
+                    
+                print(f"Provider: {provider}, Model: {model}")
             return provider, model
         return "openai", model_name
 
@@ -169,7 +177,7 @@ class ModelAPI:
                 "o4-mini": 100000,  # Technically exceeds MAX_ALLOWED_TOKENS
             },
             "anthropic": {
-                "claude-3.5-sonnet": 8192,
+                "claude-3-5-sonnet-20241022": 8192,
                 "claude-3-7-sonnet-20250219": 128000,
                 "claude-sonnet-4-20250514": 128000,
             },
@@ -246,10 +254,10 @@ class ModelAPI:
                 }
 
                 # Only add temperature if it's provided and valid
-                if temperature is not None:
+                if not thinking and temperature is not None:
                     claude_params["temperature"] = temperature
 
-                if top_p is not None:
+                if not thinking and top_p is not None:
                     claude_params["top_p"] = top_p
 
                 # Add system prompt if provided
@@ -276,10 +284,35 @@ class ModelAPI:
                         with self.client.messages.stream(**claude_params) as stream:
                             for message in stream:
                                 if message.type == "content_block_delta":
-                                    text = message.delta.text
-                                    result += text
-                                    if verbose:
-                                        print(text, end="", flush=True)
+                                    # Handle different types of delta objects
+                                    if hasattr(message.delta, 'type'):
+                                        if message.delta.type == "text_delta":
+                                            # Regular text content
+                                            text = message.delta.text
+                                            result += text
+                                            if verbose:
+                                                print(text, end="", flush=True)
+                                        elif message.delta.type == "thinking_delta":
+                                            # Thinking content
+                                            thinking_text = message.delta.thinking
+                                            thinking_content += thinking_text
+                                            # Don't print thinking content to avoid confusion
+                                        elif message.delta.type == "signature_delta":
+                                            # Signature for thinking verification - ignore for now
+                                            pass
+                                    else:
+                                        # Fallback for older format - check for text attribute
+                                        if hasattr(message.delta, 'text'):
+                                            text = message.delta.text
+                                            result += text
+                                            if verbose:
+                                                print(text, end="", flush=True)
+                                elif message.type == "content_block_start":
+                                    # Track content block types for thinking mode
+                                    if hasattr(message, 'content_block') and hasattr(message.content_block, 'type'):
+                                        if message.content_block.type == "thinking":
+                                            # Starting a thinking block
+                                            pass
                                 elif message.type == "message_delta":
                                     continue
                                 elif message.type == "error":
@@ -297,8 +330,22 @@ class ModelAPI:
                                 print(
                                     f"\n{RED}All streaming attempts failed, falling back to non-streaming API call{RESET}"
                                 )
-                            # Fallback to non-streaming API call
-                            response = self.client.messages.create(**claude_params)
+                            # Fallback to non-streaming API call with increased timeout
+                            # For large thinking budgets, we need to use streaming to avoid timeout issues
+                            if thinking and thinking_budget and thinking_budget > 20000:
+                                raise RuntimeError(f"Thinking budget ({thinking_budget}) is too large for non-streaming requests. Please use streaming or reduce the thinking budget.")
+                            
+                            # Try non-streaming with a custom timeout
+                            try:
+                                # Create a new client with extended timeout for this request
+                                import anthropic
+                                temp_client = anthropic.Anthropic(
+                                    api_key=os.getenv("ANTHROPIC_API_KEY"),
+                                    timeout=600.0  # 10 minutes
+                                )
+                                response = temp_client.messages.create(**claude_params)
+                            except Exception as timeout_error:
+                                raise RuntimeError(f"Both streaming and non-streaming requests failed. Last error: {str(timeout_error)}")
                             
                             # Handle thinking content in non-streaming response
                             if thinking and hasattr(response, 'content'):

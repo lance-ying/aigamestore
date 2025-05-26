@@ -13,9 +13,9 @@ class GameGenerator(ABC):
 
     def __init__(
         self,
-        model_name: str = "anthropic:claude-3.7-sonnet",
+        model_name: str = "anthropic:claude-4-sonnet",
         temperature: float = 1.0,
-        top_p: float = 0.9,
+        top_p: float = 1.0,
         verbose: bool = False,
         use_ecs: bool = True,
         use_baseline: bool = False,
@@ -408,7 +408,7 @@ class GameGenerator(ABC):
         self.output_summary(game_dir, conversation_log, intermediate_outputs)
 
         # Run basic test on the saved game
-        cmd = f"python game_generators/code_verifier_improver.py --game_path {game_dir} --mode basic_test --temperature 0.1"
+        cmd = f"python game_generators/code_verifier_improver.py --game_path {game_dir} --mode basic_test --thinking --thinking_budget 5000"
         if self.verbose:
             print(f"Running basic test: {cmd}")
         os.system(cmd)

@@ -634,7 +634,7 @@ Current html code:
                 system_prompt=system_prompt if self.mode != "vibe_coding" else None,
                 verbose=True,
                 temperature=self.temperature if self.mode != "basic_test_fix" else 0.1,
-                top_p=0.9,
+                top_p=1.,
                 thinking=self.thinking,
                 thinking_budget=self.thinking_budget,
             )
