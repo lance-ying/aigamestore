@@ -15,8 +15,8 @@ from gen_minigame_batch_new_prompts import run_game
 thinking = False
 thinking_tokens = 5000
 
-model = "claude-3-7-sonnet-20250219"
-# model = "claude-sonnet-4-20250514"
+# model = "claude-3-7-sonnet-20250219"
+model = "claude-sonnet-4-20250514"
 
 
 save_dir = Path(__file__).parent / "results" / Path(__file__).stem
@@ -29,21 +29,21 @@ save_dir = save_dir / run_name
 
 
 
-prompt_game_code_v0 = """Implement a fun game winnable by anyone (even unexperienced players) playing it for less than 1 minute.
+# prompt_game_code_v0 = """Implement a fun game winnable by anyone (even unexperienced players) playing it for less than 1 minute.
 
-<game_description>
-{description}
-</game_description>
+# <game_description>
+# {description}
+# </game_description>
 
-<technical_instructions>
-{technical_instructions}
-</technical_instructions>
+# <technical_instructions>
+# {technical_instructions}
+# </technical_instructions>
 
-Use the following format to write your final code:
-<code filename="{{name}}.{{extension}}">
-...
-</code>
-"""
+# Use the following format to write your final code:
+# <code filename="{{name}}.{{extension}}">
+# ...
+# </code>
+# """
 
 
 prompt_game_code_v1 = """Implement a fun game.
@@ -63,6 +63,7 @@ Use the following format to write your final code:
 """
 
 
+# TODO: could try simplifying this prompt (might lead to more issues but then can use our verifiers)
 p5js_guidelines = """* Don't use any external assets.
 * Include a index.html to run the game
     * Don't include any other content in the index.html file except for the p5.js and p5.collide2D imports and the game scripts.
@@ -232,8 +233,16 @@ Format your answer in the following format for the files that need to be updated
 Think thoroughly about how to implement the agent. Don't include any code during the thinking phase.
 """
 
+prompt_describe_screen = """Based on the code, describe the game screen that appears when the player starts the game by pressing the 'Enter' key.
+
+<game_code>
+{game_code}
+</game_code>
+"""
+
 
 def run_game_with_agent(game_code: dict[str, str], headless: bool = True, run_agent: bool = True, num_steps: int = 10000) -> tuple[list, dict]:
+
     """Test a p5.js game by manually controlling the rendering loop and return raw coverage results.
 
     Args:
@@ -516,9 +525,21 @@ def generate_games(model, themes, prompt_gen_game, save_dir, num_samples=1, num_
                 **issue_counts,
             })
 
-            if run_check["status"] != "passed":
+            # if run_check["status"] != "passed":
+            if len(run_check["errors"]) > 0:
                 # generate new game sample
                 continue
+
+
+            prompt = prompt_describe_screen.format(
+                game_code=game_code_str
+            )
+
+            generate(model, prompt, _save_dir / "game_screen", thinking=True, thinking_tokens=thinking_tokens)
+            # generate("gemini-2.5-pro-preview-05-06", prompt, _save_dir / "game_screen", thinking=True, thinking_tokens=thinking_tokens)
+
+
+            breakpoint()
 
             win_at_least_once = False
             # use the last game_code sample
@@ -538,6 +559,7 @@ def generate_games(model, themes, prompt_gen_game, save_dir, num_samples=1, num_
                         with open(try_dir / "errors.json", "w") as f:
                             json.dump(errors, f, indent=4)
                     else:
+                        print(f"Loading logs from {try_dir / 'logs.json'}")
                         with open(try_dir / "logs.json", "r") as f:
                             logs = json.load(f)
                         with open(try_dir / "errors.json", "r") as f:
@@ -550,11 +572,12 @@ def generate_games(model, themes, prompt_gen_game, save_dir, num_samples=1, num_
                 # check if won the game at least once
                 num_wins = 0
                 num_fails = 0
-                for log in logs["game_status"]:
-                    if log["game_status"] == "win":
-                        num_wins += 1
-                    elif log["game_status"] == "fail":
-                        num_fails += 1
+                if logs:
+                    for log in logs["game_status"]:
+                        if log["game_status"] == "win":
+                            num_wins += 1
+                        elif log["game_status"] == "fail":
+                            num_fails += 1
                 print(f"Num wins: {num_wins}, Num fails: {num_fails}")
 
                 agent_results.append({
@@ -626,7 +649,8 @@ if __name__ == "__main__":
         for sample_dir in samples_dir:
             with open(sample_dir / "code" / "run_check.json", "r") as f:
                 run_check = json.load(f)
-            if run_check["status"] == "passed":
+            # if run_check["status"] == "passed":
+            if len(run_check["errors"]) == 0:
                 first_pass_dir = sample_dir
                 break
         assert first_pass_dir is not None, f"No sample passed the game check for theme {idx}"
