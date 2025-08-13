@@ -249,7 +249,6 @@ Implement a fun and playable game based on the game concept input from the user.
         <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
         <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Basic testing)</button>
         <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Win)</button>
-        <button id="test_3_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_3')">TEST (Switching between tests)</button>
         // Add more test buttons with correct ID convention and click handlers
       </div>
       <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">{game_description}</p>
@@ -318,8 +317,8 @@ HTML following the <example_html> template (output last):
     </style>
   </head>
   <body>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
-    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script> // imported p5.js 
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script> // imported p5.collide2d
     <script type="module" src="game.js"></script>
   </body>
 </html>
