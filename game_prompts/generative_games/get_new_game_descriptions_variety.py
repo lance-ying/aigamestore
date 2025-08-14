@@ -181,7 +181,6 @@ Keep in mind that the game developer will implement the game in JavaScript using
     - Do not propose ideas with elements that have anything to do with audio or require audio-related implementations
     - No puzzle games, board games, turn-based games, or other non-2D games
 
-<!-- writing_guidelines -->
 Specify ideas that inspire further creative development and expansion by the game developer to turn the idea into a complete game which most people will fall in love with the moment they play it.
 You can be very specific about some game element describing a specific sub-element with high detail leaving the rest for the game developer to expand upon.
 For each idea, adopt a unique personality, style, and tone. Express as if you were talking to the game developer using sentence structure, vocabulary, and language used by people in casual natural conversations.

@@ -10,6 +10,7 @@ from gamegen_methods.baseline import BaselineGenerator
 from gamegen_methods.simple_prompt_generator import SimplePromptGenerator
 from gamegen_methods.simple_prompt_generator_exp import SimplePromptEXPGenerator
 from gamegen_methods.simple_prompt_generator_xml import SimplePromptXMLGenerator
+from gamegen_methods.baseline_concept_and_game_generator import BaselineConceptAndGameGenerator
 from gamegen_methods.two_step_generator_xml import TwoStepXMLGenerator
 from gamegen_methods.multipass_generator_xml import MultiPassXMLGenerator
 from gamegen_methods.template_based_generator import TemplateBasedGenerator
@@ -26,8 +27,8 @@ def parse_args():
     parser.add_argument(
         "--concept_path",
         type=str,
-        help="Path to the JSON file containing the game concept",
-        required=True,
+        help="Path to the JSON file containing the game concept (not required for baseline_concept_code method)",
+        required=False,
     )
 
     parser.add_argument(
@@ -41,7 +42,7 @@ def parse_args():
         "--method",
         type=str,
         default="simple_prompt",
-        choices=["baseline", "simple_prompt_basic", "simple_prompt", "simple_prompt_exp", "simple_prompt_xml", "two_step_xml", "template_based", "template_based_form", "multi_step_xml"], # TODO: "guide_complexity", "template", "template_character_driven", "template_with_critic", "template_with_play"],
+        choices=["baseline", "baseline_concept_code", "simple_prompt_basic", "simple_prompt", "simple_prompt_exp", "simple_prompt_xml", "two_step_xml", "template_based", "template_based_form", "multi_step_xml"], # TODO: "guide_complexity", "template", "template_character_driven", "template_with_critic", "template_with_play"],
         help="Game generation method to use",
     )
 
@@ -166,14 +167,26 @@ def main():
     args = parse_args()
 
     try:
-        # Load the game concept
-        concept_data = load_concept(args.concept_path)
-        game_concept = concept_data["concept"]
+        # Load the game concept (not needed for baseline_concept_code method)
+        if args.method == "baseline_concept_code":
+            game_concept = None
+            concept_data = None
+            if args.verbose:
+                print("Using baseline_concept_code method - no input concept needed")
+                print(f"Using method: {args.method}")
+                print(f"Using model: {args.model}")
+        else:
+            # Validate that concept_path is provided for methods that need it
+            if not args.concept_path:
+                raise ValueError(f"--concept_path is required for method: {args.method}")
+            
+            concept_data = load_concept(args.concept_path)
+            game_concept = concept_data["concept"]
 
-        if args.verbose:
-            print(f"Loaded game concept: {game_concept[:100]}...")
-            print(f"Using method: {args.method}")
-            print(f"Using model: {args.model}")
+            if args.verbose:
+                print(f"Loaded game concept: {game_concept[:100]}...")
+                print(f"Using method: {args.method}")
+                print(f"Using model: {args.model}")
 
         # Initialize the appropriate generator based on the method
         if args.method == "baseline":
@@ -182,6 +195,15 @@ def main():
                 verbose=args.verbose,
                 use_ecs=not args.no_ecs,
                 use_baseline=True,
+                thinking=args.thinking,
+                thinking_budget=args.thinking_budget,
+            )
+        elif args.method == "baseline_concept_code":
+            generator = BaselineConceptAndGameGenerator(
+                model_name=args.model,
+                verbose=args.verbose,
+                temperature=args.temperature,
+                top_p=args.top_p,
                 thinking=args.thinking,
                 thinking_budget=args.thinking_budget,
             )
@@ -276,10 +298,13 @@ def main():
                 print(f"\nAttempt {attempt}/{max_attempts} to generate a passing game...")
             
             # Generate the game
-            result = generator.generate_game(
-                game_concept=game_concept,
-                concept_path=args.concept_path,
-            )
+            if args.method == "baseline_concept_code":
+                result = generator.generate_game()
+            else:
+                result = generator.generate_game(
+                    game_concept=game_concept,
+                    concept_path=args.concept_path,
+                )
 
             print(f"Game generated successfully: {result['title']}")
             print(f"Saved to: {result['game_dir']}")
