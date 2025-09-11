@@ -2,6 +2,8 @@ from typing import Dict, Any, Optional, List, Tuple
 import json
 import re
 import datetime
+import glob
+import os
 from pathlib import Path
 
 from gamegen_methods.game_generator_base import GameGenerator
@@ -144,11 +146,92 @@ Come up with an interesting and novel game concept, then implement a fun and pla
     
 
     
+    def load_existing_game_concepts(self, max_games: int = 50) -> List[Dict[str, Any]]:
+        """
+        Load previously generated game concepts from the baseline_concept_game directory.
+        
+        Args:
+            max_games: Maximum number of games to load for context
+            
+        Returns:
+            List of game concept dictionaries
+        """
+        games_dir = "./games/baseline_concept_game"
+        if not os.path.exists(games_dir):
+            return []
+        
+        game_concepts = []
+        
+        # Find all game directories
+        game_dirs = glob.glob(os.path.join(games_dir, "game_*"))
+        game_dirs.sort(key=lambda x: os.path.getmtime(x), reverse=True)  # Most recent first
+        
+        count = 0
+        for game_dir in game_dirs:
+            if count >= max_games:
+                break
+                
+            # Find all sample directories within each game
+            sample_dirs = glob.glob(os.path.join(game_dir, "sample_*"))
+            sample_dirs.sort(key=lambda x: os.path.getmtime(x), reverse=True)  # Most recent first
+            
+            for sample_dir in sample_dirs:
+                if count >= max_games:
+                    break
+                    
+                metadata_path = os.path.join(sample_dir, "metadata.json")
+                if os.path.exists(metadata_path):
+                    try:
+                        with open(metadata_path, "r", encoding="utf-8") as f:
+                            metadata = json.load(f)
+                            
+                        concept = metadata.get("game_info", {}).get("concept", "")
+                        if concept:
+                            game_concepts.append({"concept": concept})
+                            count += 1
+                            
+                    except Exception as e:
+                        if self.verbose:
+                            print(f"Error loading metadata from {metadata_path}: {str(e)}")
+                        continue
+        
+        return game_concepts
+
+    def format_previous_concepts(self, previous_concepts: List[Dict[str, Any]]) -> str:
+        """
+        Format previous concepts as a string to be included in the prompt.
+        
+        Args:
+            previous_concepts: List of previously generated game concepts
+            
+        Returns:
+            Formatted string of previous concepts
+        """
+        if not previous_concepts:
+            return ""
+        
+        formatted_concepts = []
+        for concept in previous_concepts:
+            formatted_concepts.append(f"- {concept['concept']}")
+        
+        return "\n".join(formatted_concepts)
+
     def get_baseline_instructions(self) -> str:
         """
-        Get the instructions for the baseline architecture
+        Get the instructions for the baseline architecture with populated previous concepts
         """
         instructions = open("game_generators/system_prompts/baseline_concept_and_game_instructions.txt", "r").read()
+        
+        # Load existing game concepts
+        previous_concepts = self.load_existing_game_concepts()
+        previous_concepts_text = self.format_previous_concepts(previous_concepts)
+        
+        if self.verbose:
+            print(f"Loaded {len(previous_concepts)} previous game concepts for context")
+        
+        # Replace the placeholder with formatted previous concepts
+        instructions = instructions.replace("{previous_concepts_text}", previous_concepts_text)
+        
         return instructions
     
     def get_system_prompt(self) -> str:
