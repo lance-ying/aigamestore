@@ -212,7 +212,7 @@ Come up with an interesting and novel game concept, then implement a fun and pla
         
         formatted_concepts = []
         for concept in previous_concepts:
-            formatted_concepts.append(f"- {concept['concept']}")
+            formatted_concepts.append(f"- \"{concept['concept']}\"")
         
         return "\n".join(formatted_concepts)
 
