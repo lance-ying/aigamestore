@@ -276,7 +276,7 @@ Come up with an interesting and novel game concept, then implement a fun and pla
 Output the code plan and game files in this format with NO OTHER TEXT:
 
 <game_concept>
-... (Describe the novel game concept in 1-3 sentences.)
+... (Describe the novel game concept in 1-2 sentences.)
 </game_concept>
 
 <game_description>
