@@ -20,7 +20,7 @@ class BaselineConceptAndGameGenerator(GameGenerator):
         self.temperature = kwargs.get('temperature', 1.0)
         self.top_p = kwargs.get('top_p', 1.0)
         self.thinking = kwargs.get('thinking', False)
-        self.thinking_budget = kwargs.get('thinking_budget', 10000)
+        self.thinking_budget = kwargs.get('thinking_budget', 5000)
 
     def generate_user_prompt(self, game_concept: str = None) -> str:
         """
@@ -35,9 +35,9 @@ class BaselineConceptAndGameGenerator(GameGenerator):
         instructions = self.get_baseline_instructions()
         output_format = self.get_baseline_output_format()
         
-        task = """
+        task = f"""
 <task>
-Come up with an interesting and novel game concept, then implement a fun and playable game based on that concept.
+Propose an interesting and novel game concept, then implement a fun and playable game expanding on that concept.
 </task>"""
         prompt = instructions + task + output_format
         return prompt
@@ -276,7 +276,7 @@ Come up with an interesting and novel game concept, then implement a fun and pla
 Output the code plan and game files in this format with NO OTHER TEXT:
 
 <game_concept>
-... (Describe the novel game concept in 1-2 sentences.)
+... (Put the game concept here in 1-2 sentences. Note that your game concept captures a unique and interesting idea that can be expanded into a full game.)
 </game_concept>
 
 <game_description>

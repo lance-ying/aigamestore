@@ -1,3 +1,4 @@
+from curses import echo
 import os
 import time
 import logging
@@ -357,21 +358,39 @@ class GameBrowserController:
             page = await context.new_page()
             
             # Step 1 & 3: Prioritize Playwright's native handlers with enhanced logging
-            async def handle_console(msg: ConsoleMessage):
-                logging.critical(
-                    f"RAW PLAYWRIGHT CONSOLE EVENT --- Type: {msg.type()}, Text: \"{msg.text()}\", "
-                    f"Location: {msg.location()}"
-                )
+            async def handle_console(msg: [ConsoleMessage, str]):
+                if isinstance(msg, str):
+                    print(f"Console message: {msg}")
+                    if "error" in msg.lower():
+                        result["console_logs"]["error"].append(msg)
+                    else:
+                        return
                 
-                msg_type = msg.type().lower()
-                msg_text = msg.text()
-                msg_text_lower = msg_text.lower()
-                
-                # Get location data for better source tracking
-                loc = msg.location()
-                source_file = loc.get('url')
-                line_number = loc.get('lineNumber')
-                column_number = loc.get('columnNumber')
+                if isinstance(msg, ConsoleMessage):
+                    loc = msg.location
+
+                    logging.critical(
+                        f"RAW PLAYWRIGHT CONSOLE EVENT --- Type: {msg.type}, Text: \"{msg.text}\", "
+                    )
+                    if loc:
+                        logging.info(f"Location: {loc}")
+                    else:
+                        logging.info(f"Location: None")    
+                    msg_type = msg.type.lower()
+                    msg_text = msg.text
+                    msg_text_lower = msg_text.lower()
+                    # Get location data for better source tracking
+                    loc = msg.location
+                    if loc:
+                        source_file = loc.get('url')
+                        line_number = loc.get('lineNumber')
+                        column_number = loc.get('columnNumber')
+                    else:
+                        source_file = None
+                        line_number = None
+                        column_number = None
+                else:
+                    logging.info(f"Unknown console message type: {msg}")
                 
                 # Store in the appropriate category
                 if msg_type in result["console_logs"]:
@@ -2424,8 +2443,8 @@ class GameBrowserController:
                 result["errors"].append(error_message)
             
             async def key_press_console_handler(msg):
-                msg_type = msg.type().lower()
-                msg_text = msg.text()
+                msg_type = msg.type.lower()
+                msg_text = msg.text
                 
                 if msg_type == "error":
                     error_info = {
