@@ -35,34 +35,44 @@ class BashSession:
             cwd=self.cwd
         )
     
-    def execute(self, command: str, timeout: int = 30) -> str:
+    def execute(self, command: str, timeout: int = 60 * 5) -> str:
         """Execute a command and return the output."""
         try:
             # Add command to get exit code
             full_command = f"{command}\necho \"EXIT_CODE:$?\""
-            
+
             self.process.stdin.write(full_command + '\n')
             self.process.stdin.flush()
-            
+
             output_lines = []
             start_time = time.time()
-            
+
             while True:
                 if time.time() - start_time > timeout:
                     return f"Command timed out after {timeout} seconds"
-                
-                line = self.process.stdout.readline()
-                if not line:
-                    break
-                
-                line = line.rstrip('\n')
-                if line.startswith("EXIT_CODE:"):
-                    break
-                
-                output_lines.append(line)
-            
+
+                # Check if process has terminated
+                if self.process.poll() is not None:
+                    return f"Bash process terminated unexpectedly"
+
+                # Use select for non-blocking read with timeout
+                import select
+                if select.select([self.process.stdout], [], [], 0.1)[0]:
+                    line = self.process.stdout.readline()
+                    if not line:
+                        break
+
+                    line = line.rstrip('\n')
+                    if line.startswith("EXIT_CODE:"):
+                        break
+
+                    output_lines.append(line)
+                else:
+                    # No data available, continue loop to check timeout
+                    continue
+
             return '\n'.join(output_lines) if output_lines else ""
-            
+
         except Exception as e:
             return f"Error executing command: {str(e)}"
 
@@ -97,13 +107,17 @@ class CodingAgent:
             elif os.path.isfile(full_path):
                 with open(full_path, 'r') as f:
                     lines = f.readlines()
-                
+
+                # Check if file exceeds 2000 lines when no view_range specified
+                if not view_range and len(lines) > 2000:
+                    return f"File content ({len(lines)} lines) exceeds maximum allowed size (2000 lines). Please use view_range parameter to read specific portions of the file, or use the GrepTool to search for specific content."
+
                 if view_range:
                     start, end = view_range
                     if end == -1:
                         end = len(lines)
                     lines = lines[start-1:end]
-                
+
                 content = ""
                 start_line = view_range[0] if view_range else 1
                 for i, line in enumerate(lines, start=start_line):
