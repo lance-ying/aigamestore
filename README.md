@@ -1,5 +1,3 @@
-Gordian: LLM/VLM Game Generation
-
 Setup
 - Export `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY` as needed.
 - Install deps (example): `pip install playwright google-genai openai anthropic pyyaml` and `python -m playwright install firefox`.
