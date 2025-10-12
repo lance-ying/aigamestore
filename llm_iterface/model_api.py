@@ -1,0 +1,327 @@
+import os
+import datetime
+from typing import Any, Dict, List, Optional, Union
+
+# Third-party clients
+from openai import OpenAI
+
+try:
+    import anthropic  # type: ignore
+    from anthropic.types.message_create_params import (  # type: ignore
+        MessageCreateParamsNonStreaming,
+    )
+    from anthropic.types.messages.batch_create_params import Request  # type: ignore
+except Exception:
+    anthropic = None  # type: ignore
+    MessageCreateParamsNonStreaming = None  # type: ignore
+    Request = None  # type: ignore
+
+try:
+    import google.generativeai as genai  # type: ignore
+except Exception:
+    genai = None  # type: ignore
+
+
+class ModelAPI:
+    """Centralized handler for different model API calls across OpenAI, Anthropic, and Google (Gemini)."""
+
+    CLAUDE_MODELS: Dict[str, str] = {
+        "claude-3.5-sonnet": "claude-3-5-sonnet-20241022",
+        "claude-3.7-sonnet": "claude-3-7-sonnet-20250219",
+        "claude-4-sonnet": "claude-sonnet-4-20250514",
+    }
+
+    def __init__(self, model_name: str = "openai:gpt-4o") -> None:
+        self.model_provider, self.model = self._parse_model_name(model_name)
+        self.client = self._initialize_client()
+        self.call_history: List[Dict[str, Any]] = []
+
+    def _parse_model_name(self, model_name: str) -> tuple[str, str]:
+        if ":" in model_name:
+            provider, model = model_name.split(":", 1)
+            provider = provider.lower()
+            if provider == "anthropic":
+                if model in self.CLAUDE_MODELS:
+                    model = self.CLAUDE_MODELS[model]
+                elif not any(short in model for short in self.CLAUDE_MODELS.keys()):
+                    model = self.CLAUDE_MODELS["claude-4-sonnet"]
+            return provider, model
+        return "openai", model_name
+
+    def _initialize_client(self) -> Any:
+        if self.model_provider == "openai":
+            return OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        if self.model_provider == "anthropic":
+            if anthropic is None:
+                raise ImportError("anthropic package is required for Claude models")
+            return anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+        if self.model_provider == "google":
+            if genai is None:
+                raise ImportError("google-generativeai package is required for Gemini models")
+            genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+            return genai
+        raise ValueError(f"Unsupported model provider: {self.model_provider}")
+
+    def call(
+        self,
+        user_prompt: str,
+        system_prompt: Optional[str] = None,
+        chat_history: Optional[List[Dict[str, str]]] = None,
+        max_tokens: Optional[int] = None,
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+        thinking: bool = False,
+        thinking_budget: Optional[int] = 5000,
+        verbose: bool = False,
+        max_retries: int = 3,
+        image: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
+    ) -> Union[str, Dict[str, Any]]:
+        messages: List[Dict[str, str]] = []
+
+        # Reasonable caps
+        MAX_ALLOWED_TOKENS = 40000
+        model_max_tokens = {
+            "openai": {"o3-mini": 100000, "o4-mini": 100000},
+            "anthropic": {
+                "claude-3-5-sonnet-20241022": 8192,
+                "claude-3-7-sonnet-20250219": 128000,
+                "claude-sonnet-4-20250514": 128000,
+            },
+            "google": {
+                "gemini-2.0-flash": 8192,
+                "gemini-2.5-flash-preview-04-17": 65536,
+                "gemini-2.5-pro-exp-03-25": 65536,
+                "gemini-2.5-pro-preview-05-06": 65536,
+            },
+        }
+
+        if max_tokens is None:
+            # default to 40k as requested; clamp to model max
+            max_tokens = 40000
+        max_tokens = min(MAX_ALLOWED_TOKENS, max_tokens)
+
+        if thinking and thinking_budget:
+            max_tokens = max(1, max_tokens - thinking_budget)
+
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        if chat_history:
+            messages.extend(chat_history)
+        messages.append({"role": "user", "content": user_prompt})
+
+        try:
+            # Token usage placeholders
+            prompt_tokens: Optional[int] = None
+            completion_tokens: Optional[int] = None
+            total_tokens: Optional[int] = None
+            if self.model_provider == "anthropic":
+                if anthropic is None:
+                    raise RuntimeError("Anthropic client unavailable")
+
+                claude_messages: List[Dict[str, str]] = []
+                if chat_history:
+                    for msg in chat_history:
+                        if msg["role"] in ("user", "assistant"):
+                            claude_messages.append({"role": msg["role"], "content": msg["content"]})
+                claude_messages.append({"role": "user", "content": user_prompt})
+
+                claude_params: Dict[str, Any] = {
+                    "model": self.model,
+                    "messages": claude_messages,
+                    "max_tokens": max_tokens,
+                    **kwargs,
+                }
+                if temperature is not None and not thinking:
+                    claude_params["temperature"] = temperature
+                if top_p is not None and not thinking:
+                    claude_params["top_p"] = top_p
+                if system_prompt:
+                    claude_params["system"] = system_prompt
+                if thinking and thinking_budget:
+                    claude_params["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
+
+                result_text = ""
+                thinking_content = ""
+                retry = 0
+                while retry < max_retries:
+                    try:
+                        with self.client.messages.stream(**claude_params) as stream:  # type: ignore[attr-defined]
+                            for message in stream:
+                                if getattr(message, "type", None) == "content_block_delta":
+                                    delta = getattr(message, "delta", None)
+                                    if hasattr(delta, "type") and getattr(delta, "type") == "text_delta":
+                                        result_text += getattr(delta, "text", "")
+                                    elif hasattr(delta, "type") and getattr(delta, "type") == "thinking_delta":
+                                        thinking_content += getattr(delta, "thinking", "")
+                        break
+                    except Exception:
+                        retry += 1
+                        if retry >= max_retries:
+                            # Fallback non-streaming
+                            response = self.client.messages.create(**claude_params)  # type: ignore[attr-defined]
+                            if thinking and hasattr(response, "content"):
+                                for block in response.content:  # type: ignore[attr-defined]
+                                    if getattr(block, "type", "") == "text":
+                                        result_text = getattr(block, "text", "")
+                            else:
+                                result_text = response.content[0].text  # type: ignore[index]
+
+                self._record_call(system_prompt, user_prompt, result_text)
+                if thinking:
+                    return {"thinking": thinking_content, "response": result_text, "model": f"{self.model_provider}:{self.model}"}
+                return result_text
+
+            if self.model_provider == "openai":
+                # Reasoning models path
+                if thinking and thinking_budget and self.model in ("o4-mini", "o3-mini"):
+                    input_messages = [m for m in messages if m["role"] != "system"]
+                    response = self.client.responses.create(  # type: ignore[attr-defined]
+                        model=self.model,
+                        reasoning={"effort": "medium"},
+                        input=input_messages,
+                        max_output_tokens=max_tokens,
+                    )
+                    result_text = getattr(response, "output_text", "")
+                    return {"thinking": getattr(response, "reasoning", ""), "response": result_text, "model": f"{self.model_provider}:{self.model}"}
+
+                # Streaming chat completions
+                try:
+                    stream = self.client.chat.completions.create(
+                        model=self.model,
+                        messages=messages,
+                        max_completion_tokens=max_tokens,
+                        stream=True,
+                        **kwargs,
+                    )  # type: ignore[attr-defined]
+                    result_text = ""
+                    for event in stream:  # type: ignore[assignment]
+                        delta = getattr(event.choices[0], "delta", None)  # type: ignore[index]
+                        if delta and getattr(delta, "content", None):
+                            result_text += delta.content  # type: ignore[attr-defined]
+                except Exception:
+                    response = self.client.chat.completions.create(  # type: ignore[attr-defined]
+                        model=self.model,
+                        messages=messages,
+                        max_completion_tokens=max_tokens,
+                        **kwargs,
+                    )
+                    result_text = response.choices[0].message.content  # type: ignore[index]
+                # OpenAI usage if available
+                try:
+                    u = getattr(response, "usage", None)
+                    if u is not None:
+                        prompt_tokens = getattr(u, "prompt_tokens", None)
+                        completion_tokens = getattr(u, "completion_tokens", None)
+                        total_tokens = getattr(u, "total_tokens", None)
+                except Exception:
+                    pass
+                self._record_call(system_prompt, user_prompt, result_text, prompt_tokens, completion_tokens, total_tokens)
+                return {"thinking": "", "response": result_text, "model": f"{self.model_provider}:{self.model}"} if thinking else result_text
+
+            if self.model_provider == "google":
+                # thinking path with new google-genai client
+                if thinking and thinking_budget:
+                    from google import genai as new_genai  # type: ignore
+                    from google.genai import types  # type: ignore
+
+                    client = new_genai.Client(api_key=os.environ.get("GOOGLE_API_KEY"))
+                    contents: List[Any] = []
+                    for msg in messages:
+                        role = "user" if msg["role"] == "user" else "model"
+                        if msg["role"] == "system":
+                            # fold system prompt into first user message later
+                            continue
+                        contents.append(types.Content(role=role, parts=[types.Part.from_text(text=msg["content"])]))
+
+                    generate_content_config = types.GenerateContentConfig(
+                        thinking_config=types.ThinkingConfig(thinking_budget=thinking_budget),
+                        response_mime_type="text/plain",
+                        max_output_tokens=max_tokens,
+                    )
+                    if temperature is not None:
+                        generate_content_config.temperature = temperature
+
+                    response_text = ""
+                    for chunk in client.models.generate_content_stream(
+                        model=self.model,
+                        contents=contents,
+                        config=generate_content_config,
+                    ):
+                        if hasattr(chunk, "text") and chunk.text:
+                            response_text += chunk.text
+                    self._record_call(system_prompt, user_prompt, response_text)
+                    return {"thinking": "", "response": response_text, "model": f"{self.model_provider}:{self.model}"}
+
+                # regular gemini path with streaming when available
+                model = self.client.GenerativeModel(model_name=self.model)  # type: ignore[attr-defined]
+                prompt = self._format_messages_for_gemini(messages)
+                try:
+                    result_text = ""
+                    for chunk in model.generate_content(
+                        prompt,
+                        generation_config={"max_output_tokens": max_tokens, "temperature": temperature, **kwargs},
+                        stream=True,
+                    ):
+                        if hasattr(chunk, "text") and chunk.text:
+                            result_text += chunk.text
+                except Exception:
+                    response = model.generate_content(
+                        prompt,
+                        generation_config={"max_output_tokens": max_tokens, "temperature": temperature, **kwargs},
+                    )
+                    result_text = response.text  # type: ignore[attr-defined]
+                # Gemini usage if available
+                try:
+                    usage = getattr(response, "usage_metadata", None)
+                    if usage is None:
+                        usage = getattr(response, "usage", None)
+                    if usage is not None:
+                        prompt_tokens = getattr(usage, "prompt_token_count", None)
+                        completion_tokens = getattr(usage, "candidates_token_count", None)
+                        if prompt_tokens is not None and completion_tokens is not None:
+                            total_tokens = int(prompt_tokens) + int(completion_tokens)
+                except Exception:
+                    pass
+                self._record_call(system_prompt, user_prompt, result_text, prompt_tokens, completion_tokens, total_tokens)
+                return {"thinking": "", "response": result_text, "model": f"{self.model_provider}:{self.model}"} if thinking else result_text
+
+            raise RuntimeError("Unsupported provider path")
+
+        except Exception as e:
+            raise RuntimeError(f"Error calling {self.model_provider} API: {e}")
+
+    def _format_messages_for_gemini(self, messages: List[Dict[str, str]]) -> str:
+        formatted: List[str] = []
+        for msg in messages:
+            role = msg.get("role", "user").upper()
+            content = msg.get("content", "")
+            if role == "SYSTEM":
+                formatted.append(f"Instructions: {content}")
+            else:
+                formatted.append(f"{role}: {content}")
+        return "\n".join(formatted)
+
+    def _record_call(self, system_prompt: Optional[str], user_prompt: str, response: str,
+                     prompt_tokens: Optional[int] = None,
+                     completion_tokens: Optional[int] = None,
+                     total_tokens: Optional[int] = None) -> None:
+        self.call_history.append(
+            {
+                "system_prompt": system_prompt.strip() if system_prompt else None,
+                "user_prompt": user_prompt.strip(),
+                "response": response.strip(),
+                "model": f"{self.model_provider}:{self.model}",
+                "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "token_usage": {
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": total_tokens,
+                },
+            }
+        )
+
+    def get_call_history(self) -> List[Dict[str, Any]]:
+        return self.call_history
+
+
