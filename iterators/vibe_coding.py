@@ -2,7 +2,7 @@ from typing import Any, Dict, Optional
 from pathlib import Path
 import json
 
-from llm_iterface.model_api import ModelAPI
+from llm_interface.model_api import ModelAPI
 from .code_feedback import read_js_files, apply_updates
 
 

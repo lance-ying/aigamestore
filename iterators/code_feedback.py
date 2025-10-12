@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from llm_iterface.model_api import ModelAPI
+from llm_interface.model_api import ModelAPI
 
 
 def read_js_files(game_dir: str) -> List[Tuple[str, str]]:

@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 import re
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from llm_iterface.model_api import ModelAPI
+from llm_interface.model_api import ModelAPI
 
 
 class GameGenerator(ABC):

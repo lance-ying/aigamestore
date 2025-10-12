@@ -24,6 +24,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Generate a game from a config")
     parser.add_argument("--config", required=True, help="Path to generator config file")
     parser.add_argument("--game_index", type=int, required=False, help="Override next game index for output folder")
+    parser.add_argument("--concept", type=str, required=False, help="Path to concept file to drive generation (single_prompt)")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -53,7 +54,9 @@ def main() -> int:
             temperature=temperature,
             top_p=top_p,
         )
-        result = gen.generate_game(cfg.get("concept"))
+        # Prefer CLI --concept if provided; else, config concept path
+        concept_arg = args.concept or cfg.get("concept")
+        result = gen.generate_game(concept_arg, forced_game_index=args.game_index)
     else:
         raise ValueError(f"Unknown method: {method}")
 

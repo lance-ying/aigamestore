@@ -44,7 +44,7 @@ Structure
 - `generators/`: concept_and_game, single_prompt_with_testing
 - `evaluators/`: basic_test, vlm
 - `iterators/`: code_feedback, vibe_coding
-- `llm_iterface/`: unified ModelAPI
+- `llm_interface/`: unified ModelAPI
 - `prompts/`: generation prompts
 - `configs/`: nested configs under generators/, evaluators/, iterators/
 - `utils/`: saving utilities

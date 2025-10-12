@@ -2,19 +2,12 @@ import os
 import datetime
 from typing import Any, Dict, List, Optional, Union
 
-# Third-party clients
 from openai import OpenAI
 
 try:
     import anthropic  # type: ignore
-    from anthropic.types.message_create_params import (  # type: ignore
-        MessageCreateParamsNonStreaming,
-    )
-    from anthropic.types.messages.batch_create_params import Request  # type: ignore
 except Exception:
     anthropic = None  # type: ignore
-    MessageCreateParamsNonStreaming = None  # type: ignore
-    Request = None  # type: ignore
 
 try:
     import google.generativeai as genai  # type: ignore
@@ -23,8 +16,6 @@ except Exception:
 
 
 class ModelAPI:
-    """Centralized handler for different model API calls across OpenAI, Anthropic, and Google (Gemini)."""
-
     CLAUDE_MODELS: Dict[str, str] = {
         "claude-3.5-sonnet": "claude-3-5-sonnet-20241022",
         "claude-3.7-sonnet": "claude-3-7-sonnet-20250219",
@@ -79,7 +70,6 @@ class ModelAPI:
     ) -> Union[str, Dict[str, Any]]:
         messages: List[Dict[str, str]] = []
 
-        # Reasonable caps
         MAX_ALLOWED_TOKENS = 40000
         model_max_tokens = {
             "openai": {"o3-mini": 100000, "o4-mini": 100000},
@@ -97,7 +87,6 @@ class ModelAPI:
         }
 
         if max_tokens is None:
-            # default to 40k as requested; clamp to model max
             max_tokens = 40000
         max_tokens = min(MAX_ALLOWED_TOKENS, max_tokens)
 
@@ -111,10 +100,10 @@ class ModelAPI:
         messages.append({"role": "user", "content": user_prompt})
 
         try:
-            # Token usage placeholders
-            prompt_tokens: Optional[int] = None
-            completion_tokens: Optional[int] = None
-            total_tokens: Optional[int] = None
+            prompt_tokens = None
+            completion_tokens = None
+            total_tokens = None
+
             if self.model_provider == "anthropic":
                 if anthropic is None:
                     raise RuntimeError("Anthropic client unavailable")
@@ -147,18 +136,24 @@ class ModelAPI:
                 while retry < max_retries:
                     try:
                         with self.client.messages.stream(**claude_params) as stream:  # type: ignore[attr-defined]
-                            for message in stream:
-                                if getattr(message, "type", None) == "content_block_delta":
-                                    delta = getattr(message, "delta", None)
+                            for event in stream:
+                                et = getattr(event, "type", None)
+                                if et == "content_block_delta":
+                                    delta = getattr(event, "delta", None)
                                     if hasattr(delta, "type") and getattr(delta, "type") == "text_delta":
-                                        result_text += getattr(delta, "text", "")
+                                        piece = getattr(delta, "text", "")
+                                        if verbose and piece:
+                                            print(piece, end="", flush=True)
+                                        result_text += piece
                                     elif hasattr(delta, "type") and getattr(delta, "type") == "thinking_delta":
-                                        thinking_content += getattr(delta, "thinking", "")
+                                        tpiece = getattr(delta, "thinking", "")
+                                        thinking_content += tpiece
+                        if verbose:
+                            print()
                         break
                     except Exception:
                         retry += 1
                         if retry >= max_retries:
-                            # Fallback non-streaming
                             response = self.client.messages.create(**claude_params)  # type: ignore[attr-defined]
                             if thinking and hasattr(response, "content"):
                                 for block in response.content:  # type: ignore[attr-defined]
@@ -173,7 +168,6 @@ class ModelAPI:
                 return result_text
 
             if self.model_provider == "openai":
-                # Reasoning models path
                 if thinking and thinking_budget and self.model in ("o4-mini", "o3-mini"):
                     input_messages = [m for m in messages if m["role"] != "system"]
                     response = self.client.responses.create(  # type: ignore[attr-defined]
@@ -185,7 +179,6 @@ class ModelAPI:
                     result_text = getattr(response, "output_text", "")
                     return {"thinking": getattr(response, "reasoning", ""), "response": result_text, "model": f"{self.model_provider}:{self.model}"}
 
-                # Streaming chat completions
                 try:
                     stream = self.client.chat.completions.create(
                         model=self.model,
@@ -198,7 +191,12 @@ class ModelAPI:
                     for event in stream:  # type: ignore[assignment]
                         delta = getattr(event.choices[0], "delta", None)  # type: ignore[index]
                         if delta and getattr(delta, "content", None):
-                            result_text += delta.content  # type: ignore[attr-defined]
+                            piece = delta.content  # type: ignore[attr-defined]
+                            if verbose and piece:
+                                print(piece, end="", flush=True)
+                            result_text += piece
+                    if verbose:
+                        print()
                 except Exception:
                     response = self.client.chat.completions.create(  # type: ignore[attr-defined]
                         model=self.model,
@@ -207,53 +205,11 @@ class ModelAPI:
                         **kwargs,
                     )
                     result_text = response.choices[0].message.content  # type: ignore[index]
-                # OpenAI usage if available
-                try:
-                    u = getattr(response, "usage", None)
-                    if u is not None:
-                        prompt_tokens = getattr(u, "prompt_tokens", None)
-                        completion_tokens = getattr(u, "completion_tokens", None)
-                        total_tokens = getattr(u, "total_tokens", None)
-                except Exception:
-                    pass
+
                 self._record_call(system_prompt, user_prompt, result_text, prompt_tokens, completion_tokens, total_tokens)
                 return {"thinking": "", "response": result_text, "model": f"{self.model_provider}:{self.model}"} if thinking else result_text
 
             if self.model_provider == "google":
-                # thinking path with new google-genai client
-                if thinking and thinking_budget:
-                    from google import genai as new_genai  # type: ignore
-                    from google.genai import types  # type: ignore
-
-                    client = new_genai.Client(api_key=os.environ.get("GOOGLE_API_KEY"))
-                    contents: List[Any] = []
-                    for msg in messages:
-                        role = "user" if msg["role"] == "user" else "model"
-                        if msg["role"] == "system":
-                            # fold system prompt into first user message later
-                            continue
-                        contents.append(types.Content(role=role, parts=[types.Part.from_text(text=msg["content"])]))
-
-                    generate_content_config = types.GenerateContentConfig(
-                        thinking_config=types.ThinkingConfig(thinking_budget=thinking_budget),
-                        response_mime_type="text/plain",
-                        max_output_tokens=max_tokens,
-                    )
-                    if temperature is not None:
-                        generate_content_config.temperature = temperature
-
-                    response_text = ""
-                    for chunk in client.models.generate_content_stream(
-                        model=self.model,
-                        contents=contents,
-                        config=generate_content_config,
-                    ):
-                        if hasattr(chunk, "text") and chunk.text:
-                            response_text += chunk.text
-                    self._record_call(system_prompt, user_prompt, response_text)
-                    return {"thinking": "", "response": response_text, "model": f"{self.model_provider}:{self.model}"}
-
-                # regular gemini path with streaming when available
                 model = self.client.GenerativeModel(model_name=self.model)  # type: ignore[attr-defined]
                 prompt = self._format_messages_for_gemini(messages)
                 try:
@@ -264,26 +220,19 @@ class ModelAPI:
                         stream=True,
                     ):
                         if hasattr(chunk, "text") and chunk.text:
-                            result_text += chunk.text
+                            piece = chunk.text
+                            if verbose and piece:
+                                print(piece, end="", flush=True)
+                            result_text += piece
+                    if verbose:
+                        print()
                 except Exception:
                     response = model.generate_content(
                         prompt,
                         generation_config={"max_output_tokens": max_tokens, "temperature": temperature, **kwargs},
                     )
                     result_text = response.text  # type: ignore[attr-defined]
-                # Gemini usage if available
-                try:
-                    usage = getattr(response, "usage_metadata", None)
-                    if usage is None:
-                        usage = getattr(response, "usage", None)
-                    if usage is not None:
-                        prompt_tokens = getattr(usage, "prompt_token_count", None)
-                        completion_tokens = getattr(usage, "candidates_token_count", None)
-                        if prompt_tokens is not None and completion_tokens is not None:
-                            total_tokens = int(prompt_tokens) + int(completion_tokens)
-                except Exception:
-                    pass
-                self._record_call(system_prompt, user_prompt, result_text, prompt_tokens, completion_tokens, total_tokens)
+                self._record_call(system_prompt, user_prompt, result_text)
                 return {"thinking": "", "response": result_text, "model": f"{self.model_provider}:{self.model}"} if thinking else result_text
 
             raise RuntimeError("Unsupported provider path")

@@ -2,6 +2,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from generators.base import GameGenerator
 from utils.saving_utils.file_writer import save_game_baseline_concept
+from pathlib import Path
 
 
 class BaselineConceptAndGameGenerator(GameGenerator):
@@ -20,7 +21,24 @@ class BaselineConceptAndGameGenerator(GameGenerator):
 
     def get_baseline_instructions(self) -> str:
         with open("prompts/generation/baseline_concept_and_game_instructions.md", "r") as f:
-            return f.read()
+            base = f.read()
+        # Append previous concepts from game_concepts directory to steer away from duplicates
+        try:
+            concepts_dir = Path("game_concepts")
+            previous: List[str] = []
+            if concepts_dir.exists():
+                for p in sorted(concepts_dir.glob("game_*.txt")):
+                    try:
+                        text = p.read_text(encoding="utf-8").strip()
+                        if text:
+                            previous.append(f'- "{text}"')
+                    except Exception:
+                        continue
+            prev_block = "\n".join(previous[-200:])  # limit size
+            base = base.replace("{previous_concepts_text}", prev_block)
+        except Exception:
+            base = base.replace("{previous_concepts_text}", "")
+        return base
 
     def get_system_prompt(self) -> str:
         with open("prompts/generation/baseline_concept_and_game_sysprompt.md", "r") as f:

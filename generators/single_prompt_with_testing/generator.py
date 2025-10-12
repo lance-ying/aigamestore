@@ -1,7 +1,7 @@
 from typing import Any, Dict, List, Optional, Tuple
 
 from generators.base import GameGenerator
-from utils.saving_utils.file_writer import save_game_baseline_concept as save_game  # reuse pathing for now
+from utils.saving_utils.file_writer import save_game_single_prompt as save_game
 from evaluators.basic_test.runner import test_game as run_basic_test
 
 
@@ -40,7 +40,16 @@ Implement a complete, fun, and error-free p5.js game for the following concept:
         with open("prompts/generation/single_prompt_basic_sysprompt.md", "r") as f:
             return f.read()
 
-    def generate_game(self, game_concept: Optional[str] = None) -> Dict[str, Any]:
+    def generate_game(self, game_concept: Optional[str] = None, forced_game_index: Optional[int] = None) -> Dict[str, Any]:
+        # If concept is a path, read it
+        if game_concept and isinstance(game_concept, str):
+            from pathlib import Path
+            p = Path(game_concept)
+            if p.exists():
+                try:
+                    game_concept = p.read_text(encoding="utf-8").strip()
+                except Exception:
+                    pass
         user_prompt = self.generate_user_prompt(game_concept)
         system_prompt = self.get_system_prompt()
         response = self.model_api.call(
@@ -74,6 +83,7 @@ Implement a complete, fun, and error-free p5.js game for the following concept:
             game_description=game_description,
             game_controls=game_controls,
             game_concept=game_concept or title,
+            forced_game_index=forced_game_index,
             intermediate_outputs=intermediate,
         )
 
