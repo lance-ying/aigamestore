@@ -31,6 +31,25 @@ async def _start_server_if_needed(game_path: str, port: int) -> Optional[subproc
 def _build_url(game_path: str, port: int) -> str:
     if os.path.isfile(game_path) and game_path.lower().endswith(".html"):
         return f"file://{os.path.abspath(game_path)}"
+    # If a directory is provided, prefer navigating directly to an index.html if present
+    if os.path.isdir(game_path):
+        # Serve the directory as root at /
+        # If the directory itself has index.html, root URL is fine
+        index_at_root = os.path.join(game_path, "index.html")
+        if os.path.exists(index_at_root):
+            return f"http://localhost:{port}"
+        # Otherwise, search for an index.html within subdirectories (e.g., sample_0/index.html)
+        try:
+            for root, _dirs, files in os.walk(game_path):
+                if "index.html" in files:
+                    # Build the relative path from game_path to the found index
+                    rel = os.path.relpath(os.path.join(root, "index.html"), start=game_path)
+                    # Normalize to URL path separators
+                    rel_url = rel.replace(os.sep, "/")
+                    return f"http://localhost:{port}/{rel_url}"
+        except Exception:
+            # Fallback to root if any issue during search
+            pass
     return f"http://localhost:{port}"
 
 

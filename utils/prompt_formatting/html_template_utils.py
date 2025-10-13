@@ -7,6 +7,7 @@ LIB_URLS = {
     "p5.collide2D": "https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js",
     "p5play": "https://cdn.jsdelivr.net/npm/p5.play@3.13.0/lib/p5.play.js",
     "planck": "https://cdn.jsdelivr.net/npm/planck-js@0.3.0/dist/planck.min.js",
+    "matter.js": "https://cdn.jsdelivr.net/npm/matter-js@0.17.1/dist/matter.min.js",
 }
 
 

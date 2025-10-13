@@ -8,7 +8,7 @@ The proposed game concept should be novel and fun. Please consider the hard cons
     - genre: a game can belong to one or more genres (such as a arcade, shooter, endless-runner, platformer, etc.) No puzzle games, board-games, turn-based games, or other non-2D games.
     - viewpoint: the perspective from which the game is viewed on screen (can be one of the following: top-down, side-scrolling, vertical-scrolling, )
 - entities:
-   - characters: Use well-described nouns for the player character and NPCs which are easy to render and have behaviors implementable by the game developer using p5.js primitives.
+    - characters: Use well-described nouns for the player character and NPCs which are easy to render and have behaviors implementable by the game developer using p5.js primitives.
         - player: the character controlled by the player (such as Mario, Pacman, snake, paddle, etc.). 
         - NPCs: the non-player characters in the game (such as Turtle, Goomba, Ghost, etc.).
     - objects in the game:
@@ -56,7 +56,6 @@ const p5 = window.p5
 let gameInstance = new p5(p => {
     // Initialize variables
     ...
-
     // Initialize the logs. Important: Do not reset the logs at any point in the code! logs are considered write-only!
     p.logs = {
         "game_info": [],  // Information about the game

@@ -140,20 +140,6 @@ def build_user_prompt(mode: str, config: Dict[str, Any]) -> str:
             if concepts_dir.exists():
                 for p in sorted(concepts_dir.glob("game_*.yaml")):
                     concept_value = yaml.safe_load(p.read_text(encoding="utf-8"))["concept"]
-                    # concept_value = ""
-                    # if text.startswith("concept:"):
-                    #     lines = text.splitlines()
-                    #     if len(lines) >= 1:
-                    #         # single-line value on the same line as key
-                    #         if len(lines) == 1 and ":" in lines[0]:
-                    #             concept_value = lines[0].split(":", 1)[1].strip()
-                    #         else:
-                    #             # handle indented block scalar style; join wrapped lines into one
-                    #             block: list[str] = []
-                    #             for ln in lines[:]:
-                    #                 if ln.startswith("  "):
-                    #                     block.append(ln[2:].strip())
-                    #             concept_value = " ".join([b for b in " ".join(block).split()])
                     if concept_value:
                         previous.append(f'- "{concept_value}"')
                 
