@@ -16,6 +16,7 @@ class GameGenerator(ABC):
         verbose: bool = False,
         thinking: bool = False,
         thinking_budget: Optional[int] = 5000,
+        prompt_config: Optional[Dict[str, Any]] = None,
     ) -> None:
         self.model_name = model_name
         self.verbose = verbose
@@ -24,6 +25,7 @@ class GameGenerator(ABC):
         self.thinking = thinking
         self.thinking_budget = thinking_budget
         self.model_api = ModelAPI(model_name)
+        self.prompt_config: Dict[str, Any] = prompt_config or {}
 
     @abstractmethod
     def generate_user_prompt(self, game_concept: Optional[str] = None) -> str:

@@ -1,28 +1,8 @@
-<hard_constraints>
-- Game concept must be novel and interesting. Use different terms, characters, objectives, mechanics, and other game elements as compared to the previous concepts. Describe the game concept in 1-2 sentences. No purely turn-based board/puzzle games; keep play real-time and 2D.
-- The full game can be expanded by adding more elements to the game concept but should align with the game concept respecting the hard constraints and game design principles.
-- Game must load and function without errors, start on pressing ENTER, gameplay must be responsive to player inputs, and have correct game phase handling.
-- Game phases: "START" → "PLAYING" → "PAUSED" → "GAME_OVER_WIN" or "GAME_OVER_LOSE". Expose this in a variable called `gameState.gamePhase` where `gameState` is a global object accessible via `window.getGameState()`.
-- Allowed libraries: p5.js, p5.collide2D
-- Keyboard inputs only. No mouse control. Allowed keyboard keys:
-  - Allowed gameplay control keys: Arrow keys (37-40), SPACE (32), SHIFT (16), Z (90)
-  - Game phase specific controls: 
-    - ENTER (13)  – start the game
-    - ESC (27)    – pause / unpause
-    - R (82)      – restart; returns to the start screen, where the player can press ENTER to play again
-- No external images, sprites, fonts, or other assets.
-- No audio or sound effects.
-- Use p5.js in instance mode and expose the game instance globally as window.gameInstance.
-- Ensure game reproducibility using p.randomSeed(42) in the `setup` function. No other random seeding.
-- Use ES6 syntax with proper imports and exports at the top of the file where they are used. No dynamic imports or require() imports.
-- Maintain the p.logs object as write-only with proper initialization and updates during the game loop.
-</hard_constraints>
+{hard_constraints}
 
 <instructions>
 <game_concept_instructions>
-Your goal is to propose a game concept that can be expanded into multiple possible games. To do this, focus on describing 1-2 elements with creative detail (e.g., a specific character ability or a unique environmental object), while leaving the other elements undefined for me to build upon. Please consider the hard constraints on the game code developer when proposing the game concept. For each idea, adopt a unique personality, style, and tone. Use terms that are relatable and known by everyone.
-
-A game requires defining the following elements [environment, entities, mechanics, graphics]. Here are the sub-elements for each for context with examples from existing games like Mario, Pacman, Snake, Breakout, etc. for inspiration:
+The proposed game concept should be novel and fun. Please consider the hard constraints for the game code when proposing the game concept. For each idea, adopt a unique style, tone, and vocabulary. Use terms that are relatable and known by everyone. A game requires defining the following elements [environment, entities, mechanics, graphics]. Focus on 1-2 elements with creative detail leaving room for adding more elements later. Here are the sub-elements for each for context with examples from existing games like Mario, Pacman, Snake, Breakout, etc. for inspiration:
 - environment:
     - setting: the setting of the game (such as forest, space, underwater, etc.)
     - genre: a game can belong to one or more genres (such as a arcade, shooter, endless-runner, platformer, etc.) No puzzle games, board-games, turn-based games, or other non-2D games.
@@ -49,7 +29,7 @@ A game requires defining the following elements [environment, entities, mechanic
     - visual appearance: the visual appearance of the game environment and game entities defined by adjectives (such as neon-lit platforms, bioluminescent creatures, etc.). Keep the visual appearance that can be implemented using p5.js primitives.
     - animations: the animations of the game entities defined by adjectives (such as a walking turtle, a jumping frog, etc.). Keep the animations that can be implemented using p5.js primitives.
 
-Please refer to some example game concepts and their presentation in terms of active voice and in the present tense as if you were requesting a new game from a game developer. Keep the game concept concise and interesting with variation in presentations as compared to the previous concepts. Avoid naming the game in the game concept. DO NOT REPEAT ANY OF THESE IDEAS OR PROPOSE ANY IDEAS THAT ARE SIMILAR TO THESE IDEAS:
+Below are some example game concepts. Avoid naming the game in the game concept and do not repeat any of these ideas.
 <example_concepts>
 - "I want to play a game driving a car on the wrong side of the road."
 - "It would be interesting to play as a monkey leaping through a forest. The monkey has to collect bananas."
@@ -62,14 +42,14 @@ Please refer to some example game concepts and their presentation in terms of ac
 - "Can we have a platformer game set in a space station with low gravity sections, asteroid fields, and airlock puzzles?"
 </example_concepts>
 
-Here are previously generated game concepts for your reference. Please propose new game concepts that are much diverse and different from the previously generated game concepts.
+Here are previously generated game concepts for your reference. Please propose new game concepts that are different from the previously generated game concepts in terms of ideas and writing style.
 <previous_concepts>
 {previous_concepts_text}
 </previous_concepts>
 </game_concept_instructions>
 
-<game_instructions>
-- Canvas: `600 × 400 px`; target 60 FPS
+<code_instructions>
+- Canvas: `{canvas_width} × {canvas_height} px`; target 60 FPS
 - Use p5.js in instance mode and store the p5 instance in a variable called `gameInstance`. Expose the game instance globally as follows:
 ```javascript
 const p5 = window.p5
@@ -103,7 +83,5 @@ window.gameInstance = gameInstance;
     - "screen_x", "screen_y": The x and y position of the player on the screen
     - "game_x", "game_y": The x and y position of the player in the game world
     - "framecount": The framecount of the event
-</game_instructions>
+</code_instructions>
 </instructions>
-
-

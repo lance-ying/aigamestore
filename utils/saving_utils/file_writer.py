@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 import datetime
 import json
-
+import yaml  # type: ignore
 
 def save_game_baseline_concept(
     title: str,
@@ -90,20 +90,18 @@ def save_game_baseline_concept(
             json.dumps(intermediate_outputs, indent=2), encoding="utf-8"
         )
 
-    # Store the game concept aligned with game index for future de-dup guidance
-    try:
-        concepts_dir = Path("game_concepts")
-        concepts_dir.mkdir(parents=True, exist_ok=True)
-        concept_path = concepts_dir / f"game_{next_game_number:04d}.txt"
-        concept_path.write_text(game_concept.strip() + "\n", encoding="utf-8")
-    except Exception:
-        pass
+
+    concepts_dir = Path("game_concepts")
+    concepts_dir.mkdir(parents=True, exist_ok=True)
+    concept_path = concepts_dir / f"game_{next_game_number:04d}.yaml"
+    # Prefer YAML if available; else write a minimal YAML string
+    with open(concept_path, "w", encoding="utf-8") as yf:
+        yaml.safe_dump({"concept": game_concept.strip()}, yf, sort_keys=False)
 
     return sample_dir
 
 
 def save_game_single_prompt(
-    *,
     title: str,
     html_code: str,
     js_files: List[Tuple[str, str]],
@@ -113,12 +111,13 @@ def save_game_single_prompt(
     forced_game_index: Optional[int] = None,
     intermediate_outputs: Optional[Dict[str, Any]] = None,
     conversation_log: Optional[List[Dict[str, str]]] = None,
+    output_folder: Optional[str] = None,
 ) -> Path:
     """Save generated game files for single_prompt_with_testing under games/single_prompt_with_testing.
 
     If forced_game_index is provided, saves under that specific game_{index} directory.
     """
-    base_dir = Path("games") / "single_prompt_with_testing"
+    base_dir = Path("games") / (output_folder or "single_prompt_with_testing")
     base_dir.mkdir(parents=True, exist_ok=True)
 
     if forced_game_index is not None and forced_game_index >= 0:

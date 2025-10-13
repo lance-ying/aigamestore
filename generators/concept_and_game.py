@@ -3,6 +3,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from generators.base import GameGenerator
 from utils.saving_utils.file_writer import save_game_baseline_concept
 from pathlib import Path
+from utils.prompt_formatting.prompt_utils import build_user_prompt, build_system_prompt
+from utils.prompt_formatting.html_template_utils import render_html_template
 
 
 class BaselineConceptAndGameGenerator(GameGenerator):
@@ -12,12 +14,11 @@ class BaselineConceptAndGameGenerator(GameGenerator):
         super().__init__(*args, **kwargs)
 
     def generate_user_prompt(self, game_concept: Optional[str] = None) -> str:
-        instructions = self.get_baseline_instructions()
-        output_format = self.get_baseline_output_format()
+        prompt = build_user_prompt("concept_and_game", self.prompt_config)
         task = (
             "\n<task>\nPropose an interesting and novel game concept, then implement a fun and playable game expanding on that concept.\n</task>"
         )
-        return instructions + task + output_format
+        return prompt + task + self.get_baseline_output_format()
 
     def get_baseline_instructions(self) -> str:
         with open("prompts/generation/baseline_concept_and_game_instructions.md", "r") as f:
@@ -27,11 +28,26 @@ class BaselineConceptAndGameGenerator(GameGenerator):
             concepts_dir = Path("game_concepts")
             previous: List[str] = []
             if concepts_dir.exists():
-                for p in sorted(concepts_dir.glob("game_*.txt")):
+                for p in sorted(concepts_dir.glob("game_*.yaml")):
                     try:
                         text = p.read_text(encoding="utf-8").strip()
-                        if text:
-                            previous.append(f'- "{text}"')
+                        concept_value = ""
+                        if text.startswith("concept:"):
+                            # naive YAML parse for the single key
+                            lines = text.splitlines()
+                            if len(lines) >= 1:
+                                # single-line value on the same line as key
+                                if len(lines) == 1 and ":" in lines[0]:
+                                    concept_value = lines[0].split(":", 1)[1].strip()
+                                else:
+                                    # block scalar case; join wrapped lines into one
+                                    block: List[str] = []
+                                    for ln in lines[1:]:
+                                        if ln.startswith("  "):
+                                            block.append(ln[2:].strip())
+                                    concept_value = " ".join([b for b in " ".join(block).split()])
+                        if concept_value:
+                            previous.append(f'- "{concept_value}"')
                     except Exception:
                         continue
             prev_block = "\n".join(previous[-200:])  # limit size
@@ -41,26 +57,22 @@ class BaselineConceptAndGameGenerator(GameGenerator):
         return base
 
     def get_system_prompt(self) -> str:
-        with open("prompts/generation/baseline_concept_and_game_sysprompt.md", "r") as f:
-            return f.read()
+        return build_system_prompt()
 
     def get_baseline_output_format(self) -> str:
         # Kept concise; same structure as archive with example html and output tags
-        template = ""
-        try:
-            with open("html_templates/baseline_concept_and_game.html", "r") as tf:
-                template = tf.read()
-        except Exception:
-            template = ""
+        # Render template with default libraries; can be made dynamic later via config
+        libs = self.prompt_config.get("libraries_allowed") or ["p5.js", "p5.collide2D"]
+        template = render_html_template("html_templates/baseline_concept_and_game.html", libs)
         return (
             "\n<example_html>\n" + template + "</example_html>\n\n"
             "<output_instructions>\n"
             "Output the code plan and game files in this format with NO OTHER TEXT:\n\n"
-            "<game_concept>\n...\n</game_concept>\n\n"
-            "<game_description>\n...\n</game_description>\n\n"
-            "<game_controls>\n...\n</game_controls>\n\n"
-            "For the javascript files:\n<code filename=\"{name}.{extension}\">\n...\n</code>\n\n"
-            "HTML following the <example_html> template (output last):\n<code filename=\"index.html\">\n...\n</code>\n"
+            "<game_concept>\n... (Put the game concept here in 1-2 sentences capturing a fun and interesting idea that can be expanded into a full game.)\n</game_concept>\n\n"
+            "<game_description>\n... (Describe the game to the player, the objective, what they need to know to play the game. Feel free to add beyond the game concept. Keep it short and informative to allow the user to understand the game quickly. Do not mention the controls here.)\n</game_description>\n\n"
+            "<game_controls>\n... (Game controls as a list to specify the key bindings and the action they perform. Key: Action. Be specific about each key.)\n</game_controls>\n\n"
+            "For the javascript files:\n<code filename=\"{name}.{extension}\">\n... (javascript code)\n</code>\n\n"
+            "HTML following the <example_html> template (output last):\n<code filename=\"index.html\">\n... (html code)\n</code>\n"
             "</output_instructions>\n"
         )
 

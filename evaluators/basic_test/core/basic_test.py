@@ -63,21 +63,176 @@ async def _sample_canvas_pixels(page: Page, sample_count: int = 200) -> List[int
         """
         % sample_count
     )
+async def _capture_canvas_dataurl(page: Page) -> str:
+    try:
+        data_url = await page.evaluate(
+            """
+(() => {
+  const cvs = document.querySelector('canvas');
+  if (!cvs) return '';
+  try { return cvs.toDataURL('image/png'); } catch (e) { return ''; }
+})()
+            """
+        )
+        return data_url or ""
+    except Exception:
+        return ""
 
 
-async def _press_sequence(page: Page, duration_sec: int = 5) -> None:
-    keys = ["Enter", " ", "ArrowRight", "ArrowLeft", "ArrowUp", "ArrowDown"]
+async def _focus_canvas(page: Page) -> None:
+    try:
+        await page.evaluate(
+            r"""() => {
+  document.body.click();
+  const canvas = document.querySelector('canvas');
+  if (canvas) {
+    if (!canvas.hasAttribute('tabindex')) canvas.setAttribute('tabindex', '1');
+    canvas.focus();
+    canvas.click();
+  }
+}"""
+        )
+    except Exception:
+        pass
+
+
+KEY_CODE_MAP: Dict[str, int] = {
+    "Enter": 13,
+    " ": 32,
+    "Space": 32,
+    "ArrowLeft": 37,
+    "ArrowUp": 38,
+    "ArrowRight": 39,
+    "ArrowDown": 40,
+    "Shift": 16,
+    "Z": 90,
+    "z": 90,
+    "R": 82,
+    "r": 82,
+}
+
+
+async def _press_key_robust(page: Page, key: str, debug: bool = False) -> None:
+    try:
+        # Method 1: normal press
+        await page.keyboard.press(key)
+        await page.wait_for_timeout(60)
+    except Exception as e:
+        if debug:
+            logging.info(f"Standard press failed for {key}: {e}")
+    try:
+        # Method 2: down/up
+        await page.keyboard.down(key)
+        await page.wait_for_timeout(30)
+        await page.keyboard.up(key)
+        await page.wait_for_timeout(60)
+    except Exception as e:
+        if debug:
+            logging.info(f"Down/Up press failed for {key}: {e}")
+    try:
+        # Method 3: dispatch DOM KeyboardEvents on canvas using a single args object
+        code = KEY_CODE_MAP.get(key, 0)
+        await page.evaluate(
+            """
+(args) => {
+  const { k, code } = args;
+  const canvas = document.querySelector('canvas') || document.body;
+  const evs = ['keydown','keypress','keyup'];
+  evs.forEach(t => {
+    const ev = new KeyboardEvent(t, { key: k, keyCode: code, which: code, code: k, bubbles: true, cancelable: true });
+    canvas.dispatchEvent(ev);
+  });
+}
+            """,
+            {"k": key, "code": code},
+        )
+        await page.wait_for_timeout(80)
+    except Exception as e:
+        if debug:
+            logging.info(f"Dispatch event failed for {key}: {e}")
+
+
+async def _press_sequence(page: Page, duration_sec: int = 5, debug: bool = False) -> None:
+    keys = [" ", "ArrowRight", "ArrowLeft", "ArrowUp", "ArrowDown"]
     start = time.time()
     while time.time() - start < duration_sec:
         for key in keys:
             try:
-                await page.keyboard.press(key)
-                await page.wait_for_timeout(120)
-            except Exception:
-                pass
+                if debug:
+                    logging.info(f"Pressing: {key}")
+                await _press_key_robust(page, key, debug)
+            except Exception as e:
+                if debug:
+                    logging.info(f"Key press error {key}: {e}")
 
 
-def test_game(game_path: str, duration: int = 10, timeout: int = 20) -> Dict[str, Any]:
+async def _get_game_state(page: Page) -> Dict[str, Any]:
+    try:
+        state = await page.evaluate(
+            """
+(() => {
+  try {
+    // Preferred API
+    if (typeof window.getGameState === 'function') {
+      const s = window.getGameState();
+      if (s && typeof s === 'object') return { source: 'getGameState()', raw: s, phase: s.gamePhase || s.phase || null, score: s.score || 0, player: s.player || null, controlMode: s.controlMode || null };
+    }
+    // Global object fallback
+    if (window.gameState && typeof window.gameState === 'object') {
+      const s = window.gameState;
+      return { source: 'window.gameState', raw: s, phase: s.gamePhase || s.phase || null, score: s.score || 0, player: s.player || null, controlMode: s.controlMode || null };
+    }
+    // Heuristic scan of globals by name
+    for (const k of Object.keys(window)) {
+      try {
+        if (/game.*state/i.test(k)) {
+          const s = window[k];
+          if (s && typeof s === 'object') {
+            return { source: `window[${k}]`, raw: s, phase: s.gamePhase || s.phase || null, score: s.score || 0, player: s.player || null, controlMode: s.controlMode || null };
+          }
+        }
+      } catch (e) {}
+    }
+    // Heuristic scan for any object with a gamePhase-like field
+    for (const k of Object.keys(window)) {
+      try {
+        const s = window[k];
+        if (s && typeof s === 'object' && ('gamePhase' in s || 'phase' in s)) {
+          return { source: `window[${k}]`, raw: s, phase: s.gamePhase || s.phase || null, score: s.score || 0, player: s.player || null, controlMode: s.controlMode || null };
+        }
+      } catch (e) {}
+    }
+    // Check for p5 instance logs or any global with logs
+    const candidates = [];
+    const inst = (window.gameInstance ? window.gameInstance : null);
+    if (inst && typeof inst === 'object' && inst.logs) candidates.push({ source: 'window.gameInstance.logs', logs: inst.logs });
+    for (const k of Object.keys(window)) {
+      try {
+        const v = window[k];
+        if (v && typeof v === 'object' && v.logs && (v.logs.game_info || v.logs.inputs || v.logs.player_info)) {
+          candidates.push({ source: `window[${k}].logs`, logs: v.logs });
+        }
+      } catch (e) {}
+    }
+    if (candidates.length > 0) {
+      // Build a small snapshot
+      const c = candidates[0];
+      const gi = Array.isArray(c.logs.game_info) ? c.logs.game_info.slice(-3) : [];
+      const inp = Array.isArray(c.logs.inputs) ? c.logs.inputs.slice(-3) : [];
+      const pl = Array.isArray(c.logs.player_info) ? c.logs.player_info.slice(-3) : [];
+      return { source: c.source, raw: { logs: c.logs }, phase: null, score: null, player: null, controlMode: null, logs_tail: { game_info: gi, inputs: inp, player_info: pl } };
+    }
+  } catch (e) {}
+  return {};
+})()
+            """
+        )
+        return state or {}
+    except Exception:
+        return {}
+
+
+def test_game(game_path: str, duration: int = 10, timeout: int = 20, debug: bool = False) -> Dict[str, Any]:
     if not PLAYWRIGHT_OK:
         return {"test_result": False, "error": "Playwright not installed"}
 
@@ -113,23 +268,87 @@ def test_game(game_path: str, duration: int = 10, timeout: int = 20) -> Dict[str
                     return res
 
                 # focus canvas if present
+                await _focus_canvas(page)
+
+                # initial samples and state
+                before_pixels = await _sample_canvas_pixels(page)
+                before_state = await _get_game_state(page)
+                before_img = await _capture_canvas_dataurl(page)
+                if debug:
+                    logging.info(f"Initial state: {before_state}")
+                    if isinstance(before_state, dict) and 'source' in before_state:
+                        logging.info(f"State source: {before_state.get('source')}")
+
+                # Ensure game starts: press Enter first
+                # Try multiple Enter presses with focus
+                enter_attempts = 0
+                while enter_attempts < 5:
+                    try:
+                        await _focus_canvas(page)
+                        if debug:
+                            logging.info("Pressing: Enter")
+                        await _press_key_robust(page, "Enter", debug)
+                        await page.wait_for_timeout(200)
+                        cur = await _get_game_state(page)
+                        if debug:
+                            logging.info(f"State after Enter: {cur}")
+                        if isinstance(cur, dict) and (cur.get('phase') == 'PLAYING' or cur.get('phase') == 'PAUSED'):
+                            break
+                    except Exception as e:
+                        if debug:
+                            logging.info(f"Enter press error: {e}")
+                    enter_attempts += 1
+
+                # Press a sequence of keys while logging
+                keys = [" ", "ArrowRight", "ArrowLeft", "ArrowUp", "ArrowDown"]
+                start_t = time.time()
+                while time.time() - start_t < max(2, duration // 2):
+                    for k in keys:
+                        try:
+                            if debug:
+                                logging.info(f"Pressing: {k}")
+                            await _press_key_robust(page, k, debug)
+                            if debug:
+                                cur_state = await _get_game_state(page)
+                                logging.info(f"Observed state after {k}: {cur_state}")
+                        except Exception as e:
+                            if debug:
+                                logging.info(f"Key {k} press error: {e}")
+
+                after_pixels = await _sample_canvas_pixels(page)
+                after_state = await _get_game_state(page)
+                after_img = await _capture_canvas_dataurl(page)
+                if debug:
+                    logging.info(f"Final state: {after_state}")
+
+                # simple diff
+                pixel_change = False
+                if before_pixels and after_pixels:
+                    changed = sum(1 for b, a in zip(before_pixels, after_pixels) if b != a)
+                    ratio = changed / min(len(before_pixels), len(after_pixels))
+                    pixel_change = ratio >= 0.1
+
+                # game state change heuristic
+                state_change = False
                 try:
-                    canvas = page.locator("canvas").first
-                    if await canvas.count() > 0:
-                        await canvas.click()
+                    if isinstance(before_state, dict) and isinstance(after_state, dict):
+                        if before_state.get("phase") != after_state.get("phase"):
+                            state_change = True
+                        elif before_state.get("score") != after_state.get("score"):
+                            state_change = True
+                        elif (before_state.get("player") or {}) != (after_state.get("player") or {}):
+                            state_change = True
                 except Exception:
                     pass
 
-                # initial sample
-                before = await _sample_canvas_pixels(page)
-                await _press_sequence(page, max(2, duration // 2))
-                after = await _sample_canvas_pixels(page)
+                img_change = False
+                try:
+                    if before_img and after_img and before_img != after_img:
+                        img_change = True
+                except Exception:
+                    pass
 
-                # simple diff
-                if before and after:
-                    changed = sum(1 for b, a in zip(before, after) if b != a)
-                    ratio = changed / min(len(before), len(after))
-                    res["interaction_changes"] = ratio >= 0.1  # 10% pixels changed
+                res["interaction_changes"] = bool(pixel_change or state_change or img_change)
 
                 await browser.close()
                 return res

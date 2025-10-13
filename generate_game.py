@@ -2,15 +2,8 @@ import argparse
 import json
 from pathlib import Path
 from typing import Any, Dict
-
-from generators.concept_and_game.generator import BaselineConceptAndGameGenerator
-from generators.single_prompt_with_testing.generator import SinglePromptWithTestingGenerator
-
-try:
-    import yaml  # type: ignore
-except Exception:
-    yaml = None
-
+import yaml
+from generators import BaselineConceptAndGameGenerator, SinglePromptWithTestingGenerator
 
 def load_config(path: str) -> Dict[str, Any]:
     p = Path(path)
@@ -19,12 +12,14 @@ def load_config(path: str) -> Dict[str, Any]:
         return yaml.safe_load(text)
     return json.loads(text)
 
-
 def main() -> int:
     parser = argparse.ArgumentParser(description="Generate a game from a config")
     parser.add_argument("--config", required=True, help="Path to generator config file")
     parser.add_argument("--game_index", type=int, required=False, help="Override next game index for output folder")
     parser.add_argument("--concept", type=str, required=False, help="Path to concept file to drive generation (single_prompt)")
+    parser.add_argument("--output_folder", type=str, required=False, help="Custom output folder name under games/")
+    parser.add_argument("--debug_prompts", action="store_true", help="Only build and print/save prompts; no model call")
+    parser.add_argument("--debug_prompts_out", type=str, required=False, help="Optional file path to save built prompts")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -34,6 +29,16 @@ def main() -> int:
     thinking_budget = cfg.get("thinking_budget")
     temperature = cfg.get("temperature", 1.0)
     top_p = cfg.get("top_p", 1.0)
+    prompt_config = {
+        "libraries_allowed": cfg.get("libraries_allowed"),
+        "actions_allowed": cfg.get("actions_allowed"),
+        "canvas_width": cfg.get("canvas_width", 600),
+        "canvas_height": cfg.get("canvas_height", 400),
+        "output_folder": cfg.get("output_folder") or args.output_folder,
+    }
+
+    # Concept argument (used for single_prompt_with_testing)
+    concept_arg = args.concept or cfg.get("concept")
 
     if method == "concept_and_game":
         gen = BaselineConceptAndGameGenerator(
@@ -43,7 +48,19 @@ def main() -> int:
             thinking_budget=thinking_budget,
             temperature=temperature,
             top_p=top_p,
+            prompt_config=prompt_config,
         )
+        if args.debug_prompts:
+            system_prompt = gen.get_system_prompt()
+            user_prompt = gen.generate_user_prompt()
+            combined = (
+                "=== SYSTEM PROMPT ===\n" + system_prompt + "\n\n" +
+                "=== USER PROMPT ===\n" + user_prompt + "\n"
+            )
+            print(combined)
+            if args.debug_prompts_out:
+                Path(args.debug_prompts_out).write_text(combined, encoding="utf-8")
+            return 0
         result = gen.generate_game()
     elif method == "single_prompt_with_testing":
         gen = SinglePromptWithTestingGenerator(
@@ -53,9 +70,19 @@ def main() -> int:
             thinking_budget=thinking_budget,
             temperature=temperature,
             top_p=top_p,
+            prompt_config=prompt_config,
         )
-        # Prefer CLI --concept if provided; else, config concept path
-        concept_arg = args.concept or cfg.get("concept")
+        if args.debug_prompts:
+            system_prompt = gen.get_system_prompt()
+            user_prompt = gen.generate_user_prompt(concept_arg)
+            combined = (
+                "=== SYSTEM PROMPT ===\n" + system_prompt + "\n\n" +
+                "=== USER PROMPT ===\n" + (user_prompt or "") + "\n"
+            )
+            print(combined)
+            if args.debug_prompts_out:
+                Path(args.debug_prompts_out).write_text(combined, encoding="utf-8")
+            return 0
         result = gen.generate_game(concept_arg, forced_game_index=args.game_index)
     else:
         raise ValueError(f"Unknown method: {method}")
@@ -64,7 +91,6 @@ def main() -> int:
     override = args.game_index
     game_dir = result.get("game_dir")
     if override is not None and game_dir:
-        from pathlib import Path
         p = Path(game_dir)
         # Support baseline concept path structure
         if p.name.startswith("sample_") and p.parent.name.startswith("game_") and p.parent.parent.name == "baseline_concept_game":
@@ -87,5 +113,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-

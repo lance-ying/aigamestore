@@ -26,6 +26,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Evaluate game from a config")
     parser.add_argument("--config", required=True)
     parser.add_argument("--target", required=False, help="Game directory or video path")
+    parser.add_argument("--debug", action="store_true", help="Enable verbose debug logs for basic testing")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -35,7 +36,12 @@ def main() -> int:
         game_path = args.target or cfg.get("game_path")
         if not game_path:
             raise ValueError("basic_test requires --target or game_path in config")
-        res = run_basic(game_path, duration=int(cfg.get("duration", 10)), timeout=int(cfg.get("timeout", 20)))
+        res = run_basic(
+            game_path,
+            duration=int(cfg.get("duration", 10)),
+            timeout=int(cfg.get("timeout", 20)),
+            debug=bool(args.debug or cfg.get("debug", False)),
+        )
         print(json.dumps(res))
         return 0
 
