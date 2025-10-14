@@ -149,6 +149,21 @@ class ModelAPI:
                                     elif hasattr(delta, "type") and getattr(delta, "type") == "thinking_delta":
                                         tpiece = getattr(delta, "thinking", "")
                                         thinking_content += tpiece
+                            # Attempt to read token usage from final message if available
+                            try:
+                                final_msg = stream.get_final_message()  # type: ignore[attr-defined]
+                                usage = getattr(final_msg, "usage", None)
+                                if usage is not None:
+                                    in_tok = getattr(usage, "input_tokens", None)
+                                    out_tok = getattr(usage, "output_tokens", None)
+                                    if isinstance(in_tok, int):
+                                        prompt_tokens = in_tok
+                                    if isinstance(out_tok, int):
+                                        completion_tokens = out_tok
+                                    if isinstance(prompt_tokens, int) and isinstance(completion_tokens, int):
+                                        total_tokens = prompt_tokens + completion_tokens
+                            except Exception:
+                                pass
                         if verbose:
                             print()
                         break
@@ -162,8 +177,22 @@ class ModelAPI:
                                         result_text = getattr(block, "text", "")
                             else:
                                 result_text = response.content[0].text  # type: ignore[index]
+                            # Capture usage for non-streaming response if present
+                            try:
+                                usage = getattr(response, "usage", None)
+                                if usage is not None:
+                                    in_tok = getattr(usage, "input_tokens", None)
+                                    out_tok = getattr(usage, "output_tokens", None)
+                                    if isinstance(in_tok, int):
+                                        prompt_tokens = in_tok
+                                    if isinstance(out_tok, int):
+                                        completion_tokens = out_tok
+                                    if isinstance(prompt_tokens, int) and isinstance(completion_tokens, int):
+                                        total_tokens = prompt_tokens + completion_tokens
+                            except Exception:
+                                pass
 
-                self._record_call(system_prompt, user_prompt, result_text)
+                self._record_call(system_prompt, user_prompt, result_text, prompt_tokens, completion_tokens, total_tokens)
                 if thinking:
                     return {"thinking": thinking_content, "response": result_text, "model": f"{self.model_provider}:{self.model}"}
                 return result_text
@@ -178,6 +207,28 @@ class ModelAPI:
                         max_output_tokens=max_tokens,
                     )
                     result_text = getattr(response, "output_text", "")
+                    # Capture token usage if provided by the Responses API
+                    try:
+                        usage = getattr(response, "usage", None)
+                        if usage is not None:
+                            pt = getattr(usage, "prompt_tokens", None)
+                            ct = getattr(usage, "completion_tokens", None)
+                            tt = getattr(usage, "total_tokens", None)
+                            if not isinstance(pt, int):
+                                pt = getattr(usage, "input_tokens", None)
+                            if not isinstance(ct, int):
+                                ct = getattr(usage, "output_tokens", None)
+                            if not isinstance(tt, int) and isinstance(pt, int) and isinstance(ct, int):
+                                tt = pt + ct
+                            if isinstance(pt, int):
+                                prompt_tokens = pt
+                            if isinstance(ct, int):
+                                completion_tokens = ct
+                            if isinstance(tt, int):
+                                total_tokens = tt
+                    except Exception:
+                        pass
+                    self._record_call(system_prompt, user_prompt, result_text, prompt_tokens, completion_tokens, total_tokens)
                     return {"thinking": getattr(response, "reasoning", ""), "response": result_text, "model": f"{self.model_provider}:{self.model}"}
 
                 try:
@@ -186,6 +237,7 @@ class ModelAPI:
                         messages=messages,
                         max_completion_tokens=max_tokens,
                         stream=True,
+                        stream_options={"include_usage": True},  # type: ignore[arg-type]
                         **kwargs,
                     )  # type: ignore[attr-defined]
                     result_text = ""
@@ -196,6 +248,21 @@ class ModelAPI:
                             if verbose and piece:
                                 print(piece, end="", flush=True)
                             result_text += piece
+                        # Try to capture usage at the end of the stream
+                        try:
+                            usage = getattr(event, "usage", None)
+                            if usage is not None:
+                                pt = getattr(usage, "prompt_tokens", None)
+                                ct = getattr(usage, "completion_tokens", None)
+                                tt = getattr(usage, "total_tokens", None)
+                                if isinstance(pt, int):
+                                    prompt_tokens = pt
+                                if isinstance(ct, int):
+                                    completion_tokens = ct
+                                if isinstance(tt, int):
+                                    total_tokens = tt
+                        except Exception:
+                            pass
                     if verbose:
                         print()
                 except Exception:
@@ -206,6 +273,21 @@ class ModelAPI:
                         **kwargs,
                     )
                     result_text = response.choices[0].message.content  # type: ignore[index]
+                    # Capture usage for non-streaming response
+                    try:
+                        usage = getattr(response, "usage", None)
+                        if usage is not None:
+                            pt = getattr(usage, "prompt_tokens", None)
+                            ct = getattr(usage, "completion_tokens", None)
+                            tt = getattr(usage, "total_tokens", None)
+                            if isinstance(pt, int):
+                                prompt_tokens = pt
+                            if isinstance(ct, int):
+                                completion_tokens = ct
+                            if isinstance(tt, int):
+                                total_tokens = tt
+                    except Exception:
+                        pass
 
                 self._record_call(system_prompt, user_prompt, result_text, prompt_tokens, completion_tokens, total_tokens)
                 return {"thinking": "", "response": result_text, "model": f"{self.model_provider}:{self.model}"} if thinking else result_text
@@ -225,6 +307,21 @@ class ModelAPI:
                             if verbose and piece:
                                 print(piece, end="", flush=True)
                             result_text += piece
+                        # Attempt to capture usage metadata if present on chunks
+                        try:
+                            usage_md = getattr(chunk, "usage_metadata", None)
+                            if usage_md is not None:
+                                pt = getattr(usage_md, "prompt_token_count", None)
+                                ct = getattr(usage_md, "candidates_token_count", None)
+                                tt = getattr(usage_md, "total_token_count", None)
+                                if isinstance(pt, int):
+                                    prompt_tokens = pt
+                                if isinstance(ct, int):
+                                    completion_tokens = ct
+                                if isinstance(tt, int):
+                                    total_tokens = tt
+                        except Exception:
+                            pass
                     if verbose:
                         print()
                 except Exception:
@@ -233,7 +330,22 @@ class ModelAPI:
                         generation_config={"max_output_tokens": max_tokens, "temperature": temperature, **kwargs},
                     )
                     result_text = response.text  # type: ignore[attr-defined]
-                self._record_call(system_prompt, user_prompt, result_text)
+                    # Capture usage metadata for non-streaming response
+                    try:
+                        usage_md = getattr(response, "usage_metadata", None)
+                        if usage_md is not None:
+                            pt = getattr(usage_md, "prompt_token_count", None)
+                            ct = getattr(usage_md, "candidates_token_count", None)
+                            tt = getattr(usage_md, "total_token_count", None)
+                            if isinstance(pt, int):
+                                prompt_tokens = pt
+                            if isinstance(ct, int):
+                                completion_tokens = ct
+                            if isinstance(tt, int):
+                                total_tokens = tt
+                    except Exception:
+                        pass
+                self._record_call(system_prompt, user_prompt, result_text, prompt_tokens, completion_tokens, total_tokens)
                 return {"thinking": "", "response": result_text, "model": f"{self.model_provider}:{self.model}"} if thinking else result_text
 
             raise RuntimeError("Unsupported provider path")

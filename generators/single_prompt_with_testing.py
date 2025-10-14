@@ -25,9 +25,18 @@ Implement a complete, fun, and error-free p5.js game for the following concept:
             "\n<example_html>\n" + example_html + "</example_html>\n\n"
             "<output_instructions>\n"
             "Output the code plan and game files in this format with NO OTHER TEXT:\n\n"
-            "<game_description>\n...\n</game_description>\n\n"
-            "<game_controls>\n...\n</game_controls>\n\n"
-            "<automated_testing>\n...\n</automated_testing>\n\n"
+            "<game_description>\n... (Describe the game to the player, the objective, what they need to know to play the game. Do not mention the controls here. Keep it short and informative.)\n</game_description>\n\n"
+            "<game_controls>\n... (Game controls as a list to specify the key bindings and the action they perform. Key: Action. Be specific about each key.)\n</game_controls>\n\n"
+            # Unified automated testing instructions similar to XML generator
+            "Write the automated testing plan:\n"
+            "<automated_testing>\n"
+            "<TEST_1>\n"
+            "<test_description>(write in < 5 sentences \"What are you testing and the intent of the test?\")</test_description>\n"
+            "<strategy_description>(write in < 5 sentences \"What is your gameplay strategy to test it?\")</strategy_description>\n"
+            "<expected_outcome>(write in < 5 sentences \"What is the expected outcome? When do you consider the test successful?\")</expected_outcome>\n"
+            "</TEST_1>\n"
+            "// Add more tests (up to 7)\n"
+            "</automated_testing>\n\n"
             "For the javascript files:\n<code filename=\"{name}.{extension}\">\n...\n</code>\n\n"
             "HTML following the <example_html> template (output last):\n<code filename=\"index.html\">\n...\n</code>\n"
             "</output_instructions>\n"
@@ -41,24 +50,25 @@ Implement a complete, fun, and error-free p5.js game for the following concept:
         # If concept is a path, read it
         if game_concept and isinstance(game_concept, str):
             from pathlib import Path
+            import yaml  # type: ignore
             p = Path(game_concept)
             if p.exists():
                 try:
-                    text = p.read_text(encoding="utf-8").strip()
-                    if p.suffix in (".yml", ".yaml") and text.startswith("concept:"):
-                        lines = text.splitlines()
-                        if len(lines) == 1 and ":" in lines[0]:
-                            game_concept = lines[0].split(":", 1)[1].strip()
+                    # Prefer YAML parsing to avoid clipping
+                    if p.suffix in (".yml", ".yaml"):
+                        data = yaml.safe_load(p.read_text(encoding="utf-8"))
+                        if isinstance(data, dict) and "concept" in data:
+                            game_concept = str(data.get("concept") or "").strip()
                         else:
-                            block = []
-                            for ln in lines[1:]:
-                                if ln.startswith("  "):
-                                    block.append(ln[2:])
-                            game_concept = "\n".join(block).strip() or text
+                            # Fallback to raw text if unexpected format
+                            game_concept = p.read_text(encoding="utf-8").strip()
                     else:
-                        game_concept = text
+                        game_concept = p.read_text(encoding="utf-8").strip()
                 except Exception:
-                    pass
+                    try:
+                        game_concept = p.read_text(encoding="utf-8").strip()
+                    except Exception:
+                        pass
         user_prompt = self.generate_user_prompt(game_concept)
         system_prompt = self.get_system_prompt()
         response = self.model_api.call(
@@ -73,17 +83,34 @@ Implement a complete, fun, and error-free p5.js game for the following concept:
 
         if isinstance(response, dict) and "response" in response:
             content = response["response"]
+            thinking_content = response.get("thinking", "")
         else:
             content = str(response)
+            thinking_content = ""
 
         title = self.extract_title(content)
         game_description = self.extract_game_description(content)
         game_controls = self.extract_game_controls(content)
+        automated_testing_block = self.extract_automated_testing(content)
+        automated_testing = self.parse_automated_testing(automated_testing_block)
         html_code = self.extract_code_block(content, "html") or ""
         js_map = self.extract_code_block(content, "javascript")
         js_files: List[Tuple[str, str]] = list(js_map.items())  # type: ignore[arg-type]
 
-        intermediate = {"full_response": content, "call_history": self.model_api.get_call_history()}
+        # Build a conversation log like baseline mode for parity
+        conversation_log: List[Dict[str, str]] = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+            {"role": "assistant", "content": content},
+        ]
+        if thinking_content:
+            conversation_log.append({"role": "thinking", "content": thinking_content})
+
+        intermediate = {
+            "full_response": content,
+            "call_history": self.model_api.get_call_history(),
+            "automated_testing": automated_testing,
+        }
 
         game_dir = save_game(
             title=title,
@@ -95,6 +122,7 @@ Implement a complete, fun, and error-free p5.js game for the following concept:
             forced_game_index=forced_game_index,
             output_folder=self.prompt_config.get("output_folder"),
             intermediate_outputs=intermediate,
+            conversation_log=conversation_log,
         )
 
         basic = run_basic_test(str(game_dir), duration=10, timeout=20)

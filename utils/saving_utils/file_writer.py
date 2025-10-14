@@ -59,6 +59,7 @@ def save_game_baseline_concept(
             "concept": game_concept,
             "description": game_description,
             "controls": game_controls,
+            "automated_testing": {},
             "playability": False,
         },
         "generation_info": {
@@ -66,6 +67,7 @@ def save_game_baseline_concept(
             "timestamp": timestamp,
             "game_number": f"game_{next_game_number:04d}",
             "sample_index": f"sample_{next_sample}",
+            "model": None,
             "token_usage": None,
         },
         "game_files": {"html": "index.html", "javascript": js_filenames, "log": "generation_log.json"},
@@ -78,14 +80,31 @@ def save_game_baseline_concept(
         )
 
     if intermediate_outputs:
-        # If model call history present, extract last call token usage
+        # If model call history present, extract last call token usage and model
         call_history = intermediate_outputs.get("call_history") if isinstance(intermediate_outputs, dict) else None
         if isinstance(call_history, list) and call_history:
-            last = call_history[-1]
-            tu = last.get("token_usage") if isinstance(last, dict) else None
-            if tu:
-                metadata["generation_info"]["token_usage"] = tu
+            last = call_history[-1] if isinstance(call_history[-1], dict) else None
+            if isinstance(last, dict):
+                model_name = last.get("model")
+                if isinstance(model_name, str) and model_name:
+                    metadata["generation_info"]["model"] = model_name
+                tu = last.get("token_usage")
+                if isinstance(tu, dict):
+                    # Coerce nulls to integers (0) for robustness
+                    pt = tu.get("prompt_tokens") or 0
+                    ct = tu.get("completion_tokens") or 0
+                    tt = tu.get("total_tokens") or (pt + ct)
+                    metadata["generation_info"]["token_usage"] = {
+                        "prompt_tokens": int(pt),
+                        "completion_tokens": int(ct),
+                        "total_tokens": int(tt),
+                    }
                 (sample_dir / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+        # Persist automated testing block if provided as structured mapping
+        auto = intermediate_outputs.get("automated_testing") if isinstance(intermediate_outputs, dict) else None
+        if isinstance(auto, dict):
+            metadata["game_info"]["automated_testing"] = auto
+            (sample_dir / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
         (sample_dir / "intermediate_outputs.json").write_text(
             json.dumps(intermediate_outputs, indent=2), encoding="utf-8"
         )
@@ -155,6 +174,7 @@ def save_game_single_prompt(
             "concept": game_concept,
             "description": game_description,
             "controls": game_controls,
+            "automated_testing": {},
             "playability": False,
         },
         "generation_info": {
@@ -162,6 +182,8 @@ def save_game_single_prompt(
             "timestamp": timestamp,
             "game_number": f"game_{next_game_number:04d}",
             "sample_index": f"sample_{next_sample}",
+            "model": None,
+            "token_usage": None,
         },
         "game_files": {"html": "index.html", "javascript": js_filenames, "log": "generation_log.json"},
     }
@@ -173,6 +195,30 @@ def save_game_single_prompt(
         )
 
     if intermediate_outputs:
+        # Extract model and token usage from call_history, if present
+        call_history = intermediate_outputs.get("call_history") if isinstance(intermediate_outputs, dict) else None
+        if isinstance(call_history, list) and call_history:
+            last = call_history[-1] if isinstance(call_history[-1], dict) else None
+            if isinstance(last, dict):
+                model_name = last.get("model")
+                if isinstance(model_name, str) and model_name:
+                    metadata["generation_info"]["model"] = model_name
+                tu = last.get("token_usage")
+                if isinstance(tu, dict):
+                    pt = tu.get("prompt_tokens") or 0
+                    ct = tu.get("completion_tokens") or 0
+                    tt = tu.get("total_tokens") or (pt + ct)
+                    metadata["generation_info"]["token_usage"] = {
+                        "prompt_tokens": int(pt),
+                        "completion_tokens": int(ct),
+                        "total_tokens": int(tt),
+                    }
+                (sample_dir / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+        # Persist automated testing mapping if present
+        auto = intermediate_outputs.get("automated_testing") if isinstance(intermediate_outputs, dict) else None
+        if isinstance(auto, dict):
+            metadata["game_info"]["automated_testing"] = auto
+            (sample_dir / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
         (sample_dir / "intermediate_outputs.json").write_text(
             json.dumps(intermediate_outputs, indent=2), encoding="utf-8"
         )

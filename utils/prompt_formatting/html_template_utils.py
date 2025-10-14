@@ -38,5 +38,3 @@ def render_html_template(template_path: str, libraries: List[str]) -> str:
         if start is not None and end is not None and end >= start:
             return "\n".join(lines[:start] + ["    " + l for l in scripts.splitlines()] + lines[end+1:])
     return html.replace("</body>", "    " + scripts + "\n  </body>")
-
-

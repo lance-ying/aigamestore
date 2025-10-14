@@ -71,7 +71,7 @@ window.gameInstance = gameInstance;
   - Use p. to call p5 functions.
   - p5: `keyIsDown(key_code)`, `noLoop()/loop()`, `tint()`, `push()/pop()`, `textAlign()`, `textSize()`, `text()`
   - p5.collide2d for collision detection
-    - Note that the specific order of the words in the function name matters. For example, 'collideCircleRect' is not available but 'collideRectCircle' is available.
+    - Note that the specific order of the shapes in the function name matters.
     - Available functions: `collidePointPoint`, `collidePointCircle`, `collidePointEllipse`, `collidePointRect`, `collidePointLine`, `collidePointArc`, `collideRectRect`, `collideCircleCircle`, `collideRectCircle`, `collideLineLine`, `collideLineCircle`, `collideLineRect`, `collidePointPoly`, `collideCirclePoly`, `collideRectPoly`, `collideLinePoly`, `collidePolyPoly`, `collidePointTriangle`
 </p5_instructions>
 </code_instructions>

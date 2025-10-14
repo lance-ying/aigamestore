@@ -44,6 +44,56 @@ class GameGenerator(ABC):
         match = re.search(r"<automated_testing_code>\s*(.*?)\s*</automated_testing_code>", text, re.DOTALL)
         return match.group(1).strip() if match else ""
 
+    def extract_automated_testing(self, text: str) -> str:
+        match = re.search(r"<automated_testing>\s*(.*?)\s*</automated_testing>", text, re.DOTALL)
+        return match.group(1).strip() if match else ""
+
+    def parse_automated_testing(self, automated_testing_block: str) -> Dict[str, Dict[str, str]]:
+        """
+        Parse the <automated_testing> block into a structured mapping for VLM.
+
+        Returns a mapping with keys like 'TEST_1' and corresponding button id 'test_1_ModeBtn',
+        each mapping to a dict with 'test_description', 'strategy_description', 'expected_outcome' and
+        mirrored short keys 'description', 'strategy', 'expected'.
+        """
+        if not automated_testing_block:
+            return {}
+
+        tests: Dict[str, Dict[str, str]] = {}
+        # Find blocks like <TEST_1> ... </TEST_1>
+        for m in re.finditer(r"<(TEST_\d+)>\s*(.*?)\s*</\1>", automated_testing_block, re.DOTALL):
+            test_tag = m.group(1)  # e.g., TEST_1
+            body = m.group(2)
+            def _extract(tag: str) -> str:
+                mm = re.search(rf"<{tag}>\s*(.*?)\s*</{tag}>", body, re.DOTALL)
+                return (mm.group(1).strip() if mm else "").strip()
+
+            test_desc = _extract("test_description")
+            strat_desc = _extract("strategy_description")
+            expected = _extract("expected_outcome")
+
+            entry = {
+                "test_description": test_desc,
+                "strategy_description": strat_desc,
+                "expected_outcome": expected,
+                # Short mirrors for consumers expecting these keys
+                "description": test_desc,
+                "strategy": strat_desc,
+                "expected": expected,
+            }
+
+            # Save under 'TEST_n'
+            tests[test_tag] = entry
+            # Also save under button id convention: 'test_n_ModeBtn'
+            try:
+                idx = test_tag.split("_")[1]
+                button_id = f"test_{idx.lower()}_ModeBtn"
+                tests[button_id] = entry
+            except Exception:
+                pass
+
+        return tests
+
     def extract_code_block(self, text: str, language: str = "javascript") -> Union[str, Dict[str, str]]:
         code_blocks = re.findall(r"<code filename=\"(.*?)\">(.*?)</code>", text, re.DOTALL)
         if language == "javascript":

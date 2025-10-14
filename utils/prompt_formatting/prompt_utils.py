@@ -100,6 +100,7 @@ def format_hard_constraints(config: Dict[str, Any]) -> str:
 
     hc = _read("prompts/common/hard_constraints.md")
     hc = hc.replace("{libraries_allowed}", ", ".join(libs))
+    hc = hc.replace("{canvas_width}", str(cw)).replace("{canvas_height}", str(ch))
     hc = hc.replace("{game_controls}", game_controls_text)
     hc = hc.replace("{game_phase_control}", phase_block)
     return hc

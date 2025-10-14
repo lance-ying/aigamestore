@@ -74,7 +74,23 @@ def main() -> int:
         )
         if args.debug_prompts:
             system_prompt = gen.get_system_prompt()
-            user_prompt = gen.generate_user_prompt(concept_arg)
+            # Resolve concept text for debug prompt (load YAML 'concept' or file text)
+            resolved_concept = concept_arg
+            try:
+                if concept_arg:
+                    p = Path(str(concept_arg))
+                    if p.exists():
+                        if p.suffix in (".yml", ".yaml"):
+                            data = yaml.safe_load(p.read_text(encoding="utf-8"))
+                            if isinstance(data, dict) and "concept" in data:
+                                resolved_concept = str(data.get("concept") or "").strip()
+                            else:
+                                resolved_concept = p.read_text(encoding="utf-8").strip()
+                        else:
+                            resolved_concept = p.read_text(encoding="utf-8").strip()
+            except Exception:
+                pass
+            user_prompt = gen.generate_user_prompt(resolved_concept)
             combined = (
                 "=== SYSTEM PROMPT ===\n" + system_prompt + "\n\n" +
                 "=== USER PROMPT ===\n" + (user_prompt or "") + "\n"
@@ -83,7 +99,17 @@ def main() -> int:
             if args.debug_prompts_out:
                 Path(args.debug_prompts_out).write_text(combined, encoding="utf-8")
             return 0
-        result = gen.generate_game(concept_arg, forced_game_index=args.game_index)
+        # Derive game index from concept path like game_concepts/game_0000.yaml if not explicitly provided
+        derived_index = None
+        if args.game_index is None and concept_arg:
+            try:
+                p = Path(str(concept_arg))
+                stem = p.stem  # e.g., game_0000
+                if stem.startswith("game_"):
+                    derived_index = int(stem.split("_")[1])
+            except Exception:
+                derived_index = None
+        result = gen.generate_game(concept_arg, forced_game_index=(args.game_index if args.game_index is not None else derived_index))
     else:
         raise ValueError(f"Unknown method: {method}")
 
