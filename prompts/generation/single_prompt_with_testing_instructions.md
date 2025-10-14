@@ -1,48 +1,23 @@
 {hard_constraints}
 
-
 <instructions>
-<process_game_concept_to_game_design>
-
-Build upon the game concept with added entities, mechanics, and rewards with a well-planned progression and learning curve that enables the player to learn about the game elements and mechanics which eventually allows the player.
-
-Come up with the game design with your additions beyond the game concept that is feasible to implement in code following the hard constraints. You can add the following elements to the game design as long as the final game satisfies the requirements of the game concept:
-- environment:
-    - setting: the setting of the game (such as forest, space, underwater, etc.)
-    - genre: a game can belong to one or more genres (such as a arcade, shooter, endless-runner, platformer, etc.) No puzzle games, board-games, turn-based games, or other non-2D games.
-    - viewpoint: the perspective from which the game is viewed on screen (can be one of the following: top-down, side-scrolling, vertical-scrolling, )
-- entities:
-    - characters: Use well-described nouns for the player character and NPCs which are easy to render and have behaviors implementable by the game developer using p5.js primitives.
-        - player: the character controlled by the player (such as Mario, Pacman, snake, paddle, etc.). 
-        - NPCs: the non-player characters in the game (such as Turtle, Goomba, Ghost, etc.).
-    - objects in the game:
-        - collectible objects: items that can be picked up by the player to impact the score (such as coins, food, etc.)
-        - interactive objects: objects that respond to player actions (such as platforms, switches, levers, movable blocks, portals)
-        - power-ups: items that give temporary or permanent abilities (such as mushrooms, speed boost, etc.)
-        - destructible objects: objects that can be broken or destroyed (such as bricks, plants, blocks, etc.)
-        - obstacles: objects that impede player progress (such as spikes, lava pits, moving platforms, laser beams, etc.)
-- mechanics:
-    - player abilities:
-        - what the player character or other entities can do (such as move, jump, dash, shoot, kill, sword attack, climb, bounce, etc.)
-        - Some abilities can be unlocked after a certain condition (such as collecting a certain object or defeating one of the enemies)
-    - object interactions: what happens when the player interacts with another entity or object (Mario loses a life when hit by an enemy, Pacman eats dots to score points and dies when touching a ghost, etc.)
-    - rewards: what the player gets when they achieve a certain subgoal (such as points, lives, etc.)
-    - subgoals: the smaller goals in the game which when achieved contribute to the final goal or are just interesting side-quests on the journey to the final goal (such as collecting coins and mushrooms in Mario, collecting all the stars in Pacman, etc.)
-    - final goal: the main goal of the game which when achieved ends the game (such as rescuing a princess in Mario, collecting all the coins without getting caught by the ghosts in Pacman, etc.)
-- graphics:
-    - visual appearance: the visual appearance of the game environment and game entities defined by adjectives (such as neon-lit platforms, bioluminescent creatures, etc.). Keep the visual appearance that can be implemented using p5.js primitives.
-    - animations: the animations of the game entities defined by adjectives (such as a walking turtle, a jumping frog, etc.). Keep the animations that can be implemented using p5.js primitives.
-Include all the elements required by the game concept but feel free to add more elements to make a compelling game. You can add reasonable strategies that the player might use to make progress and win the game.
-</process_game_concept_to_game_design>
+<game_concept_to_game_design>
+Expand the game concept with new game elements with a well-planned progression and learning curve that enables the player to learn about the game elements and mechanics.
+For inspiration, following are some examples of game elements that you can add to the game design as long as the final game satisfies the requirements of the game concept:
+- environment: game setting, genre, viewpoint
+- entities: characters, opponents, collaborators, NPCs, objects in the game, power-ups, destructible objects, obstacles
+- mechanics: rules of the games, final win conditions, game over conditions, subgoals, rewards, player actions and abilities, interaction between entities
+- graphics: visual appearance and animations of the game entities and the environment
+</game_concept_to_game_design>
 
 <code_instructions>
-You are encouraged to write as much code as you can to make the game interesting, aesthetically pleasing, and provide a fun gameplay experience for the player when playing the game for the first time.
-<code_architecture>
+You are encouraged to write as much code as you can to make a fun game, aesthetically appealing, and provide a fun gameplay experience for the player when playing the game for the first time.
+
+<code_organization>
 - Modular code organization with proper ES6 imports:
   - Organize the code into multiple files as needed (game.js, globals.js, etc.)
-  - Create clear separation between game elements, logic, and rendering
   - Group related functionality together in meaningful modules
-  - Proper Imports:
+  - Proper imports:
     - Use ES6 for imports and exports
     - Every file MUST import ALL constants, variables, functions, classes, and external symbols at the top of every file. No Node.js style require imports. No dynamic imports within functions
 ```javascript
@@ -73,21 +48,41 @@ export const gameState = {
   ... // other game state variables which are needed to be tracked for automated testing
 };
 ```
-</code_architecture>
+</code_organization>
 
 <p5_instructions>
-- Use p5.js in instance mode
-- Store p5 instance in a variable called `gameInstance`. 
-- Expose the game instance globally as follows:
+- Use p5.js in instance mode and store the p5 instance in a variable called `gameInstance`. Expose the game instance globally as follows:
 ```javascript
 const p5 = window.p5
 let gameInstance = new p5(p => {
-  p.randomSeed(42); // ensures reproducibility.
-  ...
+    // Initialize variables
+    ...
+    // Initialize the logs. Important: Do not reset the logs at any point in the code! logs are considered write-only!
+    p.logs = {
+        "game_info": [],  // Information about the game
+        "inputs": [],     // Information about the key inputs
+        "player_info": [] // Information about the player character
+    };
+
+    // Functions
+    ...
 });
 // Expose the game instance globally
 window.gameInstance = gameInstance;
 ```
+- p.logs is write-only. Do not reset it. We want to keep track of all the logs since the start of the p5.js game instance.
+- Variables to store in the p.logs during gameplay:
+  - In "game_info": Information about the game when there are changes in the game phases
+    - "data": Any data like game phase or anything else you want to log
+    - "framecount" and "timestamp": The framecount and timestamp of the event accessed using `p.frameCount` and `Date.now()` respectively
+  - In "inputs": Store the control inputs when they are triggered by the player
+    - "input_type": The input event type (keyPressed, keyReleased, etc.)
+    - "data": Additional data specific to the input type. Store `key` and `keyCode` if the input is a key.
+    - "framecount" and "timestamp": The framecount and timestamp of the event
+  - In "player_info": Information about the player character when there are changes in the player's state (accessed via `gameState.player` where `gameState` is accessible via `window.getGameState()`)
+    - "screen_x", "screen_y": The x and y position of the player on the screen
+    - "game_x", "game_y": The x and y position of the player in the game world
+    - "framecount": The framecount of the event
 
 - Useful Functions:
   - Use p. to call p5 functions.
@@ -102,37 +97,31 @@ Implement intuitive, believable mechanics that enable players to achieve the fin
 Choose parameters and logic for game mechanics that are intuitive and believable. These can change as the game progresses. 
 Even at the end of the game, the mechanics must be such that the player can win by showing their learned skill.
 - Controls:
-  - Allowed keys: Arrow keys (37-40), SPACE (32), Z (90), SHIFT (16), ENTER (13), R (82), ESC (27)
-  - Phase transitions: START→PLAYING (ENTER), PLAYING→GAME_OVER (win/lose), GAME_OVER→START (R), PLAYING↔PAUSED (ESC)
+  - Player controls must be intuitive and impact the game state in a meaningful way
   - Input handling: Use keyboard for HUMAN mode, automated testing action outputs for automated testing modes
-  - Player controls must be intuitive and mapped correctly to appropriate changes in game state
   - When automated testing mode is selected, the game must automatically play using the action outputs from the automated testing controller
 - Non-player characters and objects:
   - NPCs and objects must be spawned and behave respecting the progression of the game
   - Implement intelligent, intuitive, and challenging behavior for all game entities to keep the player engaged
-  - Ensure proper entity interactions and responsive behavior consistent with their roles and objectives to give player feedback responsive to their actions
-  - Entity properties and behavior must be such that the player can make progress in the game
-- Physical Interactions:
-  - Base interactions on plausible physics with parameters and logic to give it a believable realistic feel
+- Interactions with other entities and objects:
+  - Have plausible physics with parameters and logic to give it a believable realistic feel
   - Prevent objects from passing through each other or behaving inconsistently to prevent shocking the player
 - GAME_OVER Conditions:
   - Implement mechanics that can lead to win or lose conditions achievable by the player
   - GAME_OVER must be a final state followed by game over screen
 - Rewards:
   - Define meaningful and reasonable conditions for rewards to keep the player motivated to reach the final goal
-  - Do not excessively repeat the same reward - avoid boring
+  - Do not excessively repeat the same rewards
 </game_mechanics_instructions>
 
 <rendering_instructions>
-- Canvas Setup: 600×400px canvas, 60 FPS
-- Ensure the correct render order of the game objects to ensure player is visible on the screen
 - Implement aesthetic objects, smooth animations, and dynamic effects for the game environment, entities, and their interactions
 - Provide useful visual feedback:
   - Player character must be distinctly identifiable
   - Provide visual feedback for interactions and response to their actions
   - UI: Add well-positioned text and graphics to inform the player about information like score, health, etc.
   - Never display current controlMode (HUMAN/TESTING) on the game canvas.
-- Avoid distractions and overburdening the player with too many entities on the screen
+- Ensure the correct render order of the game objects to ensure player is visible on the screen
 - Avoid flickering:
   - Do not call p.randomSeed() inside draw()
   - Have exactly one call to p.background() at the top of draw()

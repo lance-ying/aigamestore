@@ -2,32 +2,12 @@
 
 <instructions>
 <game_concept_instructions>
-The proposed game concept should be novel and fun. Please consider the hard constraints for the game code when proposing the game concept. For each idea, adopt a unique style, tone, and vocabulary. Use terms that are relatable and known by everyone. A game requires defining the following elements [environment, entities, mechanics, graphics]. Focus on 1-2 elements with creative detail leaving room for adding more elements later. Here are the sub-elements for each for context with examples from existing games like Mario, Pacman, Snake, Breakout, etc. for inspiration:
-- environment:
-    - setting: the setting of the game (such as forest, space, underwater, etc.)
-    - genre: a game can belong to one or more genres (such as a arcade, shooter, endless-runner, platformer, etc.) No puzzle games, board-games, turn-based games, or other non-2D games.
-    - viewpoint: the perspective from which the game is viewed on screen (can be one of the following: top-down, side-scrolling, vertical-scrolling, )
-- entities:
-    - characters: Use well-described nouns for the player character and NPCs which are easy to render and have behaviors implementable by the game developer using p5.js primitives.
-        - player: the character controlled by the player (such as Mario, Pacman, snake, paddle, etc.). 
-        - NPCs: the non-player characters in the game (such as Turtle, Goomba, Ghost, etc.).
-    - objects in the game:
-        - collectible objects: items that can be picked up by the player to impact the score (such as coins, food, etc.)
-        - interactive objects: objects that respond to player actions (such as platforms, switches, levers, movable blocks, portals)
-        - power-ups: items that give temporary or permanent abilities (such as mushrooms, speed boost, etc.)
-        - destructible objects: objects that can be broken or destroyed (such as bricks, plants, blocks, etc.)
-        - obstacles: objects that impede player progress (such as spikes, lava pits, moving platforms, laser beams, etc.)
-- mechanics:
-    - player abilities:
-        - what the player character or other entities can do (such as move, jump, dash, shoot, kill, sword attack, climb, bounce, etc.)
-        - Some abilities can be unlocked after a certain condition (such as collecting a certain object or defeating one of the enemies)
-    - object interactions: what happens when the player interacts with another entity or object (Mario loses a life when hit by an enemy, Pacman eats dots to score points and dies when touching a ghost, etc.)
-    - rewards: what the player gets when they achieve a certain subgoal (such as points, lives, etc.)
-    - subgoals: the smaller goals in the game which when achieved contribute to the final goal or are just interesting side-quests on the journey to the final goal (such as collecting coins and mushrooms in Mario, collecting all the stars in Pacman, etc.)
-    - final goal: the main goal of the game which when achieved ends the game (such as rescuing a princess in Mario, collecting all the coins without getting caught by the ghosts in Pacman, etc.)
-- graphics:
-    - visual appearance: the visual appearance of the game environment and game entities defined by adjectives (such as neon-lit platforms, bioluminescent creatures, etc.). Keep the visual appearance that can be implemented using p5.js primitives.
-    - animations: the animations of the game entities defined by adjectives (such as a walking turtle, a jumping frog, etc.). Keep the animations that can be implemented using p5.js primitives.
+The proposed game concept should be novel, fun, and open-ended to allow for further expansion. Please consider the hard constraints for the game code when proposing the game concept. 
+There are many game elements required to be defined to make a game. Creatively curate the game concept defining a few elements (1 to 2). Here are some examples of game elements for inspiration:
+- environment: game setting, genre, viewpoint
+- entities: characters, opponents, collaborators, NPCs, objects in the game, power-ups, destructible objects, obstacles
+- mechanics: rules of the games, final win conditions, game over conditions, subgoals, rewards, player actions and abilities, interaction between entities
+- graphics: visual appearance and animations of the game entities and the environment
 
 Below are some example game concepts. Avoid naming the game in the game concept and do not repeat any of these ideas.
 <example_concepts>
@@ -39,17 +19,21 @@ Below are some example game concepts. Avoid naming the game in the game concept 
 - "Tanks are everywhere hiding in the bushes. The player controls a tank and has to shoot the other tanks while avoiding their fire."
 - "There are lasers in the room but you can spray fog to see them locally. The player has to navigate through to find the exit without getting caught by the lasers."
 - "What if there was a game where you shoot balloons moving up but you need to be careful not to shoot balloons which have a stone in it?"
-- "Can we have a platformer game set in a space station with low gravity sections, asteroid fields, and airlock puzzles?"
+- "Can you make a platformer game set in a space station with low gravity sections, asteroid fields, and airlock puzzles?"
 </example_concepts>
 
-Here are previously generated game concepts for your reference. Please propose new game concepts that are different from the previously generated game concepts in terms of ideas and writing style.
+Here are previously generated game concepts for your reference.
 <previous_concepts>
 {previous_concepts_text}
 </previous_concepts>
+
+Please propose new game concepts that are different from the previously generated game concepts in terms of ideas and writing style. 
+Adopt a unique style, tone, and vocabulary. Use terms that are relatable and known by everyone. 
 </game_concept_instructions>
 
 <code_instructions>
-- Canvas: `{canvas_width} × {canvas_height} px`; target 60 FPS
+You are encouraged to write as much code as you can to make a fun game, aesthetically appealing, and provide a fun gameplay experience for the player when playing the game for the first time.
+<p5_instructions>
 - Use p5.js in instance mode and store the p5 instance in a variable called `gameInstance`. Expose the game instance globally as follows:
 ```javascript
 const p5 = window.p5
@@ -82,5 +66,13 @@ window.gameInstance = gameInstance;
     - "screen_x", "screen_y": The x and y position of the player on the screen
     - "game_x", "game_y": The x and y position of the player in the game world
     - "framecount": The framecount of the event
+
+- Useful Functions:
+  - Use p. to call p5 functions.
+  - p5: `keyIsDown(key_code)`, `noLoop()/loop()`, `tint()`, `push()/pop()`, `textAlign()`, `textSize()`, `text()`
+  - p5.collide2d for collision detection
+    - Note that the specific order of the words in the function name matters. For example, 'collideCircleRect' is not available but 'collideRectCircle' is available.
+    - Available functions: `collidePointPoint`, `collidePointCircle`, `collidePointEllipse`, `collidePointRect`, `collidePointLine`, `collidePointArc`, `collideRectRect`, `collideCircleCircle`, `collideRectCircle`, `collideLineLine`, `collideLineCircle`, `collideLineRect`, `collidePointPoly`, `collideCirclePoly`, `collideRectPoly`, `collideLinePoly`, `collidePolyPoly`, `collidePointTriangle`
+</p5_instructions>
 </code_instructions>
 </instructions>

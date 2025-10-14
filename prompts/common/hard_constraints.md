@@ -1,10 +1,10 @@
 <hard_constraints>
-- Game must load and function without errors, start on pressing ENTER, be responsive to player inputs.
-- Game concept must be novel and interesting. Use different terms, characters, objectives, mechanics, and other game elements as compared to the previous concepts. Describe the game concept in 1-2 sentences. No purely turn-based board/puzzle games; keep play real-time and 2D.
 - The full game can be expanded by adding more elements to the game concept but should align with the game concept respecting the hard constraints and game design principles.
 - Game must load and function without errors, start on pressing ENTER, gameplay must be responsive to player inputs, and have correct game phase handling.
-- Game phases: "START" → "PLAYING" → "PAUSED" → "GAME_OVER_WIN" or "GAME_OVER_LOSE". Expose this in a variable called `gameState.gamePhase` where `gameState` is a global object accessible via `window.getGameState()`.
+- Game phases: START→PLAYING (ENTER), PLAYING→GAME_OVER (win/lose), GAME_OVER→START (R), PLAYING↔PAUSED (ESC). Expose this in a variable called `gameState.gamePhase` where `gameState` is a global object accessible via `window.getGameState()`.
+- Start screen should have a title, short description of the game, instructions to play the game, and a "PRESS ENTER TO START" prompt.
 - Allowed libraries: {libraries_allowed}
+- Canvas: `{canvas_width} × {canvas_height} px`; target 60 FPS
 - Keyboard inputs only. No mouse control.
 {game_controls}
 {game_phase_control}

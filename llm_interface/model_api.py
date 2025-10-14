@@ -17,9 +17,10 @@ except Exception:
 
 class ModelAPI:
     CLAUDE_MODELS: Dict[str, str] = {
-        "claude-3.5-sonnet": "claude-3-5-sonnet-20241022",
+        # "claude-3.5-sonnet": "claude-3-5-sonnet-20241022", # Deprecated
         "claude-3.7-sonnet": "claude-3-7-sonnet-20250219",
         "claude-4-sonnet": "claude-sonnet-4-20250514",
+        "claude-4.5-sonnet": "claude-sonnet-4-5-20250929",
     }
 
     def __init__(self, model_name: str = "openai:gpt-4o") -> None:
