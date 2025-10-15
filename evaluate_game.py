@@ -127,6 +127,8 @@ def main() -> int:
     parser.add_argument("--config", required=True)
     parser.add_argument("--game_folder", required=False, help="Game directory containing index.html and game files")
     parser.add_argument("--debug", action="store_true", help="Enable verbose debug logs for basic testing")
+    parser.add_argument("--save_video_only", action="store_true", help="Record and save videos only; skip VLM model call")
+    parser.add_argument("--debug_prompts", action="store_true", help="Record videos and print VLM prompts once; also save videos")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -168,9 +170,29 @@ def main() -> int:
         if not target or not os.path.isdir(target):
             raise ValueError("vlm requires --game_folder or game_folder in config (path to a game directory)")
         import asyncio
-        res = asyncio.get_event_loop().run_until_complete(evaluate_game_folder(target, prompt, model))
-        # Save VLM results
-        out_dir = ensure_eval_subdir(target, "vlm")
+        # Pull optional duration and resolution from config
+        duration = int(cfg.get("capture_seconds", cfg.get("duration", 10)))
+        res_w_h = cfg.get("resolution") or cfg.get("size")
+        resolution = None
+        try:
+            if isinstance(res_w_h, (list, tuple)) and len(res_w_h) == 2:
+                resolution = (int(res_w_h[0]), int(res_w_h[1]))
+        except Exception:
+            resolution = None
+
+        res = asyncio.get_event_loop().run_until_complete(
+            evaluate_game_folder(
+                target,
+                prompt,
+                model,
+                save_video_only=bool(args.save_video_only),
+                debug_prompts=bool(args.debug_prompts),
+                duration=duration,
+                resolution=resolution,
+            )
+        )
+        # Save VLM results under evaluations/vlm_evaluations
+        out_dir = ensure_eval_subdir(target, "..", "evaluations", "vlm_evaluations")
         write_json(Path(out_dir) / "results.json", res)
         if RICH_OK:
             ok_count = sum(1 for e in (res.get("evaluations") or []) if (e.get("feedback") or "").strip())
