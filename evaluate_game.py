@@ -7,6 +7,18 @@ import os
 from evaluators.basic_test.runner import test_game as run_basic
 from evaluators.vlm.gemini_api import GeminiEvaluator
 from evaluators.vlm.run import evaluate_game_folder
+from utils.saving_utils.eval_writer import ensure_eval_subdir, write_json
+
+try:
+    from rich import box
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.table import Table
+    RICH_OK = True
+    _console = Console()
+except Exception:
+    RICH_OK = False
+    _console = None  # type: ignore
 
 try:
     import yaml  # type: ignore
@@ -22,10 +34,98 @@ def load_config(path: str) -> Dict[str, Any]:
     return json.loads(text)
 
 
+def _print_basic_test_results(res: Dict[str, Any]) -> None:
+    if not RICH_OK:
+        print(json.dumps(res, indent=2))
+        return
+    ok = bool(res.get("test_result"))
+    title = "BASIC TEST: PASSED" if ok else "BASIC TEST: FAILED"
+    border = "green" if ok else "red"
+
+    table = Table.grid(expand=True)
+    # Top line: show three core checks
+    loaded_ok = bool(res.get("loaded"))
+    start_obj = res.get("start_on_enter") or {}
+    start_ok = bool(start_obj.get("passed"))
+    inter_obj = res.get("interaction") or {}
+    inter_ok = bool(inter_obj.get("passed"))
+    table.add_row(
+        f"Loaded: {'[green]True[/]' if loaded_ok else '[red]False[/]'}  |  Start on Enter: {'[green]OK[/]' if start_ok else '[red]FAIL[/]'}  |  Interaction: {'[green]OK[/]' if inter_ok else '[red]FAIL[/]'}"
+    )
+    # Add details for start and interaction
+    if start_obj:
+        table.add_row(
+            f"Start details → phase: {start_obj.get('phase_before')} → {start_obj.get('phase_after')} | visual: {'changed' if start_obj.get('visual_changed') else 'no-change'}"
+        )
+    if inter_obj:
+        table.add_row(
+            f"Interaction details → state: {'changed' if inter_obj.get('state_changed') else 'no-change'} | visual: {'changed' if inter_obj.get('visual_changed') else 'no-change'}"
+        )
+
+    page_errors = res.get("page_errors") or []
+    console_errors = res.get("console_errors") or {}
+    request_failures = res.get("request_failures") or []
+
+    if page_errors:
+        table.add_row(f"[bold]Page errors[/]: {len(page_errors)}")
+        for e in page_errors[:5]:
+            table.add_row(f"  [red]{e}[/]")
+    if console_errors:
+        table.add_row("[bold]Console messages[/]:")
+        for level, msgs in list(console_errors.items())[:3]:
+            sample = msgs[:2] if isinstance(msgs, list) else []
+            table.add_row(f"  {level}: {sample}")
+    if request_failures:
+        table.add_row(f"[bold]HTTP issues[/]: {len(request_failures)} (showing up to 3)")
+        for f in request_failures[:3]:
+            table.add_row(f"  {f.get('status', '')} {f.get('method', '')} {f.get('url', '')}")
+
+    _console.print(Panel.fit(table, title=title, border_style=border, box=box.ROUNDED))
+
+
+def _format_basic_feedback(res: Dict[str, Any]) -> str:
+    lines = []
+    lines.append("# Basic Test Report")
+    status = "PASSED" if res.get("test_result") else "FAILED"
+    lines.append(f"Status: {status}")
+    lines.append("")
+    lines.append("## Summary")
+    loaded_ok = bool(res.get("loaded"))
+    start = res.get("start_on_enter") or {}
+    inter = res.get("interaction") or {}
+    lines.append(f"- Loaded: {'OK' if loaded_ok else 'FAIL'}")
+    lines.append(f"- Start on Enter: {'OK' if start.get('passed') else 'FAIL'} (phase {start.get('phase_before')} → {start.get('phase_after')}, visual={'changed' if start.get('visual_changed') else 'no-change'})")
+    lines.append(f"- Interaction: {'OK' if inter.get('passed') else 'FAIL'} (state={'changed' if inter.get('state_changed') else 'no-change'}, visual={'changed' if inter.get('visual_changed') else 'no-change'})")
+    lines.append("")
+    pes = res.get("page_errors") or []
+    if pes:
+        lines.append("## Page errors")
+        for e in pes:
+            lines.append(f"- {e}")
+        lines.append("")
+    ce = res.get("console_errors") or {}
+    if ce:
+        lines.append("## Console messages (sample)")
+        try:
+            for k, msgs in ce.items():
+                if msgs:
+                    lines.append(f"- {k}: {msgs[:5]}")
+        except Exception:
+            pass
+        lines.append("")
+    rf = res.get("request_failures") or []
+    if rf:
+        lines.append("## HTTP issues (sample)")
+        for f in rf[:10]:
+            lines.append(f"- {f}")
+        lines.append("")
+    return "\n".join(lines)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Evaluate game from a config")
     parser.add_argument("--config", required=True)
-    parser.add_argument("--target", required=False, help="Game directory or video path")
+    parser.add_argument("--game_folder", required=False, help="Game directory containing index.html and game files")
     parser.add_argument("--debug", action="store_true", help="Enable verbose debug logs for basic testing")
     args = parser.parse_args()
 
@@ -33,33 +133,50 @@ def main() -> int:
     mode = cfg.get("mode")
 
     if mode == "basic_test":
-        game_path = args.target or cfg.get("game_path")
+        game_path = args.game_folder or cfg.get("game_folder") or cfg.get("game_path")
         if not game_path:
-            raise ValueError("basic_test requires --target or game_path in config")
+            raise ValueError("basic_test requires --game_folder or game_folder in config")
         res = run_basic(
             game_path,
             duration=int(cfg.get("duration", 10)),
             timeout=int(cfg.get("timeout", 20)),
             debug=bool(args.debug or cfg.get("debug", False)),
+            save_dir=str(ensure_eval_subdir(game_path, "basic_test")),
         )
-        print(json.dumps(res))
+        # Save under evaluation/basic_test/results.json
+        out_dir = ensure_eval_subdir(game_path, "basic_test")
+        # Do not embed keypress_log in results.json; persist separately
+        klog = res.pop("keypress_log", None)
+        write_json(Path(out_dir) / "results.json", res)
+        # Save keypress log (always write; empty list if none)
+        if klog is None:
+            klog = []
+        write_json(Path(out_dir) / "keypress_log.json", klog)
+        # Save feedback.md for iterator consumption
+        try:
+            (Path(out_dir) / "feedback.md").write_text(_format_basic_feedback(res), encoding="utf-8")
+        except Exception:
+            pass
+        _print_basic_test_results(res)
         return 0
 
     if mode == "vlm":
-        # If target is a directory, record tests and evaluate each; else treat as direct video
-        target = args.target or cfg.get("target") or cfg.get("video")
+        # Only support evaluating from a game folder (records videos internally)
+        target = args.game_folder or cfg.get("game_folder") or cfg.get("target") or cfg.get("video")
         prompt = cfg.get("prompt", "Evaluate gameplay quality and success.")
-        model = cfg.get("model", "gemini-2.5-flash-preview-04-17")
-        if target and os.path.isdir(target):
-            import asyncio
-            res = asyncio.get_event_loop().run_until_complete(evaluate_game_folder(target, prompt, model))
+        model = cfg.get("model", "gemini-2.5-flash")
+        if not target or not os.path.isdir(target):
+            raise ValueError("vlm requires --game_folder or game_folder in config (path to a game directory)")
+        import asyncio
+        res = asyncio.get_event_loop().run_until_complete(evaluate_game_folder(target, prompt, model))
+        # Save VLM results
+        out_dir = ensure_eval_subdir(target, "vlm")
+        write_json(Path(out_dir) / "results.json", res)
+        if RICH_OK:
+            ok_count = sum(1 for e in (res.get("evaluations") or []) if (e.get("feedback") or "").strip())
+            _console.print(Panel.fit(f"VLM evaluations: {ok_count}", title="VLM", border_style="cyan", box=box.ROUNDED))
+        else:
             print(json.dumps(res))
-            return 0
-        if not target:
-            raise ValueError("vlm requires --target (game folder or video path) or target/video in config")
-        ev = GeminiEvaluator(model_name=model)
-        text = ev.evaluate_video(target, prompt)
-        print(text or "")
         return 0
 
     raise ValueError(f"Unknown evaluation mode: {mode}")

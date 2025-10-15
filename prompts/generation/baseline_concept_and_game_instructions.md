@@ -33,6 +33,23 @@ Adopt a unique style, tone, and vocabulary. Use terms that are relatable and kno
 
 <code_instructions>
 You are encouraged to write as much code as you can to make a fun game, aesthetically appealing, and provide a fun gameplay experience for the player when playing the game for the first time.
+
+<code_organization>
+- State Management:
+  - Implement `function getGameState()` and attach it to `window`. It must return the `gameState` object.
+  - Use a single `gameState` object to track the game's current data and status. Store all game data in the `gameState` object to be used by automated testing code to play-test the game.    
+```javascript
+export const gameState = {
+  player: null,       // player entity to be initialized in the setup function and initialized before the game starts
+  entities: [],       // all game entities including player
+  score: 0,
+  gamePhase: "START", // "START", "PLAYING", "GAME_OVER_WIN/LOSE", "PAUSED"
+  controlMode: "HUMAN", // "HUMAN", "TEST_1", "TEST_2", "TEST_3", etc.
+  ... // other game state variables which are needed to be tracked for automated testing
+};
+```
+</code_organization>
+
 <p5_instructions>
 - Use p5.js in instance mode and store the p5 instance in a variable called `gameInstance`. Expose the game instance globally as follows:
 ```javascript
@@ -71,7 +88,7 @@ window.gameInstance = gameInstance;
   - Use p. to call p5 functions.
   - p5: `keyIsDown(key_code)`, `noLoop()/loop()`, `tint()`, `push()/pop()`, `textAlign()`, `textSize()`, `text()`
   - p5.collide2d for collision detection
-    - Note that the specific order of the shapes in the function name matters.
+    - Note that the specific order of the shapes in the function name matters. For example, 'collideCircleRect' is not available.
     - Available functions: `collidePointPoint`, `collidePointCircle`, `collidePointEllipse`, `collidePointRect`, `collidePointLine`, `collidePointArc`, `collideRectRect`, `collideCircleCircle`, `collideRectCircle`, `collideLineLine`, `collideLineCircle`, `collideLineRect`, `collidePointPoly`, `collideCirclePoly`, `collideRectPoly`, `collideLinePoly`, `collidePolyPoly`, `collidePointTriangle`
 </p5_instructions>
 </code_instructions>

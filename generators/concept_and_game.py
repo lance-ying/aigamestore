@@ -60,21 +60,21 @@ class BaselineConceptAndGameGenerator(GameGenerator):
         return build_system_prompt()
 
     def get_baseline_output_format(self) -> str:
-        # Kept concise; same structure as archive with example html and output tags
-        # Render template with default libraries; can be made dynamic later via config
+        # Render template and then load instructions from prompts file
         libs = self.prompt_config.get("libraries_allowed") or ["p5.js", "p5.collide2D"]
         template = render_html_template("html_templates/baseline_concept_and_game.html", libs)
-        return (
-            "\n<example_html>\n" + template + "</example_html>\n\n"
-            "<output_instructions>\n"
-            "Output the code plan and game files in this format with NO OTHER TEXT:\n\n"
-            "<game_concept>\n... (Put the game concept here in 1-2 sentences capturing a fun and interesting idea that can be expanded into a full game.)\n</game_concept>\n\n"
-            "<game_description>\n... (Describe the game to the player, the objective, what they need to know to play the game. Feel free to add beyond the game concept. Keep it short and informative to allow the user to understand the game quickly. Do not mention the controls here.)\n</game_description>\n\n"
-            "<game_controls>\n... (Game controls as a list to specify the key bindings and the action they perform. Key: Action. Be specific about each key.)\n</game_controls>\n\n"
-            "For the javascript files:\n<code filename=\"{name}.{extension}\">\n... (javascript code)\n</code>\n\n"
-            "HTML following the <example_html> template (output last):\n<code filename=\"index.html\">\n... (html code)\n</code>\n"
-            "</output_instructions>\n"
-        )
+        from pathlib import Path
+        out_path = self.prompt_config.get("output_instructions") or "prompts/output_instructions/baseline_concept_and_game.md"
+        text = ""
+        try:
+            p = Path(out_path)
+            if p.exists():
+                text = p.read_text(encoding="utf-8")
+        except Exception:
+            text = ""
+        if text:
+            return text.replace("{example_html}", template)
+        return f"\n<example_html>\n{template}\n</example_html>\n\n<output_instructions>\n</output_instructions>\n"
 
     def extract_game_concept(self, text: str) -> str:
         import re
@@ -124,7 +124,17 @@ class BaselineConceptAndGameGenerator(GameGenerator):
         js_files: List[Tuple[str, str]] = list(js_code_dict.items())  # type: ignore[arg-type]
 
         # prepare intermediate outputs with call history for token usage in metadata
-        intermediate = {"full_response": response_text, "call_history": self.model_api.get_call_history()}
+        intermediate = {
+            "full_response": response_text,
+            "call_history": self.model_api.get_call_history(),
+            "generation_params": {
+                "temperature": self.temperature,
+                "top_p": self.top_p,
+                "thinking": self.thinking,
+                "thinking_budget": self.thinking_budget,
+                "model": self.model_name,
+            },
+        }
 
         game_dir = save_game_baseline_concept(
             title=title,

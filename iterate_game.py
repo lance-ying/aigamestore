@@ -3,8 +3,8 @@ import json
 from pathlib import Path
 from typing import Any, Dict
 
-from iterators.code_feedback import iterate_once as run_code_feedback
-from iterators.vibe_coding import improve_fun as run_vibe_coding
+from iterators.base import CodeIterator
+from iterators.vibe_coding import run_vibe_coding
 
 try:
     import yaml  # type: ignore
@@ -23,21 +23,55 @@ def load_config(path: str) -> Dict[str, Any]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Iterate on a game given a config")
     parser.add_argument("--config", required=True)
+    parser.add_argument("--output_dir", help="Optional output directory for non in-place modes")
+    parser.add_argument("--game_folder", help="Path to game folder (for basic_bug_fix reading evaluation/basic_test/feedback.md)")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
     mode = cfg.get("mode")
-    if mode == "code_feedback":
+    if mode in ("code_iterator", "code_feedback", "basic_testing_fix"):
+        # Backward compatible: "code_feedback" maps to the same iterator but requires explicit feedback
         game_dir = cfg.get("game_dir") or cfg.get("target")
         if not game_dir:
-            raise ValueError("code_feedback requires game_dir in config")
-        res = run_code_feedback(
-            game_dir=game_dir,
-            feedback=cfg.get("feedback", ""),
+            raise ValueError("code_iterator requires game_dir in config")
+        feedback = cfg.get("feedback")
+        if not feedback:
+            # Allow passing via CLI flag
+            parser2 = argparse.ArgumentParser(add_help=False)
+            parser2.add_argument("--feedback")
+            # Re-parse known args only
+            known, _ = parser2.parse_known_args()
+            feedback = getattr(known, "feedback", None)
+        if not feedback:
+            raise ValueError("code_iterator requires 'feedback' (no fallback text is provided)")
+        it = CodeIterator(
             model=cfg.get("model", "anthropic:claude-3.7-sonnet"),
+            temperature=float(cfg.get("temperature", 1.0)),
             thinking=bool(cfg.get("thinking", True)),
             thinking_budget=cfg.get("thinking_budget", 8000),
         )
+        # basic_testing_fix implies in-place; otherwise allow output_dir switch via config/CLI
+        in_place = True if mode in ("code_feedback", "basic_testing_fix") else bool(cfg.get("in_place", False))
+        output_dir = args.output_dir or cfg.get("output_dir")
+        res = it.iterate(game_dir, feedback, in_place=in_place, output_dir=output_dir)
+        print(json.dumps(res))
+        return 0
+    if mode == "basic_bug_fix":
+        game_dir = args.game_folder or cfg.get("game_dir") or cfg.get("target")
+        if not game_dir:
+            raise ValueError("basic_bug_fix requires --game_folder or game_dir in config")
+        bt_dir = Path(game_dir) / "evaluation" / "basic_test"
+        fb_path = bt_dir / "feedback.md"
+        if not bt_dir.exists() or not fb_path.exists():
+            raise SystemExit("Missing evaluation/basic_test/feedback.md. Run basic_test first.")
+        feedback = fb_path.read_text(encoding="utf-8")
+        it = CodeIterator(
+            model=cfg.get("model", "anthropic:claude-3.7-sonnet"),
+            temperature=float(cfg.get("temperature", 1.0)),
+            thinking=bool(cfg.get("thinking", True)),
+            thinking_budget=cfg.get("thinking_budget", 8000),
+        )
+        res = it.iterate(game_dir, feedback, in_place=True, output_dir=None)
         print(json.dumps(res))
         return 0
     if mode == "vibe_coding":
@@ -47,8 +81,7 @@ def main() -> int:
         res = run_vibe_coding(
             game_dir=game_dir,
             model=cfg.get("model", "anthropic:claude-3.7-sonnet"),
-            thinking=bool(cfg.get("thinking", True)),
-            thinking_budget=cfg.get("thinking_budget", 8000),
+            max_iters=int(cfg.get("max_iters", 1)),
         )
         print(json.dumps(res))
         return 0

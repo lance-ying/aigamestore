@@ -105,6 +105,17 @@ def save_game_baseline_concept(
         if isinstance(auto, dict):
             metadata["game_info"]["automated_testing"] = auto
             (sample_dir / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+        # Persist generation params (temperature, top_p, thinking, etc.) if provided
+        gen_params = intermediate_outputs.get("generation_params") if isinstance(intermediate_outputs, dict) else None
+        if isinstance(gen_params, dict):
+            metadata["generation_info"]["params"] = {
+                "temperature": gen_params.get("temperature"),
+                "top_p": gen_params.get("top_p"),
+                "thinking": gen_params.get("thinking"),
+                "thinking_budget": gen_params.get("thinking_budget"),
+                "model": gen_params.get("model"),
+            }
+            (sample_dir / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
         (sample_dir / "intermediate_outputs.json").write_text(
             json.dumps(intermediate_outputs, indent=2), encoding="utf-8"
         )
@@ -218,6 +229,17 @@ def save_game_single_prompt(
         auto = intermediate_outputs.get("automated_testing") if isinstance(intermediate_outputs, dict) else None
         if isinstance(auto, dict):
             metadata["game_info"]["automated_testing"] = auto
+            (sample_dir / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+        # Persist generation params (temperature, top_p, thinking, etc.) if provided
+        gen_params = intermediate_outputs.get("generation_params") if isinstance(intermediate_outputs, dict) else None
+        if isinstance(gen_params, dict):
+            metadata["generation_info"]["params"] = {
+                "temperature": gen_params.get("temperature"),
+                "top_p": gen_params.get("top_p"),
+                "thinking": gen_params.get("thinking"),
+                "thinking_budget": gen_params.get("thinking_budget"),
+                "model": gen_params.get("model"),
+            }
             (sample_dir / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
         (sample_dir / "intermediate_outputs.json").write_text(
             json.dumps(intermediate_outputs, indent=2), encoding="utf-8"

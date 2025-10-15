@@ -122,10 +122,9 @@ class ModelAPI:
                     "max_tokens": max_tokens,
                     **kwargs,
                 }
-                if temperature is not None and not thinking:
-                    claude_params["temperature"] = temperature
-                if top_p is not None and not thinking:
-                    claude_params["top_p"] = top_p
+                # Claude 4.x/4.5: prefer temperature; avoid top_p
+                if not thinking:
+                    claude_params["temperature"] = 1.0 if temperature is None else float(temperature)
                 if system_prompt:
                     claude_params["system"] = system_prompt
                 if thinking and thinking_budget:

@@ -21,26 +21,22 @@ Implement a complete, fun, and error-free p5.js game for the following concept:
 """
         libs = self.prompt_config.get("libraries_allowed") or ["p5.js", "p5.collide2D"]
         example_html = render_html_template("html_templates/single_prompt_with_testing.html", libs)
-        output_instructions = (
-            "\n<example_html>\n" + example_html + "</example_html>\n\n"
-            "<output_instructions>\n"
-            "Output the code plan and game files in this format with NO OTHER TEXT:\n\n"
-            "<game_description>\n... (Describe the game to the player, the objective, what they need to know to play the game. Do not mention the controls here. Keep it short and informative.)\n</game_description>\n\n"
-            "<game_controls>\n... (Game controls as a list to specify the key bindings and the action they perform. Key: Action. Be specific about each key.)\n</game_controls>\n\n"
-            # Unified automated testing instructions similar to XML generator
-            "Write the automated testing plan:\n"
-            "<automated_testing>\n"
-            "<TEST_1>\n"
-            "<test_description>(write in < 5 sentences \"What are you testing and the intent of the test?\")</test_description>\n"
-            "<strategy_description>(write in < 5 sentences \"What is your gameplay strategy to test it?\")</strategy_description>\n"
-            "<expected_outcome>(write in < 5 sentences \"What is the expected outcome? When do you consider the test successful?\")</expected_outcome>\n"
-            "</TEST_1>\n"
-            "// Add more tests (up to 7)\n"
-            "</automated_testing>\n\n"
-            "For the javascript files:\n<code filename=\"{name}.{extension}\">\n...\n</code>\n\n"
-            "HTML following the <example_html> template (output last):\n<code filename=\"index.html\">\n...\n</code>\n"
-            "</output_instructions>\n"
-        )
+        # Load output instructions from prompts file, fallback to default path
+        import os
+        from pathlib import Path
+        out_path = self.prompt_config.get("output_instructions") or "prompts/output_instructions/single_prompt_with_testing.md"
+        text = ""
+        try:
+            p = Path(out_path)
+            if p.exists():
+                text = p.read_text(encoding="utf-8")
+        except Exception:
+            text = ""
+        if text:
+            output_instructions = text.replace("{example_html}", example_html)
+        else:
+            # Minimal fallback if file missing
+            output_instructions = f"\n<example_html>\n{example_html}\n</example_html>\n\n<output_instructions>\n</output_instructions>\n"
         return instructions + "\n" + task + output_instructions
 
     def get_system_prompt(self) -> str:
@@ -110,6 +106,13 @@ Implement a complete, fun, and error-free p5.js game for the following concept:
             "full_response": content,
             "call_history": self.model_api.get_call_history(),
             "automated_testing": automated_testing,
+            "generation_params": {
+                "temperature": self.temperature,
+                "top_p": self.top_p,
+                "thinking": self.thinking,
+                "thinking_budget": self.thinking_budget,
+                "model": self.model_name,
+            },
         }
 
         game_dir = save_game(

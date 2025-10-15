@@ -4,6 +4,9 @@ import asyncio
 import logging
 import subprocess
 from typing import Any, Dict, List, Optional
+import random
+import base64
+import json
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
@@ -96,6 +99,19 @@ async def _capture_canvas_dataurl(page: Page) -> str:
         return data_url or ""
     except Exception:
         return ""
+
+
+def _write_data_url_png(data_url: str, path: str) -> bool:
+    try:
+        if not data_url or not data_url.startswith("data:image/png;base64,"):
+            return False
+        b64 = data_url.split(",", 1)[1]
+        raw = base64.b64decode(b64)
+        with open(path, "wb") as f:
+            f.write(raw)
+        return True
+    except Exception:
+        return False
 
 
 async def _focus_canvas(page: Page) -> None:
@@ -251,7 +267,46 @@ async def _get_game_state(page: Page) -> Dict[str, Any]:
         return {}
 
 
-def test_game(game_path: str, duration: int = 10, timeout: int = 20, debug: bool = False) -> Dict[str, Any]:
+async def _get_full_game_state(page: Page) -> Optional[Dict[str, Any]]:
+    try:
+        gs = await page.evaluate(
+            r"""
+(() => {
+  try {
+    if (typeof window.getGameState === 'function') {
+      const s = window.getGameState();
+      const seen = new WeakSet();
+      return JSON.parse(JSON.stringify(s, (k, v) => {
+        if (typeof v === 'function') return undefined;
+        if (typeof v === 'object' && v !== null) {
+          if (seen.has(v)) return undefined;
+          seen.add(v);
+        }
+        return v;
+      }));
+    }
+  } catch (e) {}
+  return null;
+})()
+            """
+        )
+        return gs if isinstance(gs, dict) else None
+    except Exception:
+        return None
+
+
+def _shallow_state_view(state: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a minimal, JSON-safe view of the state to avoid cycles and large payloads."""
+    if not isinstance(state, dict):
+        return {}
+    return {
+        "phase": state.get("phase"),
+        "score": state.get("score"),
+        "controlMode": state.get("controlMode"),
+    }
+
+
+def test_game(game_path: str, duration: int = 10, timeout: int = 20, debug: bool = False, save_dir: Optional[str] = None) -> Dict[str, Any]:
     if not PLAYWRIGHT_OK:
         return {"test_result": False, "error": "Playwright not installed"}
 
@@ -265,6 +320,7 @@ def test_game(game_path: str, duration: int = 10, timeout: int = 20, debug: bool
             "console_errors": {},
             "page_errors": [],
             "request_failures": [],
+            "keypress_log": [],
         }
 
         server_proc: Optional[subprocess.Popen] = None
@@ -293,6 +349,22 @@ def test_game(game_path: str, duration: int = 10, timeout: int = 20, debug: bool
                 before_pixels = await _sample_canvas_pixels(page)
                 before_state = await _get_game_state(page)
                 before_img = await _capture_canvas_dataurl(page)
+                # Prepare screenshots subfolder
+                shots_dir = None
+                if save_dir:
+                    try:
+                        os.makedirs(save_dir, exist_ok=True)
+                        shots_dir = os.path.join(save_dir, "screenshots")
+                        os.makedirs(shots_dir, exist_ok=True)
+                    except Exception:
+                        shots_dir = save_dir
+                # Optionally save initial frame
+                if (shots_dir or save_dir) and before_img:
+                    try:
+                        target_dir = shots_dir or save_dir  # type: ignore[truthy-bool]
+                        _write_data_url_png(before_img, os.path.join(target_dir, f"0000_initial.png"))
+                    except Exception:
+                        pass
                 if debug:
                     logging.info(f"Initial state: {before_state}")
                     if isinstance(before_state, dict) and 'source' in before_state:
@@ -309,6 +381,31 @@ def test_game(game_path: str, duration: int = 10, timeout: int = 20, debug: bool
                         await _press_key_robust(page, "Enter", debug)
                         await page.wait_for_timeout(200)
                         cur = await _get_game_state(page)
+                        # Try to capture full, JSON-safe gameState via getGameState
+                        gs = await _get_full_game_state(page)
+                        # Save frame after Enter attempt
+                        if (shots_dir or save_dir):
+                            try:
+                                img = await _capture_canvas_dataurl(page)
+                                if img:
+                                    target_dir = shots_dir or save_dir  # type: ignore[truthy-bool]
+                                    filename = f"{enter_attempts+1:04d}_Enter.png"
+                                    _write_data_url_png(img, os.path.join(target_dir, filename))
+                                    image_rel = os.path.join("screenshots", filename) if shots_dir else filename
+                            except Exception:
+                                pass
+                        # Log Enter attempt state
+                        try:
+                            (res.setdefault("keypress_log", [])).append({
+                                "t": time.time(),
+                                "key": "Enter",
+                                "state": _shallow_state_view(cur),
+                                "attempt": enter_attempts + 1,
+                                "gameState": gs if isinstance(gs, dict) else None,
+                                "image": image_rel if (shots_dir or save_dir) else None,
+                            })
+                        except Exception:
+                            pass
                         if debug:
                             logging.info(f"State after Enter: {cur}")
                         if isinstance(cur, dict) and (cur.get('phase') == 'PLAYING' or cur.get('phase') == 'PAUSED'):
@@ -318,56 +415,147 @@ def test_game(game_path: str, duration: int = 10, timeout: int = 20, debug: bool
                             logging.info(f"Enter press error: {e}")
                     enter_attempts += 1
 
-                # Press a sequence of keys while logging
-                keys = [" ", "ArrowRight", "ArrowLeft", "ArrowUp", "ArrowDown"]
-                start_t = time.time()
-                while time.time() - start_t < max(2, duration // 2):
-                    for k in keys:
+                # Baseline after start (post-Enter) for interaction comparison
+                baseline_gs = await _get_full_game_state(page)
+
+                # Capture state right after trying to start the game
+                after_enter_pixels = await _sample_canvas_pixels(page)
+                after_enter_state = await _get_game_state(page)
+                after_enter_img = await _capture_canvas_dataurl(page)
+
+                # Compute start-on-enter checks: require BOTH visual change and phase change
+                start_pixel_change = False
+                if before_pixels and after_enter_pixels:
+                    changed = sum(1 for b, a in zip(before_pixels, after_enter_pixels) if b != a)
+                    ratio = changed / min(len(before_pixels), len(after_enter_pixels))
+                    # small threshold to detect meaningful change
+                    start_pixel_change = ratio >= 0.005
+
+                start_img_change = False
+                try:
+                    if before_img and after_enter_img and before_img != after_enter_img:
+                        start_img_change = True
+                except Exception:
+                    pass
+
+                start_phase_changed = False
+                try:
+                    if isinstance(before_state, dict) and isinstance(after_enter_state, dict):
+                        # Prefer explicit transition to PLAYING
+                        if before_state.get("phase") != after_enter_state.get("phase") and after_enter_state.get("phase") in ("PLAYING", "PAUSED"):
+                            start_phase_changed = True
+                except Exception:
+                    pass
+
+                res["start_on_enter"] = {
+                    "phase_before": (before_state or {}).get("phase") if isinstance(before_state, dict) else None,
+                    "phase_after": (after_enter_state or {}).get("phase") if isinstance(after_enter_state, dict) else None,
+                    "phase_changed": bool(start_phase_changed),
+                    "visual_changed": bool(start_pixel_change or start_img_change),
+                }
+                res["start_on_enter"]["passed"] = bool(res["start_on_enter"]["phase_changed"] and res["start_on_enter"]["visual_changed"])  # type: ignore[index]
+
+                # Random interaction test: send random gameplay keys (exclude Enter)
+                interaction_keys = [" ", "ArrowRight", "ArrowLeft", "ArrowUp", "ArrowDown", "Z", "Shift"]
+                inter_start_t = time.time()
+                # Bound the loop by duration; at least 2 seconds of random interactions
+                img_counter = 10000  # start high to separate from enter attempts
+                prev_gs = baseline_gs
+                while time.time() - inter_start_t < max(2, duration // 2):
+                    k = random.choice(interaction_keys)
+                    try:
+                        if debug:
+                            logging.info(f"Pressing: {k}")
+                        await _press_key_robust(page, k, debug)
+                        cur_state = await _get_game_state(page)
+                        gs = await _get_full_game_state(page)
+                        # Save frame after this action
+                        if (shots_dir or save_dir):
+                            try:
+                                img = await _capture_canvas_dataurl(page)
+                                if img:
+                                    target_dir = shots_dir or save_dir  # type: ignore[truthy-bool]
+                                    filename = f"{img_counter:04d}_{k.replace(' ', 'Space')}.png"
+                                    _write_data_url_png(img, os.path.join(target_dir, filename))
+                                    image_rel = os.path.join("screenshots", filename) if shots_dir else filename
+                            except Exception:
+                                pass
+                        # Compute per-action state change vs previous snapshot
+                        per_action_changed = False
                         try:
-                            if debug:
-                                logging.info(f"Pressing: {k}")
-                            await _press_key_robust(page, k, debug)
-                            if debug:
-                                cur_state = await _get_game_state(page)
-                                logging.info(f"Observed state after {k}: {cur_state}")
-                        except Exception as e:
-                            if debug:
-                                logging.info(f"Key {k} press error: {e}")
+                            if isinstance(prev_gs, dict) and isinstance(gs, dict):
+                                left = json.dumps(prev_gs, sort_keys=True, default=str)
+                                right = json.dumps(gs, sort_keys=True, default=str)
+                                per_action_changed = (left != right)
+                        except Exception:
+                            pass
+                        try:
+                            (res.setdefault("keypress_log", [])).append({
+                                "t": time.time(),
+                                "key": k,
+                                "state": _shallow_state_view(cur_state),
+                                "gameState": gs if isinstance(gs, dict) else None,
+                                "image": image_rel if (shots_dir or save_dir) else None,
+                                "state_changed": bool(per_action_changed),
+                            })
+                        except Exception:
+                            pass
+                        if debug:
+                            logging.info(f"Observed state after {k}: {cur_state}")
+                        img_counter += 1
+                        prev_gs = gs if isinstance(gs, dict) else prev_gs
+                    except Exception as e:
+                        if debug:
+                            logging.info(f"Key {k} press error: {e}")
 
                 after_pixels = await _sample_canvas_pixels(page)
                 after_state = await _get_game_state(page)
                 after_img = await _capture_canvas_dataurl(page)
+                # Final gs after interactions (from last loop iteration if available)
+                last_gs = prev_gs or await _get_full_game_state(page)
                 if debug:
                     logging.info(f"Final state: {after_state}")
 
-                # simple diff
-                pixel_change = False
-                if before_pixels and after_pixels:
-                    changed = sum(1 for b, a in zip(before_pixels, after_pixels) if b != a)
-                    ratio = changed / min(len(before_pixels), len(after_pixels))
-                    pixel_change = ratio >= 0.1
+                # Interaction diffs: compare AFTER ENTER vs AFTER INTERACTION
+                inter_pixel_change = False
+                if after_enter_pixels and after_pixels:
+                    changed = sum(1 for b, a in zip(after_enter_pixels, after_pixels) if b != a)
+                    ratio = changed / min(len(after_enter_pixels), len(after_pixels))
+                    inter_pixel_change = ratio >= 0.01
 
-                # game state change heuristic
-                state_change = False
+                inter_state_change = False
                 try:
-                    if isinstance(before_state, dict) and isinstance(after_state, dict):
-                        if before_state.get("phase") != after_state.get("phase"):
-                            state_change = True
-                        elif before_state.get("score") != after_state.get("score"):
-                            state_change = True
-                        elif (before_state.get("player") or {}) != (after_state.get("player") or {}):
-                            state_change = True
+                    # Prefer comparing full gameState snapshots when available
+                    if isinstance(baseline_gs, dict) and isinstance(last_gs, dict):
+                        left = json.dumps(baseline_gs, sort_keys=True, default=str)
+                        right = json.dumps(last_gs, sort_keys=True, default=str)
+                        inter_state_change = (left != right)
+                    elif isinstance(after_enter_state, dict) and isinstance(after_state, dict):
+                        if after_enter_state.get("phase") != after_state.get("phase"):
+                            inter_state_change = True
+                        elif after_enter_state.get("score") != after_state.get("score"):
+                            inter_state_change = True
+                        elif (after_enter_state.get("player") or {}) != (after_state.get("player") or {}):
+                            inter_state_change = True
                 except Exception:
                     pass
 
-                img_change = False
+                inter_img_change = False
                 try:
-                    if before_img and after_img and before_img != after_img:
-                        img_change = True
+                    if after_enter_img and after_img and after_enter_img != after_img:
+                        inter_img_change = True
                 except Exception:
                     pass
 
-                res["interaction_changes"] = bool(pixel_change or state_change or img_change)
+                # Record strict interaction requirement: BOTH state and visual changes
+                res["interaction"] = {
+                    "state_changed": bool(inter_state_change),
+                    "visual_changed": bool(inter_pixel_change or inter_img_change),
+                }
+                res["interaction"]["passed"] = bool(res["interaction"]["state_changed"] and res["interaction"]["visual_changed"])  # type: ignore[index]
+
+                # Back-compat field: true if any change observed (not used for pass/fail now)
+                res["interaction_changes"] = bool(inter_pixel_change or inter_state_change or inter_img_change)
 
                 await browser.close()
                 return res
@@ -391,8 +579,10 @@ def test_game(game_path: str, duration: int = 10, timeout: int = 20, debug: bool
             time.sleep(0.1)
         out = fut.result()
 
-    # Determine final result
-    ok = bool(out.get("loaded")) and bool(out.get("interaction_changes")) and not out.get("page_errors")
+    # Determine final result: must load, start on Enter (phase + visual), and pass interaction (state + visual)
+    start_ok = bool((out.get("start_on_enter") or {}).get("passed"))
+    interact_ok = bool((out.get("interaction") or {}).get("passed"))
+    ok = bool(out.get("loaded")) and start_ok and interact_ok and not out.get("page_errors")
     return {"test_result": ok, **out}
 
 

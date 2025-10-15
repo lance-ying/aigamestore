@@ -41,8 +41,8 @@ class GameGenerator(ABC):
         return match.group(1).strip() if match else ""
 
     def extract_automated_testing_code(self, text: str) -> str:
-        match = re.search(r"<automated_testing_code>\s*(.*?)\s*</automated_testing_code>", text, re.DOTALL)
-        return match.group(1).strip() if match else ""
+        from utils.saving_utils.model_output_parser import extract_automated_testing_code as _eatc
+        return _eatc(text)
 
     def extract_automated_testing(self, text: str) -> str:
         match = re.search(r"<automated_testing>\s*(.*?)\s*</automated_testing>", text, re.DOTALL)
@@ -95,42 +95,31 @@ class GameGenerator(ABC):
         return tests
 
     def extract_code_block(self, text: str, language: str = "javascript") -> Union[str, Dict[str, str]]:
-        code_blocks = re.findall(r"<code filename=\"(.*?)\">(.*?)</code>", text, re.DOTALL)
-        if language == "javascript":
-            js_files: Dict[str, str] = {}
-            for filename, code in code_blocks:
-                if filename.endswith(".js"):
-                    cleaned = re.sub("```(javascript|js)?", "", code)
-                    js_files[filename.replace("\\", "/")] = cleaned.strip()
-            if not js_files:
-                js_files["game.js"] = "// Default game.js - Generated empty file\n"
-            return js_files
-        else:
-            for filename, code in code_blocks:
-                if filename.endswith(".html"):
-                    return re.sub("```(html|xml)?", "", code).strip()
-            return ""
+        from utils.saving_utils.model_output_parser import extract_code_block as _ecb
+        return _ecb(text, language)
 
     def extract_title(self, text: str) -> str:
-        match = re.search(r"<game_title>\s*(.*?)\s*</game_title>", text, re.DOTALL)
-        if match:
-            return match.group(1).strip()
-        for pattern in [r"GAME TITLE:\s*(.*?)(?:\n|$)", r"title:\s*(.*?)(?:\n|$)", r"<title>(.*?)</title>"]:
-            m = re.search(pattern, text, re.IGNORECASE)
-            if m:
-                return m.group(1).strip()
-        return "Untitled Game"
+        from utils.saving_utils.model_output_parser import extract_title as _et
+        return _et(text)
 
     def extract_game_description(self, text: str) -> str:
-        match = re.search(r"<game_description>\s*(.*?)\s*</game_description>", text, re.DOTALL)
-        return match.group(1).strip() if match else ""
+        from utils.saving_utils.model_output_parser import extract_game_description as _egd
+        return _egd(text)
 
     def extract_game_controls(self, text: str) -> str:
-        match = re.search(r"<game_controls>\s*(.*?)\s*</game_controls>", text, re.DOTALL)
-        return match.group(1).strip() if match else ""
+        from utils.saving_utils.model_output_parser import extract_game_controls as _egc
+        return _egc(text)
 
     def extract_game_plan(self, text: str) -> str:
-        match = re.search(r"<plan>\s*(.*?)\s*</plan>", text, re.DOTALL)
-        return match.group(1).strip() if match else ""
+        from utils.saving_utils.model_output_parser import extract_game_plan as _egp
+        return _egp(text)
+
+    def extract_automated_testing(self, text: str) -> str:
+        from utils.saving_utils.model_output_parser import extract_automated_testing as _eat
+        return _eat(text)
+
+    def parse_automated_testing(self, automated_testing_block: str) -> Dict[str, Dict[str, str]]:
+        from utils.saving_utils.model_output_parser import parse_automated_testing as _pat
+        return _pat(automated_testing_block)
 
 
