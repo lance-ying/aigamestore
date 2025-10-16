@@ -1,9 +1,27 @@
 import argparse
 import json
+import os
 from pathlib import Path
 from typing import Any, Dict
 import yaml
 from generators import BaselineConceptAndGameGenerator, SinglePromptWithTestingGenerator
+
+# Load environment variables from .env file if it exists
+def load_env_file() -> None:
+    env_file = Path(".env")
+    if env_file.exists():
+        with open(env_file, "r") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, value = line.split("=", 1)
+                    value = value.strip()
+                    # Remove surrounding quotes if present
+                    if value and value[0] in ('"', "'") and value[-1] in ('"', "'"):
+                        value = value[1:-1]
+                    os.environ[key.strip()] = value
+
+load_env_file()
 
 def load_config(path: str) -> Dict[str, Any]:
     p = Path(path)
@@ -20,6 +38,7 @@ def main() -> int:
     parser.add_argument("--output_folder", type=str, required=False, help="Custom output folder name under games/")
     parser.add_argument("--debug_prompts", action="store_true", help="Only build and print/save prompts; no model call")
     parser.add_argument("--debug_prompts_out", type=str, required=False, help="Optional file path to save built prompts")
+    parser.add_argument("--no-testing", action="store_true", help="Skip automated testing code generation")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -35,6 +54,11 @@ def main() -> int:
         "canvas_width": cfg.get("canvas_width", 600),
         "canvas_height": cfg.get("canvas_height", 400),
         "output_folder": cfg.get("output_folder") or args.output_folder,
+        "prompt_file": cfg.get("prompt_file"),
+        "library": cfg.get("library"),
+        "game_controls": cfg.get("game_controls"),
+        "game_phase_control": cfg.get("game_phase_control"),
+        "include_testing": not args.no_testing,
     }
 
     # Concept argument (used for single_prompt_with_testing)
@@ -74,7 +98,7 @@ def main() -> int:
         )
         if args.debug_prompts:
             system_prompt = gen.get_system_prompt()
-            # Resolve concept text for debug prompt (load YAML 'concept' or file text)
+            # Resolve concept text for debug prompt (load YAML/JSON 'concept' or file text)
             resolved_concept = concept_arg
             try:
                 if concept_arg:
@@ -82,6 +106,12 @@ def main() -> int:
                     if p.exists():
                         if p.suffix in (".yml", ".yaml"):
                             data = yaml.safe_load(p.read_text(encoding="utf-8"))
+                            if isinstance(data, dict) and "concept" in data:
+                                resolved_concept = str(data.get("concept") or "").strip()
+                            else:
+                                resolved_concept = p.read_text(encoding="utf-8").strip()
+                        elif p.suffix == ".json":
+                            data = json.loads(p.read_text(encoding="utf-8"))
                             if isinstance(data, dict) and "concept" in data:
                                 resolved_concept = str(data.get("concept") or "").strip()
                             else:
@@ -99,14 +129,16 @@ def main() -> int:
             if args.debug_prompts_out:
                 Path(args.debug_prompts_out).write_text(combined, encoding="utf-8")
             return 0
-        # Derive game index from concept path like game_concepts/game_0000.yaml if not explicitly provided
+        # Derive game index from concept path like game_concepts/game_0000.yaml or ios_game_0000.json if not explicitly provided
         derived_index = None
         if args.game_index is None and concept_arg:
             try:
                 p = Path(str(concept_arg))
-                stem = p.stem  # e.g., game_0000
+                stem = p.stem  # e.g., game_0000 or ios_game_0000
                 if stem.startswith("game_"):
                     derived_index = int(stem.split("_")[1])
+                elif stem.startswith("ios_game_"):
+                    derived_index = int(stem.split("_")[2])
             except Exception:
                 derived_index = None
         result = gen.generate_game(concept_arg, forced_game_index=(args.game_index if args.game_index is not None else derived_index))

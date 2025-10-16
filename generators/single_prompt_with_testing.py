@@ -23,6 +23,7 @@ Implement a complete, fun, and error-free p5.js game for the following concept:
         example_html = render_html_template("html_templates/single_prompt_with_testing.html", libs)
         # Load output instructions from prompts file, fallback to default path
         import os
+        import re
         from pathlib import Path
         out_path = self.prompt_config.get("output_instructions") or "prompts/output_instructions/single_prompt_with_testing.md"
         text = ""
@@ -37,6 +38,18 @@ Implement a complete, fun, and error-free p5.js game for the following concept:
         else:
             # Minimal fallback if file missing
             output_instructions = f"\n<example_html>\n{example_html}\n</example_html>\n\n<output_instructions>\n</output_instructions>\n"
+        
+        # Remove automated testing from output instructions if disabled
+        if not self.prompt_config.get("include_testing", True):
+            output_instructions = re.sub(
+                r"Write the automated testing plan:.*?</automated_testing>",
+                "",
+                output_instructions,
+                flags=re.DOTALL
+            )
+            # Clean up extra blank lines
+            output_instructions = re.sub(r'\n\n\n+', '\n\n', output_instructions)
+        
         return instructions + "\n" + task + output_instructions
 
     def get_system_prompt(self) -> str:
@@ -46,13 +59,21 @@ Implement a complete, fun, and error-free p5.js game for the following concept:
         # If concept is a path, read it
         if game_concept and isinstance(game_concept, str):
             from pathlib import Path
+            import json
             import yaml  # type: ignore
             p = Path(game_concept)
             if p.exists():
                 try:
-                    # Prefer YAML parsing to avoid clipping
+                    # Prefer YAML/JSON parsing to avoid clipping
                     if p.suffix in (".yml", ".yaml"):
                         data = yaml.safe_load(p.read_text(encoding="utf-8"))
+                        if isinstance(data, dict) and "concept" in data:
+                            game_concept = str(data.get("concept") or "").strip()
+                        else:
+                            # Fallback to raw text if unexpected format
+                            game_concept = p.read_text(encoding="utf-8").strip()
+                    elif p.suffix == ".json":
+                        data = json.loads(p.read_text(encoding="utf-8"))
                         if isinstance(data, dict) and "concept" in data:
                             game_concept = str(data.get("concept") or "").strip()
                         else:
@@ -128,7 +149,10 @@ Implement a complete, fun, and error-free p5.js game for the following concept:
             conversation_log=conversation_log,
         )
 
-        basic = run_basic_test(str(game_dir), duration=10, timeout=20)
+        # Only run basic test if include_testing is not explicitly disabled
+        basic = None
+        if self.prompt_config.get("include_testing", True):
+            basic = run_basic_test(str(game_dir), duration=10, timeout=20)
 
         return {
             "title": title,

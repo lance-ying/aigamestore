@@ -132,7 +132,13 @@ def build_user_prompt(mode: str, config: Dict[str, Any]) -> str:
     code_inst = build_code_instructions(config)
     cw = int(config.get("canvas_width", 600))
     ch = int(config.get("canvas_height", 400))
-    if mode == "concept_and_game":
+
+    # Check if custom prompt_file is specified in config
+    prompt_file = config.get("prompt_file")
+    if prompt_file:
+        # Use custom prompt file if specified
+        instr = _read(prompt_file)
+    elif mode == "concept_and_game":
         instr = _read("prompts/generation/baseline_concept_and_game_instructions.md")
         # Fill previous concepts if placeholder present
         try:
@@ -143,7 +149,7 @@ def build_user_prompt(mode: str, config: Dict[str, Any]) -> str:
                     concept_value = yaml.safe_load(p.read_text(encoding="utf-8"))["concept"]
                     if concept_value:
                         previous.append(f'- "{concept_value}"')
-                
+
             prev_block = "\n".join(previous)
             instr = instr.replace("{canvas_width}", str(cw)).replace("{canvas_height}", str(ch))
             if prev_block.strip():
@@ -160,6 +166,28 @@ def build_user_prompt(mode: str, config: Dict[str, Any]) -> str:
             instr = instr.replace("{previous_concepts_text}", "")
     else:
         instr = _read("prompts/generation/single_prompt_with_testing_instructions.md")
+
+    # Remove automated testing instructions if include_testing is False
+    include_testing = config.get("include_testing", True)
+    if not include_testing:
+        # Remove the entire <automated_testing_instructions> block from instructions
+        instr = re.sub(
+            r"<automated_testing_instructions>.*?</automated_testing_instructions>",
+            "",
+            instr,
+            flags=re.DOTALL
+        )
+        # Also remove automated testing from output instructions
+        # This pattern matches "Write the automated testing plan:" through "</automated_testing>"
+        instr = re.sub(
+            r"Write the automated testing plan:.*?</automated_testing>",
+            "",
+            instr,
+            flags=re.DOTALL
+        )
+        # Clean up extra blank lines
+        instr = re.sub(r'\n\n\n+', '\n\n', instr)
+
     # Fill placeholders in instruction files if present
     instr = instr.replace("{code_instructions}", code_inst)
     if "{hard_constraints}" in instr:

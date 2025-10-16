@@ -46,7 +46,10 @@ class ModelAPI:
         if self.model_provider == "anthropic":
             if anthropic is None:
                 raise ImportError("anthropic package is required for Claude models")
-            return anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+            return anthropic.Anthropic(
+                api_key=os.getenv("ANTHROPIC_API_KEY"),
+                timeout=1800.0  # 30 minutes timeout
+            )
         if self.model_provider == "google":
             if genai is None:
                 raise ImportError("google-generativeai package is required for Gemini models")
@@ -133,6 +136,7 @@ class ModelAPI:
                 result_text = ""
                 thinking_content = ""
                 retry = 0
+                last_error = None
                 while retry < max_retries:
                     try:
                         with self.client.messages.stream(**claude_params) as stream:  # type: ignore[attr-defined]
@@ -166,30 +170,12 @@ class ModelAPI:
                         if verbose:
                             print()
                         break
-                    except Exception:
+                    except Exception as e:
+                        last_error = e
                         retry += 1
                         if retry >= max_retries:
-                            response = self.client.messages.create(**claude_params)  # type: ignore[attr-defined]
-                            if thinking and hasattr(response, "content"):
-                                for block in response.content:  # type: ignore[attr-defined]
-                                    if getattr(block, "type", "") == "text":
-                                        result_text = getattr(block, "text", "")
-                            else:
-                                result_text = response.content[0].text  # type: ignore[index]
-                            # Capture usage for non-streaming response if present
-                            try:
-                                usage = getattr(response, "usage", None)
-                                if usage is not None:
-                                    in_tok = getattr(usage, "input_tokens", None)
-                                    out_tok = getattr(usage, "output_tokens", None)
-                                    if isinstance(in_tok, int):
-                                        prompt_tokens = in_tok
-                                    if isinstance(out_tok, int):
-                                        completion_tokens = out_tok
-                                    if isinstance(prompt_tokens, int) and isinstance(completion_tokens, int):
-                                        total_tokens = prompt_tokens + completion_tokens
-                            except Exception:
-                                pass
+                            # Still use streaming even on final retry to avoid 10-min timeout
+                            raise RuntimeError(f"Streaming failed after {max_retries} retries: {last_error}")
 
                 self._record_call(system_prompt, user_prompt, result_text, prompt_tokens, completion_tokens, total_tokens)
                 if thinking:

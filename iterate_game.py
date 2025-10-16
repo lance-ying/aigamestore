@@ -1,15 +1,34 @@
 import argparse
 import json
+import os
 from pathlib import Path
 from typing import Any, Dict
 
 from iterators.base import CodeIterator
 from iterators.vibe_coding import run_vibe_coding
+from iterators.feedback_fix import FeedbackFixIterator
 
 try:
     import yaml  # type: ignore
 except Exception:
     yaml = None
+
+# Load environment variables from .env file if it exists
+def load_env_file() -> None:
+    env_file = Path(".env")
+    if env_file.exists():
+        with open(env_file, "r") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, value = line.split("=", 1)
+                    value = value.strip()
+                    # Remove surrounding quotes if present
+                    if value and value[0] in ('"', "'") and value[-1] in ('"', "'"):
+                        value = value[1:-1]
+                    os.environ[key.strip()] = value
+
+load_env_file()
 
 
 def load_config(path: str) -> Dict[str, Any]:
@@ -82,6 +101,33 @@ def main() -> int:
             game_dir=game_dir,
             model=cfg.get("model", "anthropic:claude-3.7-sonnet"),
             max_iters=int(cfg.get("max_iters", 1)),
+        )
+        print(json.dumps(res))
+        return 0
+    if mode == "feedback_fix":
+        game_dir = cfg.get("game_dir") or cfg.get("target")
+        if not game_dir:
+            raise ValueError("feedback_fix requires game_dir in config")
+        feedback = cfg.get("feedback")
+        if not feedback:
+            # Allow passing via CLI flag
+            parser2 = argparse.ArgumentParser(add_help=False)
+            parser2.add_argument("--feedback")
+            known, _ = parser2.parse_known_args()
+            feedback = getattr(known, "feedback", None)
+        if not feedback:
+            raise ValueError("feedback_fix requires 'feedback' text")
+        it = FeedbackFixIterator(
+            model=cfg.get("model", "anthropic:claude-4.5-sonnet"),
+            temperature=float(cfg.get("temperature", 0.6)),
+            thinking=bool(cfg.get("thinking", True)),
+            thinking_budget=cfg.get("thinking_budget", 8000),
+        )
+        res = it.iterate(
+            game_dir=game_dir,
+            feedback=feedback,
+            use_planning=bool(cfg.get("use_planning", True)),
+            in_place=bool(cfg.get("in_place", True)),
         )
         print(json.dumps(res))
         return 0

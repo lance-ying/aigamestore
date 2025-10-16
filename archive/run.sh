@@ -1,3 +1,0 @@
-# python game_generators/generate_game_main.py --concept_path "./game_prompts/generative_games/dev_games/platformer_0000.json" --method "three_step_xml" --verbose --model "anthropic:claude-3.7-sonnet" --allow_resample 0
-
-python game_generators/generate_game_main.py --concept_path ./game_prompts/generative_games/dev_games/platformer_0000.json --method simple_prompt_xml --verbose --generate_with_ai --no_ecs

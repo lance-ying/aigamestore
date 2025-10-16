@@ -9,6 +9,23 @@ from evaluators.vlm.gemini_api import GeminiEvaluator
 from evaluators.vlm.run import evaluate_game_folder
 from utils.saving_utils.eval_writer import ensure_eval_subdir, write_json
 
+# Load environment variables from .env file if it exists
+def load_env_file() -> None:
+    env_file = Path(".env")
+    if env_file.exists():
+        with open(env_file, "r") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, value = line.split("=", 1)
+                    value = value.strip()
+                    # Remove surrounding quotes if present
+                    if value and value[0] in ('"', "'") and value[-1] in ('"', "'"):
+                        value = value[1:-1]
+                    os.environ[key.strip()] = value
+
+load_env_file()
+
 try:
     from rich import box
     from rich.console import Console
