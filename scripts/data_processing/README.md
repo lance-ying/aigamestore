@@ -34,6 +34,16 @@ Generate games directly from CSV descriptions without expansion (comparison mode
 uv run python scripts/data_processing/generate_games_batch.py
 ```
 
+### `update_csv_generation_status.py`
+Add a `generated` column to unique_suitable_games_with_concepts.csv indicating which games have been generated.
+```bash
+python scripts/data_processing/update_csv_generation_status.py
+python scripts/data_processing/update_csv_generation_status.py --csv path/to/games.csv
+python scripts/data_processing/update_csv_generation_status.py --no-backup
+```
+
+This script reads metadata.json from each game in `public/games/` to match against CSV entries.
+
 ## Typical Usage
 
 These scripts are typically used once to prepare datasets:
