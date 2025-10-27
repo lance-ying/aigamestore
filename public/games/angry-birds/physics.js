@@ -24,7 +24,7 @@ export function setupCollisionHandling(engine, p) {
           (bodyA.label === 'pig' && bodyB.label === 'bird')) {
         const pig = gameState.pigs.find(p => p.body === bodyA || p.body === bodyB);
         if (pig && relativeVelocity > 2) {
-          const damage = relativeVelocity * 10;
+          const damage = relativeVelocity * 12;
           pig.takeDamage(damage);
         }
       }
@@ -44,7 +44,7 @@ export function setupCollisionHandling(engine, p) {
           (bodyA.label === 'structure' && bodyB.label === 'bird')) {
         const structure = gameState.structures.find(s => s.body === bodyA || s.body === bodyB);
         if (structure && relativeVelocity > 3) {
-          const damage = relativeVelocity * 5;
+          const damage = relativeVelocity * 7;
           structure.takeDamage(damage);
         }
       }

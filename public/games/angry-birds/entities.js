@@ -17,7 +17,7 @@ export class Bird {
     
     this.body = Bodies.circle(x, y, 15, {
       label: 'bird',
-      density: 0.002,
+      density: 0.003,
       restitution: 0.4,
       friction: 0.8
     });
@@ -97,8 +97,8 @@ export class Bird {
     switch (this.ability) {
       case "speed_boost":
         // Boost velocity in current direction
-        const vx = this.body.velocity.x * 1.8;
-        const vy = this.body.velocity.y * 1.8;
+        const vx = this.body.velocity.x * 2.2;
+        const vy = this.body.velocity.y * 2.2;
         Body.setVelocity(this.body, { x: vx, y: vy });
         break;
         
@@ -212,15 +212,9 @@ export class Pig {
     this.p.strokeWeight(2);
     this.p.circle(0, 0, 36);
     
-    // Draw snout
-    this.p.fill(120, 220, 120);
-    this.p.ellipse(0, 5, 20, 15);
-    this.p.fill(80, 160, 80);
-    this.p.circle(-4, 5, 5);
-    this.p.circle(4, 5, 5);
-    
     // Draw eyes
     this.p.fill(255);
+    this.p.noStroke();
     this.p.circle(-6, -3, 10);
     this.p.circle(6, -3, 10);
     this.p.fill(0);

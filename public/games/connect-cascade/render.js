@@ -15,6 +15,7 @@ export function calculateDotPosition(gridX, gridY) {
 export function renderStartScreen(p) {
   p.background(20, 25, 35);
   
+  p.noStroke();
   p.fill(255, 255, 255);
   p.textAlign(p.CENTER, p.CENTER);
   p.textSize(48);
@@ -83,6 +84,7 @@ export function renderPlayingScreen(p) {
   
   // Draw paused indicator
   if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+    p.noStroke();
     p.fill(255, 255, 255);
     p.textAlign(p.RIGHT, p.TOP);
     p.textSize(16);
@@ -91,6 +93,7 @@ export function renderPlayingScreen(p) {
 }
 
 function renderUI(p) {
+  p.noStroke();
   p.fill(255, 255, 255);
   p.textAlign(p.LEFT, p.TOP);
   p.textSize(16);
@@ -181,6 +184,7 @@ export function renderGameOverScreen(p) {
   
   const isWin = gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN;
   
+  p.noStroke();
   p.fill(255, 255, 255);
   p.textAlign(p.CENTER, p.CENTER);
   p.textSize(48);

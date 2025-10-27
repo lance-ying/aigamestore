@@ -21,9 +21,12 @@ export const TRACK_X_OFFSET = (CANVAS_WIDTH - TRACK_WIDTH) / 2;
 export const PLAYER_CAR_WIDTH = 30;
 export const PLAYER_CAR_HEIGHT = 50;
 export const PLAYER_START_Y = CANVAS_HEIGHT - 100;
+export const BASELINE_SPEED = 4; // Constant cruising speed
 export const MAX_SPEED = 8;
+export const SPEED_BOOST = 1.33; // ~20 mph boost on tap (20/15 speed units)
 export const ACCELERATION = 0.15;
 export const DECELERATION = 0.08;
+export const CONTINUOUS_DECELERATION = 0.05; // Gradual slowdown when not boosting
 export const LANE_CHANGE_SPEED = 4;
 export const MAX_HEALTH = 100;
 

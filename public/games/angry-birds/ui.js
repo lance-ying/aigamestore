@@ -18,13 +18,13 @@ export function renderStartScreen(p) {
   p.noStroke();
   p.fill(0);
   p.text("Launch birds to destroy pigs and structures!", CANVAS_WIDTH / 2, 150);
-  p.text("Use special abilities to maximize destruction", CANVAS_WIDTH / 2, 175);
+  p.text("Use speed boost ability to maximize destruction", CANVAS_WIDTH / 2, 175);
   
   // Instructions
   p.textSize(14);
   p.textAlign(p.LEFT, p.CENTER);
-  p.text("↑↓ - Adjust Power", 150, 220);
-  p.text("←→ - Aim Angle", 150, 240);
+  p.text("↑↓ - Aim Angle", 150, 220);
+  p.text("←→ - Adjust Power", 150, 240);
   p.text("SPACE - Launch / Activate Ability", 150, 260);
   
   // Start prompt
@@ -92,55 +92,23 @@ export function renderAimingGuide(p) {
   const angleRad = (gameState.slingshotAngle * Math.PI) / 180;
   const power = gameState.slingshotPower;
   
-  // Calculate initial velocity - must match launchBird() exactly
-  const vx = Math.cos(angleRad) * power * 0.15;
-  const vy = Math.sin(angleRad) * power * 0.15;
-  const gravity = gameState.world.gravity.y;
+  // Draw a short straight line to indicate angle and direction
+  const lineLength = 80; // Short line to show direction
+  const startX = base.x;
+  const startY = base.y - 30;
+  const endX = startX + Math.cos(angleRad) * lineLength;
+  const endY = startY + Math.sin(angleRad) * lineLength;
   
-  // Matter.js applies air resistance via damping (default is 0.01)
-  const airDamping = 0.01;
+  p.stroke(255, 255, 255, 180);
+  p.strokeWeight(3);
+  p.line(startX, startY, endX, endY);
   
-  // Draw trajectory prediction
-  p.noFill();
-  p.stroke(255, 255, 255, 100);
-  p.strokeWeight(2);
-  p.beginShape();
-  
-  // Start from bird's current position
-  let posX = base.x;
-  let posY = base.y - 30;
-  let velX = vx;
-  let velY = vy;
-  
-  // Simulate trajectory with smaller time steps for accuracy
-  // Use sub-steps to better match Matter.js physics
-  const subSteps = 4;
-  const dt = 1.0 / subSteps;
-  
-  for (let step = 0; step < 120 * subSteps; step++) {
-    // Draw vertex every few substeps (for visual clarity)
-    if (step % subSteps === 0) {
-      p.vertex(posX, posY);
-    }
-    
-    // Apply gravity acceleration
-    velY += gravity * dt;
-    
-    // Apply air resistance damping (velocity decay)
-    const dampingFactor = 1 - airDamping;
-    velX *= dampingFactor;
-    velY *= dampingFactor;
-    
-    // Update position with velocity
-    posX += velX * dt;
-    posY += velY * dt;
-    
-    // Stop if trajectory goes off screen or hits ground
-    if (posY > CANVAS_HEIGHT - 20 || posX > CANVAS_WIDTH + 100 || posX < -100) {
-      break;
-    }
-  }
-  p.endShape();
+  // Draw arrow head at the end
+  const arrowSize = 8;
+  const arrowAngle1 = angleRad + Math.PI * 0.75;
+  const arrowAngle2 = angleRad - Math.PI * 0.75;
+  p.line(endX, endY, endX + Math.cos(arrowAngle1) * arrowSize, endY + Math.sin(arrowAngle1) * arrowSize);
+  p.line(endX, endY, endX + Math.cos(arrowAngle2) * arrowSize, endY + Math.sin(arrowAngle2) * arrowSize);
   
   // Draw angle and power indicators
   p.fill(255);

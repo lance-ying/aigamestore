@@ -2,7 +2,8 @@
 
 import { 
   PLAYER_CAR_WIDTH, PLAYER_CAR_HEIGHT, PLAYER_START_Y,
-  MAX_SPEED, ACCELERATION, DECELERATION, LANE_CHANGE_SPEED,
+  BASELINE_SPEED, MAX_SPEED, SPEED_BOOST, ACCELERATION, DECELERATION, 
+  CONTINUOUS_DECELERATION, LANE_CHANGE_SPEED,
   MAX_HEALTH, DRIFT_SPEED_THRESHOLD, DRIFT_DURATION_FOR_BONUS,
   DRIFT_POINTS, DRIFT_BOOST_MULTIPLIER, NUM_LANES, LANE_WIDTH,
   TRACK_X_OFFSET, RIVAL_CAR_WIDTH, RIVAL_CAR_HEIGHT,
@@ -18,7 +19,7 @@ export class PlayerCar {
     this.x = TRACK_X_OFFSET + lane * LANE_WIDTH + LANE_WIDTH / 2;
     this.y = PLAYER_START_Y;
     this.targetX = this.x;
-    this.speed = 0;
+    this.speed = 0; // Start at zero speed
     this.maxSpeed = MAX_SPEED;
     this.health = MAX_HEALTH;
     this.width = PLAYER_CAR_WIDTH;
@@ -32,6 +33,7 @@ export class PlayerCar {
     this.exhaustParticles = [];
     this.driftTrails = [];
     this.color = [100, 220, 100];
+    this.prevUpPressed = false; // Track previous Up key state for press detection
   }
 
   update() {
@@ -42,12 +44,15 @@ export class PlayerCar {
 
     this.maxSpeed = MAX_SPEED * engineBoost;
     
-    // Handle acceleration/deceleration
-    if (gameState.inputState.up) {
-      this.speed = this.p.min(this.speed + ACCELERATION * accelBoost, this.maxSpeed);
+    // Detect Up key press (transition from not pressed to pressed)
+    const upJustPressed = gameState.inputState.up && !this.prevUpPressed;
+    if (upJustPressed) {
+      // Add speed boost on tap
+      const boost = SPEED_BOOST * accelBoost;
+      this.speed = this.p.min(this.speed + boost, this.maxSpeed);
       
       // Add exhaust particles
-      if (this.p.frameCount % 3 === 0) {
+      for (let i = 0; i < 5; i++) {
         this.exhaustParticles.push({
           x: this.x,
           y: this.y + this.height / 2,
@@ -55,28 +60,39 @@ export class PlayerCar {
           alpha: 150
         });
       }
-    } else {
-      this.speed = this.p.max(0, this.speed - DECELERATION);
     }
+    this.prevUpPressed = gameState.inputState.up;
 
-    // Handle steering
+    // Always decelerate gradually
+    this.speed = this.p.max(0, this.speed - CONTINUOUS_DECELERATION);
+
+    // Handle steering with neutralization when opposite direction is pressed
     const laneChangeSpeed = LANE_CHANGE_SPEED * handlingBoost;
-    if (gameState.inputState.left && this.lane > 0) {
-      this.targetX = TRACK_X_OFFSET + (this.lane - 1) * LANE_WIDTH + LANE_WIDTH / 2;
-      if (this.p.abs(this.x - this.targetX) < laneChangeSpeed) {
-        this.lane--;
-        this.x = this.targetX;
+    const movingLeft = this.targetX < this.x;
+    const movingRight = this.targetX > this.x;
+    
+    // If moving in one direction and opposite key is pressed, neutralize to straight
+    if (movingLeft && gameState.inputState.right && !gameState.inputState.left) {
+      // Moving left but right is pressed - stop and go straight
+      this.targetX = this.x;
+    } else if (movingRight && gameState.inputState.left && !gameState.inputState.right) {
+      // Moving right but left is pressed - stop and go straight
+      this.targetX = this.x;
+    } else if (gameState.inputState.left && !gameState.inputState.right) {
+      // Only left pressed - move left
+      const minX = TRACK_X_OFFSET + LANE_WIDTH / 2;
+      if (this.x > minX) {
+        this.targetX = this.p.max(minX, this.x - laneChangeSpeed);
       }
-    }
-    if (gameState.inputState.right && this.lane < NUM_LANES - 1) {
-      this.targetX = TRACK_X_OFFSET + (this.lane + 1) * LANE_WIDTH + LANE_WIDTH / 2;
-      if (this.p.abs(this.x - this.targetX) < laneChangeSpeed) {
-        this.lane++;
-        this.x = this.targetX;
+    } else if (gameState.inputState.right && !gameState.inputState.left) {
+      // Only right pressed - move right
+      const maxX = TRACK_X_OFFSET + (NUM_LANES - 1) * LANE_WIDTH + LANE_WIDTH / 2;
+      if (this.x < maxX) {
+        this.targetX = this.p.min(maxX, this.x + laneChangeSpeed);
       }
     }
 
-    // Move towards target lane
+    // Move towards target position
     if (this.x < this.targetX) {
       this.x = this.p.min(this.x + laneChangeSpeed, this.targetX);
       this.tiltAngle = this.p.lerp(this.tiltAngle, 0.1, 0.2);
@@ -85,6 +101,15 @@ export class PlayerCar {
       this.tiltAngle = this.p.lerp(this.tiltAngle, -0.1, 0.2);
     } else {
       this.tiltAngle = this.p.lerp(this.tiltAngle, 0, 0.2);
+    }
+
+    // Update lane based on current position
+    for (let i = 0; i < NUM_LANES; i++) {
+      const laneCenter = TRACK_X_OFFSET + i * LANE_WIDTH + LANE_WIDTH / 2;
+      if (this.p.abs(this.x - laneCenter) < LANE_WIDTH / 4) {
+        this.lane = i;
+        break;
+      }
     }
 
     // Handle drifting

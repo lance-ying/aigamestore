@@ -1,4 +1,4 @@
-import { gameState, GAME_PHASES, CONTROL_MODES, CANVAS_WIDTH, ROBOT_MASTERS } from './globals.js';
+import { gameState, GAME_PHASES, CONTROL_MODES, ROBOT_MASTERS } from './globals.js';
 import { Stage } from './stage.js';
 
 export function handleKeyPressed(p) {
@@ -41,21 +41,6 @@ export function handleKeyPressed(p) {
     }
   }
 
-  // Stage select
-  if (gameState.stageSelectMode) {
-    if (key >= '1' && key <= '6') {
-      const index = parseInt(key) - 1;
-      if (!gameState.robotMastersDefeated[ROBOT_MASTERS[index].name]) {
-        startBossStage(p, index);
-      }
-    } else if (key === '0') {
-      const allDefeated = ROBOT_MASTERS.every(rm => gameState.robotMastersDefeated[rm.name]);
-      if (allDefeated) {
-        startWilyStage(p);
-      }
-    }
-  }
-
   // Weapon switch
   if (keyCode === 16 && gameState.gamePhase === GAME_PHASES.PLAYING) { // SHIFT
     gameState.currentWeapon = (gameState.currentWeapon + 1) % gameState.unlockedWeapons.length;
@@ -65,12 +50,12 @@ export function handleKeyPressed(p) {
 export function getKeys(p) {
   if (gameState.controlMode === CONTROL_MODES.HUMAN) {
     return {
-      left: p.keyIsDown(37),
-      right: p.keyIsDown(39),
-      up: p.keyIsDown(38),
-      down: p.keyIsDown(40),
-      jump: p.keyIsDown(90), // Z
-      shoot: p.keyIsDown(32) // SPACE
+      left: p.keyIsDown(37),   // Arrow Left
+      right: p.keyIsDown(39),  // Arrow Right
+      up: p.keyIsDown(38),     // Arrow Up
+      down: p.keyIsDown(40),   // Arrow Down
+      jump: p.keyIsDown(90),   // Z key = 90
+      shoot: p.keyIsDown(32)   // Space key = 32
     };
   } else {
     return getTestKeys(p);
@@ -123,36 +108,39 @@ function getTestKeys(p) {
 
 function startGame(p) {
   gameState.gamePhase = GAME_PHASES.PLAYING;
-  gameState.stageSelectMode = true;
+  gameState.currentLevel = 1;
+  loadLevel(p, 1);
   
   p.logs.game_info.push({
-    data: { phase: GAME_PHASES.PLAYING },
+    data: { phase: GAME_PHASES.PLAYING, level: 1 },
     framecount: p.frameCount,
     timestamp: Date.now()
   });
 }
 
-function startBossStage(p, index) {
-  gameState.stageSelectMode = false;
-  const bossData = ROBOT_MASTERS[index];
-  gameState.currentStage = new Stage('boss', bossData);
+export function loadLevel(p, levelNum) {
+  gameState.currentLevel = levelNum;
   
-  if (gameState.player) {
-    gameState.player.x = 100;
-    gameState.player.y = 100;
-    gameState.player.vx = 0;
-    gameState.player.vy = 0;
+  // Levels 1-6: Robot Masters (increasing difficulty)
+  if (levelNum >= 1 && levelNum <= 6) {
+    const bossIndex = levelNum - 1;
+    const bossData = ROBOT_MASTERS[bossIndex];
+    gameState.currentStage = new Stage('boss', bossData, levelNum);
+  } 
+  // Level 7: Wily Fortress
+  else if (levelNum === 7) {
+    gameState.currentStage = new Stage('wily_fortress', null, levelNum);
   }
-  
-  gameState.camera.x = 0;
-  gameState.playerHealth = gameState.maxPlayerHealth;
-  gameState.invincibilityFrames = 60;
-}
-
-function startWilyStage(p) {
-  gameState.stageSelectMode = false;
-  gameState.wilyStagePhase = 0;
-  gameState.currentStage = new Stage('wily_fortress');
+  // Level 8: Boss Gauntlet
+  else if (levelNum === 8) {
+    gameState.bossGauntletIndex = 0;
+    gameState.currentStage = new Stage('boss_gauntlet', null, levelNum);
+  }
+  // Level 9+: Victory
+  else {
+    gameState.gamePhase = GAME_PHASES.GAME_OVER_WIN;
+    return;
+  }
   
   if (gameState.player) {
     gameState.player.x = 50;
@@ -162,13 +150,13 @@ function startWilyStage(p) {
   }
   
   gameState.camera.x = 0;
-  gameState.playerHealth = gameState.maxPlayerHealth;
+  gameState.invincibilityFrames = 60;
 }
 
 function resetGame(p) {
   gameState.gamePhase = GAME_PHASES.START;
-  gameState.stageSelectMode = false;
   gameState.currentStage = null;
+  gameState.currentLevel = 0;
   gameState.entities = [];
   gameState.robotMastersDefeated = {};
   gameState.unlockedWeapons = ['BUSTER'];
@@ -177,7 +165,7 @@ function resetGame(p) {
   gameState.bossGauntletIndex = 0;
   gameState.wilyStagePhase = 0;
   gameState.score = 0;
-  gameState.lives = 3;
+  gameState.lives = 5;
   gameState.playerHealth = 28;
   gameState.projectiles = [];
   gameState.particles = [];
