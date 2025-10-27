@@ -71,6 +71,32 @@ def start_game_server(games_dir: str = "public/games"):
     class QuietHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         def log_message(self, format, *args):
             pass  # Suppress log messages
+        
+        def do_GET(self):
+            # Intercept do_GET to add no-cache headers
+            # Let parent handle the file serving
+            path = self.translate_path(self.path)
+            
+            try:
+                f = open(path, 'rb')
+            except OSError:
+                self.send_error(404, "File not found")
+                return None
+            
+            try:
+                self.send_response(200)
+                self.send_header("Content-type", self.guess_type(path))
+                fs = os.fstat(f.fileno())
+                self.send_header("Content-Length", str(fs[6]))
+                # Critical: Add no-cache headers
+                self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+                self.send_header("Pragma", "no-cache")
+                self.send_header("Expires", "0")
+                self.end_headers()
+                
+                self.copyfile(f, self.wfile)
+            finally:
+                f.close()
     
     try:
         game_server = socketserver.TCPServer(("", GAME_SERVER_PORT), QuietHTTPRequestHandler)
@@ -206,7 +232,7 @@ def get_game_metadata(game_path: str) -> Dict[str, str]:
 
 def get_game_iframe_html(game_dir_name: str, cache_bust: bool = False) -> str:
     """
-    Generate HTML for game iframe.
+    Generate HTML for game iframe with aggressive cache busting.
     
     Args:
         game_dir_name: Directory name of the game
@@ -225,9 +251,9 @@ def get_game_iframe_html(game_dir_name: str, cache_bust: bool = False) -> str:
     
     # Add cache busting parameter to force reload
     if cache_bust:
-        game_url += f"?_t={timestamp}"
+        game_url += f"?v={timestamp}"
     
-    # JavaScript to aggressively reload the iframe
+    # Very aggressive reload script that clears all caches
     reload_script = ""
     if cache_bust:
         reload_script = f"""
@@ -235,14 +261,28 @@ def get_game_iframe_html(game_dir_name: str, cache_bust: bool = False) -> str:
         (function() {{
             var iframe = document.getElementById('{iframe_id}');
             if (iframe) {{
-                // Force reload by clearing src and setting it again
+                // Method 1: Clear iframe completely and recreate
                 setTimeout(function() {{
-                    var originalSrc = iframe.src;
-                    iframe.src = 'about:blank';
-                    setTimeout(function() {{
-                        iframe.src = originalSrc;
-                    }}, 10);
-                }}, 100);
+                    var parent = iframe.parentNode;
+                    var newIframe = document.createElement('iframe');
+                    newIframe.id = '{iframe_id}';
+                    newIframe.src = iframe.src;
+                    newIframe.style.cssText = 'width: 100%; height: 100%; border: none; display: block;';
+                    newIframe.setAttribute('allow', 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture');
+                    newIframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-popups allow-forms');
+                    newIframe.setAttribute('tabindex', '0');
+                    parent.removeChild(iframe);
+                    parent.appendChild(newIframe);
+                    
+                    // Method 2: Force reload inside iframe after it loads
+                    newIframe.onload = function() {{
+                        try {{
+                            newIframe.contentWindow.location.reload(true);
+                        }} catch(e) {{
+                            console.log('Hard reload attempted');
+                        }}
+                    }};
+                }}, 50);
             }}
         }})();
         </script>
