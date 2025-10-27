@@ -87,100 +87,90 @@ export function handleKeyPress(p, key, keyCode) {
 function handleTurn(p) {
   const level = LEVELS[gameState.currentLevel];
   
-  // Always execute the turn - turn 90 degrees clockwise
-  gameState.player.turn90Clockwise();
-  
-  // Check if this turn was near a turn point for scoring/feedback
-  if (gameState.nextTurnIndex < gameState.turnPoints.length) {
-    const nextTurn = gameState.turnPoints[gameState.nextTurnIndex];
-    const playerDistance = gameState.player.getTraveledDistance();
-    const distanceDiff = Math.abs(playerDistance - nextTurn.distance);
-    
-    // If close to a turn point, give feedback and advance
-    if (distanceDiff < 150) {
-      gameState.nextTurnIndex++;
-      
-      // Award points based on both distance and timing
-      const timeDiff = Math.abs(gameState.gameTime - nextTurn.timing);
-      let points = 10;
-      let feedback = "TURN";
-      let color = [255, 255, 255];
-      
-      // Perfect timing AND distance (within 50 pixels and perfect timing window)
-      if (distanceDiff < 50 && timeDiff < nextTurn.perfect) {
-        points = 100 + gameState.perfectStreak * 50;
-        gameState.perfectStreak++;
-        feedback = "PERFECT!";
-        color = [255, 215, 0];
-      }
-      // Good timing (within timing window but not perfect distance)
-      else if (timeDiff < nextTurn.perfect * 2) {
-        points = 50;
-        gameState.perfectStreak = Math.floor(gameState.perfectStreak / 2);
-        feedback = "GOOD";
-        color = [200, 200, 255];
-      }
-      // Early or late timing (still valid distance, but timing is off)
-      else if (distanceDiff < 80) {
-        points = 25;
-        gameState.perfectStreak = 0;
-        feedback = "OK";
-        color = [150, 200, 150];
-      }
-      // Far from ideal spot but still valid
-      else {
-        points = 10;
-        gameState.perfectStreak = 0;
-        feedback = "TURN";
-        color = [200, 200, 200];
-      }
-      
-      gameState.score += points;
-      gameState.levelScore += points;
-      
-      // Add feedback
-      gameState.tapFeedback.push(
-        new TapFeedback(gameState.player.x, gameState.player.y, feedback, color)
-      );
-    } else if (distanceDiff < 300) {
-      // Close but not quite there yet - still turned but less points
-      let feedback = "TURN";
-      let color = [150, 150, 150];
-      
-      if (playerDistance < nextTurn.distance) {
-        feedback = "EARLY";
-        color = [200, 150, 150];
-      } else {
-        feedback = "LATE";
-        color = [200, 150, 150];
-      }
-      
-      gameState.score += 5;
-      gameState.levelScore += 5;
-      gameState.perfectStreak = 0;
-      
-      gameState.tapFeedback.push(
-        new TapFeedback(gameState.player.x, gameState.player.y, feedback, color)
-      );
-    } else {
-      // Way too far from turn point - still turned but minimal points
-      gameState.score += 5;
-      gameState.levelScore += 5;
-      gameState.perfectStreak = 0;
-      
-      gameState.tapFeedback.push(
-        new TapFeedback(gameState.player.x, gameState.player.y, "TURN", [150, 150, 150])
-      );
-    }
-  } else {
-    // No more turn points - still turn but give minimal feedback
+  // Check if there's a turn point ahead to turn at
+  if (gameState.nextTurnIndex >= gameState.turnPoints.length) {
+    // No more turns - give minimal feedback
     gameState.score += 5;
     gameState.levelScore += 5;
-    
     gameState.tapFeedback.push(
-      new TapFeedback(gameState.player.x, gameState.player.y, "TURN", [150, 150, 150])
+      new TapFeedback(gameState.player.x, gameState.player.y, "NO TURN", [100, 100, 100])
     );
+    return;
   }
+  
+  const nextTurn = gameState.turnPoints[gameState.nextTurnIndex];
+  const playerDistance = gameState.player.getTraveledDistance();
+  const distanceDiff = nextTurn.distance - playerDistance;
+  
+  // Check if player is in valid range to execute this turn
+  if (distanceDiff < -100) {
+    // Missed the turn - too late
+    gameState.score += 5;
+    gameState.levelScore += 5;
+    gameState.perfectStreak = 0;
+    gameState.tapFeedback.push(
+      new TapFeedback(gameState.player.x, gameState.player.y, "MISSED", [255, 100, 100])
+    );
+    return;
+  }
+  
+  if (distanceDiff > 200) {
+    // Too early - way before the turn point
+    gameState.score += 5;
+    gameState.levelScore += 5;
+    gameState.perfectStreak = 0;
+    gameState.tapFeedback.push(
+      new TapFeedback(gameState.player.x, gameState.player.y, "TOO EARLY", [200, 150, 150])
+    );
+    return;
+  }
+  
+  // Valid turn range - execute the turn in the correct direction
+  gameState.player.turn(nextTurn.direction);
+  gameState.nextTurnIndex++;
+  
+  // Calculate timing score
+  const timeDiff = Math.abs(gameState.gameTime - nextTurn.timing);
+  let points = 10;
+  let feedback = "TURN";
+  let color = [255, 255, 255];
+  
+  // Perfect timing AND distance
+  if (Math.abs(distanceDiff) < 30 && timeDiff < nextTurn.perfect) {
+    points = 100 + gameState.perfectStreak * 50;
+    gameState.perfectStreak++;
+    feedback = "PERFECT!";
+    color = [255, 215, 0];
+  }
+  // Good timing
+  else if (Math.abs(distanceDiff) < 60 && timeDiff < nextTurn.perfect * 2) {
+    points = 50;
+    gameState.perfectStreak = Math.floor(gameState.perfectStreak / 2);
+    feedback = "GOOD";
+    color = [200, 200, 255];
+  }
+  // OK timing
+  else if (Math.abs(distanceDiff) < 100) {
+    points = 25;
+    gameState.perfectStreak = 0;
+    feedback = distanceDiff < 0 ? "LATE" : "EARLY";
+    color = [150, 200, 150];
+  }
+  // Barely made it
+  else {
+    points = 10;
+    gameState.perfectStreak = 0;
+    feedback = "BARELY";
+    color = [200, 200, 200];
+  }
+  
+  gameState.score += points;
+  gameState.levelScore += points;
+  
+  // Add feedback
+  gameState.tapFeedback.push(
+    new TapFeedback(gameState.player.x, gameState.player.y, feedback, color)
+  );
   
   gameState.lastTapTime = gameState.gameTime;
 }
