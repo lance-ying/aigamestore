@@ -10,25 +10,25 @@ export class Enemy {
     this.stunTimer = 0;
     this.flashTimer = 0;
     
-    // Type-specific properties
+    // Type-specific properties (reduced speeds for better gameplay)
     if (type === 'normal') {
       this.health = 1;
       this.maxHealth = 1;
-      this.speed = 1;
+      this.speed = 0.6; // Reduced from 1
       this.size = 15;
       this.color = [255, 50, 50];
       this.points = 10;
     } else if (type === 'fast') {
       this.health = 1;
       this.maxHealth = 1;
-      this.speed = 1.5;
+      this.speed = 1.0; // Reduced from 1.5
       this.size = 15;
       this.color = [255, 150, 50];
       this.points = 20;
     } else if (type === 'tank') {
       this.health = 3;
       this.maxHealth = 3;
-      this.speed = 0.7;
+      this.speed = 0.5; // Reduced from 0.7
       this.size = 20;
       this.color = [150, 30, 30];
       this.points = 30;

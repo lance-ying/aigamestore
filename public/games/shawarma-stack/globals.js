@@ -14,7 +14,7 @@ export const GAME_PHASES = {
 export const INGREDIENTS = {
   MEAT: { name: "Meat", key: "Z", keyCode: 90, color: [139, 69, 19] },
   TOMATO: { name: "Tomato", key: "W", keyCode: 87, color: [220, 20, 60] },
-  ONION: { name: "Onion", key: "A", keyCode: 65, color: [255, 248, 220] },
+  ONION: { name: "Onion", key: "A", keyCode: 65, color: [200, 150, 220] },
   LETTUCE: { name: "Lettuce", key: "S", keyCode: 83, color: [144, 238, 144] },
   PICKLE: { name: "Pickle", key: "D", keyCode: 68, color: [154, 205, 50] },
   GARLIC_SAUCE: { name: "Garlic", key: "↑", keyCode: 38, color: [255, 255, 224] },
@@ -89,7 +89,10 @@ export const gameState = {
   nextCustomerTime: 0,
   highScore: 0,
   totalCustomersThisLevel: 0,
-  levelStartTime: 0
+  levelStartTime: 0,
+  particles: [],
+  lastAddedIngredient: null,
+  lastAddedTime: 0
 };
 
 // Expose getGameState globally

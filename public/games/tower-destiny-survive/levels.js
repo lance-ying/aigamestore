@@ -1,6 +1,6 @@
 // levels.js - Level and wave management
 import { gameState, GAME_PHASES } from './globals.js';
-import { Zombie } from './entities.js';
+import { Zombie, PowerUp } from './entities.js';
 
 export function initializeLevel(levelNumber) {
   gameState.currentLevel = levelNumber;
@@ -16,6 +16,7 @@ export function initializeLevel(levelNumber) {
   gameState.zombies = [];
   gameState.bullets = [];
   gameState.blocks = [];
+  gameState.powerups = [];
   
   startNextWave();
 }
@@ -61,10 +62,21 @@ function spawnZombie(p, levelConfig) {
     type = "fast";
   }
   
-  const y = 300 + (Math.random() - 0.5) * 60;
-  const zombie = new Zombie(620, y, type, gameState.currentLevel);
+  // Spawn from random side
+  const spawnFromLeft = Math.random() < 0.5;
+  const x = spawnFromLeft ? 10 : 590;
+  
+  // Fixed y position - aligned with bullet firing height
+  // Tower is at y=320 with height 60, so top is at 260
+  // Bullets fire from y=250, so zombies should spawn at y=250
+  const y = 250;
+  
+  const zombie = new Zombie(x, y, type, gameState.currentLevel, !spawnFromLeft);
   gameState.zombies.push(zombie);
   gameState.entities.push(zombie);
+  
+  // Store original zombie count for power-up drops
+  zombie.dropPowerUp = Math.random() < 0.3; // 30% chance to drop power-up
 }
 
 export function checkWaveComplete() {
@@ -87,5 +99,28 @@ export function checkWaveComplete() {
       gameState.score += 100;
       startNextWave();
     }
+  }
+}
+
+// Called when a zombie is killed to potentially spawn power-ups
+export function spawnPowerUpFromZombie(p, x, y) {
+  if (Math.random() < 0.3) { // 30% chance
+    const powerUpTypes = ["health", "energy", "damage"];
+    const weights = [0.4, 0.4, 0.2]; // Health and energy more common
+    
+    let roll = Math.random();
+    let type = "health";
+    let cumulative = 0;
+    
+    for (let i = 0; i < powerUpTypes.length; i++) {
+      cumulative += weights[i];
+      if (roll < cumulative) {
+        type = powerUpTypes[i];
+        break;
+      }
+    }
+    
+    const powerup = new PowerUp(x, y, type);
+    gameState.powerups.push(powerup);
   }
 }

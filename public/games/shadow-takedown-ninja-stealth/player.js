@@ -7,7 +7,7 @@ export class Player {
     this.p = p;
     this.x = x;
     this.y = y;
-    this.size = 20;
+    this.size = 28; // Increased from 20 to 28 for better visibility
     this.speed = 2.5;
     this.direction = 0; // angle in radians
     this.velocityX = 0;
@@ -60,10 +60,10 @@ export class Player {
     this.p.translate(this.x, this.y);
     this.p.rotate(this.direction);
     
-    // Draw ninja body (triangle)
+    // Draw ninja body (triangle) with glow effect for better visibility
     this.p.fill(30, 30, 30);
-    this.p.stroke(0);
-    this.p.strokeWeight(1);
+    this.p.stroke(100, 150, 255);
+    this.p.strokeWeight(2);
     this.p.triangle(
       this.size / 2, 0,
       -this.size / 2, -this.size / 3,
@@ -73,7 +73,7 @@ export class Player {
     // Draw front indicator (white dot)
     this.p.fill(255);
     this.p.noStroke();
-    this.p.circle(this.size / 3, 0, 4);
+    this.p.circle(this.size / 3, 0, 5);
     
     this.p.pop();
   }
@@ -88,17 +88,18 @@ export class Player {
       const enemy = enemies[i];
       if (!enemy.eliminated) {
         const dist = this.p.dist(this.x, this.y, enemy.x, enemy.y);
-        if (dist < 30 && !enemy.isDetecting) {
-          // Successful takedown
+        if (dist < 35 && !enemy.isDetecting) {
+          // Successful takedown - trigger animation
           enemy.eliminated = true;
+          enemy.eliminatedTimer = 30; // 0.5 seconds fade out
           const points = enemy.isPrimaryTarget ? 500 : 100;
           gameState.score += points;
           
-          // Remove from entities
-          const entityIndex = gameState.entities.indexOf(enemy);
-          if (entityIndex > -1) {
-            gameState.entities.splice(entityIndex, 1);
-          }
+          // Create takedown particles
+          this.createTakedownParticles(enemy.x, enemy.y);
+          
+          // Remove from entities after animation completes
+          // (will be handled in enemy.update())
           
           return true;
         }
@@ -107,10 +108,32 @@ export class Player {
     return false;
   }
 
+  createTakedownParticles(x, y) {
+    if (!gameState.particles) {
+      gameState.particles = [];
+    }
+    
+    // Create particle burst
+    for (let i = 0; i < 12; i++) {
+      const angle = (this.p.TWO_PI / 12) * i;
+      const speed = this.p.random(2, 4);
+      gameState.particles.push({
+        x: x,
+        y: y,
+        vx: this.p.cos(angle) * speed,
+        vy: this.p.sin(angle) * speed,
+        life: 30,
+        maxLife: 30,
+        size: this.p.random(3, 6),
+        color: [150, 150, 150]
+      });
+    }
+  }
+
   attemptVentUse(vents) {
     for (let vent of vents) {
       const dist = this.p.dist(this.x, this.y, vent.x, vent.y);
-      if (dist < 20) {
+      if (dist < 25) {
         // Teleport to linked vent
         if (vent.linkedVent) {
           this.x = vent.linkedVent.x;
@@ -129,24 +152,25 @@ export class Player {
         const dist = this.p.dist(this.x, this.y, barrel.x, barrel.y);
         if (dist < 35) {
           barrel.exploded = true;
-          barrel.explosionTimer = 20;
+          barrel.explosionTimer = 30; // Increased for better visual
+          
+          // Create explosion particles
+          barrel.createExplosionParticles();
           
           // Check enemies in explosion radius
           let enemiesHit = 0;
           for (let enemy of enemies) {
             if (!enemy.eliminated) {
               const enemyDist = this.p.dist(barrel.x, barrel.y, enemy.x, enemy.y);
-              if (enemyDist < 60) {
+              if (enemyDist < 70) {
                 enemy.eliminated = true;
+                enemy.eliminatedTimer = 20;
                 const points = enemy.isPrimaryTarget ? 500 : 100;
                 gameState.score += points;
                 enemiesHit++;
                 
-                // Remove from entities
-                const entityIndex = gameState.entities.indexOf(enemy);
-                if (entityIndex > -1) {
-                  gameState.entities.splice(entityIndex, 1);
-                }
+                // Create impact particles
+                this.createTakedownParticles(enemy.x, enemy.y);
               }
             }
           }

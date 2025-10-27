@@ -52,7 +52,7 @@ function renderStartScreen(p) {
   p.textSize(13);
   p.fill(220);
   const instructions = [
-    "Arrow Left/Right: Rotate aim",
+    "Arrow Left/Right: Rotate aim (HOLD for smooth rotation)",
     "Space: Throw knife",
     "Esc: Pause game",
     "R: Restart"
@@ -125,9 +125,11 @@ function renderUI(p) {
   p.textSize(14);
   p.text(`Enemies: ${gameState.enemiesRemaining}`, 10, 35);
   
-  // Hostages alive
-  p.fill(100, 150, 255);
-  p.text(`Hostages: ${gameState.hostagesAlive}/${gameState.hostages.length}`, 10, 55);
+  // Hostages alive (only show if there are hostages in this level)
+  if (gameState.hostages.length > 0) {
+    p.fill(100, 150, 255);
+    p.text(`Hostages Safe: ${gameState.hostagesAlive}`, 10, 55);
+  }
 }
 
 function renderPauseOverlay(p) {

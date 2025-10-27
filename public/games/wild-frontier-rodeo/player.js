@@ -80,6 +80,7 @@ export class Player {
 
   draw(p) {
     p.push();
+    p.rectMode(p.CORNER);
     
     // Draw player (cowboy)
     if (gameState.isJumping) {

@@ -27,7 +27,6 @@ import {
   checkSnakePelletCollision,
   checkSnakeMassCollision,
   checkSnakeBodyCollision,
-  checkSnakeBoundaryCollision,
   checkSnakeObstacleCollision,
 } from './collision.js';
 import {
@@ -42,6 +41,7 @@ import { renderUI, renderArena } from './ui.js';
 
 const p5 = window.p5;
 let aiControllers = [];
+let enterKeyPressed = false;
 
 let gameInstance = new p5(p => {
   // Initialize logs
@@ -57,6 +57,23 @@ let gameInstance = new p5(p => {
     p.randomSeed(42);
     
     logGameInfo('Game initialized', { phase: gameState.gamePhase });
+    
+    // Add global keyboard event listener for more reliable Enter key handling
+    document.addEventListener('keydown', function(event) {
+      if (event.key === 'Enter' || event.keyCode === 13) {
+        if (gameState.gamePhase === PHASE_LEVEL_COMPLETE) {
+          event.preventDefault();
+          logGameInfo('Global Enter handler: Level complete screen', { 
+            currentLevel: gameState.currentLevel 
+          });
+          advanceToNextLevel();
+        } else if (gameState.gamePhase === PHASE_START) {
+          event.preventDefault();
+          logGameInfo('Global Enter handler: Start screen');
+          initializeLevel(1);
+        }
+      }
+    });
   };
 
   p.draw = function() {
@@ -73,22 +90,28 @@ let gameInstance = new p5(p => {
                gameState.gamePhase === PHASE_LEVEL_COMPLETE) {
       renderUI(p);
     }
+    
+    // Reset enter key flag at end of frame
+    enterKeyPressed = false;
   };
 
   p.keyPressed = function() {
     logInput('keyPressed', { key: p.key, keyCode: p.keyCode });
 
     if (p.keyCode === 13) { // ENTER
+      if (enterKeyPressed) return false; // Prevent double-trigger within same frame
+      enterKeyPressed = true;
+      
       if (gameState.gamePhase === PHASE_START) {
-        startGame(1);
+        logGameInfo('Starting game from START screen', { level: 1 });
+        initializeLevel(1);
       } else if (gameState.gamePhase === PHASE_LEVEL_COMPLETE) {
-        if (gameState.currentLevel < 3) {
-          startGame(gameState.currentLevel + 1);
-        } else {
-          gameState.gamePhase = PHASE_GAME_OVER_WIN;
-          logGameInfo('All levels complete', { phase: gameState.gamePhase });
-        }
+        logGameInfo('Player pressed ENTER on level complete screen', { 
+          currentLevel: gameState.currentLevel 
+        });
+        advanceToNextLevel();
       }
+      return false;
     } else if (p.keyCode === 27) { // ESC
       if (gameState.gamePhase === PHASE_PLAYING) {
         gameState.gamePhase = PHASE_PAUSED;
@@ -102,83 +125,150 @@ let gameInstance = new p5(p => {
           gameState.gamePhase === PHASE_GAME_OVER_WIN ||
           gameState.gamePhase === PHASE_GAME_OVER_LOSE ||
           gameState.gamePhase === PHASE_LEVEL_COMPLETE) {
-        resetGame();
+        resetToMainMenu();
       }
-    }
-
-    // Gameplay controls
-    if (gameState.gamePhase === PHASE_PLAYING && gameState.controlMode === CONTROL_HUMAN) {
-      handlePlayerInput();
     }
   };
 
   function handlePlayerInput() {
     if (!gameState.player || !gameState.player.isAlive) return;
 
-    if (p.keyCode === 37 || p.key === 'a' || p.key === 'A') { // LEFT
+    // Continuous turning - check if keys are held down
+    if (p.keyIsDown(37) || p.keyIsDown(65)) { // LEFT or A
       gameState.player.turnLeft();
-    } else if (p.keyCode === 39 || p.key === 'd' || p.key === 'D') { // RIGHT
+    }
+    if (p.keyIsDown(39) || p.keyIsDown(68)) { // RIGHT or D
       gameState.player.turnRight();
-    } else if (p.keyCode === 32 || p.keyCode === 16) { // SPACE or SHIFT
+    }
+    
+    // Boost
+    if (p.keyIsDown(32) || p.keyIsDown(16)) { // SPACE or SHIFT
       if (gameState.player.activateBoost()) {
         const ejected = gameState.player.ejectMass(BOOST_COST);
         const newMass = spawnMassDrops(p, ejected.map(e => e.pos), gameState.player.color);
         gameState.massDrops.push(...newMass);
       }
+    } else {
+      gameState.player.deactivateBoost();
     }
   }
 
-  function startGame(level) {
-    gameState.currentLevel = level;
-    const config = LEVEL_CONFIGS[level];
+  function initializeLevel(levelNumber) {
+    logGameInfo('Initializing level', { 
+      level: levelNumber, 
+      previousPhase: gameState.gamePhase,
+      currentScore: gameState.score 
+    });
     
-    gameState.score = gameState.currentLevel > 1 ? gameState.score : 0;
+    const config = LEVEL_CONFIGS[levelNumber];
+    
+    if (!config) {
+      logGameInfo('ERROR: Invalid level number', { level: levelNumber });
+      return;
+    }
+    
+    // Preserve score when advancing levels (only reset on level 1 from start screen)
+    const preservedScore = (levelNumber === 1 && gameState.gamePhase === PHASE_START) ? 0 : gameState.score;
+    
+    // Set level state
+    gameState.currentLevel = levelNumber;
+    gameState.score = preservedScore;
     gameState.gamePhase = PHASE_PLAYING;
     gameState.targetLength = config.targetLength;
     gameState.framesSurvived = 0;
     gameState.lastSurvivalBonus = 0;
     gameState.testModeTimer = 0;
     
-    // Spawn entities
+    // Clear all entities
+    clearEntities();
+    
+    // Spawn new entities for this level
+    spawnLevelEntities(config);
+    
+    gameState.playerLength = gameState.player.getLength();
+    
+    logGameInfo('Level initialized successfully', { 
+      phase: gameState.gamePhase, 
+      level: levelNumber,
+      targetLength: config.targetLength,
+      playerLength: gameState.playerLength,
+      aiCount: gameState.aiSnakes.length,
+      score: gameState.score
+    });
+    logPlayerInfo();
+  }
+
+  function clearEntities() {
+    gameState.entities = [];
+    gameState.aiSnakes = [];
+    gameState.pellets = [];
+    gameState.massDrops = [];
+    gameState.obstacles = [];
+    gameState.player = null;
+    aiControllers = [];
+  }
+
+  function spawnLevelEntities(config) {
+    // Spawn player
     gameState.player = spawnPlayer(p, config, gameState.playerSkinColor);
     gameState.entities = [gameState.player];
     
+    // Spawn AI snakes
     gameState.aiSnakes = spawnAISnakes(p, config);
     gameState.entities.push(...gameState.aiSnakes);
     
+    // Spawn obstacles
     gameState.obstacles = spawnObstacles(p, config);
+    
+    // Spawn pellets
     gameState.pellets = spawnPellets(p, config.pelletDensity, [], gameState.obstacles);
-    gameState.massDrops = [];
     
     // Create AI controllers
     aiControllers = [];
     for (let snake of gameState.aiSnakes) {
       aiControllers.push(new AIController(p, snake, config));
     }
-    
-    gameState.playerLength = gameState.player.getLength();
-    
-    logGameInfo('Level started', { 
-      phase: gameState.gamePhase, 
-      level: level,
-      targetLength: config.targetLength
-    });
-    logPlayerInfo();
   }
 
-  function resetGame() {
+  function advanceToNextLevel() {
+    const currentLevel = gameState.currentLevel;
+    
+    logGameInfo('Attempting to advance to next level', { 
+      currentLevel: currentLevel,
+      phase: gameState.gamePhase
+    });
+    
+    if (currentLevel >= 3) {
+      // All levels complete - show victory
+      gameState.gamePhase = PHASE_GAME_OVER_WIN;
+      logGameInfo('All levels complete - victory!', { 
+        finalScore: gameState.score 
+      });
+    } else {
+      // Advance to next level
+      const nextLevel = currentLevel + 1;
+      logGameInfo('Advancing to next level', { 
+        currentLevel: currentLevel, 
+        nextLevel: nextLevel,
+        score: gameState.score 
+      });
+      initializeLevel(nextLevel);
+    }
+  }
+
+  function resetToMainMenu() {
+    logGameInfo('Resetting to main menu', { previousPhase: gameState.gamePhase });
+    
     gameState.gamePhase = PHASE_START;
     gameState.currentLevel = 1;
     gameState.score = 0;
-    gameState.player = null;
-    gameState.entities = [];
-    gameState.aiSnakes = [];
-    gameState.pellets = [];
-    gameState.massDrops = [];
-    gameState.obstacles = [];
-    aiControllers = [];
+    gameState.playerLength = 0;
+    gameState.framesSurvived = 0;
+    gameState.lastSurvivalBonus = 0;
     
-    logGameInfo('Game reset', { phase: gameState.gamePhase });
+    clearEntities();
+    
+    logGameInfo('Reset complete', { phase: gameState.gamePhase });
   }
 
   function updateGame() {
@@ -198,24 +288,14 @@ let gameInstance = new p5(p => {
           gameState.massDrops.push(...newMass);
         }
       }
+    } else {
+      // Handle human input continuously for smooth turning
+      handlePlayerInput();
     }
 
     // Update player
     if (gameState.player.isAlive) {
       gameState.player.update();
-      
-      // Deactivate boost if key released
-      if (gameState.controlMode === CONTROL_HUMAN) {
-        if (!p.keyIsDown(32) && !p.keyIsDown(16)) {
-          gameState.player.deactivateBoost();
-        }
-      } else {
-        // Auto-deactivate boost in test mode
-        const action = getTestAction(p);
-        if (!action || !action.boost) {
-          gameState.player.deactivateBoost();
-        }
-      }
     }
 
     // Update AI snakes
@@ -266,16 +346,6 @@ let gameInstance = new p5(p => {
         });
       }
 
-      // Boundary collisions
-      if (checkSnakeBoundaryCollision(gameState.player)) {
-        gameState.player.isAlive = false;
-        gameState.gamePhase = PHASE_GAME_OVER_LOSE;
-        logGameInfo('Player defeated - boundary collision', { 
-          phase: gameState.gamePhase,
-          finalScore: gameState.score
-        });
-      }
-
       // Obstacle collisions
       if (checkSnakeObstacleCollision(p, gameState.player, gameState.obstacles)) {
         gameState.player.isAlive = false;
@@ -304,9 +374,8 @@ let gameInstance = new p5(p => {
         snake.grow(1);
       }
 
-      // Body collisions
+      // Body collisions and obstacle collisions
       if (checkSnakeBodyCollision(p, snake, allSnakes) ||
-          checkSnakeBoundaryCollision(snake) ||
           checkSnakeObstacleCollision(p, snake, gameState.obstacles)) {
         const mass = snake.explode();
         const newMass = spawnMassDrops(p, mass.map(m => m.pos), snake.color);
@@ -319,28 +388,13 @@ let gameInstance = new p5(p => {
     // Maintain pellet density
     gameState.pellets = spawnPellets(p, config.pelletDensity, gameState.pellets, gameState.obstacles);
 
-    // Update player length
+    // Update player length and check win condition
     if (gameState.player && gameState.player.isAlive) {
       gameState.playerLength = gameState.player.getLength();
       
-      // Check win condition
-      if (gameState.playerLength >= config.targetLength) {
-        gameState.score += LEVEL_COMPLETE_BONUS;
-        
-        if (gameState.currentLevel === 3) {
-          gameState.gamePhase = PHASE_GAME_OVER_WIN;
-          logGameInfo('Game won!', { 
-            phase: gameState.gamePhase,
-            finalScore: gameState.score
-          });
-        } else {
-          gameState.gamePhase = PHASE_LEVEL_COMPLETE;
-          logGameInfo('Level complete', { 
-            phase: gameState.gamePhase,
-            level: gameState.currentLevel,
-            score: gameState.score
-          });
-        }
+      // Check if level target is reached - ONLY call handleLevelComplete if still in PLAYING phase
+      if (gameState.playerLength >= config.targetLength && gameState.gamePhase === PHASE_PLAYING) {
+        handleLevelComplete();
       }
 
       // Survival bonus
@@ -354,6 +408,31 @@ let gameInstance = new p5(p => {
       if (p.frameCount % 60 === 0) {
         logPlayerInfo();
       }
+    }
+  }
+
+  function handleLevelComplete() {
+    // Award level completion bonus
+    gameState.score += LEVEL_COMPLETE_BONUS;
+    
+    const currentLevel = gameState.currentLevel;
+    
+    if (currentLevel === 3) {
+      // Final level completed - instant win
+      gameState.gamePhase = PHASE_GAME_OVER_WIN;
+      logGameInfo('Final level complete - Game won!', { 
+        phase: gameState.gamePhase,
+        finalScore: gameState.score
+      });
+    } else {
+      // Level completed - show completion screen
+      gameState.gamePhase = PHASE_LEVEL_COMPLETE;
+      logGameInfo('Level complete - awaiting player input', { 
+        phase: gameState.gamePhase,
+        level: currentLevel,
+        score: gameState.score,
+        nextLevel: currentLevel + 1
+      });
     }
   }
 

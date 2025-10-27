@@ -8,6 +8,9 @@ export function checkCollisions(p, player) {
   for (const obstacle of gameState.obstacles) {
     if (!obstacle.active) continue;
     
+    // Only check collision if obstacle is close enough (in z-space)
+    if (obstacle.z > 150) continue;
+    
     // Skip collision if jetpack is active
     if (player.jetpackActive) continue;
     
@@ -43,12 +46,16 @@ export function checkCollisions(p, player) {
   for (const coin of gameState.coins) {
     if (!coin.active || coin.collected) continue;
     
+    // Only check collision if coin is close enough
+    if (coin.z > 150) continue;
+    
     const coinBox = coin.getBoundingBox();
     const magnetRadius = 150;
     
     // Auto-collect with magnet or jetpack
     if (player.magnetActive || player.jetpackActive) {
-      const distance = p.dist(player.x, player.y, coin.x, coinBox.y + coinBox.height / 2);
+      const { screenX } = coin.getScreenPosition();
+      const distance = p.dist(player.x, player.y, screenX, coinBox.y + coinBox.height / 2);
       if (distance < magnetRadius) {
         collectCoin(p, coin);
       }
@@ -60,6 +67,9 @@ export function checkCollisions(p, player) {
   // Check powerup collisions
   for (const powerup of gameState.powerups) {
     if (!powerup.active || powerup.collected) continue;
+    
+    // Only check collision if powerup is close enough
+    if (powerup.z > 150) continue;
     
     const powerupBox = powerup.getBoundingBox();
     

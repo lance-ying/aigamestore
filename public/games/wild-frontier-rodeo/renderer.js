@@ -35,6 +35,8 @@ export class Renderer {
   }
 
   drawBackground() {
+    this.p.push();
+    this.p.rectMode(this.p.CORNER);
     const offset = gameState.backgroundOffset % 800;
     
     // Sky
@@ -66,6 +68,7 @@ export class Renderer {
       const x = i * 50 - offset * 0.8;
       this.p.ellipse(x, CANVAS_HEIGHT - 95, 40, 10);
     }
+    this.p.pop();
   }
 
   drawGame() {
@@ -80,6 +83,8 @@ export class Renderer {
         
         // Draw riding timer indicator
         if (entity === gameState.currentAnimal && gameState.ridingTimer > 0) {
+          this.p.push();
+          this.p.rectMode(this.p.CORNER);
           const timerWidth = 60;
           const timerHeight = 5;
           const x = entity.x - timerWidth / 2;
@@ -92,6 +97,7 @@ export class Renderer {
           const color = percent > 0.5 ? [100, 200, 100] : percent > 0.25 ? [255, 200, 0] : [255, 50, 50];
           this.p.fill(...color);
           this.p.rect(x, y, timerWidth * percent, timerHeight);
+          this.p.pop();
         }
       } else if (entity instanceof Obstacle) {
         entity.draw(this.p);
@@ -104,9 +110,12 @@ export class Renderer {
     }
     
     // Draw particles
+    this.p.push();
+    this.p.noStroke();
     for (const particle of gameState.entities) {
       // Handled by entity draw methods
     }
+    this.p.pop();
     
     this.p.pop();
   }
@@ -175,6 +184,7 @@ export class Renderer {
 
   drawPauseOverlay() {
     this.p.push();
+    this.p.rectMode(this.p.CORNER);
     this.p.fill(0, 0, 0, 150);
     this.p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
     
@@ -195,6 +205,7 @@ export class Renderer {
 
   drawGameOverWin() {
     this.p.push();
+    this.p.rectMode(this.p.CORNER);
     this.p.fill(0, 0, 0, 150);
     this.p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
     
@@ -223,6 +234,7 @@ export class Renderer {
 
   drawGameOverLose() {
     this.p.push();
+    this.p.rectMode(this.p.CORNER);
     this.p.fill(0, 0, 0, 150);
     this.p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
     

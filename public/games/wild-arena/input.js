@@ -10,7 +10,10 @@ export function getPlayerInputs(p) {
       left: p.keyIsDown(37),
       right: p.keyIsDown(39),
       fire: p.keyIsDown(32),
-      ability: p.keyIsDown(16)
+      ability: p.keyIsDown(16),
+      weapon1: p.keyIsDown(49), // 1 key
+      weapon2: p.keyIsDown(50), // 2 key
+      weapon3: p.keyIsDown(51)  // 3 key
     };
   } else {
     // Test mode inputs
@@ -23,7 +26,10 @@ export function getPlayerInputs(p) {
       left: false,
       right: false,
       fire: false,
-      ability: false
+      ability: false,
+      weapon1: false,
+      weapon2: false,
+      weapon3: false
     };
   }
 }
@@ -40,7 +46,10 @@ export function generateTestActions(p) {
       left: frameCount % 120 < 60,
       right: frameCount % 120 >= 60,
       fire: frameCount % 20 === 0,
-      ability: frameCount % 180 === 0
+      ability: frameCount % 180 === 0,
+      weapon1: false,
+      weapon2: false,
+      weapon3: false
     });
   } else if (gameState.controlMode === 'TEST_2') {
     // Aggressive winning strategy
@@ -63,7 +72,10 @@ export function generateTestActions(p) {
         left: dx < -20,
         right: dx > 20,
         fire: dist < 200,
-        ability: dist < 100 && gameState.player.ability.cooldown === 0
+        ability: dist < 100 && gameState.player.ability.cooldown === 0,
+        weapon1: frameCount % 300 === 0,
+        weapon2: frameCount % 300 === 100,
+        weapon3: frameCount % 300 === 200
       });
     } else {
       actions.push({
@@ -72,7 +84,10 @@ export function generateTestActions(p) {
         left: false,
         right: false,
         fire: false,
-        ability: false
+        ability: false,
+        weapon1: false,
+        weapon2: false,
+        weapon3: false
       });
     }
   }

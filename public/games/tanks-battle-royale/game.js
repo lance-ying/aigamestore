@@ -8,10 +8,11 @@ import {
   PLAYER_CONFIG,
   ENEMY_CONFIG,
   PICKUP_TYPES,
+  WEAPON_TYPES,
   XP_TO_LEVEL
 } from './globals.js';
 
-import { Player, Enemy, Projectile, Pickup, Particle } from './entities.js';
+import { Player, Enemy, Projectile, Pickup, WeaponPickup, Obstacle, Particle } from './entities.js';
 import { AIController } from './ai.js';
 
 const p5 = window.p5;
@@ -149,6 +150,7 @@ let gameInstance = new p5(p => {
     gameState.projectiles = [];
     gameState.pickups = [];
     gameState.particles = [];
+    gameState.obstacles = [];
     gameState.score = 0;
     gameState.xp = 0;
     gameState.level = 1;
@@ -165,6 +167,9 @@ let gameInstance = new p5(p => {
     gameState.player = new Player(p, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
     gameState.entities.push(gameState.player);
     
+    // Create obstacles for cover
+    createObstacles(p);
+    
     gameState.gamePhase = GAME_PHASES.PLAYING;
     
     p.logs.game_info.push({
@@ -174,6 +179,24 @@ let gameInstance = new p5(p => {
     });
 
     spawnEnemyWave(p);
+  }
+
+  function createObstacles(p) {
+    // Create scattered obstacles for cover
+    const obstacleConfigs = [
+      { x: 150, y: 100, width: 60, height: 40 },
+      { x: 450, y: 100, width: 60, height: 40 },
+      { x: 150, y: 300, width: 60, height: 40 },
+      { x: 450, y: 300, width: 60, height: 40 },
+      { x: 300, y: 150, width: 40, height: 60 },
+      { x: 300, y: 250, width: 40, height: 60 },
+      { x: 100, y: 200, width: 50, height: 30 },
+      { x: 500, y: 200, width: 50, height: 30 }
+    ];
+
+    for (const config of obstacleConfigs) {
+      gameState.obstacles.push(new Obstacle(p, config.x, config.y, config.width, config.height));
+    }
   }
 
   function pauseGame(p) {
@@ -239,14 +262,19 @@ let gameInstance = new p5(p => {
 
     // Player shooting
     if (keys.shoot && gameState.player.shoot()) {
-      const proj = new Projectile(
-        p,
-        gameState.player.x + p.cos(gameState.player.angle) * 15,
-        gameState.player.y + p.sin(gameState.player.angle) * 15,
-        gameState.player.angle,
-        true
-      );
-      gameState.projectiles.push(proj);
+      const weapon = WEAPON_TYPES[gameState.player.currentWeapon];
+      for (let i = 0; i < weapon.projectileCount; i++) {
+        const spread = weapon.spread * (p.random() - 0.5);
+        const proj = new Projectile(
+          p,
+          gameState.player.x + p.cos(gameState.player.angle) * 15,
+          gameState.player.y + p.sin(gameState.player.angle) * 15,
+          gameState.player.angle + spread,
+          true,
+          weapon.color
+        );
+        gameState.projectiles.push(proj);
+      }
     }
 
     // Player reload
@@ -291,7 +319,8 @@ let gameInstance = new p5(p => {
         for (let j = gameState.enemies.length - 1; j >= 0; j--) {
           const enemy = gameState.enemies[j];
           if (p.dist(proj.x, proj.y, enemy.x, enemy.y) < 12) {
-            if (enemy.takeDamage(PLAYER_CONFIG.weaponDamage)) {
+            const weapon = WEAPON_TYPES[gameState.player.currentWeapon];
+            if (enemy.takeDamage(weapon.damage)) {
               // Enemy killed
               createExplosion(p, enemy.x, enemy.y, [200, 100, 100]);
               gameState.enemies.splice(j, 1);
@@ -300,10 +329,15 @@ let gameInstance = new p5(p => {
               gameState.enemiesKilledThisWave++;
               addXP(p, ENEMY_CONFIG.xpValue);
               
-              // Spawn pickup
-              if (p.random() < 0.3) {
-                const pickupType = gameState.player.health < 50 ? PICKUP_TYPES.HEALTH : PICKUP_TYPES.AMMO;
+              // Spawn pickups
+              const rand = p.random();
+              if (rand < 0.5) { // 50% chance for health or ammo
+                const pickupType = gameState.player.health < gameState.player.maxHealth * 0.7 ? PICKUP_TYPES.HEALTH : PICKUP_TYPES.AMMO;
                 gameState.pickups.push(new Pickup(p, enemy.x, enemy.y, pickupType));
+              } else if (rand < 0.7) { // 20% chance for weapon
+                const weaponTypes = Object.keys(WEAPON_TYPES);
+                const randomWeapon = weaponTypes[p.floor(p.random(weaponTypes.length))];
+                gameState.pickups.push(new WeaponPickup(p, enemy.x, enemy.y, randomWeapon));
               }
             }
             gameState.projectiles.splice(i, 1);
@@ -325,12 +359,16 @@ let gameInstance = new p5(p => {
       pickup.update();
 
       if (p.dist(pickup.x, pickup.y, gameState.player.x, gameState.player.y) < 20) {
-        if (pickup.type === PICKUP_TYPES.HEALTH) {
-          gameState.player.heal(30);
+        if (pickup instanceof WeaponPickup) {
+          gameState.player.switchWeapon(pickup.weaponType);
+          createExplosion(p, pickup.x, pickup.y, WEAPON_TYPES[pickup.weaponType].color);
+        } else if (pickup.type === PICKUP_TYPES.HEALTH) {
+          gameState.player.heal(40);
+          createExplosion(p, pickup.x, pickup.y, [100, 255, 100]);
         } else if (pickup.type === PICKUP_TYPES.AMMO) {
-          gameState.player.addAmmo(15);
+          gameState.player.addAmmo(20);
+          createExplosion(p, pickup.x, pickup.y, [255, 200, 50]);
         }
-        createExplosion(p, pickup.x, pickup.y, [100, 255, 100]);
         gameState.pickups.splice(i, 1);
       }
     }
@@ -381,22 +419,39 @@ let gameInstance = new p5(p => {
   function spawnEnemy(p) {
     const side = p.floor(p.random(4));
     let x, y;
+    let validSpawn = false;
+    let attempts = 0;
     
-    if (side === 0) { // Top
-      x = p.random(20, CANVAS_WIDTH - 20);
-      y = 20;
-    } else if (side === 1) { // Right
-      x = CANVAS_WIDTH - 20;
-      y = p.random(20, CANVAS_HEIGHT - 20);
-    } else if (side === 2) { // Bottom
-      x = p.random(20, CANVAS_WIDTH - 20);
-      y = CANVAS_HEIGHT - 20;
-    } else { // Left
-      x = 20;
-      y = p.random(20, CANVAS_HEIGHT - 20);
+    while (!validSpawn && attempts < 10) {
+      if (side === 0) { // Top
+        x = p.random(20, CANVAS_WIDTH - 20);
+        y = 20;
+      } else if (side === 1) { // Right
+        x = CANVAS_WIDTH - 20;
+        y = p.random(20, CANVAS_HEIGHT - 20);
+      } else if (side === 2) { // Bottom
+        x = p.random(20, CANVAS_WIDTH - 20);
+        y = CANVAS_HEIGHT - 20;
+      } else { // Left
+        x = 20;
+        y = p.random(20, CANVAS_HEIGHT - 20);
+      }
+      
+      // Check if spawn is not inside obstacle
+      validSpawn = true;
+      for (const obstacle of gameState.obstacles) {
+        if (x > obstacle.x - obstacle.width / 2 - 20 &&
+            x < obstacle.x + obstacle.width / 2 + 20 &&
+            y > obstacle.y - obstacle.height / 2 - 20 &&
+            y < obstacle.y + obstacle.height / 2 + 20) {
+          validSpawn = false;
+          break;
+        }
+      }
+      attempts++;
     }
 
-    const difficulty = 1 + gameState.waveNumber * 0.15;
+    const difficulty = 1 + gameState.waveNumber * 0.1;
     const enemy = new Enemy(p, x, y, difficulty);
     gameState.enemies.push(enemy);
     gameState.entities.push(enemy);
@@ -404,17 +459,17 @@ let gameInstance = new p5(p => {
 
   function spawnEnemyWave(p) {
     const count = getEnemiesPerWave();
-    for (let i = 0; i < Math.min(count, 3); i++) {
+    for (let i = 0; i < Math.min(count, 2); i++) {
       spawnEnemy(p);
     }
   }
 
   function getEnemiesPerWave() {
-    return 3 + gameState.waveNumber * 2;
+    return 2 + gameState.waveNumber;
   }
 
   function getMaxEnemies() {
-    return Math.min(8, 3 + gameState.waveNumber);
+    return Math.min(5, 2 + Math.floor(gameState.waveNumber / 2));
   }
 
   function addXP(p, amount) {
@@ -430,9 +485,9 @@ let gameInstance = new p5(p => {
 
   function levelUp(p) {
     // Upgrade player
-    gameState.player.maxHealth += 10;
+    gameState.player.maxHealth += 20;
     gameState.player.health = gameState.player.maxHealth;
-    gameState.player.maxAmmo += 5;
+    gameState.player.maxAmmo += 10;
     gameState.player.ammo = gameState.player.maxAmmo;
     
     createExplosion(p, gameState.player.x, gameState.player.y, [100, 255, 255], 20);
@@ -451,6 +506,11 @@ let gameInstance = new p5(p => {
   function renderGame(p) {
     // Render environment
     renderEnvironment(p);
+
+    // Render obstacles
+    for (const obstacle of gameState.obstacles) {
+      obstacle.render();
+    }
 
     // Render pickups
     for (const pickup of gameState.pickups) {
@@ -505,7 +565,7 @@ let gameInstance = new p5(p => {
     // Top bar background
     p.fill(20, 25, 30, 200);
     p.noStroke();
-    p.rect(0, 0, CANVAS_WIDTH, 60);
+    p.rect(0, 0, CANVAS_WIDTH, 80);
 
     // Level and XP
     p.fill(255, 220, 100);
@@ -531,8 +591,14 @@ let gameInstance = new p5(p => {
     p.text(`SCORE: ${gameState.score}`, 150, 10);
     p.text(`KILLS: ${gameState.kills}`, 150, 30);
 
+    // Weapon info
+    const weapon = WEAPON_TYPES[gameState.player.currentWeapon];
+    p.fill(...weapon.color);
+    p.text(`WEAPON: ${weapon.name}`, 10, 55);
+
     // Wave
     p.textAlign(p.RIGHT, p.TOP);
+    p.fill(255);
     p.text(`WAVE ${gameState.waveNumber}`, CANVAS_WIDTH - 10, 10);
     p.text(`ENEMIES: ${gameState.enemies.length}`, CANVAS_WIDTH - 10, 30);
 
@@ -559,7 +625,7 @@ let gameInstance = new p5(p => {
 
     // Reload indicator
     if (gameState.player.reloading) {
-      const reloadPercent = gameState.player.reloadFrames / PLAYER_CONFIG.reloadTime;
+      const reloadPercent = gameState.player.reloadFrames / weapon.reloadTime;
       p.fill(255, 150, 0);
       p.textAlign(p.CENTER, p.CENTER);
       p.textSize(14);
@@ -580,7 +646,7 @@ let gameInstance = new p5(p => {
     p.textSize(14);
     p.fill(200);
     p.text("Eliminate enemy soldiers in this fast-paced arena shooter!", CANVAS_WIDTH / 2, 110);
-    p.text("Collect pickups to restore health and ammo.", CANVAS_WIDTH / 2, 130);
+    p.text("Use obstacles for cover and collect weapon drops!", CANVAS_WIDTH / 2, 130);
     p.text("Reach LEVEL 5 to win the match!", CANVAS_WIDTH / 2, 150);
 
     // Instructions

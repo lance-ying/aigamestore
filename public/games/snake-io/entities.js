@@ -13,8 +13,7 @@ export class Snake {
     this.isPlayer = isPlayer;
     this.isBoosting = false;
     this.isAlive = true;
-    this.targetDirection = null;
-    this.turnSpeed = 0.15;
+    this.turnRate = 0.08; // Smaller turn rate for smoother curves
     
     // Initialize segments
     for (let i = 0; i < length; i++) {
@@ -32,14 +31,28 @@ export class Snake {
 
   turnLeft() {
     if (!this.isAlive) return;
-    const perpendicular = this.p.createVector(-this.direction.y, this.direction.x);
-    this.targetDirection = perpendicular.copy();
+    // Rotate direction by small angle for smooth turning
+    const angle = -this.turnRate;
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    const newX = this.direction.x * cos - this.direction.y * sin;
+    const newY = this.direction.x * sin + this.direction.y * cos;
+    this.direction.x = newX;
+    this.direction.y = newY;
+    this.direction.normalize();
   }
 
   turnRight() {
     if (!this.isAlive) return;
-    const perpendicular = this.p.createVector(this.direction.y, -this.direction.x);
-    this.targetDirection = perpendicular.copy();
+    // Rotate direction by small angle for smooth turning
+    const angle = this.turnRate;
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    const newX = this.direction.x * cos - this.direction.y * sin;
+    const newY = this.direction.x * sin + this.direction.y * cos;
+    this.direction.x = newX;
+    this.direction.y = newY;
+    this.direction.normalize();
   }
 
   activateBoost() {
@@ -57,23 +70,18 @@ export class Snake {
   update() {
     if (!this.isAlive) return;
 
-    // Smooth turning
-    if (this.targetDirection) {
-      this.direction.lerp(this.targetDirection, this.turnSpeed);
-      this.direction.normalize();
-      
-      if (this.direction.angleBetween(this.targetDirection) < 0.1) {
-        this.direction = this.targetDirection.copy();
-        this.targetDirection = null;
-      }
-    }
-
     // Move head
     const head = this.getHead();
     const newHead = this.p.createVector(
       head.x + this.direction.x * this.speed,
       head.y + this.direction.y * this.speed
     );
+
+    // Wrap around boundaries (Pac-Man style)
+    if (newHead.x < 0) newHead.x = CANVAS_WIDTH;
+    if (newHead.x > CANVAS_WIDTH) newHead.x = 0;
+    if (newHead.y < 0) newHead.y = CANVAS_HEIGHT;
+    if (newHead.y > CANVAS_HEIGHT) newHead.y = 0;
 
     // Add new head
     this.segments.unshift(newHead);

@@ -138,6 +138,8 @@ let gameInstance = new p5(p => {
       const skill = player.useSkill1(p);
       if (skill) {
         gameState.projectiles.push(new Projectile(skill));
+        // Create bright flash effect at player position to show skill activated
+        createSkillActivationFlash(p, player.x + player.width/2, player.y + player.height/2);
       }
       inputHandler.keys.skill1 = false;
     }
@@ -146,6 +148,8 @@ let gameInstance = new p5(p => {
       const skill = player.useSkill2(p);
       if (skill) {
         gameState.projectiles.push(new Projectile(skill));
+        // Create flash effect
+        createSkillActivationFlash(p, player.x + player.width/2, player.y + player.height/2);
       }
       inputHandler.keys.skill2 = false;
     }
@@ -221,6 +225,71 @@ let gameInstance = new p5(p => {
         });
       }
     }
+  }
+  
+  function createSkillActivationFlash(p, x, y) {
+    // Create bright burst of particles at player position
+    for (let i = 0; i < 20; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = Math.random() * 6 + 3;
+      const flashParticle = {
+        x: x,
+        y: y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        color: [150, 220, 255],
+        size: Math.random() * 6 + 4,
+        life: 20,
+        maxLife: 20,
+        dead: false,
+        update: function() {
+          this.x += this.vx;
+          this.y += this.vy;
+          this.vx *= 0.95;
+          this.vy *= 0.95;
+          this.life--;
+          if (this.life <= 0) this.dead = true;
+        },
+        draw: function(p, cameraX) {
+          p.push();
+          const alpha = 255 * (this.life / this.maxLife);
+          p.fill(this.color[0], this.color[1], this.color[2], alpha);
+          p.noStroke();
+          p.ellipse(this.x - cameraX, this.y, this.size, this.size);
+          p.pop();
+        }
+      };
+      gameState.particles.push(flashParticle);
+    }
+    
+    // Add bright expanding ring
+    const ring = {
+      x: x,
+      y: y,
+      radius: 10,
+      maxRadius: 60,
+      life: 15,
+      maxLife: 15,
+      dead: false,
+      update: function() {
+        this.radius += 3;
+        this.life--;
+        if (this.life <= 0) this.dead = true;
+      },
+      draw: function(p, cameraX) {
+        p.push();
+        const alpha = 200 * (this.life / this.maxLife);
+        p.noFill();
+        p.stroke(200, 230, 255, alpha);
+        p.strokeWeight(4);
+        p.ellipse(this.x - cameraX, this.y, this.radius * 2, this.radius * 2);
+        p.strokeWeight(2);
+        p.stroke(255, 255, 255, alpha * 1.5);
+        p.ellipse(this.x - cameraX, this.y, this.radius * 2, this.radius * 2);
+        p.pop();
+      }
+    };
+    gameState.particles.push(ring);
   }
   
   function renderGame(p) {

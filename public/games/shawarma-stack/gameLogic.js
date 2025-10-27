@@ -15,6 +15,7 @@ export class GameLogic {
     gameState.customersServed = 0;
     gameState.totalCustomersThisLevel = 0;
     gameState.coins = 0;
+    gameState.particles = [];
     
     const config = LEVEL_CONFIG[level - 1];
     gameState.reputation = config.initialReputation;
@@ -75,6 +76,11 @@ export class GameLogic {
     );
     gameState.customerQueue.push(customer);
     gameState.totalCustomersThisLevel++;
+    
+    // Create arrival particles
+    if (typeof window.createParticles === 'function') {
+      window.createParticles(positions[index], 80, [200, 200, 255], 8, 'star');
+    }
   }
 
   addIngredient(ingredientKey) {
@@ -82,6 +88,14 @@ export class GameLogic {
     if (gameState.customerQueue.length === 0) return;
     
     gameState.currentWrap.push(ingredientKey);
+    gameState.lastAddedIngredient = ingredientKey;
+    gameState.lastAddedTime = this.p.millis();
+    
+    // Create particles
+    const ingredient = INGREDIENTS[ingredientKey];
+    if (ingredient && typeof window.createParticles === 'function') {
+      window.createParticles(300, 230, ingredient.color, 5, 'normal');
+    }
     
     // Log player action
     this.p.logs.player_info.push({
@@ -124,6 +138,11 @@ export class GameLogic {
       
       customer.startLeaving(true);
       
+      // Create success particles
+      if (typeof window.createParticles === 'function') {
+        window.createParticles(300, 230, [255, 215, 0], 20, 'star');
+      }
+      
       // Log score update
       this.p.logs.player_info.push({
         action: "serve_correct",
@@ -136,6 +155,11 @@ export class GameLogic {
     } else {
       gameState.reputation = Math.max(0, gameState.reputation - 0.15);
       customer.startLeaving(false);
+      
+      // Create failure particles
+      if (typeof window.createParticles === 'function') {
+        window.createParticles(300, 230, [100, 100, 100], 10, 'normal');
+      }
       
       this.p.logs.player_info.push({
         action: "serve_incorrect",
@@ -203,6 +227,21 @@ export class GameLogic {
     const bonus = 250;
     gameState.score += bonus;
     
+    // Create level complete particles
+    if (typeof window.createParticles === 'function') {
+      for (let i = 0; i < 50; i++) {
+        setTimeout(() => {
+          window.createParticles(
+            this.p.random(100, 500),
+            this.p.random(100, 300),
+            [255, 215, 0],
+            3,
+            'star'
+          );
+        }, i * 50);
+      }
+    }
+    
     this.p.logs.game_info.push({
       event: "level_complete",
       level: gameState.currentLevel,
@@ -215,7 +254,9 @@ export class GameLogic {
       this.gameOver(true);
     } else {
       gameState.currentLevel++;
-      this.initLevel(gameState.currentLevel);
+      setTimeout(() => {
+        this.initLevel(gameState.currentLevel);
+      }, 2000);
     }
   }
 

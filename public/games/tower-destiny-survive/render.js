@@ -23,6 +23,7 @@ export function renderGame(p) {
     case GAME_PHASES.PLAYING:
       renderGameplay(p);
       renderUI(p);
+      renderTrajectoryIndicator(p);
       break;
     case GAME_PHASES.PAUSED:
       renderGameplay(p);
@@ -51,36 +52,38 @@ function renderStartScreen(p) {
   p.fill(255, 220, 100);
   p.textAlign(p.CENTER, p.CENTER);
   p.textSize(36);
-  p.text("TOWER DESTINY SURVIVE", CANVAS_WIDTH / 2, 80);
+  p.text("TOWER DESTINY SURVIVE", CANVAS_WIDTH / 2, 60);
   
   p.textSize(16);
   p.fill(200);
-  p.text("Defend your tower against zombie waves!", CANVAS_WIDTH / 2, 130);
+  p.text("Defend your tower from all sides!", CANVAS_WIDTH / 2, 100);
   
   // Instructions
   p.textAlign(p.LEFT, p.TOP);
-  p.textSize(14);
+  p.textSize(13);
   p.fill(220);
   
   const instructions = [
     "HOW TO PLAY:",
-    "• Move your tower left/right with Arrow Keys",
-    "• Press SPACE to shoot zombies",
-    "• Collect blue blocks for upgrades",
-    "• Survive 3 levels of increasing difficulty",
+    "• Move: Arrow Keys or A/D",
+    "• Shoot: SPACE (costs energy!)",
+    "• Switch Direction: Q (left) / E (right)",
+    "• Aim: UP/DOWN Arrow Keys",
+    "• Energy regenerates over time",
+    "• Kill zombies quickly for combo bonuses!",
+    "• Collect power-ups from defeated zombies:",
+    "  - Green: +Health",
+    "  - Blue: +Energy",
+    "  - Orange: Damage boost",
     "",
-    "ZOMBIE TYPES:",
-    "• Green: Basic zombies",
-    "• Yellow: Fast but weak",
-    "• Red: Slow but tanky",
-    "",
-    "ESC to Pause  |  R to Restart"
+    "Zombies attack from BOTH SIDES!",
+    "Adjust your aim and fire trajectory!"
   ];
   
-  let y = 170;
+  let y = 130;
   instructions.forEach(line => {
-    p.text(line, 50, y);
-    y += 20;
+    p.text(line, 40, y);
+    y += 18;
   });
   
   // Start prompt
@@ -99,11 +102,42 @@ function renderGameplay(p) {
   gameState.bullets.forEach(b => b.render(p));
   gameState.zombies.forEach(z => z.render(p));
   gameState.blocks.forEach(b => b.render(p));
+  gameState.powerups.forEach(pu => pu.render(p));
   gameState.particles.forEach(part => part.render(p));
   
   if (gameState.player) {
     gameState.player.render(p);
   }
+}
+
+function renderTrajectoryIndicator(p) {
+  if (!gameState.player) return;
+  
+  p.push();
+  
+  // Draw trajectory line from tower
+  const direction = gameState.facingRight ? 1 : -1;
+  const angleRad = (gameState.firingAngle * Math.PI) / 180;
+  const lineLength = 80;
+  
+  const startX = gameState.player.x;
+  const startY = gameState.player.y - gameState.player.height - 10;
+  const endX = startX + Math.cos(angleRad) * lineLength * direction;
+  const endY = startY + Math.sin(angleRad) * lineLength;
+  
+  // Draw dashed line
+  p.stroke(255, 255, 100, 150);
+  p.strokeWeight(2);
+  p.drawingContext.setLineDash([5, 5]);
+  p.line(startX, startY, endX, endY);
+  p.drawingContext.setLineDash([]);
+  
+  // Draw angle indicator circle at the end
+  p.fill(255, 255, 100, 100);
+  p.noStroke();
+  p.circle(endX, endY, 8);
+  
+  p.pop();
 }
 
 function renderUI(p) {
@@ -112,28 +146,35 @@ function renderUI(p) {
   // Score
   p.fill(255);
   p.textAlign(p.LEFT, p.TOP);
-  p.textSize(16);
+  p.textSize(14);
   p.text(`SCORE: ${gameState.score}`, 10, 10);
   
-  // Level
-  p.textAlign(p.RIGHT, p.TOP);
-  p.text(`LEVEL: ${gameState.currentLevel}`, CANVAS_WIDTH - 10, 10);
-  
-  // Wave
+  // Level & Wave
   const levelConfig = gameState.levels[gameState.currentLevel - 1];
-  p.textAlign(p.CENTER, p.TOP);
-  p.text(`WAVE: ${gameState.currentWave} / ${levelConfig.waves}`, CANVAS_WIDTH / 2, 10);
+  p.text(`LVL ${gameState.currentLevel} | WAVE ${gameState.currentWave}/${levelConfig.waves}`, 10, 28);
   
   // Blocks
-  p.textAlign(p.LEFT, p.TOP);
   p.fill(80, 180, 255);
-  p.text(`BLOCKS: ${gameState.blocksCollected}`, 10, 30);
+  p.textAlign(p.RIGHT, p.TOP);
+  p.text(`BLOCKS: ${gameState.blocksCollected}`, CANVAS_WIDTH - 10, 10);
+  
+  // Combo counter
+  if (gameState.comboCount > 0) {
+    p.fill(255, 215, 0);
+    p.textSize(16);
+    p.text(`COMBO x${gameState.comboMultiplier.toFixed(1)} (${gameState.comboCount})`, CANVAS_WIDTH - 10, 28);
+  }
+  
+  // Firing angle indicator
+  p.fill(255, 255, 100);
+  p.textSize(12);
+  p.text(`ANGLE: ${gameState.firingAngle}°`, CANVAS_WIDTH - 10, 48);
   
   // Tower health bar
-  const barWidth = 200;
-  const barHeight = 20;
+  const barWidth = 150;
+  const barHeight = 16;
   const barX = CANVAS_WIDTH / 2 - barWidth / 2;
-  const barY = 35;
+  const barY = 10;
   
   p.fill(60, 60, 60);
   p.rect(barX, barY, barWidth, barHeight);
@@ -146,9 +187,31 @@ function renderUI(p) {
   
   p.fill(255);
   p.textAlign(p.CENTER, p.CENTER);
-  p.textSize(12);
-  p.text(`HP: ${Math.ceil(gameState.towerHealth)} / ${gameState.towerMaxHealth}`, 
+  p.textSize(10);
+  p.text(`HP: ${Math.ceil(gameState.towerHealth)}/${gameState.towerMaxHealth}`, 
          CANVAS_WIDTH / 2, barY + barHeight / 2);
+  
+  // Energy bar
+  const energyBarY = barY + barHeight + 4;
+  p.fill(40, 40, 60);
+  p.rect(barX, energyBarY, barWidth, 12);
+  
+  const energyPercent = gameState.energy / gameState.maxEnergy;
+  p.fill(100, 200, 255);
+  p.rect(barX, energyBarY, barWidth * energyPercent, 12);
+  
+  p.fill(255);
+  p.textSize(9);
+  p.text(`ENERGY: ${Math.floor(gameState.energy)}`, CANVAS_WIDTH / 2, energyBarY + 6);
+  
+  // Power-up indicator
+  if (gameState.powerupEffects.damageBoostTimer > 0) {
+    p.fill(255, 150, 50);
+    p.textAlign(p.LEFT, p.TOP);
+    p.textSize(12);
+    p.text(`⚡ DAMAGE BOOST (${Math.ceil(gameState.powerupEffects.damageBoostTimer / 60)}s)`, 
+           10, CANVAS_HEIGHT - 30);
+  }
   
   p.pop();
 }
@@ -167,11 +230,6 @@ function renderPauseOverlay(p) {
   p.textSize(18);
   p.text("Press ESC to Resume", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 20);
   p.text("Press R to Restart", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 50);
-  
-  // Small indicator in top right
-  p.textAlign(p.RIGHT, p.TOP);
-  p.textSize(14);
-  p.text("PAUSED", CANVAS_WIDTH - 10, 10);
   
   p.pop();
 }

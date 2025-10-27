@@ -34,9 +34,9 @@ let gameInstance = new p5(p => {
     p.randomSeed(42);
     p.frameRate(60);
     
-    // Initialize
+    // Initialize - shield positioned ABOVE balloon to intercept falling obstacles
     balloon = new Balloon(p, CANVAS_WIDTH / 2, CANVAS_HEIGHT - 100);
-    shield = new Shield(p, CANVAS_WIDTH / 2, CANVAS_HEIGHT - 80);
+    shield = new Shield(p, CANVAS_WIDTH / 2, CANVAS_HEIGHT - 200);
     obstacleManager = new ObstacleManager(p);
     ui = new UI(p);
     testingController = new TestingController();
@@ -221,7 +221,7 @@ let gameInstance = new p5(p => {
     gameState.lastClearedTime = 0;
     
     balloon = new Balloon(p, CANVAS_WIDTH / 2, CANVAS_HEIGHT - 100);
-    shield = new Shield(p, CANVAS_WIDTH / 2, CANVAS_HEIGHT - 80);
+    shield = new Shield(p, CANVAS_WIDTH / 2, CANVAS_HEIGHT - 200);
     obstacles = [];
     gameState.obstacles = obstacles;
     

@@ -14,13 +14,13 @@ export class Enemy {
     this.facingRight = false;
     this.state = 'idle';
     this.animTimer = 0;
-    this.aggroRange = 300;
+    this.aggroRange = 350;
     this.patrolRange = 100;
     this.patrolCenter = x;
     this.attackTimer = 0;
-    this.attackCooldown = 60;
+    this.attackCooldown = 50;
     this.shootTimer = 0;
-    this.shootCooldown = 120;
+    this.shootCooldown = 100;
     this.dead = false;
     this.deathTimer = 0;
     this.hitFlash = 0;
@@ -28,57 +28,62 @@ export class Enemy {
     // Scale stats by type and level
     this.setupStats(type, level);
     
-    this.moveSpeed = 2;
+    this.moveSpeed = 2.5;
     this.gravity = 0.6;
     this.maxFallSpeed = 15;
   }
   
   setupStats(type, level) {
-    const levelMult = 1 + (level - 1) * 0.3;
+    // Balanced difficulty multiplier
+    const levelMult = 1 + (level - 1) * 0.35;
     
     switch(type) {
       case 'minion':
-        this.maxHealth = Math.floor(30 * levelMult);
-        this.attackPower = Math.floor(5 * levelMult);
-        this.defense = Math.floor(1 * levelMult);
+        this.maxHealth = Math.floor(50 * levelMult);
+        this.attackPower = Math.floor(6 * levelMult); // Reduced from 8
+        this.defense = Math.floor(2 * levelMult);
         this.xpValue = 25;
         this.scoreValue = 25;
         this.width = 30;
         this.height = 50;
+        this.attackCooldown = 45;
         break;
       case 'archer':
-        this.maxHealth = Math.floor(25 * levelMult);
-        this.attackPower = Math.floor(8 * levelMult);
-        this.defense = Math.floor(0 * levelMult);
+        this.maxHealth = Math.floor(40 * levelMult);
+        this.attackPower = Math.floor(9 * levelMult); // Reduced from 12
+        this.defense = Math.floor(1 * levelMult);
         this.xpValue = 30;
         this.scoreValue = 30;
         this.width = 30;
         this.height = 50;
-        this.aggroRange = 400;
+        this.aggroRange = 450;
+        this.shootCooldown = 90;
         break;
       case 'guard':
-        this.maxHealth = Math.floor(60 * levelMult);
-        this.attackPower = Math.floor(12 * levelMult);
-        this.defense = Math.floor(3 * levelMult);
+        this.maxHealth = Math.floor(100 * levelMult);
+        this.attackPower = Math.floor(12 * levelMult); // Reduced from 18
+        this.defense = Math.floor(5 * levelMult);
         this.xpValue = 50;
         this.scoreValue = 50;
         this.width = 40;
         this.height = 60;
-        this.moveSpeed = 2.5;
+        this.moveSpeed = 3;
+        this.attackCooldown = 40;
         break;
       case 'boss':
-        this.maxHealth = Math.floor(150 * (1 + level * 0.5));
-        this.attackPower = Math.floor(15 * (1 + level * 0.3));
-        this.defense = Math.floor(5 * levelMult);
+        this.maxHealth = Math.floor(250 * (1 + level * 0.6));
+        this.attackPower = Math.floor(12 * (1 + level * 0.3)); // SIGNIFICANTLY reduced from 25 * (1 + level * 0.4)
+        this.defense = Math.floor(8 * levelMult);
         this.xpValue = 200;
         this.scoreValue = 500;
         this.width = 60;
         this.height = 80;
-        this.moveSpeed = 1.5;
-        this.aggroRange = 500;
+        this.moveSpeed = 2;
+        this.aggroRange = 600;
         this.isBoss = true;
         this.phase = 1;
-        this.specialAttackTimer = 180;
+        this.specialAttackTimer = 150;
+        this.attackCooldown = 35;
         break;
     }
     
@@ -141,12 +146,12 @@ export class Enemy {
   
   updateMeleeAI(player, distToPlayer, playerInRange) {
     if (playerInRange) {
-      // Chase player
-      if (player.x > this.x + 40) {
+      // More aggressive chase
+      if (player.x > this.x + 35) {
         this.vx = this.moveSpeed;
         this.facingRight = true;
         this.state = 'running';
-      } else if (player.x < this.x - 40) {
+      } else if (player.x < this.x - 35) {
         this.vx = -this.moveSpeed;
         this.facingRight = false;
         this.state = 'running';
@@ -172,15 +177,15 @@ export class Enemy {
   
   updateArcherAI(player, distToPlayer, playerInRange) {
     if (playerInRange) {
-      // Maintain distance
-      const idealDist = 250;
-      if (distToPlayer < idealDist - 50) {
-        // Back away
-        this.vx = player.x > this.x ? -this.moveSpeed * 0.7 : this.moveSpeed * 0.7;
+      // More aggressive positioning
+      const idealDist = 200;
+      if (distToPlayer < idealDist - 30) {
+        // Back away faster
+        this.vx = player.x > this.x ? -this.moveSpeed : this.moveSpeed;
         this.facingRight = player.x > this.x;
-      } else if (distToPlayer > idealDist + 50) {
+      } else if (distToPlayer > idealDist + 80) {
         // Get closer
-        this.vx = player.x > this.x ? this.moveSpeed * 0.7 : -this.moveSpeed * 0.7;
+        this.vx = player.x > this.x ? this.moveSpeed : -this.moveSpeed;
         this.facingRight = player.x > this.x;
       } else {
         this.vx = 0;
@@ -195,16 +200,17 @@ export class Enemy {
   }
   
   updateBossAI(p, player, distToPlayer, playerInRange) {
-    // Phase transitions
+    // Phase transitions - more aggressive in phase 2
     if (this.health < this.maxHealth * 0.5 && this.phase === 1) {
       this.phase = 2;
-      this.moveSpeed = 2;
-      this.attackCooldown = 40;
+      this.moveSpeed = 2.5;
+      this.attackCooldown = 30;
+      this.specialAttackTimer = 100;
     }
     
     if (playerInRange) {
-      if (distToPlayer > 100) {
-        // Chase
+      if (distToPlayer > 80) {
+        // More aggressive chase
         this.vx = player.x > this.x ? this.moveSpeed : -this.moveSpeed;
         this.facingRight = player.x > this.x;
         this.state = 'running';
@@ -244,7 +250,7 @@ export class Enemy {
     return {
       x: this.facingRight ? this.x + this.width : this.x,
       y: this.y + this.height / 2,
-      vx: this.facingRight ? 6 : -6,
+      vx: this.facingRight ? 7 : -7,
       vy: 0,
       width: 10,
       height: 10,

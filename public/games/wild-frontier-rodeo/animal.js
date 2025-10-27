@@ -29,6 +29,7 @@ export class Animal {
 
   draw(p, frameCount) {
     p.push();
+    p.rectMode(p.CORNER);
     
     // Body
     p.fill(...this.color);
@@ -69,8 +70,14 @@ export class Animal {
     // Legs (simple animation)
     const legOffset = Math.sin((frameCount + this.animationOffset) * 0.2) * 3;
     p.fill(60, 40, 20);
-    p.rect(this.x - this.width / 3, this.y + this.height / 2, 6, 15 + legOffset);
-    p.rect(this.x + this.width / 3, this.y + this.height / 2, 6, 15 - legOffset);
+    // Front left leg
+    p.rect(this.x - this.width / 3 - 3, this.y + this.height / 2, 6, 15 + legOffset);
+    // Front right leg
+    p.rect(this.x - this.width / 3 + 10 - 3, this.y + this.height / 2, 6, 15 - legOffset);
+    // Back left leg
+    p.rect(this.x + this.width / 3 - 10 - 3, this.y + this.height / 2, 6, 15 - legOffset);
+    // Back right leg
+    p.rect(this.x + this.width / 3 - 3, this.y + this.height / 2, 6, 15 + legOffset);
     
     p.pop();
   }

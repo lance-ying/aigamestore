@@ -1,4 +1,5 @@
 import { gameState, PHASE } from './globals.js';
+import { createFloatingText, createParticles } from './game.js';
 
 export function handleKeyPressed(p, key, keyCode) {
   p.logs.inputs.push({
@@ -16,6 +17,8 @@ export function handleKeyPressed(p, key, keyCode) {
         framecount: p.frameCount,
         timestamp: Date.now()
       });
+    } else if (gameState.gamePhase === "PLAYING" && gameState.controlMode === "HUMAN") {
+      handleEnterInGame(p);
     }
   } else if (keyCode === 27) {
     if (gameState.gamePhase === "PLAYING") {
@@ -45,7 +48,11 @@ export function handleKeyPressed(p, key, keyCode) {
   }
 
   if (gameState.gamePhase === "PLAYING" && gameState.controlMode === "HUMAN") {
-    if (keyCode === 38) {
+    if (keyCode === 37) {
+      handleArrowLeft();
+    } else if (keyCode === 39) {
+      handleArrowRight();
+    } else if (keyCode === 38) {
       handleArrowUp();
     } else if (keyCode === 40) {
       handleArrowDown();
@@ -63,6 +70,8 @@ function startGame() {
   import('./game.js').then(module => {
     module.initializeLevel(gameState.currentLevel);
     gameState.gamePhase = "PLAYING";
+    gameState.highlightedTerritoryIndex = 0;
+    gameState.phaseTransitionAnimation = 30;
   });
 }
 
@@ -75,6 +84,7 @@ function resetToStart() {
   gameState.players = [];
   gameState.selectedTerritoryId1 = null;
   gameState.selectedTerritoryId2 = null;
+  gameState.highlightedTerritoryIndex = 0;
   gameState.reinforcementPool = 0;
   gameState.armiesToMove = 0;
   gameState.hasFortifiedThisTurn = false;
@@ -83,6 +93,39 @@ function resetToStart() {
   gameState.combatResults = null;
   gameState.combatAnimationFrames = 0;
   gameState.turnNumber = 1;
+  gameState.floatingTexts = [];
+  gameState.particles = [];
+  gameState.territoryFlashes = [];
+  gameState.phaseTransitionAnimation = 0;
+}
+
+function handleArrowLeft() {
+  if (gameState.combatResults) return;
+  
+  if (gameState.highlightedTerritoryIndex > 0) {
+    gameState.highlightedTerritoryIndex--;
+  } else {
+    gameState.highlightedTerritoryIndex = gameState.territories.length - 1;
+  }
+}
+
+function handleArrowRight() {
+  if (gameState.combatResults) return;
+  
+  if (gameState.highlightedTerritoryIndex < gameState.territories.length - 1) {
+    gameState.highlightedTerritoryIndex++;
+  } else {
+    gameState.highlightedTerritoryIndex = 0;
+  }
+}
+
+function handleEnterInGame(p) {
+  if (gameState.combatResults) return;
+  
+  const highlightedTerritory = gameState.territories[gameState.highlightedTerritoryIndex];
+  if (!highlightedTerritory) return;
+  
+  handleTerritorySelect(p, highlightedTerritory.id);
 }
 
 function handleArrowUp() {
@@ -120,11 +163,21 @@ function handleSpace(p) {
     const territory = gameState.territories.find(t => t.id === gameState.selectedTerritoryId1);
     if (territory && territory.ownerId === gameState.currentPlayerId) {
       territory.addArmies(gameState.armiesToMove);
+      createFloatingText(`+${gameState.armiesToMove}`, territory.centerPos.x, territory.centerPos.y, [100, 255, 100]);
+      createParticles(territory.centerPos.x, territory.centerPos.y, 10, [100, 255, 100]);
       gameState.reinforcementPool -= gameState.armiesToMove;
       gameState.armiesToMove = 0;
       gameState.selectedTerritoryId1 = null;
       
       logPlayerInfo(p);
+      
+      // Auto-advance to attack phase when reinforcements are depleted
+      if (gameState.reinforcementPool === 0) {
+        setTimeout(() => {
+          gameState.currentPhase = PHASE.ATTACK;
+          gameState.phaseTransitionAnimation = 30;
+        }, 300);
+      }
     }
   } else if (gameState.currentPhase === PHASE.ATTACK && gameState.selectedTerritoryId1 !== null && gameState.selectedTerritoryId2 !== null && gameState.armiesToMove > 0) {
     executeAttack(p);
@@ -134,6 +187,8 @@ function handleSpace(p) {
 }
 
 function handleShift(p) {
+  const oldPhase = gameState.currentPhase;
+  
   if (gameState.currentPhase === PHASE.REINFORCE) {
     gameState.currentPhase = PHASE.ATTACK;
     gameState.reinforcementPool = 0;
@@ -141,6 +196,11 @@ function handleShift(p) {
     gameState.currentPhase = PHASE.FORTIFY;
   } else if (gameState.currentPhase === PHASE.FORTIFY) {
     endPlayerTurn(p);
+    return;
+  }
+  
+  if (oldPhase !== gameState.currentPhase) {
+    gameState.phaseTransitionAnimation = 30;
   }
   
   gameState.selectedTerritoryId1 = null;
@@ -158,6 +218,10 @@ function executeAttack(p) {
   
   if (!attacker || !defender) return;
   
+  // Create attack particles
+  createParticles(attacker.centerPos.x, attacker.centerPos.y, 15, [255, 100, 100]);
+  createParticles(defender.centerPos.x, defender.centerPos.y, 15, [255, 165, 0]);
+  
   import('./combat.js').then(module => {
     const combatResult = module.resolveCombat(p, gameState.armiesToMove, defender.armies);
     
@@ -168,12 +232,23 @@ function executeAttack(p) {
       attacker.removeArmies(combatResult.attackerLosses);
       defender.removeArmies(combatResult.defenderLosses);
       
+      if (combatResult.attackerLosses > 0) {
+        createFloatingText(`-${combatResult.attackerLosses}`, attacker.centerPos.x, attacker.centerPos.y, [255, 100, 100]);
+      }
+      if (combatResult.defenderLosses > 0) {
+        createFloatingText(`-${combatResult.defenderLosses}`, defender.centerPos.x, defender.centerPos.y, [255, 100, 100]);
+      }
+      
       if (defender.armies === 0) {
         const movedArmies = gameState.armiesToMove;
         defender.changeOwner(attacker.ownerId, movedArmies);
         attacker.removeArmies(movedArmies);
         
+        createFloatingText("CONQUERED!", defender.centerPos.x, defender.centerPos.y, [255, 255, 100]);
+        createParticles(defender.centerPos.x, defender.centerPos.y, 20, [255, 255, 100]);
+        
         gameState.score += 10;
+        gameState.combatResults.conquered = true;
         
         const defenderPlayer = gameState.players.find(pl => pl.id !== attacker.ownerId && pl.getTerritoriesOwned(gameState.territories).length === 0);
         if (defenderPlayer) {
@@ -181,13 +256,15 @@ function executeAttack(p) {
         }
       }
       
-      gameState.combatResults = null;
-      gameState.selectedTerritoryId1 = null;
-      gameState.selectedTerritoryId2 = null;
-      gameState.armiesToMove = 0;
-      
-      logPlayerInfo(p);
-      checkWinCondition(p);
+      setTimeout(() => {
+        gameState.combatResults = null;
+        gameState.selectedTerritoryId1 = null;
+        gameState.selectedTerritoryId2 = null;
+        gameState.armiesToMove = 0;
+        
+        logPlayerInfo(p);
+        checkWinCondition(p);
+      }, 500);
     }, 1500);
   });
 }
@@ -200,6 +277,11 @@ function executeFortify(p) {
   
   source.removeArmies(gameState.armiesToMove);
   target.addArmies(gameState.armiesToMove);
+  
+  createFloatingText(`-${gameState.armiesToMove}`, source.centerPos.x, source.centerPos.y, [255, 165, 0]);
+  createFloatingText(`+${gameState.armiesToMove}`, target.centerPos.x, target.centerPos.y, [100, 255, 100]);
+  createParticles(source.centerPos.x, source.centerPos.y, 8, [255, 165, 0]);
+  createParticles(target.centerPos.x, target.centerPos.y, 8, [100, 255, 100]);
   
   gameState.hasFortifiedThisTurn = true;
   gameState.selectedTerritoryId1 = null;
@@ -222,6 +304,7 @@ function endPlayerTurn(p) {
   }
   
   gameState.currentPhase = PHASE.AI_TURN;
+  gameState.phaseTransitionAnimation = 30;
   gameState.selectedTerritoryId1 = null;
   gameState.selectedTerritoryId2 = null;
   gameState.armiesToMove = 0;
@@ -230,6 +313,7 @@ function endPlayerTurn(p) {
   setTimeout(() => {
     import('./game.js').then(module => {
       module.executeAITurns(p);
+      gameState.phaseTransitionAnimation = 30;
     });
   }, 500);
 }
@@ -250,6 +334,7 @@ function checkWinCondition(p) {
           module.initializeLevel(gameState.currentLevel);
           gameState.currentPhase = PHASE.REINFORCE;
           gameState.currentPlayerId = 0;
+          gameState.phaseTransitionAnimation = 30;
         });
       }, 2000);
     } else {
@@ -300,19 +385,7 @@ function logPlayerInfo(p) {
   }
 }
 
-export function handleMousePressed(p, mouseX, mouseY) {
-  if (gameState.gamePhase !== "PLAYING" || gameState.currentPlayerId !== 0) return;
-  if (gameState.combatResults) return;
-  
-  for (let territory of gameState.territories) {
-    if (territory.containsPoint(p, mouseX, mouseY)) {
-      handleTerritoryClick(p, territory.id);
-      break;
-    }
-  }
-}
-
-function handleTerritoryClick(p, territoryId) {
+function handleTerritorySelect(p, territoryId) {
   const territory = gameState.territories.find(t => t.id === territoryId);
   if (!territory) return;
   

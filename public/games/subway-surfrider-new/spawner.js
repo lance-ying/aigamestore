@@ -4,15 +4,15 @@ import { gameState, LEVELS } from './globals.js';
 
 export function spawnEntities(p) {
   const level = LEVELS[gameState.currentLevel];
-  const spawnZ = 2000;
+  const spawnZ = 1000; // Reduced from 1200 since obstacles now move 2.5x faster
   
   // Spawn obstacles
   if (p.random() < level.obstacleChance * 0.1) {
     spawnObstacle(p, spawnZ);
   }
   
-  // Spawn coins
-  if (p.random() < 0.3) {
+  // Spawn coins - reduced from 0.3 to 0.1 to prevent excessive coins
+  if (p.random() < 0.1) {
     spawnCoins(p, spawnZ);
   }
   
@@ -30,19 +30,17 @@ function spawnObstacle(p, z) {
   let lanes = [];
   
   if (type === 'train') {
-    // Trains can span 1-3 lanes
-    const numLanes = p.floor(p.random(1, 4));
+    // Trains can span 1-2 lanes (reduced from 1-3 for easier gameplay)
+    const numLanes = p.random() < 0.6 ? 1 : 2;
     const startLane = p.floor(p.random(0, 4 - numLanes));
     for (let i = 0; i < numLanes; i++) {
       lanes.push(startLane + i);
     }
   } else {
-    // Jump and slide barriers typically span 1-2 lanes
-    const numLanes = p.random() < 0.7 ? 1 : 2;
-    const startLane = p.floor(p.random(0, 4 - numLanes));
-    for (let i = 0; i < numLanes; i++) {
-      lanes.push(startLane + i);
-    }
+    // Jump and slide barriers typically span 1 lane (reduced from 1-2)
+    const numLanes = 1;
+    const startLane = p.floor(p.random(0, 3));
+    lanes.push(startLane);
   }
   
   const obstacle = new Obstacle(p, type, lanes, z);

@@ -11,6 +11,7 @@ export class Obstacle {
     this.rotation = 0;
     this.rotationSpeed = config.rotationSpeed || 0;
     this.removed = false;
+    this.lastPushFrame = -100; // Track when last pushed to prevent continuous collision
     
     switch (type) {
       case 'block':
@@ -180,14 +181,41 @@ export class Obstacle {
   }
 
   pushAway(shield) {
+    // Prevent continuous pushing by adding a cooldown
+    const currentFrame = this.p.frameCount;
+    if (currentFrame - this.lastPushFrame < 5) {
+      return; // Don't push again if we just pushed recently
+    }
+    this.lastPushFrame = currentFrame;
+    
+    // Calculate direction from shield to obstacle
     const dx = this.x - shield.x;
     const dy = this.y - shield.y;
     const dist = Math.sqrt(dx * dx + dy * dy);
     
-    if (dist > 0) {
-      const force = 8;
-      this.vx += (dx / dist) * force;
-      this.vy += (dy / dist) * force;
+    if (dist > 0.1) {
+      // Normalize direction
+      const nx = dx / dist;
+      const ny = dy / dist;
+      
+      // Immediately separate objects to prevent overlap
+      const separationDistance = 60; // Push it far enough to clear the shield
+      this.x += nx * separationDistance;
+      this.y += ny * separationDistance;
+      
+      // Apply strong bounce velocity (replace existing velocity, don't add)
+      const bounceStrength = 18;
+      this.vx = nx * bounceStrength;
+      this.vy = ny * bounceStrength;
+      
+      // Add some randomness for more dynamic deflection
+      this.vx += (Math.random() - 0.5) * 6;
+      
+      // If the obstacle would bounce downward (toward balloon), force it sideways instead
+      if (this.vy > 0) {
+        this.vy = Math.abs(this.vy) * -0.5; // Flip to upward or reduce downward
+        this.vx *= 1.5; // Increase horizontal velocity to compensate
+      }
     }
   }
 }

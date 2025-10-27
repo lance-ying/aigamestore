@@ -1,5 +1,5 @@
 // entities.js - Game entities (obstacles, coins, powerups)
-import { CANVAS_HEIGHT, LANE_POSITIONS } from './globals.js';
+import { CANVAS_WIDTH, CANVAS_HEIGHT, LANE_POSITIONS, PLAYER_START_Y } from './globals.js';
 
 export class Obstacle {
   constructor(p, type, lanes, z) {
@@ -11,46 +11,58 @@ export class Obstacle {
   }
   
   update(speed) {
-    this.z -= speed;
+    // Obstacles move 2.5x faster than base game speed for better gameplay
+    this.z -= speed * 2.5;
     if (this.z < -50) {
       this.active = false;
     }
   }
   
-  getScreenPosition() {
+  getScreenPosition(laneIndex) {
     const p = this.p;
-    const scale = p.max(0.1, 1000 / (this.z + 1000));
-    const screenY = CANVAS_HEIGHT * 0.7 + (1 - scale) * 100;
-    return { scale, screenY };
+    const scale = p.max(0.3, 1000 / (this.z + 1000)); // Changed min from 0.1 to 0.3 to match background tracks
+    
+    // Calculate screen Y with perspective
+    const horizonY = CANVAS_HEIGHT * 0.4; // 160
+    const playerLevelY = PLAYER_START_Y; // 300
+    const screenY = horizonY + (playerLevelY - horizonY) * scale;
+    
+    // Calculate screen X with perspective - converge toward center at distance
+    const centerX = CANVAS_WIDTH / 2;
+    const laneX = LANE_POSITIONS[laneIndex];
+    const offsetFromCenter = laneX - centerX;
+    const screenX = centerX + offsetFromCenter * scale;
+    
+    return { scale, screenY, screenX };
   }
   
   getBoundingBoxes() {
-    const { scale, screenY } = this.getScreenPosition();
     const boxes = [];
     
     for (const laneIndex of this.lanes) {
-      const x = LANE_POSITIONS[laneIndex];
+      const { scale, screenY, screenX } = this.getScreenPosition(laneIndex);
       
       if (this.type === 'train') {
         boxes.push({
-          x: x - 40 * scale,
+          x: screenX - 40 * scale,
           y: screenY - 100 * scale,
           width: 80 * scale,
           height: 100 * scale
         });
       } else if (this.type === 'jump') {
         boxes.push({
-          x: x - 30 * scale,
+          x: screenX - 30 * scale,
           y: screenY - 20 * scale,
           width: 60 * scale,
           height: 20 * scale
         });
       } else if (this.type === 'slide') {
+        // Repositioned and enlarged so it actually blocks a standing player
         boxes.push({
-          x: x - 30 * scale,
-          y: screenY - 80 * scale,
+          x: screenX - 30 * scale,
+          y: screenY - 50 * scale,
           width: 60 * scale,
-          height: 15 * scale
+          height: 40 * scale
         });
       }
     }
@@ -60,45 +72,93 @@ export class Obstacle {
   
   render() {
     const p = this.p;
-    const { scale, screenY } = this.getScreenPosition();
-    
-    if (scale < 0.1) return;
     
     p.push();
     
     for (const laneIndex of this.lanes) {
-      const x = LANE_POSITIONS[laneIndex];
+      const { scale, screenY, screenX } = this.getScreenPosition(laneIndex);
+      
+      if (scale < 0.3) continue; // Changed from 0.1 to 0.3
       
       if (this.type === 'train') {
         // Draw train
         p.fill(120, 120, 120);
         p.stroke(80, 80, 80);
         p.strokeWeight(2);
-        p.rect(x - 40 * scale, screenY - 100 * scale, 80 * scale, 100 * scale, 5);
+        p.rect(screenX - 40 * scale, screenY - 100 * scale, 80 * scale, 100 * scale, 5);
         
         // Train windows
         p.fill(50, 150, 200);
         p.noStroke();
-        p.rect(x - 25 * scale, screenY - 80 * scale, 20 * scale, 25 * scale);
-        p.rect(x + 5 * scale, screenY - 80 * scale, 20 * scale, 25 * scale);
+        p.rect(screenX - 25 * scale, screenY - 80 * scale, 20 * scale, 25 * scale);
+        p.rect(screenX + 5 * scale, screenY - 80 * scale, 20 * scale, 25 * scale);
+        
+        // "DODGE!" text if close enough
+        if (scale > 0.5) {
+          p.fill(255, 50, 50);
+          p.textAlign(p.CENTER, p.CENTER);
+          p.textSize(14 * scale);
+          p.textStyle(p.BOLD);
+          p.text('DODGE!', screenX, screenY - 120 * scale);
+        }
       } else if (this.type === 'jump') {
         // Draw low barrier
         p.fill(255, 220, 0);
         p.stroke(0);
         p.strokeWeight(2);
-        p.rect(x - 30 * scale, screenY - 20 * scale, 60 * scale, 20 * scale);
+        p.rect(screenX - 30 * scale, screenY - 20 * scale, 60 * scale, 20 * scale);
         
         // Hazard stripes
         p.fill(0);
         for (let i = 0; i < 3; i++) {
-          p.rect(x - 30 * scale + i * 20 * scale, screenY - 20 * scale, 10 * scale, 20 * scale);
+          p.rect(screenX - 30 * scale + i * 20 * scale, screenY - 20 * scale, 10 * scale, 20 * scale);
+        }
+        
+        // "JUMP!" text if close enough
+        if (scale > 0.5) {
+          p.fill(255, 255, 50);
+          p.stroke(0);
+          p.strokeWeight(2);
+          p.textAlign(p.CENTER, p.CENTER);
+          p.textSize(16 * scale);
+          p.textStyle(p.BOLD);
+          p.text('JUMP!', screenX, screenY - 40 * scale);
+          
+          // Up arrow
+          p.noStroke();
+          p.fill(255, 255, 50);
+          p.triangle(
+            screenX, screenY - 60 * scale,
+            screenX - 8 * scale, screenY - 48 * scale,
+            screenX + 8 * scale, screenY - 48 * scale
+          );
         }
       } else if (this.type === 'slide') {
-        // Draw high barrier
+        // Draw high barrier - repositioned to actually block standing player
         p.fill(200, 50, 50);
         p.stroke(150, 30, 30);
         p.strokeWeight(2);
-        p.rect(x - 30 * scale, screenY - 80 * scale, 60 * scale, 15 * scale);
+        p.rect(screenX - 30 * scale, screenY - 50 * scale, 60 * scale, 40 * scale);
+        
+        // "SLIDE!" text if close enough
+        if (scale > 0.5) {
+          p.fill(255, 100, 100);
+          p.stroke(0);
+          p.strokeWeight(2);
+          p.textAlign(p.CENTER, p.CENTER);
+          p.textSize(16 * scale);
+          p.textStyle(p.BOLD);
+          p.text('SLIDE!', screenX, screenY - 70 * scale);
+          
+          // Down arrow
+          p.noStroke();
+          p.fill(255, 100, 100);
+          p.triangle(
+            screenX, screenY - 60 * scale,
+            screenX - 8 * scale, screenY - 72 * scale,
+            screenX + 8 * scale, screenY - 72 * scale
+          );
+        }
       }
     }
     
@@ -110,7 +170,6 @@ export class Coin {
   constructor(p, lane, z, yOffset = 0) {
     this.p = p;
     this.lane = lane;
-    this.x = LANE_POSITIONS[lane];
     this.z = z;
     this.yOffset = yOffset;
     this.active = true;
@@ -118,7 +177,8 @@ export class Coin {
   }
   
   update(speed) {
-    this.z -= speed;
+    // Coins move at same speed as obstacles for consistency
+    this.z -= speed * 2.5;
     if (this.z < -50) {
       this.active = false;
     }
@@ -126,16 +186,27 @@ export class Coin {
   
   getScreenPosition() {
     const p = this.p;
-    const scale = p.max(0.1, 1000 / (this.z + 1000));
-    const screenY = CANVAS_HEIGHT * 0.7 + (1 - scale) * 100 - this.yOffset * scale;
-    return { scale, screenY };
+    const scale = p.max(0.3, 1000 / (this.z + 1000)); // Changed min from 0.1 to 0.3 to match background tracks
+    
+    // Calculate screen Y with perspective
+    const horizonY = CANVAS_HEIGHT * 0.4; // 160
+    const playerLevelY = PLAYER_START_Y; // 300
+    const screenY = horizonY + (playerLevelY - horizonY) * scale - this.yOffset * scale;
+    
+    // Calculate screen X with perspective - converge toward center at distance
+    const centerX = CANVAS_WIDTH / 2;
+    const laneX = LANE_POSITIONS[this.lane];
+    const offsetFromCenter = laneX - centerX;
+    const screenX = centerX + offsetFromCenter * scale;
+    
+    return { scale, screenY, screenX };
   }
   
   getBoundingBox() {
-    const { scale, screenY } = this.getScreenPosition();
+    const { scale, screenY, screenX } = this.getScreenPosition();
     const size = 15 * scale;
     return {
-      x: this.x - size / 2,
+      x: screenX - size / 2,
       y: screenY - size / 2,
       width: size,
       height: size
@@ -146,27 +217,27 @@ export class Coin {
     const p = this.p;
     if (this.collected) return;
     
-    const { scale, screenY } = this.getScreenPosition();
+    const { scale, screenY, screenX } = this.getScreenPosition();
     
-    if (scale < 0.1) return;
+    if (scale < 0.3) return; // Changed from 0.1 to 0.3
     
     p.push();
     
     // Coin glow
     p.noStroke();
     p.fill(255, 220, 100, 100);
-    p.circle(this.x, screenY, 20 * scale);
+    p.circle(screenX, screenY, 20 * scale);
     
     // Coin
     p.fill(255, 215, 0);
     p.stroke(200, 170, 0);
     p.strokeWeight(2);
-    p.circle(this.x, screenY, 15 * scale);
+    p.circle(screenX, screenY, 15 * scale);
     
     // Highlight
     p.fill(255, 255, 200);
     p.noStroke();
-    p.circle(this.x - 3 * scale, screenY - 3 * scale, 5 * scale);
+    p.circle(screenX - 3 * scale, screenY - 3 * scale, 5 * scale);
     
     p.pop();
   }
@@ -177,14 +248,14 @@ export class Powerup {
     this.p = p;
     this.type = type; // 'jetpack', 'hoverboard', 'magnet'
     this.lane = lane;
-    this.x = LANE_POSITIONS[lane];
     this.z = z;
     this.active = true;
     this.collected = false;
   }
   
   update(speed) {
-    this.z -= speed;
+    // Powerups move at same speed as obstacles for consistency
+    this.z -= speed * 2.5;
     if (this.z < -50) {
       this.active = false;
     }
@@ -192,16 +263,27 @@ export class Powerup {
   
   getScreenPosition() {
     const p = this.p;
-    const scale = p.max(0.1, 1000 / (this.z + 1000));
-    const screenY = CANVAS_HEIGHT * 0.7 + (1 - scale) * 100 - 50 * scale;
-    return { scale, screenY };
+    const scale = p.max(0.3, 1000 / (this.z + 1000)); // Changed min from 0.1 to 0.3 to match background tracks
+    
+    // Calculate screen Y with perspective
+    const horizonY = CANVAS_HEIGHT * 0.4; // 160
+    const playerLevelY = PLAYER_START_Y; // 300
+    const screenY = horizonY + (playerLevelY - horizonY) * scale - 50 * scale;
+    
+    // Calculate screen X with perspective - converge toward center at distance
+    const centerX = CANVAS_WIDTH / 2;
+    const laneX = LANE_POSITIONS[this.lane];
+    const offsetFromCenter = laneX - centerX;
+    const screenX = centerX + offsetFromCenter * scale;
+    
+    return { scale, screenY, screenX };
   }
   
   getBoundingBox() {
-    const { scale, screenY } = this.getScreenPosition();
+    const { scale, screenY, screenX } = this.getScreenPosition();
     const size = 30 * scale;
     return {
-      x: this.x - size / 2,
+      x: screenX - size / 2,
       y: screenY - size / 2,
       width: size,
       height: size
@@ -212,9 +294,9 @@ export class Powerup {
     const p = this.p;
     if (this.collected) return;
     
-    const { scale, screenY } = this.getScreenPosition();
+    const { scale, screenY, screenX } = this.getScreenPosition();
     
-    if (scale < 0.1) return;
+    if (scale < 0.3) return; // Changed from 0.1 to 0.3
     
     p.push();
     
@@ -223,7 +305,7 @@ export class Powerup {
     // Background circle
     p.noStroke();
     p.fill(255, 255, 255, 150);
-    p.circle(this.x, screenY, size * 1.3);
+    p.circle(screenX, screenY, size * 1.3);
     
     if (this.type === 'jetpack') {
       // Green rocket
@@ -231,42 +313,42 @@ export class Powerup {
       p.stroke(30, 150, 30);
       p.strokeWeight(2);
       p.triangle(
-        this.x, screenY - size * 0.4,
-        this.x - size * 0.3, screenY + size * 0.4,
-        this.x + size * 0.3, screenY + size * 0.4
+        screenX, screenY - size * 0.4,
+        screenX - size * 0.3, screenY + size * 0.4,
+        screenX + size * 0.3, screenY + size * 0.4
       );
       p.fill(255, 100, 0);
       p.noStroke();
       p.triangle(
-        this.x - size * 0.15, screenY + size * 0.4,
-        this.x, screenY + size * 0.6,
-        this.x + size * 0.15, screenY + size * 0.4
+        screenX - size * 0.15, screenY + size * 0.4,
+        screenX, screenY + size * 0.6,
+        screenX + size * 0.15, screenY + size * 0.4
       );
     } else if (this.type === 'hoverboard') {
       // Orange board
       p.fill(255, 150, 0);
       p.stroke(200, 100, 0);
       p.strokeWeight(2);
-      p.rect(this.x - size * 0.4, screenY - size * 0.15, size * 0.8, size * 0.3, 5);
+      p.rect(screenX - size * 0.4, screenY - size * 0.15, size * 0.8, size * 0.3, 5);
       
       // Wheels
       p.fill(50);
-      p.circle(this.x - size * 0.25, screenY + size * 0.2, size * 0.15);
-      p.circle(this.x + size * 0.25, screenY + size * 0.2, size * 0.15);
+      p.circle(screenX - size * 0.25, screenY + size * 0.2, size * 0.15);
+      p.circle(screenX + size * 0.25, screenY + size * 0.2, size * 0.15);
     } else if (this.type === 'magnet') {
       // Purple magnet
       p.fill(150, 50, 200);
       p.stroke(100, 30, 150);
       p.strokeWeight(2);
-      p.rect(this.x - size * 0.35, screenY - size * 0.4, size * 0.25, size * 0.8, 5);
-      p.rect(this.x + size * 0.1, screenY - size * 0.4, size * 0.25, size * 0.8, 5);
+      p.rect(screenX - size * 0.35, screenY - size * 0.4, size * 0.25, size * 0.8, 5);
+      p.rect(screenX + size * 0.1, screenY - size * 0.4, size * 0.25, size * 0.8, 5);
       
       p.fill(255, 100, 100);
       p.noStroke();
-      p.rect(this.x - size * 0.35, screenY - size * 0.4, size * 0.25, size * 0.3);
+      p.rect(screenX - size * 0.35, screenY - size * 0.4, size * 0.25, size * 0.3);
       
       p.fill(100, 100, 255);
-      p.rect(this.x + size * 0.1, screenY - size * 0.4, size * 0.25, size * 0.3);
+      p.rect(screenX + size * 0.1, screenY - size * 0.4, size * 0.25, size * 0.3);
     }
     
     p.pop();

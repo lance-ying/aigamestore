@@ -4,7 +4,7 @@ import { Territory } from './territory.js';
 import { Player } from './player.js';
 import { AI } from './ai.js';
 import { drawUI } from './ui.js';
-import { handleKeyPressed, handleMousePressed } from './input.js';
+import { handleKeyPressed } from './input.js';
 
 const p5 = window.p5;
 let gameInstance = null;
@@ -44,10 +44,14 @@ export function initializeLevel(levelNumber) {
   gameState.currentPhase = PHASE.REINFORCE;
   gameState.selectedTerritoryId1 = null;
   gameState.selectedTerritoryId2 = null;
+  gameState.highlightedTerritoryIndex = 0;
   gameState.armiesToMove = 0;
   gameState.hasFortifiedThisTurn = false;
   gameState.combatResults = null;
   gameState.combatAnimationFrames = 0;
+  gameState.floatingTexts = [];
+  gameState.particles = [];
+  gameState.territoryFlashes = [];
   
   const player = gameState.players[0];
   gameState.reinforcementPool = player.calculateReinforcements(gameState.territories, gameState.continents);
@@ -100,7 +104,8 @@ function updateHighScore() {
 
 gameInstance = new p5(p => {
   p.setup = function() {
-    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    const canvas = p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    canvas.parent('gameContainer');
     p.frameRate(60);
     p.randomSeed(42);
     
@@ -129,6 +134,8 @@ gameInstance = new p5(p => {
     
     if (gameState.gamePhase === "PLAYING" || gameState.gamePhase === "PAUSED") {
       drawTerritories(p);
+      drawParticles(p);
+      drawFloatingTexts(p);
     }
     
     drawUI(p);
@@ -136,26 +143,74 @@ gameInstance = new p5(p => {
     if (gameState.combatResults) {
       gameState.combatAnimationFrames++;
     }
+    
+    // Update phase transition animation
+    if (gameState.phaseTransitionAnimation > 0) {
+      gameState.phaseTransitionAnimation--;
+    }
   };
   
   p.keyPressed = function() {
     handleKeyPressed(p, p.key, p.keyCode);
-  };
-  
-  p.mousePressed = function() {
-    handleMousePressed(p, p.mouseX, p.mouseY);
   };
 });
 
 function drawTerritories(p) {
   const validTargets = getValidTargets();
   
-  for (let territory of gameState.territories) {
+  for (let i = 0; i < gameState.territories.length; i++) {
+    const territory = gameState.territories[i];
     const isSelected1 = territory.id === gameState.selectedTerritoryId1;
     const isSelected2 = territory.id === gameState.selectedTerritoryId2;
     const isValidTarget = validTargets.includes(territory.id);
+    const isHighlighted = i === gameState.highlightedTerritoryIndex;
     
-    territory.draw(p, isSelected1, isSelected2, isValidTarget);
+    territory.draw(p, isSelected1, isSelected2, isValidTarget, isHighlighted);
+  }
+}
+
+function drawParticles(p) {
+  for (let i = gameState.particles.length - 1; i >= 0; i--) {
+    const particle = gameState.particles[i];
+    
+    p.push();
+    p.noStroke();
+    const alpha = 255 * (1 - particle.age / particle.maxAge);
+    p.fill(...particle.color, alpha);
+    p.circle(particle.x, particle.y, particle.size);
+    p.pop();
+    
+    particle.x += particle.vx;
+    particle.y += particle.vy;
+    particle.vy += 0.2; // gravity
+    particle.age++;
+    
+    if (particle.age >= particle.maxAge) {
+      gameState.particles.splice(i, 1);
+    }
+  }
+}
+
+function drawFloatingTexts(p) {
+  for (let i = gameState.floatingTexts.length - 1; i >= 0; i--) {
+    const text = gameState.floatingTexts[i];
+    
+    p.push();
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(18);
+    p.strokeWeight(3);
+    p.stroke(0);
+    const alpha = 255 * (1 - text.age / text.maxAge);
+    p.fill(...text.color, alpha);
+    p.text(text.text, text.x, text.y);
+    p.pop();
+    
+    text.y -= 1.5;
+    text.age++;
+    
+    if (text.age >= text.maxAge) {
+      gameState.floatingTexts.splice(i, 1);
+    }
   }
 }
 
@@ -184,6 +239,34 @@ function getValidTargets() {
   }
   
   return validTargets;
+}
+
+export function createFloatingText(text, x, y, color = [255, 255, 255]) {
+  gameState.floatingTexts.push({
+    text: text,
+    x: x,
+    y: y,
+    color: color,
+    age: 0,
+    maxAge: 60
+  });
+}
+
+export function createParticles(x, y, count, color = [255, 255, 255]) {
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = Math.random() * 3 + 1;
+    gameState.particles.push({
+      x: x,
+      y: y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 2,
+      size: Math.random() * 4 + 2,
+      color: color,
+      age: 0,
+      maxAge: 40
+    });
+  }
 }
 
 window.gameInstance = gameInstance;

@@ -16,33 +16,51 @@ export class UI {
     p.strokeWeight(4);
     p.textAlign(p.CENTER, p.CENTER);
     p.textSize(48);
-    p.text("SKYWARD SHIELD", CANVAS_WIDTH / 2, 80);
+    p.text("SKYWARD SHIELD", CANVAS_WIDTH / 2, 60);
     
     // Description
     p.noStroke();
-    p.textSize(16);
+    p.textSize(15);
     p.fill(255);
-    p.text("Guide your balloon upward!", CANVAS_WIDTH / 2, 150);
-    p.text("Use your shield to push obstacles away", CANVAS_WIDTH / 2, 175);
-    p.text("Reach the target height to complete each level", CANVAS_WIDTH / 2, 200);
+    p.text("Your balloon rises automatically!", CANVAS_WIDTH / 2, 120);
+    p.text("Obstacles fall from above - position your shield", CANVAS_WIDTH / 2, 140);
+    p.text("ABOVE the balloon to deflect them!", CANVAS_WIDTH / 2, 160);
+    
+    // Visual diagram
+    p.textSize(12);
+    p.fill(255, 200, 100);
+    p.text("↓ OBSTACLES ↓", CANVAS_WIDTH / 2, 190);
+    
+    p.fill(200, 200, 200);
+    p.rect(CANVAS_WIDTH / 2 - 25, 210, 50, 50, 5);
+    p.fill(100);
+    p.textSize(10);
+    p.text("SHIELD", CANVAS_WIDTH / 2, 235);
+    
+    p.fill(220, 240, 255);
+    p.stroke(180, 200, 220);
+    p.strokeWeight(2);
+    p.circle(CANVAS_WIDTH / 2, 280, 30);
+    p.noStroke();
+    p.fill(100);
+    p.textSize(10);
+    p.text("BALLOON", CANVAS_WIDTH / 2, 305);
     
     // Instructions
     p.textSize(14);
     p.fill(255, 255, 200);
-    p.text("CONTROLS:", CANVAS_WIDTH / 2, 240);
-    p.textSize(12);
+    p.text("CONTROLS:", CANVAS_WIDTH / 2, 330);
+    p.textSize(11);
     p.fill(255);
-    p.text("Arrow Keys: Move Shield", CANVAS_WIDTH / 2, 265);
-    p.text("SHIFT + Arrows: Move Shield Faster", CANVAS_WIDTH / 2, 285);
-    p.text("SPACE/ESC: Pause", CANVAS_WIDTH / 2, 305);
-    p.text("R: Restart", CANVAS_WIDTH / 2, 325);
+    p.text("Arrow Keys: Move Shield  |  SHIFT: Faster", CANVAS_WIDTH / 2, 350);
+    p.text("SPACE/ESC: Pause  |  R: Restart", CANVAS_WIDTH / 2, 365);
     
     // Start prompt
     p.textSize(20);
     p.fill(255, 255, 100);
     const flash = Math.sin(p.frameCount * 0.1) > 0;
     if (flash) {
-      p.text("PRESS ENTER TO START", CANVAS_WIDTH / 2, 365);
+      p.text("PRESS ENTER TO START", CANVAS_WIDTH / 2, 390);
     }
   }
 

@@ -27,7 +27,7 @@ export const gameState = {
   maxLevel: 5,
   playerAngle: -Math.PI / 2, // Start aiming upward
   knifeCooldown: 0,
-  knifeCooldownTime: 500,
+  knifeCooldownTime: 250, // Reduced from 500 for faster action
   lastKnifeTime: 0,
   enemiesRemaining: 0,
   hostagesAlive: 0,

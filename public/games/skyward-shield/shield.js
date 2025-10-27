@@ -54,6 +54,21 @@ export class Shield {
       p.line(this.x - 30, this.y + i * 20, this.x + 30, this.y + i * 20);
     }
     
+    // Add upward arrow indicator showing obstacles come from above
+    p.fill(255, 200, 100, 200);
+    p.noStroke();
+    p.triangle(
+      this.x, this.y - 45,
+      this.x - 8, this.y - 35,
+      this.x + 8, this.y - 35
+    );
+    
+    // Add text hint
+    p.fill(255, 255, 100, 150);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(10);
+    p.text("BLOCK", this.x, this.y);
+    
     p.pop();
   }
 

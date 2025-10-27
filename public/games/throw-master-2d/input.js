@@ -41,11 +41,29 @@ export function setupInputHandlers(p) {
       }
     }
 
-    // Gameplay controls (only in PLAYING phase)
+    // Gameplay controls (only in PLAYING phase) - Space to throw
     if (gameState.gamePhase === GAME_PHASES.PLAYING && gameState.controlMode === "HUMAN") {
-      handleGameplayInput(p);
+      if (p.keyCode === 32) { // Space
+        throwKnife(p);
+      }
     }
   };
+}
+
+// Continuous input handling for smooth rotation
+export function updateContinuousInput(p) {
+  if (gameState.gamePhase !== GAME_PHASES.PLAYING || gameState.controlMode !== "HUMAN") {
+    return;
+  }
+
+  const rotationSpeed = 3 * (Math.PI / 180); // 3 degrees per frame for smooth rotation
+
+  if (p.keyIsDown(37)) { // Arrow Left - hold to rotate
+    gameState.playerAngle -= rotationSpeed;
+  }
+  if (p.keyIsDown(39)) { // Arrow Right - hold to rotate
+    gameState.playerAngle += rotationSpeed;
+  }
 }
 
 function handleGameplayInput(p) {

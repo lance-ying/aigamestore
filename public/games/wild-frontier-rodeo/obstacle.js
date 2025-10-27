@@ -35,6 +35,7 @@ export class Obstacle {
 
   draw(p) {
     p.push();
+    p.rectMode(p.CORNER);
     
     if (this.type === 'ROCK') {
       p.fill(...this.color);

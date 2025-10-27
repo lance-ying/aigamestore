@@ -5,6 +5,7 @@ export function drawUI(p) {
     drawStartScreen(p);
   } else if (gameState.gamePhase === "PLAYING") {
     drawPlayingUI(p);
+    drawPhaseTransition(p);
   } else if (gameState.gamePhase === "PAUSED") {
     drawPlayingUI(p);
     drawPausedOverlay(p);
@@ -29,30 +30,32 @@ function drawStartScreen(p) {
   p.textSize(14);
   p.fill(180, 180, 180);
   const instructions = [
-    "GAMEPLAY:",
-    "• Each turn: Reinforce → Attack → Fortify",
-    "• Click territories to select them",
-    "• Arrow Up/Down: Adjust army counts",
-    "• Space: Confirm actions",
+    "KEYBOARD CONTROLS:",
+    "• Arrow Left/Right: Navigate territories",
+    "• Enter: Select highlighted territory",
+    "• Arrow Up/Down: Adjust army count",
+    "• Space: Confirm action",
     "• Shift: Advance to next phase",
-    "• Z: End your turn early",
+    "• Z: End turn early",
     "",
-    "OBJECTIVE:",
-    "• Capture all territories to win the level",
-    "• Control continents for bonus armies",
-    "• Eliminate AI opponents for points"
+    "GAMEPLAY:",
+    "• REINFORCE: Deploy armies to your territories",
+    "• ATTACK: Conquer enemy territories",
+    "• FORTIFY: Move armies between your territories",
+    "",
+    "Win by capturing all territories!"
   ];
   
-  let yPos = 180;
+  let yPos = 170;
   for (let line of instructions) {
-    p.text(line, 100, yPos);
-    yPos += 20;
+    p.text(line, 80, yPos);
+    yPos += 18;
   }
   
   p.fill(255, 255, 100);
   p.textAlign(p.CENTER, p.CENTER);
   p.textSize(24);
-  p.text("PRESS ENTER TO START", CANVAS_WIDTH / 2, 360);
+  p.text("PRESS ENTER TO START", CANVAS_WIDTH / 2, 370);
   
   if (gameState.highScore > 0) {
     p.fill(150, 255, 150);
@@ -74,42 +77,62 @@ function drawPlayingUI(p) {
   
   p.fill(255);
   p.text(`Level: ${gameState.currentLevel}`, 10, 30);
+  p.text(`Turn: ${gameState.turnNumber}`, 10, 50);
   
   p.textAlign(p.CENTER, p.TOP);
   let phaseText = "";
+  let phaseColor = [255, 255, 255];
   if (gameState.currentPhase === PHASE.REINFORCE) {
     phaseText = "Phase: REINFORCE";
+    phaseColor = [100, 255, 100];
   } else if (gameState.currentPhase === PHASE.ATTACK) {
     phaseText = "Phase: ATTACK";
+    phaseColor = [255, 100, 100];
   } else if (gameState.currentPhase === PHASE.FORTIFY) {
     phaseText = "Phase: FORTIFY";
+    phaseColor = [100, 200, 255];
   } else if (gameState.currentPhase === PHASE.AI_TURN) {
     phaseText = "Phase: AI TURN";
+    phaseColor = [255, 255, 100];
   }
+  
+  p.fill(...phaseColor);
+  p.textSize(16);
   p.text(phaseText, CANVAS_WIDTH / 2, 10);
   
   p.textAlign(p.RIGHT, p.TOP);
+  p.fill(255, 255, 100);
   p.text(`SCORE: ${gameState.score}`, CANVAS_WIDTH - 10, 10);
   
   if (gameState.currentPhase === PHASE.REINFORCE && gameState.reinforcementPool > 0) {
     p.textAlign(p.LEFT, p.BOTTOM);
-    p.fill(255, 220, 100);
-    p.text(`Reinforcements: ${gameState.reinforcementPool}`, 10, CANVAS_HEIGHT - 10);
+    p.fill(100, 255, 100);
+    p.textSize(16);
+    p.text(`Reinforcements: ${gameState.reinforcementPool}`, 10, CANVAS_HEIGHT - 30);
+  }
+  
+  const highlightedTerritory = gameState.territories[gameState.highlightedTerritoryIndex];
+  if (highlightedTerritory) {
+    p.textAlign(p.CENTER, p.BOTTOM);
+    p.fill(200, 200, 255);
+    p.textSize(12);
+    p.text(`[Arrow Keys to navigate] ${highlightedTerritory.name} - Owner: ${gameState.players[highlightedTerritory.ownerId]?.name} - Armies: ${highlightedTerritory.armies}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT - 10);
   }
   
   if (gameState.selectedTerritoryId1 !== null) {
     const territory = gameState.territories.find(t => t.id === gameState.selectedTerritoryId1);
     if (territory) {
       p.textAlign(p.CENTER, p.BOTTOM);
-      p.fill(200, 200, 255);
-      p.text(`${territory.name} | Owner: ${gameState.players[territory.ownerId]?.name} | Armies: ${territory.armies}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT - 10);
+      p.fill(255, 255, 100);
+      p.textSize(13);
+      p.text(`Selected: ${territory.name} | Armies: ${territory.armies}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT - 30);
     }
   }
   
   if (gameState.armiesToMove > 0) {
     p.textAlign(p.CENTER, p.CENTER);
     p.fill(255, 255, 100);
-    p.textSize(18);
+    p.textSize(20);
     let actionText = "";
     if (gameState.currentPhase === PHASE.REINFORCE) {
       actionText = `Deploying: ${gameState.armiesToMove} armies`;
@@ -124,16 +147,75 @@ function drawPlayingUI(p) {
     p.text("Arrow Up/Down to adjust | Space to confirm", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 75);
   }
   
+  if (gameState.currentPhase === PHASE.REINFORCE && gameState.selectedTerritoryId1 === null) {
+    p.textAlign(p.CENTER, p.CENTER);
+    p.fill(200, 255, 200);
+    p.textSize(14);
+    p.text("Press Enter to select highlighted territory", CANVAS_WIDTH / 2, 60);
+  } else if (gameState.currentPhase === PHASE.ATTACK && gameState.selectedTerritoryId1 === null) {
+    p.textAlign(p.CENTER, p.CENTER);
+    p.fill(255, 200, 200);
+    p.textSize(14);
+    p.text("Select your territory with armies > 1", CANVAS_WIDTH / 2, 60);
+  } else if (gameState.currentPhase === PHASE.ATTACK && gameState.selectedTerritoryId1 !== null && gameState.selectedTerritoryId2 === null) {
+    p.textAlign(p.CENTER, p.CENTER);
+    p.fill(255, 200, 200);
+    p.textSize(14);
+    p.text("Select adjacent enemy territory to attack", CANVAS_WIDTH / 2, 60);
+  } else if (gameState.currentPhase === PHASE.FORTIFY && gameState.selectedTerritoryId1 === null) {
+    p.textAlign(p.CENTER, p.CENTER);
+    p.fill(200, 200, 255);
+    p.textSize(14);
+    p.text("Select source territory (or press Shift/Z to skip)", CANVAS_WIDTH / 2, 60);
+  } else if (gameState.currentPhase === PHASE.FORTIFY && gameState.selectedTerritoryId1 !== null && gameState.selectedTerritoryId2 === null) {
+    p.textAlign(p.CENTER, p.CENTER);
+    p.fill(200, 200, 255);
+    p.textSize(14);
+    p.text("Select adjacent friendly territory", CANVAS_WIDTH / 2, 60);
+  }
+  
   if (gameState.combatResults) {
     drawCombatResults(p);
   }
 }
 
+function drawPhaseTransition(p) {
+  if (gameState.phaseTransitionAnimation > 0) {
+    const alpha = (gameState.phaseTransitionAnimation / 30) * 200;
+    p.push();
+    p.fill(0, 0, 0, alpha);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.textAlign(p.CENTER, p.CENTER);
+    p.fill(255, 255, 255, alpha);
+    p.textSize(32);
+    let phaseText = "";
+    if (gameState.currentPhase === PHASE.REINFORCE) {
+      phaseText = "REINFORCE PHASE";
+    } else if (gameState.currentPhase === PHASE.ATTACK) {
+      phaseText = "ATTACK PHASE";
+    } else if (gameState.currentPhase === PHASE.FORTIFY) {
+      phaseText = "FORTIFY PHASE";
+    } else if (gameState.currentPhase === PHASE.AI_TURN) {
+      phaseText = "AI TURN";
+    }
+    p.text(phaseText, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+    p.pop();
+  }
+}
+
 function drawPausedOverlay(p) {
-  p.textAlign(p.RIGHT, p.TOP);
+  p.fill(0, 0, 0, 150);
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  p.textAlign(p.CENTER, p.CENTER);
   p.fill(255, 255, 0);
+  p.textSize(48);
+  p.text("PAUSED", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+  
   p.textSize(18);
-  p.text("PAUSED", CANVAS_WIDTH - 10, 35);
+  p.fill(200, 200, 200);
+  p.text("Press ESC to resume", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 50);
 }
 
 function drawGameOverScreen(p) {
@@ -188,46 +270,69 @@ function drawCombatResults(p) {
   const results = gameState.combatResults;
   
   p.push();
-  p.fill(0, 0, 0, 200);
-  p.rect(CANVAS_WIDTH / 2 - 150, CANVAS_HEIGHT / 2 - 80, 300, 160);
+  p.fill(0, 0, 0, 220);
+  p.rect(CANVAS_WIDTH / 2 - 160, CANVAS_HEIGHT / 2 - 100, 320, 200);
   
-  p.fill(255);
+  p.strokeWeight(3);
+  p.stroke(255, 255, 100);
+  p.noFill();
+  p.rect(CANVAS_WIDTH / 2 - 160, CANVAS_HEIGHT / 2 - 100, 320, 200);
+  
+  p.fill(255, 255, 100);
+  p.noStroke();
   p.textAlign(p.CENTER, p.CENTER);
-  p.textSize(20);
-  p.text("COMBAT!", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 50);
+  p.textSize(24);
+  p.text("⚔️ COMBAT! ⚔️", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 70);
   
   p.textSize(16);
   p.fill(100, 150, 255);
-  p.text("Attacker Rolls:", CANVAS_WIDTH / 2 - 75, CANVAS_HEIGHT / 2 - 20);
+  p.text("Attacker Rolls:", CANVAS_WIDTH / 2 - 80, CANVAS_HEIGHT / 2 - 35);
   
   if (gameState.combatAnimationFrames < 30) {
     const animDice = [];
     for (let i = 0; i < results.attackerRolls.length; i++) {
       animDice.push(Math.floor(p.random(1, 7)));
     }
-    p.text(animDice.join(", "), CANVAS_WIDTH / 2 - 75, CANVAS_HEIGHT / 2 + 5);
+    p.textSize(20);
+    p.text(animDice.join(", "), CANVAS_WIDTH / 2 - 80, CANVAS_HEIGHT / 2 - 10);
   } else {
-    p.text(results.attackerRolls.join(", "), CANVAS_WIDTH / 2 - 75, CANVAS_HEIGHT / 2 + 5);
+    p.textSize(20);
+    p.text(results.attackerRolls.join(", "), CANVAS_WIDTH / 2 - 80, CANVAS_HEIGHT / 2 - 10);
   }
   
   p.fill(255, 100, 100);
-  p.text("Defender Rolls:", CANVAS_WIDTH / 2 + 75, CANVAS_HEIGHT / 2 - 20);
+  p.textSize(16);
+  p.text("Defender Rolls:", CANVAS_WIDTH / 2 + 80, CANVAS_HEIGHT / 2 - 35);
   
   if (gameState.combatAnimationFrames < 30) {
     const animDice = [];
     for (let i = 0; i < results.defenderRolls.length; i++) {
       animDice.push(Math.floor(p.random(1, 7)));
     }
-    p.text(animDice.join(", "), CANVAS_WIDTH / 2 + 75, CANVAS_HEIGHT / 2 + 5);
+    p.textSize(20);
+    p.text(animDice.join(", "), CANVAS_WIDTH / 2 + 80, CANVAS_HEIGHT / 2 - 10);
   } else {
-    p.text(results.defenderRolls.join(", "), CANVAS_WIDTH / 2 + 75, CANVAS_HEIGHT / 2 + 5);
+    p.textSize(20);
+    p.text(results.defenderRolls.join(", "), CANVAS_WIDTH / 2 + 80, CANVAS_HEIGHT / 2 - 10);
   }
   
   if (gameState.combatAnimationFrames >= 30) {
-    p.fill(255, 255, 100);
-    p.textSize(14);
-    p.text(`Attacker lost: ${results.attackerLosses}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 35);
-    p.text(`Defender lost: ${results.defenderLosses}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 55);
+    p.fill(255, 255, 255);
+    p.textSize(16);
+    p.text("CASUALTIES:", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 25);
+    
+    p.fill(100, 150, 255);
+    p.textSize(18);
+    p.text(`Attacker: -${results.attackerLosses}`, CANVAS_WIDTH / 2 - 80, CANVAS_HEIGHT / 2 + 50);
+    
+    p.fill(255, 100, 100);
+    p.text(`Defender: -${results.defenderLosses}`, CANVAS_WIDTH / 2 + 80, CANVAS_HEIGHT / 2 + 50);
+    
+    if (results.conquered) {
+      p.fill(255, 255, 100);
+      p.textSize(20);
+      p.text("🏆 TERRITORY CONQUERED! 🏆", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 80);
+    }
   }
   
   p.pop();

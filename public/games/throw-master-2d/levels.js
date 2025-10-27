@@ -1,7 +1,7 @@
 // levels.js - Level definitions
 
 export const levels = [
-  // Level 1: The Training Grounds
+  // Level 1: The Training Grounds (now with a hostage to introduce the mechanic)
   {
     number: 1,
     name: "The Training Grounds",
@@ -14,7 +14,9 @@ export const levels = [
     ],
     barrels: [],
     boxes: [],
-    hostages: []
+    hostages: [
+      { x: 300, y: 370 }
+    ]
   },
   
   // Level 2: Barrel Practice

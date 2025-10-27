@@ -59,15 +59,10 @@ export function checkSnakeBodyCollision(p, snake, otherSnakes) {
 }
 
 export function checkSnakeBoundaryCollision(snake) {
-  const head = snake.getHead();
-  const margin = 20;
-  
-  return (
-    head.x < margin ||
-    head.x > CANVAS_WIDTH - margin ||
-    head.y < margin ||
-    head.y > CANVAS_HEIGHT - margin
-  );
+  // NOTE: Boundary collision is DISABLED - Pac-Man style wrapping is now enabled
+  // Boundaries no longer kill snakes; they wrap around to the opposite side
+  // This function is kept for compatibility but always returns false
+  return false;
 }
 
 export function checkSnakeObstacleCollision(p, snake, obstacles) {
@@ -76,7 +71,7 @@ export function checkSnakeObstacleCollision(p, snake, obstacles) {
   for (let obstacle of obstacles) {
     const bounds = obstacle.getBounds();
     
-    if (p.collideCircleRect(
+    if (collideCircleRect(
       head.x, head.y, SEGMENT_SIZE,
       bounds.x, bounds.y, bounds.width, bounds.height
     )) {
@@ -85,4 +80,21 @@ export function checkSnakeObstacleCollision(p, snake, obstacles) {
   }
   
   return false;
+}
+
+// Custom circle-rect collision detection
+function collideCircleRect(cx, cy, diameter, rx, ry, rw, rh) {
+  const radius = diameter / 2;
+  
+  // Find the closest point on the rectangle to the circle
+  const closestX = Math.max(rx, Math.min(cx, rx + rw));
+  const closestY = Math.max(ry, Math.min(cy, ry + rh));
+  
+  // Calculate the distance between the circle's center and this closest point
+  const distanceX = cx - closestX;
+  const distanceY = cy - closestY;
+  
+  // If the distance is less than the circle's radius, there's a collision
+  const distanceSquared = (distanceX * distanceX) + (distanceY * distanceY);
+  return distanceSquared < (radius * radius);
 }

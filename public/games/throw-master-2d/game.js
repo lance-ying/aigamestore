@@ -1,7 +1,7 @@
 // game.js - Main game file
 
 import { gameState, GAME_PHASES, CANVAS_WIDTH, CANVAS_HEIGHT, TARGET_FPS } from './globals.js';
-import { setupInputHandlers } from './input.js';
+import { setupInputHandlers, updateContinuousInput } from './input.js';
 import { updateGame, handleTestingControls, setParticleSystem } from './gameLogic.js';
 import { renderGame } from './render.js';
 import { ParticleSystem } from './particles.js';
@@ -39,6 +39,9 @@ let gameInstance = new p5(p => {
   };
 
   p.draw = function() {
+    // Handle continuous input (smooth rotation)
+    updateContinuousInput(p);
+    
     // Handle automated testing controls
     if (gameState.gamePhase === GAME_PHASES.PLAYING) {
       handleTestingControls(p);

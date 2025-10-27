@@ -89,6 +89,8 @@ function handleSpacePress(p) {
         executeMove(() => {
           activateSpecialPiece(currentTile, p);
           currentTile.markedForClear = true;
+          gameState.isAnimating = true;
+          gameState.comboMultiplier = 1.0;
         }, p);
         gameState.selectedTile = null;
       } else {

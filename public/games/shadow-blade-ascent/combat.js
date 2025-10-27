@@ -14,8 +14,41 @@ export function handleCombat(p, player, enemies, projectiles, particles) {
         const damage = enemy.takeDamage(player.attackHitbox.damage);
         updateCombo(p);
         
-        // Create hit particles
-        particles.push(...createHitParticles(enemy.x + enemy.width/2, enemy.y + enemy.height/2));
+        // Create MORE hit particles for better feedback
+        particles.push(...createHitParticles(enemy.x + enemy.width/2, enemy.y + enemy.height/2, 12));
+        
+        // Add bright flash particles at hit point
+        for (let i = 0; i < 5; i++) {
+          const angle = Math.random() * Math.PI * 2;
+          const speed = Math.random() * 3 + 2;
+          const hitParticle = {
+            x: enemy.x + enemy.width/2,
+            y: enemy.y + enemy.height/2,
+            vx: Math.cos(angle) * speed,
+            vy: Math.sin(angle) * speed - 1,
+            color: [255, 220, 100],
+            size: Math.random() * 4 + 3,
+            life: 20,
+            maxLife: 20,
+            dead: false,
+            update: function() {
+              this.x += this.vx;
+              this.y += this.vy;
+              this.vy += 0.2;
+              this.life--;
+              if (this.life <= 0) this.dead = true;
+            },
+            draw: function(p, cameraX) {
+              p.push();
+              const alpha = 255 * (this.life / this.maxLife);
+              p.fill(this.color[0], this.color[1], this.color[2], alpha);
+              p.noStroke();
+              p.ellipse(this.x - cameraX, this.y, this.size, this.size);
+              p.pop();
+            }
+          };
+          particles.push(hitParticle);
+        }
         
         // Show damage number
         createDamageNumber(p, enemy.x + enemy.width/2, enemy.y, damage, false);
@@ -39,7 +72,7 @@ export function handleCombat(p, player, enemies, projectiles, particles) {
       if (checkCollision(hitbox, player)) {
         const damage = player.takeDamage(hitbox.damage);
         if (damage > 0) {
-          particles.push(...createHitParticles(player.x + player.width/2, player.y + player.height/2, 3));
+          particles.push(...createHitParticles(player.x + player.width/2, player.y + player.height/2, 5));
           createDamageNumber(p, player.x + player.width/2, player.y, damage, true);
         }
       }
@@ -53,7 +86,7 @@ export function handleCombat(p, player, enemies, projectiles, particles) {
     
     // Boss special attacks
     if (enemy.type === 'boss' && enemy.specialAttackTimer === 0) {
-      enemy.specialAttackTimer = 180;
+      enemy.specialAttackTimer = enemy.phase === 1 ? 150 : 100;
       
       // Create multiple projectiles or AoE
       if (Math.random() > 0.5) {
@@ -100,7 +133,7 @@ export function handleCombat(p, player, enemies, projectiles, particles) {
         if (checkCollision(proj, enemy)) {
           const damage = enemy.takeDamage(proj.damage);
           updateCombo(p);
-          particles.push(...createHitParticles(enemy.x + enemy.width/2, enemy.y + enemy.height/2));
+          particles.push(...createHitParticles(enemy.x + enemy.width/2, enemy.y + enemy.height/2, 10));
           createDamageNumber(p, enemy.x + enemy.width/2, enemy.y, damage, false);
           
           if (proj.type === 'projectile') {
@@ -117,7 +150,7 @@ export function handleCombat(p, player, enemies, projectiles, particles) {
       if (checkCollision(proj, player)) {
         const damage = player.takeDamage(proj.damage);
         if (damage > 0) {
-          particles.push(...createHitParticles(player.x + player.width/2, player.y + player.height/2, 3));
+          particles.push(...createHitParticles(player.x + player.width/2, player.y + player.height/2, 5));
           createDamageNumber(p, player.x + player.width/2, player.y, damage, true);
         }
         if (proj.type === 'projectile') {

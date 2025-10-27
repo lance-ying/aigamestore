@@ -21,6 +21,20 @@ export const gameState = {
   towerHealth: 100,
   towerMaxHealth: 100,
   towerSpeed: 4,
+  facingRight: true, // New: direction tower is facing
+  firingAngle: 0, // Angle in degrees (-30 to +30)
+  
+  // Energy system
+  energy: 100,
+  maxEnergy: 100,
+  energyRegenRate: 0.5, // energy per frame
+  shotEnergyCost: 15, // energy per shot
+  
+  // Combo system
+  comboCount: 0,
+  comboTimer: 0,
+  comboTimeLimit: 120, // frames to maintain combo
+  comboMultiplier: 1,
   
   // Game progression
   currentLevel: 1,
@@ -42,6 +56,7 @@ export const gameState = {
   zombies: [],
   blocks: [],
   particles: [],
+  powerups: [],
   
   // Weapons
   weapons: [
@@ -61,6 +76,12 @@ export const gameState = {
     }
   ],
   activeWeaponSlots: 1,
+  
+  // Power-up effects
+  powerupEffects: {
+    damageBoost: 0,
+    damageBoostTimer: 0
+  },
   
   // Upgrade costs
   upgradeCosts: {

@@ -24,11 +24,17 @@ export function checkCollisions(p) {
         // Create hit particles
         createHitParticles(p, bullet.x, bullet.y, killed ? [255, 200, 100] : [255, 255, 255]);
         
-        if (killed) {
-          zombie.active = false;
-        }
         break;
       }
+    }
+  }
+  
+  // Update combo timer
+  if (gameState.comboTimer > 0) {
+    gameState.comboTimer--;
+    if (gameState.comboTimer === 0) {
+      gameState.comboCount = 0;
+      gameState.comboMultiplier = 1;
     }
   }
   
@@ -37,6 +43,7 @@ export function checkCollisions(p) {
   gameState.zombies = gameState.zombies.filter(z => z.active);
   gameState.blocks = gameState.blocks.filter(b => b.active);
   gameState.particles = gameState.particles.filter(p => p.active);
+  gameState.powerups = gameState.powerups.filter(p => p.active);
 }
 
 function createHitParticles(p, x, y, color) {

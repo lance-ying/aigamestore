@@ -1,6 +1,6 @@
 // entities.js - Player and Enemy classes
 
-import { CANVAS_WIDTH, CANVAS_HEIGHT, gameState } from './globals.js';
+import { CANVAS_WIDTH, CANVAS_HEIGHT, gameState, WEAPON_TYPES } from './globals.js';
 
 export class Player {
   constructor(p, x, y) {
@@ -12,11 +12,15 @@ export class Player {
     this.maxHealth = 100;
     this.health = 100;
     this.facingAngle = 0;
+    
+    // Weapon system
+    this.weapons = ['PISTOL', 'SHOTGUN', 'RIFLE'];
+    this.currentWeaponIndex = 0;
     this.weapon = {
-      damage: 15,
-      fireRate: 15,
+      ...WEAPON_TYPES.PISTOL,
       cooldown: 0
     };
+    
     this.ability = {
       type: 'DASH',
       cooldown: 0,
@@ -28,7 +32,24 @@ export class Player {
     this.damageFlash = 0;
   }
 
+  switchWeapon(index) {
+    if (index >= 0 && index < this.weapons.length) {
+      this.currentWeaponIndex = index;
+      const weaponType = this.weapons[index];
+      const baseWeapon = WEAPON_TYPES[weaponType];
+      this.weapon = {
+        ...baseWeapon,
+        cooldown: this.weapon.cooldown
+      };
+    }
+  }
+
   update(inputs) {
+    // Weapon switching
+    if (inputs.weapon1) this.switchWeapon(0);
+    if (inputs.weapon2) this.switchWeapon(1);
+    if (inputs.weapon3) this.switchWeapon(2);
+
     // Movement
     let dx = 0;
     let dy = 0;
@@ -97,14 +118,23 @@ export class Player {
   fire() {
     if (this.weapon.cooldown === 0) {
       this.weapon.cooldown = this.weapon.fireRate;
-      return {
-        x: this.x + this.p.cos(this.facingAngle) * this.radius,
-        y: this.y + this.p.sin(this.facingAngle) * this.radius,
-        vx: this.p.cos(this.facingAngle) * 8,
-        vy: this.p.sin(this.facingAngle) * 8,
-        damage: this.weapon.damage,
-        owner: 'PLAYER'
-      };
+      
+      const projectiles = [];
+      for (let i = 0; i < this.weapon.projectileCount; i++) {
+        const spreadAngle = this.weapon.spread * (i - (this.weapon.projectileCount - 1) / 2);
+        const angle = this.facingAngle + spreadAngle;
+        
+        projectiles.push({
+          x: this.x + this.p.cos(angle) * this.radius,
+          y: this.y + this.p.sin(angle) * this.radius,
+          vx: this.p.cos(angle) * this.weapon.projectileSpeed,
+          vy: this.p.sin(angle) * this.weapon.projectileSpeed,
+          damage: this.weapon.damage,
+          owner: 'PLAYER',
+          color: this.weapon.color
+        });
+      }
+      return projectiles;
     }
     return null;
   }
@@ -286,7 +316,8 @@ export class Enemy {
             vx: (dx / dist) * 5,
             vy: (dy / dist) * 5,
             damage: this.damage,
-            owner: 'ENEMY'
+            owner: 'ENEMY',
+            color: [255, 130, 50]
           };
         }
       }
@@ -302,6 +333,31 @@ export class Enemy {
       this.defeatAnimation = 20;
       gameState.score += 50;
       gameState.enemiesDefeated++;
+      
+      // Drop loot
+      this.dropLoot();
+    }
+  }
+
+  dropLoot() {
+    // 60% chance to drop loot
+    if (this.p.random() < 0.6) {
+      const lootTypes = ['HEALTH', 'WEAPON', 'ABILITY'];
+      const weights = [0.5, 0.3, 0.2]; // Health more common
+      
+      let rand = this.p.random();
+      let type = lootTypes[0];
+      let cumulative = 0;
+      
+      for (let i = 0; i < lootTypes.length; i++) {
+        cumulative += weights[i];
+        if (rand < cumulative) {
+          type = lootTypes[i];
+          break;
+        }
+      }
+      
+      gameState.loot.push(new Loot(this.p, this.x, this.y, type));
     }
   }
 
@@ -350,6 +406,7 @@ export class Projectile {
     this.vy = data.vy;
     this.damage = data.damage;
     this.owner = data.owner;
+    this.color = data.color || (data.owner === 'PLAYER' ? [255, 220, 100] : [255, 130, 50]);
     this.radius = 4;
     this.active = true;
     this.hitEffect = 0;
@@ -394,7 +451,7 @@ export class Projectile {
       this.p.fill(255, 100, 100, alpha);
       this.p.circle(this.x, this.y, this.radius * 4);
     } else {
-      this.p.fill(...(this.owner === 'PLAYER' ? [255, 220, 100] : [255, 130, 50]));
+      this.p.fill(...this.color);
       this.p.circle(this.x, this.y, this.radius * 2);
     }
     

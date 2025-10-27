@@ -1,6 +1,6 @@
 // entities.js - Game entity classes
 
-import { PLAYER_CONFIG, ENEMY_CONFIG, gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { PLAYER_CONFIG, ENEMY_CONFIG, WEAPON_TYPES, gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
 
 export class Player {
   constructor(p, x, y) {
@@ -10,8 +10,9 @@ export class Player {
     this.angle = 0;
     this.health = PLAYER_CONFIG.maxHealth;
     this.maxHealth = PLAYER_CONFIG.maxHealth;
-    this.ammo = PLAYER_CONFIG.maxAmmo;
-    this.maxAmmo = PLAYER_CONFIG.maxAmmo;
+    this.currentWeapon = "PISTOL";
+    this.ammo = WEAPON_TYPES.PISTOL.maxAmmo;
+    this.maxAmmo = WEAPON_TYPES.PISTOL.maxAmmo;
     this.moveSpeed = PLAYER_CONFIG.moveSpeed;
     this.framesSinceFire = 999;
     this.reloading = false;
@@ -22,20 +23,29 @@ export class Player {
   update(keys) {
     const speed = this.sprinting ? this.moveSpeed * PLAYER_CONFIG.sprintMultiplier : this.moveSpeed;
     
+    let newX = this.x;
+    let newY = this.y;
+    
     // Movement
     if (keys.up) {
-      this.x += this.p.cos(this.angle) * speed;
-      this.y += this.p.sin(this.angle) * speed;
+      newX += this.p.cos(this.angle) * speed;
+      newY += this.p.sin(this.angle) * speed;
     }
     if (keys.down) {
-      this.x -= this.p.cos(this.angle) * speed;
-      this.y -= this.p.sin(this.angle) * speed;
+      newX -= this.p.cos(this.angle) * speed;
+      newY -= this.p.sin(this.angle) * speed;
     }
     if (keys.left) {
       this.angle -= PLAYER_CONFIG.turnSpeed;
     }
     if (keys.right) {
       this.angle += PLAYER_CONFIG.turnSpeed;
+    }
+
+    // Check obstacle collision
+    if (!this.checkObstacleCollision(newX, newY)) {
+      this.x = newX;
+      this.y = newY;
     }
 
     // Boundary constraints
@@ -47,7 +57,8 @@ export class Player {
     // Reload handling
     if (this.reloading) {
       this.reloadFrames++;
-      if (this.reloadFrames >= PLAYER_CONFIG.reloadTime) {
+      const weapon = WEAPON_TYPES[this.currentWeapon];
+      if (this.reloadFrames >= weapon.reloadTime) {
         this.ammo = this.maxAmmo;
         this.reloading = false;
         this.reloadFrames = 0;
@@ -55,8 +66,21 @@ export class Player {
     }
   }
 
+  checkObstacleCollision(x, y) {
+    for (const obstacle of gameState.obstacles) {
+      if (x > obstacle.x - obstacle.width / 2 - 10 &&
+          x < obstacle.x + obstacle.width / 2 + 10 &&
+          y > obstacle.y - obstacle.height / 2 - 10 &&
+          y < obstacle.y + obstacle.height / 2 + 10) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   shoot() {
-    if (this.framesSinceFire >= PLAYER_CONFIG.fireRate && !this.reloading && this.ammo > 0) {
+    const weapon = WEAPON_TYPES[this.currentWeapon];
+    if (this.framesSinceFire >= weapon.fireRate && !this.reloading && this.ammo > 0) {
       this.framesSinceFire = 0;
       this.ammo--;
       return true;
@@ -67,6 +91,17 @@ export class Player {
   reload() {
     if (!this.reloading && this.ammo < this.maxAmmo) {
       this.reloading = true;
+      this.reloadFrames = 0;
+    }
+  }
+
+  switchWeapon(weaponType) {
+    if (WEAPON_TYPES[weaponType]) {
+      this.currentWeapon = weaponType;
+      const weapon = WEAPON_TYPES[weaponType];
+      this.maxAmmo = weapon.maxAmmo;
+      this.ammo = weapon.maxAmmo;
+      this.reloading = false;
       this.reloadFrames = 0;
     }
   }
@@ -122,7 +157,7 @@ export class Player {
     this.p.noStroke();
     this.p.fill(100, 100, 100);
     this.p.rect(this.x - barWidth/2, this.y - 20, barWidth, barHeight);
-    this.p.fill(healthPercent > 0.3 ? (100, 200, 100) : (200, 50, 50));
+    this.p.fill(healthPercent > 0.3 ? 100 : 200, healthPercent > 0.3 ? 200 : 50, healthPercent > 0.3 ? 100 : 50);
     this.p.rect(this.x - barWidth/2, this.y - 20, barWidth * healthPercent, barHeight);
     this.p.pop();
   }
@@ -162,8 +197,13 @@ export class Enemy {
       this.angle += angleDiff * ENEMY_CONFIG.turnSpeed * this.difficulty;
       
       if (dist > 100) {
-        this.x += this.p.cos(this.angle) * this.moveSpeed;
-        this.y += this.p.sin(this.angle) * this.moveSpeed;
+        const newX = this.x + this.p.cos(this.angle) * this.moveSpeed;
+        const newY = this.y + this.p.sin(this.angle) * this.moveSpeed;
+        
+        if (!this.checkObstacleCollision(newX, newY)) {
+          this.x = newX;
+          this.y = newY;
+        }
       }
     } else {
       // Wander behavior
@@ -173,8 +213,14 @@ export class Enemy {
         this.wanderChangeFrames = 0;
       }
       this.angle += (this.wanderAngle - this.angle) * 0.05;
-      this.x += this.p.cos(this.angle) * this.moveSpeed * 0.5;
-      this.y += this.p.sin(this.angle) * this.moveSpeed * 0.5;
+      
+      const newX = this.x + this.p.cos(this.angle) * this.moveSpeed * 0.5;
+      const newY = this.y + this.p.sin(this.angle) * this.moveSpeed * 0.5;
+      
+      if (!this.checkObstacleCollision(newX, newY)) {
+        this.x = newX;
+        this.y = newY;
+      }
     }
 
     // Boundary constraints
@@ -182,6 +228,18 @@ export class Enemy {
     this.y = this.p.constrain(this.y, 20, CANVAS_HEIGHT - 20);
 
     this.framesSinceFire++;
+  }
+
+  checkObstacleCollision(x, y) {
+    for (const obstacle of gameState.obstacles) {
+      if (x > obstacle.x - obstacle.width / 2 - 9 &&
+          x < obstacle.x + obstacle.width / 2 + 9 &&
+          y > obstacle.y - obstacle.height / 2 - 9 &&
+          y < obstacle.y + obstacle.height / 2 + 9) {
+        return true;
+      }
+    }
+    return false;
   }
 
   canShoot() {
@@ -242,7 +300,7 @@ export class Enemy {
 }
 
 export class Projectile {
-  constructor(p, x, y, angle, fromPlayer = true) {
+  constructor(p, x, y, angle, fromPlayer = true, color = null) {
     this.p = p;
     this.x = x;
     this.y = y;
@@ -250,18 +308,38 @@ export class Projectile {
     this.speed = 8;
     this.fromPlayer = fromPlayer;
     this.lifetime = 60;
+    this.color = color || (fromPlayer ? [255, 220, 100] : [255, 100, 100]);
   }
 
   update() {
-    this.x += this.p.cos(this.angle) * this.speed;
-    this.y += this.p.sin(this.angle) * this.speed;
+    const newX = this.x + this.p.cos(this.angle) * this.speed;
+    const newY = this.y + this.p.sin(this.angle) * this.speed;
+    
+    // Check obstacle collision
+    let hitObstacle = false;
+    for (const obstacle of gameState.obstacles) {
+      if (newX > obstacle.x - obstacle.width / 2 &&
+          newX < obstacle.x + obstacle.width / 2 &&
+          newY > obstacle.y - obstacle.height / 2 &&
+          newY < obstacle.y + obstacle.height / 2) {
+        hitObstacle = true;
+        break;
+      }
+    }
+    
+    if (hitObstacle) {
+      return true; // Remove projectile
+    }
+    
+    this.x = newX;
+    this.y = newY;
     this.lifetime--;
     return this.lifetime <= 0 || this.x < 0 || this.x > CANVAS_WIDTH || this.y < 0 || this.y > CANVAS_HEIGHT;
   }
 
   render() {
     this.p.push();
-    this.p.fill(...(this.fromPlayer ? [255, 220, 100] : [255, 100, 100]));
+    this.p.fill(...this.color);
     this.p.noStroke();
     this.p.circle(this.x, this.y, 4);
     this.p.pop();
@@ -306,6 +384,63 @@ export class Pickup {
       this.p.rect(0, 0, 6, 6);
     }
     
+    this.p.pop();
+  }
+}
+
+export class WeaponPickup {
+  constructor(p, x, y, weaponType) {
+    this.p = p;
+    this.x = x;
+    this.y = y;
+    this.weaponType = weaponType;
+    this.bobOffset = 0;
+    this.rotation = 0;
+  }
+
+  update() {
+    this.bobOffset = this.p.sin(this.p.frameCount * 0.1) * 3;
+    this.rotation += 0.05;
+  }
+
+  render() {
+    const weapon = WEAPON_TYPES[this.weaponType];
+    this.p.push();
+    this.p.translate(this.x, this.y + this.bobOffset);
+    this.p.rotate(this.rotation);
+    
+    this.p.fill(...weapon.color);
+    this.p.stroke(weapon.color[0] - 50, weapon.color[1] - 50, weapon.color[2] - 50);
+    this.p.strokeWeight(2);
+    this.p.rectMode(this.p.CENTER);
+    this.p.rect(0, 0, 16, 6);
+    this.p.rect(8, 0, 6, 3);
+    
+    this.p.pop();
+  }
+}
+
+export class Obstacle {
+  constructor(p, x, y, width, height) {
+    this.p = p;
+    this.x = x;
+    this.y = y;
+    this.width = width;
+    this.height = height;
+  }
+
+  render() {
+    this.p.push();
+    this.p.fill(80, 70, 60);
+    this.p.stroke(60, 50, 40);
+    this.p.strokeWeight(2);
+    this.p.rectMode(this.p.CENTER);
+    this.p.rect(this.x, this.y, this.width, this.height);
+    
+    // Add some texture
+    this.p.fill(100, 90, 80);
+    this.p.noStroke();
+    this.p.rect(this.x - this.width/4, this.y - this.height/4, this.width/3, this.height/3);
     this.p.pop();
   }
 }

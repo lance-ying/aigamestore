@@ -71,6 +71,17 @@ let gameInstance = new p5(p => {
     // Update player movement
     updatePlayerMovement(p);
     
+    // Regenerate energy
+    gameState.energy = Math.min(gameState.energy + gameState.energyRegenRate, gameState.maxEnergy);
+    
+    // Update power-up effects
+    if (gameState.powerupEffects.damageBoostTimer > 0) {
+      gameState.powerupEffects.damageBoostTimer--;
+      if (gameState.powerupEffects.damageBoostTimer === 0) {
+        gameState.powerupEffects.damageBoost = 0;
+      }
+    }
+    
     // Update tower
     if (gameState.player) {
       gameState.player.update(p);
@@ -83,6 +94,7 @@ let gameInstance = new p5(p => {
           game_x: gameState.player.x,
           game_y: gameState.player.y,
           health: gameState.towerHealth,
+          energy: gameState.energy,
           framecount: p.frameCount
         });
       }
@@ -100,6 +112,9 @@ let gameInstance = new p5(p => {
     // Update blocks
     gameState.blocks.forEach(b => b.update(p));
     
+    // Update power-ups
+    gameState.powerups.forEach(pu => pu.update(p));
+    
     // Update particles
     gameState.particles.forEach(part => part.update(p));
     
@@ -109,7 +124,7 @@ let gameInstance = new p5(p => {
     if (gameState.blockSpawnTimer >= levelConfig.blockFrequency) {
       const block = new Block(
         100 + Math.random() * 400,
-        50 + Math.random() * 200
+        270 + Math.random() * 40
       );
       gameState.blocks.push(block);
       gameState.blockSpawnTimer = 0;

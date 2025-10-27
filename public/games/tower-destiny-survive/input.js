@@ -38,7 +38,8 @@ export function handleKeyPressed(p) {
     }
   } else if (keyCode === 82) { // R
     if (gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE || 
-        gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN) {
+        gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN ||
+        gameState.gamePhase === GAME_PHASES.PAUSED) {
       resetGame(p);
     }
   }
@@ -47,6 +48,14 @@ export function handleKeyPressed(p) {
   if (gameState.gamePhase === GAME_PHASES.PLAYING) {
     if (keyCode === 32) { // SPACE
       fireWeapons(p);
+    } else if (keyCode === 81) { // Q - face left
+      gameState.facingRight = false;
+    } else if (keyCode === 69) { // E - face right
+      gameState.facingRight = true;
+    } else if (keyCode === 38) { // UP ARROW - aim up
+      gameState.firingAngle = Math.max(-30, gameState.firingAngle - 5);
+    } else if (keyCode === 40) { // DOWN ARROW - aim down
+      gameState.firingAngle = Math.min(30, gameState.firingAngle + 5);
     }
   }
   
@@ -75,6 +84,12 @@ function startGame(p) {
   gameState.blocksCollected = 10; // Start with some blocks
   gameState.currentLevel = 1;
   gameState.towerHealth = gameState.towerMaxHealth;
+  gameState.energy = gameState.maxEnergy;
+  gameState.comboCount = 0;
+  gameState.comboTimer = 0;
+  gameState.comboMultiplier = 1;
+  gameState.facingRight = true;
+  gameState.firingAngle = 0;
   
   if (gameState.player) {
     gameState.player.health = gameState.towerMaxHealth;
@@ -96,7 +111,18 @@ function resetGame(p) {
   gameState.currentLevel = 1;
   gameState.towerMaxHealth = 100;
   gameState.towerHealth = 100;
+  gameState.energy = 100;
+  gameState.maxEnergy = 100;
   gameState.activeWeaponSlots = 1;
+  gameState.comboCount = 0;
+  gameState.comboTimer = 0;
+  gameState.comboMultiplier = 1;
+  gameState.facingRight = true;
+  gameState.firingAngle = 0;
+  gameState.powerupEffects = {
+    damageBoost: 0,
+    damageBoostTimer: 0
+  };
   
   // Reset weapons
   gameState.weapons = [
@@ -124,6 +150,7 @@ function resetGame(p) {
   gameState.bullets = [];
   gameState.blocks = [];
   gameState.particles = [];
+  gameState.powerups = [];
   
   p.logs.game_info.push({
     data: { gamePhase: gameState.gamePhase },
@@ -153,6 +180,14 @@ export function updatePlayerMovement(p) {
 }
 
 function fireWeapons(p) {
+  // Check energy
+  if (gameState.energy < gameState.shotEnergyCost) {
+    return; // Not enough energy
+  }
+  
+  let fired = false;
+  const direction = gameState.facingRight ? 1 : -1;
+  
   for (let i = 0; i < gameState.activeWeaponSlots; i++) {
     const weapon = gameState.weapons[i];
     if (weapon && weapon.unlocked) {
@@ -162,12 +197,20 @@ function fireWeapons(p) {
           gameState.player.x + offsetX,
           gameState.player.y - gameState.player.height - 10,
           weapon.damage,
-          weapon.type
+          weapon.type,
+          direction,
+          gameState.firingAngle
         );
         gameState.bullets.push(bullet);
         weapon.lastFired = p.frameCount;
+        fired = true;
       }
     }
+  }
+  
+  // Consume energy if any weapon fired
+  if (fired) {
+    gameState.energy -= gameState.shotEnergyCost;
   }
 }
 

@@ -13,7 +13,10 @@ export class Vehicle {
     this.chassis = Bodies.rectangle(x, y, bodyWidth, bodyHeight, {
       density: 0.002,
       friction: 0.3,
-      restitution: 0.2
+      restitution: 0.2,
+      collisionFilter: {
+        group: -1 // Negative group prevents collision with other bodies in same group
+      }
     });
     
     // Create wheels
@@ -22,13 +25,19 @@ export class Vehicle {
     this.frontWheel = Bodies.circle(x + wheelOffset, y + bodyHeight/2 + wheelRadius, wheelRadius, {
       density: 0.004,
       friction: 1.5,
-      restitution: 0.2
+      restitution: 0.2,
+      collisionFilter: {
+        group: -1 // Same group as chassis to prevent collision
+      }
     });
     
     this.rearWheel = Bodies.circle(x - wheelOffset, y + bodyHeight/2 + wheelRadius, wheelRadius, {
       density: 0.004,
       friction: 1.5,
-      restitution: 0.2
+      restitution: 0.2,
+      collisionFilter: {
+        group: -1 // Same group as chassis to prevent collision
+      }
     });
     
     // Create constraints (suspension)
@@ -69,12 +78,30 @@ export class Vehicle {
   
   applyAcceleration() {
     const { Body } = this.physics;
-    Body.setAngularVelocity(this.rearWheel, this.rearWheel.angularVelocity + 0.015);
+    
+    // Apply horizontal force to rear wheel to propel vehicle forward
+    const forceMagnitude = 0.008; // Increased from 0.0015 for stronger movement
+    Body.applyForce(this.rearWheel, 
+      this.rearWheel.position,
+      { x: forceMagnitude, y: 0 }
+    );
+    
+    // Also spin the wheel for visual effect and better traction
+    Body.setAngularVelocity(this.rearWheel, this.rearWheel.angularVelocity + 0.05);
   }
   
   applyBrake() {
     const { Body } = this.physics;
-    Body.setAngularVelocity(this.rearWheel, this.rearWheel.angularVelocity - 0.015);
+    
+    // Apply reverse force
+    const forceMagnitude = -0.005; // Increased from -0.001
+    Body.applyForce(this.rearWheel, 
+      this.rearWheel.position,
+      { x: forceMagnitude, y: 0 }
+    );
+    
+    // Slow down wheel rotation
+    Body.setAngularVelocity(this.rearWheel, this.rearWheel.angularVelocity * 0.9);
   }
   
   update() {

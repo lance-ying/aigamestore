@@ -9,6 +9,61 @@ import { AutomatedController } from './controller.js';
 
 const p5 = window.p5;
 
+class Particle {
+  constructor(p, x, y, color, type = 'normal') {
+    this.p = p;
+    this.x = x;
+    this.y = y;
+    this.vx = p.random(-2, 2);
+    this.vy = p.random(-4, -1);
+    this.life = 1.0;
+    this.color = color;
+    this.size = p.random(4, 8);
+    this.type = type;
+  }
+  
+  update() {
+    this.x += this.vx;
+    this.y += this.vy;
+    this.vy += 0.2; // gravity
+    this.life -= 0.02;
+  }
+  
+  draw() {
+    this.p.push();
+    this.p.noStroke();
+    this.p.fill(...this.color, this.life * 255);
+    
+    if (this.type === 'star') {
+      this.drawStar(this.x, this.y, this.size, this.size * 0.5, 5);
+    } else {
+      this.p.ellipse(this.x, this.y, this.size);
+    }
+    
+    this.p.pop();
+  }
+  
+  drawStar(x, y, radius1, radius2, npoints) {
+    const p = this.p;
+    let angle = p.TWO_PI / npoints;
+    let halfAngle = angle / 2.0;
+    p.beginShape();
+    for (let a = -p.PI / 2; a < p.TWO_PI - p.PI / 2; a += angle) {
+      let sx = x + p.cos(a) * radius1;
+      let sy = y + p.sin(a) * radius1;
+      p.vertex(sx, sy);
+      sx = x + p.cos(a + halfAngle) * radius2;
+      sy = y + p.sin(a + halfAngle) * radius2;
+      p.vertex(sx, sy);
+    }
+    p.endShape(p.CLOSE);
+  }
+  
+  isDead() {
+    return this.life <= 0;
+  }
+}
+
 let gameInstance = new p5(p => {
   let wrapRenderer;
   let uiRenderer;
@@ -61,12 +116,14 @@ let gameInstance = new p5(p => {
     } else if (gameState.gamePhase === GAME_PHASES.PLAYING) {
       drawPlaying();
       gameLogic.update();
+      updateParticles();
       
       if (gameState.gamePhase === GAME_PHASES.PAUSED) {
         uiRenderer.drawPausedOverlay();
       }
     } else if (gameState.gamePhase === GAME_PHASES.PAUSED) {
       drawPlaying();
+      updateParticles();
       uiRenderer.drawPausedOverlay();
     } else if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN) {
       uiRenderer.drawGameOver(true);
@@ -75,15 +132,32 @@ let gameInstance = new p5(p => {
     }
   };
   
+  function updateParticles() {
+    for (let i = gameState.particles.length - 1; i >= 0; i--) {
+      gameState.particles[i].update();
+      gameState.particles[i].draw();
+      if (gameState.particles[i].isDead()) {
+        gameState.particles.splice(i, 1);
+      }
+    }
+  }
+  
   function drawPlaying() {
-    // Background
-    p.fill(80, 70, 60);
-    p.noStroke();
-    p.rect(0, 0, 600, 150);
+    // Background with gradient
+    for (let i = 0; i < 150; i++) {
+      let inter = p.map(i, 0, 150, 0, 1);
+      let c = p.lerpColor(p.color(80, 70, 60), p.color(100, 90, 80), inter);
+      p.stroke(c);
+      p.line(0, i, 600, i);
+    }
     
-    // Counter
-    p.fill(139, 119, 101);
-    p.rect(0, 150, 600, 250);
+    // Counter with gradient
+    for (let i = 150; i < 400; i++) {
+      let inter = p.map(i, 150, 400, 0, 1);
+      let c = p.lerpColor(p.color(139, 119, 101), p.color(110, 90, 80), inter);
+      p.stroke(c);
+      p.line(0, i, 600, i);
+    }
     
     // Draw HUD
     uiRenderer.drawHUD();
@@ -187,6 +261,7 @@ let gameInstance = new p5(p => {
     gameState.totalCustomersThisLevel = 0;
     gameState.currentWrap = [];
     gameState.customerQueue = [];
+    gameState.particles = [];
     
     p.logs.game_info.push({
       event: "game_reset",
@@ -195,6 +270,13 @@ let gameInstance = new p5(p => {
       timestamp: Date.now()
     });
   }
+  
+  // Expose particle creation
+  window.createParticles = function(x, y, color, count = 10, type = 'normal') {
+    for (let i = 0; i < count; i++) {
+      gameState.particles.push(new Particle(p, x, y, color, type));
+    }
+  };
 });
 
 // Expose game instance globally

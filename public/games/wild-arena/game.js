@@ -4,7 +4,7 @@ import { gameState, GAME_PHASE, CANVAS_WIDTH, CANVAS_HEIGHT, LEVELS } from './gl
 import { Player, Enemy, Projectile, Loot } from './entities.js';
 import { initLevel, getCurrentLevelConfig } from './level.js';
 import { getPlayerInputs, generateTestActions } from './input.js';
-import { renderStartScreen, renderPausedOverlay, renderGameOverScreen, renderUI, renderZone } from './rendering.js';
+import { renderStartScreen, renderPausedOverlay, renderGameOverScreen, renderUI, renderZone, renderLevelTransition } from './rendering.js';
 
 const p5 = window.p5;
 
@@ -44,11 +44,27 @@ let gameInstance = new p5(p => {
       renderGame();
       renderUI(p);
       renderPausedOverlay(p);
+    } else if (gameState.gamePhase === GAME_PHASE.LEVEL_TRANSITION) {
+      renderGame();
+      renderLevelTransition(p);
+      updateLevelTransition();
     } else if (gameState.gamePhase === GAME_PHASE.GAME_OVER_WIN || gameState.gamePhase === GAME_PHASE.GAME_OVER_LOSE) {
       renderGame();
       renderGameOverScreen(p, gameState.gamePhase === GAME_PHASE.GAME_OVER_WIN);
     }
   };
+
+  function updateLevelTransition() {
+    gameState.transitionTimer++;
+    
+    // After 2 seconds (120 frames), start the next level
+    if (gameState.transitionTimer >= 120) {
+      gameState.transitionTimer = 0;
+      gameState.gamePhase = GAME_PHASE.PLAYING;
+      levelConfig = initLevel(p, gameState.currentLevel);
+      logGameInfo(`Level ${gameState.currentLevel} started`);
+    }
+  }
 
   function updateGame() {
     gameState.framesSinceStart++;
@@ -67,9 +83,11 @@ let gameInstance = new p5(p => {
       
       // Fire weapon
       if (inputs.fire) {
-        const projectile = gameState.player.fire();
-        if (projectile) {
-          gameState.projectiles.push(new Projectile(p, projectile));
+        const projectiles = gameState.player.fire();
+        if (projectiles) {
+          for (const projData of projectiles) {
+            gameState.projectiles.push(new Projectile(p, projData));
+          }
         }
       }
       
@@ -84,9 +102,12 @@ let gameInstance = new p5(p => {
       }
     }
     
+    // Count active enemies
+    const enemies = gameState.entities.filter(e => e.constructor.name === 'Enemy' && e.active && e.defeatAnimation === 0);
+    const allEnemiesDefeated = gameState.enemiesDefeated >= gameState.enemiesRequired;
+    
     // Update enemies
-    const enemies = gameState.entities.filter(e => e.constructor.name === 'Enemy');
-    for (const enemy of enemies) {
+    for (const enemy of gameState.entities.filter(e => e.constructor.name === 'Enemy')) {
       if (enemy.active && enemy.defeatAnimation === 0) {
         enemy.update(gameState.player);
         
@@ -97,6 +118,17 @@ let gameInstance = new p5(p => {
             gameState.player.takeDamage(attack.damage);
           } else if (attack.type === 'RANGED') {
             gameState.projectiles.push(new Projectile(p, attack));
+          }
+        }
+        
+        // Check if enemy is outside zone (only damage if enemies still alive)
+        if (!allEnemiesDefeated && levelConfig && gameState.levelTimer > levelConfig.zoneStartDelay) {
+          const distToZoneCenter = p.dist(enemy.x, enemy.y, gameState.zoneCenterX, gameState.zoneCenterY);
+          if (distToZoneCenter > gameState.zoneRadius - enemy.radius) {
+            // Damage enemy every 30 frames (0.5 seconds)
+            if (gameState.framesSinceStart % 30 === 0) {
+              enemy.takeDamage(5);
+            }
           }
         }
       }
@@ -162,21 +194,12 @@ let gameInstance = new p5(p => {
     // Remove inactive loot
     gameState.loot = gameState.loot.filter(item => item.active);
     
-    // Spawn loot randomly
-    if (levelConfig && p.random() < levelConfig.lootSpawnRate) {
-      const lootTypes = ['HEALTH', 'WEAPON', 'ABILITY'];
-      const type = p.random(lootTypes);
-      const x = p.random(50, CANVAS_WIDTH - 50);
-      const y = p.random(50, CANVAS_HEIGHT - 50);
-      gameState.loot.push(new Loot(p, x, y, type));
-    }
-    
     // Update level timer
     gameState.levelTimer++;
     gameState.score += 1 / 60; // Time bonus
     
-    // Update zone
-    if (levelConfig && gameState.levelTimer > levelConfig.zoneStartDelay) {
+    // Update zone - only shrink if enemies are still alive
+    if (levelConfig && !allEnemiesDefeated && gameState.levelTimer > levelConfig.zoneStartDelay) {
       if (gameState.zoneRadius > gameState.zoneTargetRadius) {
         gameState.zoneRadius -= levelConfig.zoneShrinkSpeed;
         if (gameState.zoneRadius < gameState.zoneTargetRadius) {
@@ -185,8 +208,8 @@ let gameInstance = new p5(p => {
       }
     }
     
-    // Check if player is outside zone
-    if (gameState.player) {
+    // Check if player is outside zone (only damage if enemies still alive)
+    if (gameState.player && !allEnemiesDefeated) {
       const distToZoneCenter = p.dist(gameState.player.x, gameState.player.y, gameState.zoneCenterX, gameState.zoneCenterY);
       if (distToZoneCenter > gameState.zoneRadius - gameState.player.radius) {
         gameState.zoneDamageTimer++;
@@ -201,18 +224,19 @@ let gameInstance = new p5(p => {
     // Check win/lose conditions
     if (gameState.player && gameState.player.health <= 0) {
       endGame(false);
-    } else if (gameState.enemiesDefeated >= gameState.enemiesRequired && gameState.levelTimer >= gameState.levelDuration) {
-      // Level complete
+    } else if (allEnemiesDefeated) {
+      // All enemies defeated - advance level immediately
       gameState.score += 200; // Level completion bonus
       
       if (gameState.currentLevel >= LEVELS.length) {
         // Game won
         endGame(true);
       } else {
-        // Next level
+        // Next level - show transition screen
         gameState.currentLevel++;
-        levelConfig = initLevel(p, gameState.currentLevel);
-        logGameInfo(`Level ${gameState.currentLevel} started`);
+        gameState.gamePhase = GAME_PHASE.LEVEL_TRANSITION;
+        gameState.transitionTimer = 0;
+        logGameInfo(`Level ${gameState.currentLevel - 1} completed`);
       }
     }
   }
@@ -220,6 +244,9 @@ let gameInstance = new p5(p => {
   function renderGame() {
     // Background
     p.background(60, 80, 50);
+    
+    // Render zone (as background layer before entities)
+    renderZone(p);
     
     // Render obstacles
     for (const obstacle of gameState.obstacles) {
@@ -247,9 +274,6 @@ let gameInstance = new p5(p => {
     for (const projectile of gameState.projectiles) {
       projectile.render();
     }
-    
-    // Render zone
-    renderZone(p);
   }
 
   function startGame() {

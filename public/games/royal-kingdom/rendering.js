@@ -6,18 +6,21 @@ export function renderStartScreen(p) {
   
   // Title
   p.fill(255, 215, 0);
+  p.noStroke();
   p.textAlign(p.CENTER, p.CENTER);
   p.textSize(48);
   p.text('ROYAL KINGDOM', CANVAS_WIDTH / 2, 80);
   
   // Description
   p.fill(220, 220, 220);
+  p.noStroke();
   p.textSize(14);
   p.text('Match 3 or more tiles to complete objectives!', CANVAS_WIDTH / 2, 140);
   p.text('Create special pieces by matching 4 or 5 tiles.', CANVAS_WIDTH / 2, 160);
   
   // Instructions
   p.fill(200, 200, 255);
+  p.noStroke();
   p.textSize(12);
   p.textAlign(p.LEFT);
   p.text('Arrow Keys / WASD: Move cursor', 50, 200);
@@ -27,12 +30,13 @@ export function renderStartScreen(p) {
   
   // Objectives
   p.fill(255, 200, 100);
+  p.noStroke();
   p.textAlign(p.CENTER);
   p.textSize(14);
   p.text('Complete objectives before moves run out!', CANVAS_WIDTH / 2, 300);
   
   // Start prompt
-  p.fill(255, 255, 100);
+  p.noStroke();
   p.textSize(20);
   const flash = Math.sin(p.frameCount * 0.1) * 0.5 + 0.5;
   p.fill(255, 255, 100, 150 + flash * 105);
@@ -51,6 +55,7 @@ export function renderGame(p) {
   // Paused indicator
   if (gameState.gamePhase === 'PAUSED') {
     p.fill(255, 255, 255);
+    p.noStroke();
     p.textAlign(p.RIGHT, p.TOP);
     p.textSize(16);
     p.text('PAUSED', CANVAS_WIDTH - 10, 10);
@@ -60,22 +65,26 @@ export function renderGame(p) {
 function renderUI(p) {
   // Score
   p.fill(255, 215, 0);
+  p.noStroke();
   p.textAlign(p.LEFT, p.TOP);
   p.textSize(18);
   p.text(`Score: ${gameState.score}`, 10, 10);
   
   // Moves
   p.fill(gameState.movesRemaining < 10 ? [255, 100, 100] : [100, 255, 100]);
+  p.noStroke();
   p.textAlign(p.RIGHT, p.TOP);
   p.text(`Moves: ${gameState.movesRemaining}`, CANVAS_WIDTH - 10, 10);
   
   // Level
   p.fill(200, 200, 255);
+  p.noStroke();
   p.textAlign(p.CENTER, p.TOP);
   p.text(`Level ${gameState.currentLevel}`, CANVAS_WIDTH / 2, 10);
   
   // Objectives
   p.fill(220, 220, 220);
+  p.noStroke();
   p.textAlign(p.LEFT, p.TOP);
   p.textSize(12);
   p.text('Objectives:', 10, 40);
@@ -83,6 +92,7 @@ function renderUI(p) {
   gameState.objectives.forEach((obj, i) => {
     const complete = obj.current >= obj.target;
     p.fill(...(complete ? [100, 255, 100] : [200, 200, 200]));
+    p.noStroke();
     const progress = complete ? '✓' : `${Math.min(obj.current, obj.target)}/${obj.target}`;
     p.text(`${obj.display}: ${progress}`, 10, 60 + i * 18);
   });
@@ -122,12 +132,14 @@ export function renderGameOver(p) {
   
   // Title
   p.fill(...(isWin ? [100, 255, 100] : [255, 100, 100]));
+  p.noStroke();
   p.textAlign(p.CENTER, p.CENTER);
   p.textSize(48);
   p.text(isWin ? 'LEVEL COMPLETE!' : 'LEVEL FAILED!', CANVAS_WIDTH / 2, 100);
   
   // Score
   p.fill(255, 215, 0);
+  p.noStroke();
   p.textSize(24);
   p.text(`Level Score: ${gameState.score}`, CANVAS_WIDTH / 2, 160);
   
@@ -136,6 +148,7 @@ export function renderGameOver(p) {
     const bonus = gameState.movesRemaining * 20;
     if (bonus > 0) {
       p.fill(200, 255, 200);
+      p.noStroke();
       p.textSize(18);
       p.text(`Moves Bonus: +${bonus}`, CANVAS_WIDTH / 2, 200);
     }
@@ -143,25 +156,29 @@ export function renderGameOver(p) {
     // Next level info
     if (gameState.currentLevel < 5) {
       p.fill(200, 200, 255);
+      p.noStroke();
       p.textSize(16);
       p.text(`Next: Level ${gameState.currentLevel + 1}`, CANVAS_WIDTH / 2, 240);
     } else {
       p.fill(255, 215, 0);
+      p.noStroke();
       p.textSize(20);
       p.text('ALL LEVELS COMPLETE!', CANVAS_WIDTH / 2, 240);
       p.fill(200, 255, 200);
+      p.noStroke();
       p.textSize(18);
       p.text(`Total Score: ${gameState.totalScore + gameState.score}`, CANVAS_WIDTH / 2, 270);
     }
   } else {
     // Failed message
     p.fill(220, 220, 220);
+    p.noStroke();
     p.textSize(16);
     p.text('Try again!', CANVAS_WIDTH / 2, 200);
   }
   
   // Instructions
-  p.fill(255, 255, 100);
+  p.noStroke();
   p.textSize(20);
   const flash = Math.sin(p.frameCount * 0.1) * 0.5 + 0.5;
   p.fill(255, 255, 100, 150 + flash * 105);

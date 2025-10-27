@@ -10,9 +10,11 @@ export function renderUI(p) {
   } else if (gameState.gamePhase === PHASE_PAUSED) {
     renderPlayingUI(p);
     renderPausedOverlay(p);
+  } else if (gameState.gamePhase === PHASE_LEVEL_COMPLETE) {
+    renderLevelCompleteScreen(p);
   } else if (gameState.gamePhase === PHASE_GAME_OVER_LOSE) {
     renderGameOverScreen(p, false);
-  } else if (gameState.gamePhase === PHASE_GAME_OVER_WIN || gameState.gamePhase === PHASE_LEVEL_COMPLETE) {
+  } else if (gameState.gamePhase === PHASE_GAME_OVER_WIN) {
     renderGameOverScreen(p, true);
   }
 }
@@ -117,6 +119,50 @@ function renderPausedOverlay(p) {
   p.text('Press R to restart', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 50);
 }
 
+function renderLevelCompleteScreen(p) {
+  p.background(34, 34, 34);
+  
+  // Title
+  p.fill(100, 220, 100);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text('LEVEL COMPLETE!', CANVAS_WIDTH / 2, 80);
+  
+  // Level info
+  const config = LEVEL_CONFIGS[gameState.currentLevel];
+  p.textSize(24);
+  p.fill(150, 220, 50);
+  p.text(`${config.name} Conquered!`, CANVAS_WIDTH / 2, 130);
+  
+  // Stats
+  p.textSize(20);
+  p.fill(255);
+  p.text(`Score: ${gameState.score}`, CANVAS_WIDTH / 2, 180);
+  p.text(`Final Length: ${gameState.playerLength}`, CANVAS_WIDTH / 2, 210);
+  
+  // Next level preview
+  if (gameState.currentLevel < 3) {
+    const nextConfig = LEVEL_CONFIGS[gameState.currentLevel + 1];
+    p.textSize(18);
+    p.fill(200);
+    p.text(`Next: Level ${gameState.currentLevel + 1} - ${nextConfig.name}`, CANVAS_WIDTH / 2, 260);
+    p.textSize(16);
+    p.fill(150);
+    p.text(`Target Length: ${nextConfig.targetLength}`, CANVAS_WIDTH / 2, 285);
+    p.text(`AI Opponents: ${nextConfig.aiCount}`, CANVAS_WIDTH / 2, 305);
+  } else {
+    p.textSize(20);
+    p.fill(255, 220, 0);
+    p.text('Final Level Ahead!', CANVAS_WIDTH / 2, 260);
+  }
+  
+  // Instructions - pulsing effect
+  p.textSize(28);
+  const alpha = p.map(p.sin(p.frameCount * 0.1), -1, 1, 150, 255);
+  p.fill(255, 220, 0, alpha);
+  p.text('>>> PRESS ENTER TO CONTINUE <<<', CANVAS_WIDTH / 2, CANVAS_HEIGHT - 50);
+}
+
 function renderGameOverScreen(p, isWin) {
   p.background(34, 34, 34);
   
@@ -125,9 +171,7 @@ function renderGameOverScreen(p, isWin) {
   p.textAlign(p.CENTER, p.CENTER);
   p.textSize(48);
   
-  if (gameState.gamePhase === PHASE_LEVEL_COMPLETE) {
-    p.text('LEVEL COMPLETE!', CANVAS_WIDTH / 2, 100);
-  } else if (isWin) {
+  if (isWin) {
     p.text('VICTORY!', CANVAS_WIDTH / 2, 100);
     p.textSize(24);
     p.fill(150, 220, 50);
