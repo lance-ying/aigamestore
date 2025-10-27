@@ -1,4 +1,4 @@
-// enemy.js - Enemy entity with movement AI
+// enemy.js - Enemy entity with turn-based movement AI
 
 import { GRID_CONFIG } from './globals.js';
 
@@ -7,12 +7,10 @@ export class Enemy {
     this.gridX = gridX;
     this.gridY = gridY;
     this.level = level;
-    this.moveDelay = 0;
-    this.moveDelayMax = 15 + Math.floor(Math.random() * 10); // Random speed
     this.direction = Math.floor(Math.random() * 4); // 0=left, 1=right, 2=up, 3=down
-    this.changeDirectionTimer = 0;
     this.damage = 15 + level * 3; // Damage increases with level
     this.active = true;
+    this.hp = 2; // Enemies can take 2 hits
   }
 
   getScreenX() {
@@ -31,22 +29,34 @@ export class Enemy {
     return tile.type !== 'WALL';
   }
 
-  update(map, player) {
+  // Turn-based movement - only called when player moves
+  takeTurn(map, player) {
     if (!this.active) return;
 
-    this.moveDelay--;
-    this.changeDirectionTimer--;
-
-    if (this.moveDelay <= 0) {
-      // Change direction occasionally or when hitting wall
-      if (this.changeDirectionTimer <= 0 || !this.tryMove(map)) {
-        this.direction = Math.floor(Math.random() * 4);
-        this.changeDirectionTimer = 30 + Math.floor(Math.random() * 60);
-      }
-
-      this.tryMove(map);
-      this.moveDelay = this.moveDelayMax;
+    // 50% chance to move each turn (makes enemies slower)
+    if (Math.random() > 0.5) {
+      return; // Skip this turn
     }
+
+    // Simple AI: move toward player with some randomness
+    const dx = player.gridX - this.gridX;
+    const dy = player.gridY - this.gridY;
+    const distToPlayer = Math.abs(dx) + Math.abs(dy);
+
+    // 70% chance to move toward player, 30% random
+    if (Math.random() < 0.7 && distToPlayer > 0) {
+      // Move toward player
+      if (Math.abs(dx) > Math.abs(dy)) {
+        this.direction = dx > 0 ? 1 : 0; // right or left
+      } else {
+        this.direction = dy > 0 ? 3 : 2; // down or up
+      }
+    } else {
+      // Random movement
+      this.direction = Math.floor(Math.random() * 4);
+    }
+
+    this.tryMove(map);
 
     // Check collision with player
     if (this.gridX === player.gridX && this.gridY === player.gridY) {
@@ -76,20 +86,14 @@ export class Enemy {
   collideWithPlayer(player) {
     if (this.active) {
       player.takeDamage(this.damage);
-      // Knock back the enemy to prevent continuous damage
-      this.knockBack();
     }
   }
 
-  knockBack() {
-    // Move enemy in opposite direction
-    switch (this.direction) {
-      case 0: this.direction = 1; break;
-      case 1: this.direction = 0; break;
-      case 2: this.direction = 3; break;
-      case 3: this.direction = 2; break;
+  takeDamage(amount) {
+    this.hp -= amount;
+    if (this.hp <= 0) {
+      this.active = false;
     }
-    this.moveDelay = this.moveDelayMax * 2; // Add delay after collision
   }
 
   render(p) {
@@ -118,6 +122,15 @@ export class Enemy {
     p.fill(0);
     p.ellipse(x - size * 0.15, y - size * 0.1, size * 0.1, size * 0.1);
     p.ellipse(x + size * 0.15, y - size * 0.1, size * 0.1, size * 0.1);
+    
+    // HP indicator
+    if (this.hp < 2) {
+      p.fill(255, 255, 255);
+      p.noStroke();
+      p.textAlign(p.CENTER, p.CENTER);
+      p.textSize(10);
+      p.text(`HP:${this.hp}`, x, y + size * 0.5 + 8);
+    }
     
     p.pop();
   }

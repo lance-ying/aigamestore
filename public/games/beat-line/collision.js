@@ -10,6 +10,11 @@ export function checkCollisions(p) {
   const level = LEVELS[gameState.currentLevel];
   const player = gameState.player;
 
+  // Skip collision checks during grace period after turn
+  if (player.turnGracePeriod > 0) {
+    return;
+  }
+
   // Check obstacle collisions
   for (const obstacle of gameState.obstacles) {
     if (checkLineObstacleCollision(player, obstacle)) {
@@ -48,20 +53,24 @@ function isPlayerOnTrack(player, level) {
   for (const segment of gameState.trackSegments) {
     const segDist = Math.abs(segment.distance - player.getTraveledDistance());
     
-    if (segDist < nearestDist) {
-      nearestDist = segDist;
-      
+    if (segDist < 100) { // Only check nearby segments
       // Check if player is within track bounds
       const direction = segment.direction;
       
       if (direction === "RIGHT" || direction === "LEFT") {
         // Track is horizontal
         const distFromCenter = Math.abs(player.y - segment.y);
-        onTrack = distFromCenter < trackWidth / 2;
+        if (distFromCenter < trackWidth / 2 + 5) { // Added 5px tolerance
+          onTrack = true;
+          break;
+        }
       } else {
         // Track is vertical
         const distFromCenter = Math.abs(player.x - segment.x);
-        onTrack = distFromCenter < trackWidth / 2;
+        if (distFromCenter < trackWidth / 2 + 5) { // Added 5px tolerance
+          onTrack = true;
+          break;
+        }
       }
     }
   }

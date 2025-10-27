@@ -12,6 +12,7 @@ export class Player {
     this.glowIntensity = 0;
     this.alive = true;
     this.collisionRadius = 3;
+    this.turnGracePeriod = 0; // Frames of collision immunity after turn
   }
 
   update(speed) {
@@ -33,10 +34,15 @@ export class Player {
     if (this.glowIntensity > 0) {
       this.glowIntensity -= 5;
     }
+    
+    // Decay grace period
+    if (this.turnGracePeriod > 0) {
+      this.turnGracePeriod--;
+    }
   }
 
   turn(direction) {
-    // Change direction based on turn
+    // Change direction based on specified direction
     switch (direction) {
       case "UP":
         this.direction = { x: 0, y: -1 };
@@ -52,18 +58,7 @@ export class Player {
         break;
     }
     this.glowIntensity = 255;
-  }
-
-  turn90Clockwise() {
-    // Rotate direction 90 degrees clockwise
-    // Right (1,0) -> Down (0,1)
-    // Down (0,1) -> Left (-1,0)
-    // Left (-1,0) -> Up (0,-1)
-    // Up (0,-1) -> Right (1,0)
-    const newX = -this.direction.y;
-    const newY = this.direction.x;
-    this.direction = { x: newX, y: newY };
-    this.glowIntensity = 255;
+    this.turnGracePeriod = 30; // 0.5 seconds of grace at 60fps
   }
 
   die() {

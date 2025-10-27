@@ -22,6 +22,9 @@ export function renderGame(p) {
   // Track segments
   renderTrack(p, level);
 
+  // Turn point indicators
+  renderTurnIndicators(p, level);
+
   // Obstacles
   for (const obstacle of gameState.obstacles) {
     obstacle.render(p, gameState.cameraOffset);
@@ -42,6 +45,9 @@ export function renderGame(p) {
 
   // UI
   renderUI(p, level);
+  
+  // Beat indicator
+  renderBeatIndicator(p, level);
 }
 
 function renderTrack(p, level) {
@@ -62,6 +68,126 @@ function renderTrack(p, level) {
   }
   
   p.pop();
+}
+
+function renderTurnIndicators(p, level) {
+  p.push();
+  p.translate(-gameState.cameraOffset, 0);
+  
+  // Show next few turn points
+  for (let i = gameState.nextTurnIndex; i < Math.min(gameState.nextTurnIndex + 3, gameState.turnPoints.length); i++) {
+    const turn = gameState.turnPoints[i];
+    const playerDist = gameState.player.getTraveledDistance();
+    const distToTurn = turn.distance - playerDist;
+    
+    // Only show if within viewing range
+    if (distToTurn > -50 && distToTurn < 600) {
+      // Calculate position on track
+      const x = getXForDistance(turn.distance, level);
+      const y = getYForDistance(turn.distance, level);
+      
+      // Pulsing effect based on proximity
+      const proximity = Math.max(0, 1 - Math.abs(distToTurn) / 200);
+      const pulseSize = 20 + proximity * 10;
+      const alpha = 100 + proximity * 155;
+      
+      // Draw turn marker
+      p.push();
+      p.translate(x, y);
+      
+      // Outer glow
+      p.noFill();
+      p.stroke(255, 255, 0, alpha * 0.5);
+      p.strokeWeight(3);
+      p.circle(0, 0, pulseSize + 10);
+      
+      // Inner marker
+      p.fill(255, 255, 0, alpha);
+      p.noStroke();
+      p.circle(0, 0, pulseSize);
+      
+      // Direction arrow
+      p.fill(0);
+      p.textAlign(p.CENTER, p.CENTER);
+      p.textSize(12);
+      const arrow = getArrowForDirection(turn.direction);
+      p.text(arrow, 0, 0);
+      
+      p.pop();
+      
+      // Distance indicator (only for next turn)
+      if (i === gameState.nextTurnIndex && distToTurn > 0) {
+        p.fill(255, 255, 255, 200);
+        p.textAlign(p.CENTER, p.TOP);
+        p.textSize(10);
+        p.text(Math.round(distToTurn), x, y + pulseSize / 2 + 5);
+      }
+    }
+  }
+  
+  p.pop();
+}
+
+function getArrowForDirection(direction) {
+  switch (direction) {
+    case "UP": return "↑";
+    case "DOWN": return "↓";
+    case "LEFT": return "←";
+    case "RIGHT": return "→";
+    default: return "?";
+  }
+}
+
+function getXForDistance(distance, level) {
+  let x = 100;
+  let currentDir = { x: 1, y: 0 };
+  let lastTurnDist = 0;
+
+  for (const turn of level.turnPoints) {
+    if (distance > turn.distance) {
+      const segmentLength = turn.distance - lastTurnDist;
+      x += currentDir.x * segmentLength;
+      lastTurnDist = turn.distance;
+      currentDir = getDirectionVector(turn.direction);
+    } else {
+      break;
+    }
+  }
+
+  const remainingDist = distance - lastTurnDist;
+  x += currentDir.x * remainingDist;
+  return x;
+}
+
+function getYForDistance(distance, level) {
+  let y = 200;
+  let currentDir = { x: 1, y: 0 };
+  let lastTurnDist = 0;
+
+  for (const turn of level.turnPoints) {
+    if (distance > turn.distance) {
+      const segmentLength = turn.distance - lastTurnDist;
+      y += currentDir.y * segmentLength;
+      lastTurnDist = turn.distance;
+      currentDir = getDirectionVector(turn.direction);
+    } else {
+      break;
+    }
+  }
+
+  const remainingDist = distance - lastTurnDist;
+  y += currentDir.y * remainingDist;
+  return y;
+}
+
+function getDirectionVector(direction) {
+  switch (direction) {
+    case "UP": return { x: 0, y: -1 };
+    case "DOWN": return { x: 0, y: 1 };
+    case "LEFT": return { x: -1, y: 0 };
+    case "RIGHT": return { x: 1, y: 0 };
+    default: return { x: 1, y: 0 };
+  }
 }
 
 function renderPlayer(p) {
@@ -97,6 +223,48 @@ function renderPlayer(p) {
   p.pop();
 }
 
+function renderBeatIndicator(p, level) {
+  // Beat indicator in bottom left
+  const beatInterval = 60000 / level.bpm;
+  const timeSinceBeat = gameState.gameTime % beatInterval;
+  const beatProgress = timeSinceBeat / beatInterval;
+  
+  const x = 30;
+  const y = CANVAS_HEIGHT - 30;
+  const size = 40;
+  
+  p.push();
+  
+  // Background circle
+  p.noFill();
+  p.stroke(100);
+  p.strokeWeight(3);
+  p.circle(x, y, size);
+  
+  // Beat progress arc
+  p.noFill();
+  p.stroke(255, 255, 0);
+  p.strokeWeight(4);
+  p.arc(x, y, size, size, -p.HALF_PI, -p.HALF_PI + beatProgress * p.TWO_PI);
+  
+  // Beat flash on exact beat
+  if (beatProgress < 0.1) {
+    const flashAlpha = (0.1 - beatProgress) / 0.1 * 255;
+    p.fill(255, 255, 0, flashAlpha);
+    p.noStroke();
+    p.circle(x, y, size * 0.6);
+  }
+  
+  // Label
+  p.fill(255);
+  p.noStroke();
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(10);
+  p.text("BEAT", x, y + size / 2 + 12);
+  
+  p.pop();
+}
+
 function renderUI(p, level) {
   // Score
   p.fill(255);
@@ -115,6 +283,19 @@ function renderUI(p, level) {
   p.text(`LEVEL: ${gameState.currentLevel + 1}/${LEVELS.length}`, 20, 20);
   p.textSize(12);
   p.text(level.name, 20, 40);
+  
+  // Next turn hint
+  if (gameState.nextTurnIndex < gameState.turnPoints.length) {
+    const nextTurn = gameState.turnPoints[gameState.nextTurnIndex];
+    const distToTurn = nextTurn.distance - gameState.player.getTraveledDistance();
+    
+    if (distToTurn > 0 && distToTurn < 300) {
+      p.textAlign(p.CENTER, p.TOP);
+      p.fill(255, 255, 0);
+      p.textSize(14);
+      p.text(`TURN ${getArrowForDirection(nextTurn.direction)} AHEAD`, CANVAS_WIDTH / 2, 20);
+    }
+  }
   
   // Pause indicator
   if (gameState.gamePhase === GAME_PHASE.PAUSED) {
@@ -145,9 +326,11 @@ export function renderStartScreen(p) {
   p.textSize(12);
   p.textAlign(p.LEFT, p.TOP);
   const startY = 200;
-  p.text("SPACE - Turn (tap to the beat!)", 150, startY);
-  p.text("ESC - Pause/Unpause", 150, startY + 20);
-  p.text("R - Restart to menu", 150, startY + 40);
+  p.text("SPACE - Turn at turn points (follow the arrows!)", 100, startY);
+  p.text("ESC - Pause/Unpause", 100, startY + 20);
+  p.text("R - Restart to menu", 100, startY + 40);
+  p.text("Watch for yellow markers on the track!", 100, startY + 60);
+  p.text("Press SPACE when you reach them to turn", 100, startY + 80);
   
   // Start prompt
   p.fill(255, 255, 0);
@@ -155,12 +338,12 @@ export function renderStartScreen(p) {
   p.textSize(20);
   const pulse = Math.sin(p.frameCount * 0.1) * 0.5 + 0.5;
   p.fill(255, 255, 0, 150 + pulse * 105);
-  p.text("PRESS ENTER TO START", CANVAS_WIDTH / 2, 320);
+  p.text("PRESS ENTER TO START", CANVAS_WIDTH / 2, 340);
   
   // Levels preview
   p.fill(150);
   p.textSize(11);
-  p.text("3 Levels • Increasing Difficulty", CANVAS_WIDTH / 2, 360);
+  p.text("3 Levels • Increasing Difficulty", CANVAS_WIDTH / 2, 370);
 }
 
 export function renderGameOverScreen(p) {
