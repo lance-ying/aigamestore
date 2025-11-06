@@ -471,7 +471,7 @@ def fix_game_action(game_path: str, feedback: str) -> Tuple[str, gr.Dropdown, st
     
     try:
         iterator = FeedbackFixIterator(
-            model="anthropic:claude-3.5-haiku",  # Changed to Claude Haiku
+            model="anthropic:claude-4.5-sonnet",  
             temperature=0.6,
             thinking=True,
             thinking_budget=8000,
