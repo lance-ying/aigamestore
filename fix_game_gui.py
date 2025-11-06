@@ -58,7 +58,7 @@ game_server_thread = None
 
 # Configuration for multiple game directories
 GAME_DIRECTORIES = {
-    "Game Platform": "public_platform/games",
+    "Game Platform": "public_platform/games_platform",
     "Batch 103125": "public/games_gen_halloween",
     "Batch 110325": "public/new_batch_110325",
     "Batch 110425": "public/batch_110425",
