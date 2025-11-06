@@ -65,7 +65,7 @@ function renderStartScreen(p) {
   p.textAlign(p.RIGHT, p.CENTER);
   const rightX = CANVAS_WIDTH - 100;
   p.text("Complete levels to progress", rightX, startY);
-  p.text("Collect cash for upgrades", rightX, startY + 20);
+  p.text("Collect coins for points", rightX, startY + 20);
   p.text("Master drifting for bonuses", rightX, startY + 40);
   p.text("Defeat The Enforcer to win!", rightX, startY + 60);
 
@@ -88,6 +88,7 @@ function renderPlayingScreen(p) {
 
   // Render entities
   gameState.obstacles.forEach(obstacle => obstacle.render());
+  gameState.coins.forEach(coin => coin.render());
   gameState.rivals.forEach(rival => rival.render());
   if (gameState.boss) {
     gameState.boss.render();

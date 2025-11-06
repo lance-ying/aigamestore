@@ -17,22 +17,19 @@ export const LANE_WIDTH = 120;
 export const TRACK_WIDTH = NUM_LANES * LANE_WIDTH;
 export const TRACK_X_OFFSET = (CANVAS_WIDTH - TRACK_WIDTH) / 2;
 
-// Player car constants - TAP-BASED CONTROLS
+// Player car constants - HOLD-BASED CONTROLS
 export const PLAYER_CAR_WIDTH = 30;
 export const PLAYER_CAR_HEIGHT = 50;
 export const PLAYER_START_Y = CANVAS_HEIGHT - 100;
 export const BASELINE_SPEED = 4; // Constant cruising speed
-export const MAX_SPEED = 12; // Increased for tap-based
-export const SPEED_BOOST = 3.0; // Significant boost per tap (~45 mph)
-export const CONTINUOUS_DECELERATION = 0.05; // Gradual slowdown when not boosting
-export const LANE_CHANGE_DISTANCE = LANE_WIDTH; // Full lane change per tap
-export const BRAKE_FORCE = 2.0; // Speed reduction per brake tap
+export const MAX_SPEED = 12; // Maximum speed
+export const SPEED_BOOST = 0.15; // Acceleration per frame when holding
+export const CONTINUOUS_DECELERATION = 0.08; // Gradual slowdown when not boosting
+export const LANE_CHANGE_SPEED = 8; // Speed of lane change movement
+export const BRAKE_FORCE = 0.25; // Speed reduction per frame when braking
 export const MAX_HEALTH = 100;
 
-// Tap-based movement constants
-export const TAP_COOLDOWN = 5; // Frames between taps to prevent spam
-
-// Drift constants (simplified for tap-based)
+// Drift constants
 export const DRIFT_SPEED_THRESHOLD = 3;
 export const DRIFT_DURATION_FOR_BONUS = 30; // frames (0.5 seconds at 60fps)
 export const DRIFT_POINTS = 20;
@@ -45,6 +42,10 @@ export const RIVAL_SPAWN_INTERVAL = 120; // frames
 
 // Obstacle constants
 export const OBSTACLE_SPAWN_INTERVAL = 90; // frames
+
+// Coin constants
+export const COIN_SPAWN_INTERVAL = 60; // frames
+export const COIN_POINTS = 10; // Points per coin
 
 // Boss constants
 export const BOSS_WIDTH = 50;
@@ -125,6 +126,7 @@ export const gameState = {
   entities: [],
   rivals: [],
   obstacles: [],
+  coins: [],
   boss: null,
   projectiles: [],
   particles: [],
@@ -136,6 +138,7 @@ export const gameState = {
   cameraY: 0,
   framesSinceRivalSpawn: 0,
   framesSinceObstacleSpawn: 0,
+  framesSinceCoinSpawn: 0,
   driftChainMultiplier: 1,
   consecutiveDrifts: 0,
   noCollisionBonus: true,

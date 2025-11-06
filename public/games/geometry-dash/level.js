@@ -148,71 +148,43 @@ export class Level {
   }
 
   generateLevel1() {
-    // Original level - Basic jumps and ship section
+    // Level 1 - Very easy introduction level
     let x = 300;
     
-    // Section 1: Basic jumps
-    for (let i = 0; i < 3; i++) {
-      x += 150;
-      this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, 'spike'));
-    }
-    
-    // Section 2: Platforms and gaps
-    x += 200;
-    this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE * 2, BLOCK_SIZE * 3, BLOCK_SIZE * 2, 'block'));
-    
-    x += 200;
-    this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE * 3, BLOCK_SIZE * 2, BLOCK_SIZE * 3, 'block'));
-    
-    x += 150;
+    // Section 1: Single spike with lots of warning space
+    x += 350;
     this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, 'spike'));
     
+    // Section 2: One simple platform
+    x += 300;
+    this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE * 2, BLOCK_SIZE * 3, BLOCK_SIZE * 2, 'block'));
+    
     // Ship portal
-    x += 150;
+    x += 250;
     this.portals.push(new Portal(x, GROUND_Y - BLOCK_SIZE * 3, PLAYER_MODES.SHIP));
     
-    // Section 3: Ship mode with ceiling obstacles
-    x += 150;
-    this.obstacles.push(new Obstacle(x, 0, BLOCK_SIZE * 5, BLOCK_SIZE * 3, 'ceiling'));
-    
-    x += 250;
-    this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE * 4, BLOCK_SIZE * 2, BLOCK_SIZE, 'block'));
-    
+    // Section 3: Simple ship mode section - one ceiling
     x += 200;
     this.obstacles.push(new Obstacle(x, 0, BLOCK_SIZE * 3, BLOCK_SIZE * 2, 'ceiling'));
     
-    // Ground spikes for ship section - now with better spacing
-    x += -400;
-    for (let i = 0; i < 12; i++) {
-      this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, 'spike'));
-      x += BLOCK_SIZE * 2.5; // Increased spacing for better gameplay
-    }
+    x += 300;
+    this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE * 4, BLOCK_SIZE * 2, BLOCK_SIZE, 'block'));
     
     // Back to cube portal
-    x += 200;
+    x += 250;
     this.portals.push(new Portal(x, GROUND_Y - BLOCK_SIZE * 3, PLAYER_MODES.CUBE));
     
-    // Section 4: Advanced jumps
-    x += 200;
-    this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, 'spike'));
-    x += 200;
-    this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, 'spike'));
-    x += 200;
-    this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE * 2, BLOCK_SIZE * 3, BLOCK_SIZE * 2, 'block'));
-    
-    // Final section
-    x += 200;
-    this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, 'spike'));
-    x += 200;
+    // Section 4: Easy finish with one final spike
+    x += 250;
     this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, 'spike'));
     
-    x += 200;
+    x += 250;
     this.endX = x + 100;
     this.length = this.endX + 200;
   }
 
   generateLevel2() {
-    // Level 2 - More platforms and longer ship section
+    // Level 2 - Still easy but slightly more challenging
     let x = 300;
     
     // Section 1: Staircase of platforms
@@ -221,15 +193,15 @@ export class Level {
       this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE * (i + 1), BLOCK_SIZE * 2, BLOCK_SIZE, 'block'));
     }
     
-    // Section 2: Spike valley - increased spacing from 100 to 160
+    // Section 2: Spike valley - reduced from 5 to 3 spikes with more spacing
     x += 150;
-    for (let i = 0; i < 5; i++) {
-      x += 160;
+    for (let i = 0; i < 3; i++) {
+      x += 220;
       this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, 'spike'));
     }
     
     // High platform
-    x += 150;
+    x += 200;
     this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE * 4, BLOCK_SIZE * 4, BLOCK_SIZE, 'block'));
     
     // Ship portal

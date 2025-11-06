@@ -5,10 +5,10 @@ import { AoOni } from './aooni.js';
 import { Player } from './player.js';
 
 export function createLevel1() {
-  // Level 1: Simple layout with safer item placement
-  // Player starts in left room, needs key from top-left corner
-  // Door blocks passage to right side where objective is located AWAY from enemy
-  // Enemy patrols lower-right area, objective is in upper-right area
+  // Level 1: BEGINNER-FRIENDLY - Simple layout with slow enemy
+  // Player starts in left area, needs key from safe location
+  // Enemy is slow and patrols far from objectives
+  // Clear path to victory with minimal obstacles
   
   gameState.walls = [
     // Outer walls
@@ -17,29 +17,25 @@ export function createLevel1() {
     { x: CANVAS_WIDTH - 20, y: 0, w: 20, h: CANVAS_HEIGHT },
     { x: 0, y: CANVAS_HEIGHT - 20, w: CANVAS_WIDTH, h: 20 },
     
-    // Central vertical wall dividing left and right sections
-    { x: 280, y: 20, w: 20, h: 140 },
+    // Single central dividing wall with door passage
+    { x: 280, y: 20, w: 20, h: 120 },
     { x: 280, y: 220, w: 20, h: 160 },
     
-    // Horizontal walls creating corridors
-    { x: 20, y: 120, w: 160, h: 20 },
-    { x: 400, y: 120, w: 180, h: 20 },
-    
-    // Small barriers for complexity
-    { x: 100, y: 240, w: 20, h: 80 },
-    { x: 450, y: 240, w: 20, h: 80 }
+    // Minimal horizontal barriers
+    { x: 20, y: 160, w: 120, h: 20 },
+    { x: 440, y: 160, w: 120, h: 20 }
   ];
 
-  // Door in the central wall - blocks passage until unlocked
+  // Single door in the central wall
   gameState.doors = [
-    new Door(280, 160, 20, 60, true, "key1")
+    new Door(280, 140, 20, 80, true, "key1")
   ];
 
   gameState.items = [
-    // Key in upper left corner (safe from enemy, accessible from start)
-    new Item(60, 50, "key", "key1", false),
-    // Objective in upper-right corner (away from enemy patrol in lower area)
-    new Item(520, 60, "objective", "obj1_1", true)
+    // Key in safe starting area (upper left)
+    new Item(60, 60, "key", "key1", false),
+    // Objective in upper-right area (safe from slow enemy)
+    new Item(500, 60, "objective", "obj1_1", true)
   ];
 
   // Define required items for this level
@@ -47,21 +43,22 @@ export function createLevel1() {
 
   gameState.hidingSpots = [
     new HidingSpot(50, 280, 40, 30, "closet"),
-    new HidingSpot(350, 50, 40, 30, "closet")
+    new HidingSpot(360, 50, 40, 30, "closet")
   ];
 
-  // Exit in upper right (requires getting through door and collecting objective)
+  // Exit in upper right
   gameState.exitZone = new ExitZone(480, 320, 80, 60);
 
-  gameState.player = new Player(50, 180);
+  gameState.player = new Player(60, 200);
 
-  // Enemy patrols LOWER-RIGHT area, away from objective which is in UPPER-RIGHT
+  // SLOW enemy patrols bottom area only - far from objectives
+  // Speed multiplier 0.7 makes it much easier for beginners
   gameState.aoOnis = [
-    new AoOni(380, 300, 1.0, [
-      [380, 300],
-      [500, 300],
-      [500, 200],
-      [380, 200]
+    new AoOni(400, 320, 0.7, [
+      [400, 320],
+      [500, 320],
+      [500, 240],
+      [360, 240]
     ])
   ];
   
@@ -69,10 +66,8 @@ export function createLevel1() {
 }
 
 export function createLevel2() {
-  // Level 2: Two-room layout with careful item placement
-  // Player starts in bottom-left, 2 objectives to collect
-  // Enemy patrols central corridor, objectives in safe corners
-  // No locked doors but strategic wall placement
+  // Level 2: MODERATE - Two-room layout with faster enemy
+  // Increased difficulty with normal speed enemy
   
   gameState.walls = [
     // Outer walls
@@ -120,9 +115,9 @@ export function createLevel2() {
 
   gameState.player = new Player(50, 340);
 
-  // Enemy patrols CENTRAL corridor area between objectives
+  // Normal speed enemy (1.0) - noticeable increase from level 1
   gameState.aoOnis = [
-    new AoOni(300, 250, 1.1, [
+    new AoOni(300, 250, 1.0, [
       [300, 250],
       [450, 250],
       [450, 150],
@@ -134,9 +129,8 @@ export function createLevel2() {
 }
 
 export function createLevel3() {
-  // Level 3: Three-room maze with 2 keys and 2 objectives
-  // More complex navigation but still clear structure
-  // Player starts bottom-left, must navigate to collect keys and objectives
+  // Level 3: CHALLENGING - Three-room maze with increased speed
+  // Progressive difficulty continues
   
   gameState.walls = [
     // Outer walls
@@ -167,7 +161,7 @@ export function createLevel3() {
     // Keys in accessible locations
     new Item(60, 60, "key", "key3a", false),
     new Item(520, 340, "key", "key3b", false),
-    // Objectives behind locked doors (safe once accessed)
+    // Objectives behind locked doors
     new Item(280, 280, "objective", "obj3_1", true),
     new Item(460, 60, "objective", "obj3_2", true)
   ];
@@ -186,15 +180,15 @@ export function createLevel3() {
 
   gameState.player = new Player(50, 340);
 
-  // Two enemies: one patrols left, one patrols right
+  // Two enemies with increased speed (1.15) - progressive difficulty
   gameState.aoOnis = [
-    new AoOni(100, 250, 1.2, [
+    new AoOni(100, 250, 1.15, [
       [100, 250],
       [100, 100],
       [160, 100],
       [160, 250]
     ]),
-    new AoOni(480, 250, 1.2, [
+    new AoOni(480, 250, 1.15, [
       [480, 250],
       [520, 250],
       [520, 180],
@@ -206,9 +200,7 @@ export function createLevel3() {
 }
 
 export function createLevel4() {
-  // Level 4: Dark level with flashlight (3 objectives)
-  // Corridor-based layout with strategic hiding spots
-  // More complex navigation with darkness mechanic
+  // Level 4: HARD - Dark level with flashlight, faster enemy
   
   gameState.walls = [
     // Outer walls
@@ -257,7 +249,7 @@ export function createLevel4() {
 
   gameState.player = new Player(50, 180);
 
-  // Faster enemy with central patrol pattern
+  // Fast enemy (1.4) with complex patrol
   gameState.aoOnis = [
     new AoOni(300, 200, 1.4, [
       [300, 200],
@@ -273,9 +265,8 @@ export function createLevel4() {
 }
 
 export function createLevel5() {
-  // Level 5: Final challenge with 2 keys, 3 objectives, 2 fast enemies
-  // Complex but fair layout requiring all skills learned
-  // Darkness continues from level 4
+  // Level 5: EXPERT - Final challenge with fastest enemies
+  // Maximum difficulty with multiple fast enemies
   
   gameState.walls = [
     // Outer walls
@@ -331,7 +322,7 @@ export function createLevel5() {
 
   gameState.player = new Player(50, 180);
 
-  // Two fast enemies with separate patrol zones
+  // Two very fast enemies (1.5) - maximum difficulty for final level
   gameState.aoOnis = [
     new AoOni(200, 260, 1.5, [
       [200, 260],

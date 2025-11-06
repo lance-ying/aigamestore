@@ -3,9 +3,9 @@
 import { 
   gameState, PHASE_PLAYING, PHASE_GAME_OVER_WIN, PHASE_GAME_OVER_LOSE,
   LEVELS, POINTS_LEVEL_COMPLETE, RIVAL_SPAWN_INTERVAL,
-  OBSTACLE_SPAWN_INTERVAL, NUM_LANES, CANVAS_HEIGHT
+  OBSTACLE_SPAWN_INTERVAL, COIN_SPAWN_INTERVAL, NUM_LANES, CANVAS_HEIGHT
 } from './globals.js';
-import { PlayerCar, RivalCar, Obstacle, BossCar, Particle } from './entities.js';
+import { PlayerCar, RivalCar, Obstacle, BossCar, Particle, Coin } from './entities.js';
 import { checkCollisions } from './collision.js';
 
 export function updateGame(p) {
@@ -65,6 +65,10 @@ export function updateGame(p) {
   gameState.obstacles.forEach(obstacle => obstacle.update());
   gameState.obstacles = gameState.obstacles.filter(obstacle => !obstacle.isOffScreen());
 
+  // Update coins
+  gameState.coins.forEach(coin => coin.update());
+  gameState.coins = gameState.coins.filter(coin => !coin.isOffScreen());
+
   // Update projectiles
   gameState.projectiles.forEach(projectile => projectile.update());
   gameState.projectiles = gameState.projectiles.filter(projectile => !projectile.isOffScreen());
@@ -86,6 +90,13 @@ export function updateGame(p) {
     if (gameState.framesSinceObstacleSpawn >= OBSTACLE_SPAWN_INTERVAL / currentLevel.obstacleFrequency) {
       spawnObstacle(p);
       gameState.framesSinceObstacleSpawn = 0;
+    }
+
+    // Spawn coins
+    gameState.framesSinceCoinSpawn++;
+    if (gameState.framesSinceCoinSpawn >= COIN_SPAWN_INTERVAL) {
+      spawnCoin(p);
+      gameState.framesSinceCoinSpawn = 0;
     }
   }
 
@@ -126,6 +137,12 @@ function spawnObstacle(p) {
   gameState.obstacles.push(obstacle);
 }
 
+function spawnCoin(p) {
+  const lane = p.floor(p.random(NUM_LANES));
+  const coin = new Coin(p, lane);
+  gameState.coins.push(coin);
+}
+
 function completeLevel(p, level) {
   gameState.score += POINTS_LEVEL_COMPLETE;
   gameState.cash += level.cashReward;
@@ -154,6 +171,7 @@ export function resetLevel(p) {
   gameState.player = new PlayerCar(p, Math.floor(NUM_LANES / 2));
   gameState.rivals = [];
   gameState.obstacles = [];
+  gameState.coins = [];
   gameState.projectiles = [];
   gameState.particles = [];
   gameState.scrollSpeed = 0;
@@ -162,6 +180,7 @@ export function resetLevel(p) {
   gameState.levelLength = currentLevel.targetTime ? currentLevel.targetTime * 60 * 5 : 3000;
   gameState.framesSinceRivalSpawn = 0;
   gameState.framesSinceObstacleSpawn = 0;
+  gameState.framesSinceCoinSpawn = 0;
   gameState.driftChainMultiplier = 1;
   gameState.consecutiveDrifts = 0;
   gameState.noCollisionBonus = true;

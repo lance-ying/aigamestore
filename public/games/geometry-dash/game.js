@@ -1,4 +1,4 @@
-import { CANVAS_WIDTH, CANVAS_HEIGHT, GROUND_Y, SCROLL_SPEED, gameState, keys, previousKeys, isKeyJustPressed, setControlMode } from './globals.js';
+import { CANVAS_WIDTH, CANVAS_HEIGHT, GROUND_Y, SCROLL_SPEED, gameState, keys, setControlMode } from './globals.js';
 import { Player } from './player.js';
 import { Level } from './level.js';
 import { checkCollisions } from './collision.js';
@@ -80,8 +80,16 @@ let gameInstance = new p5(p => {
     if (collisionResult === true) {
       // Player died
       gameState.deathCount++;
-      logGameInfo("Player died", { deathCount: gameState.deathCount });
-      gameState.gamePhase = "GAME_OVER_LOSE";
+      gameState.lives--;
+      logGameInfo("Player died", { deathCount: gameState.deathCount, livesRemaining: gameState.lives });
+      
+      if (gameState.lives > 0) {
+        // Still has lives left - restart level
+        restartLevel();
+      } else {
+        // Out of lives - game over
+        gameState.gamePhase = "GAME_OVER_LOSE";
+      }
     } else if (collisionResult === 'win') {
       // Player won
       logGameInfo("Player won", { time: gameState.elapsedTime });
@@ -95,10 +103,6 @@ let gameInstance = new p5(p => {
     if (p.frameCount % 10 === 0) {
       logPlayerInfo();
     }
-    
-    // Update previous key states at end of frame for next frame's tap detection
-    previousKeys.space = p.keyIsDown(32);
-    previousKeys.up = p.keyIsDown(38);
   }
 
   function drawGame() {
@@ -138,12 +142,17 @@ let gameInstance = new p5(p => {
     p.text(`Mode: ${gameState.player.mode.toUpperCase()}`, 20, 45);
     p.pop();
     
-    // Draw attempt counter
+    // Draw lives and attempt counter
     p.push();
     p.fill(255);
     p.textSize(14);
     p.textAlign(p.CENTER);
-    p.text(`Attempt ${gameState.deathCount + 1}`, CANVAS_WIDTH / 2, 45);
+    // Draw hearts for lives
+    let livesText = '❤️'.repeat(gameState.lives);
+    if (gameState.lives === 0) {
+      livesText = '💔';
+    }
+    p.text(`${livesText} | Attempt ${gameState.deathCount + 1}`, CANVAS_WIDTH / 2, 45);
     p.pop();
   }
 
@@ -155,71 +164,40 @@ let gameInstance = new p5(p => {
     p.fill(255, 255, 0);
     p.textSize(40);
     p.textAlign(p.CENTER);
-    p.text("GEOMETRY DASH", CANVAS_WIDTH / 2, 80);
+    p.text("GEOMETRY DASH", CANVAS_WIDTH / 2, 100);
     p.pop();
     
-    // Level selection
+    // Current level info
     p.push();
     p.fill(255);
-    p.textSize(20);
+    p.textSize(24);
     p.textAlign(p.CENTER);
-    p.text("SELECT LEVEL", CANVAS_WIDTH / 2, 130);
-    p.pop();
-    
-    // Level buttons display
-    p.push();
-    p.textAlign(p.CENTER);
-    p.textSize(16);
-    for (let i = 1; i <= 4; i++) {
-      const xPos = CANVAS_WIDTH / 2 - 120 + (i - 1) * 80;
-      const yPos = 170;
-      
-      // Highlight selected level
-      if (i === gameState.currentLevel) {
-        p.fill(255, 255, 0);
-        p.stroke(255, 255, 0);
-        p.strokeWeight(3);
-        p.noFill();
-        p.rect(xPos - 25, yPos - 25, 50, 50, 5);
-      }
-      
-      p.fill(i === gameState.currentLevel ? 255 : 200);
-      p.noStroke();
-      p.text(`${i}`, xPos, yPos + 5);
-    }
-    p.pop();
-    
-    // Instructions
-    p.push();
-    p.fill(200, 200, 255);
-    p.textSize(14);
-    p.textAlign(p.CENTER);
-    p.text("Press 1, 2, 3, or 4 to select level", CANVAS_WIDTH / 2, 240);
+    p.text(`Level ${gameState.currentLevel}`, CANVAS_WIDTH / 2, 160);
     p.pop();
     
     // Controls
     p.push();
     p.fill(200, 200, 255);
-    p.textSize(12);
+    p.textSize(14);
     p.textAlign(p.CENTER);
-    p.text("TAP SPACE / UP: Jump (cube) or fly (ship)", CANVAS_WIDTH / 2, 270);
-    p.text("ESC: Pause | R: Restart", CANVAS_WIDTH / 2, 290);
+    p.text("HOLD SPACE / UP: Jump (cube) or fly (ship)", CANVAS_WIDTH / 2, 220);
+    p.text("ESC: Pause | R: Restart", CANVAS_WIDTH / 2, 245);
     p.pop();
     
     // Start prompt
     p.push();
     p.fill(255);
-    p.textSize(20);
+    p.textSize(24);
     p.textAlign(p.CENTER);
     const blinkRate = Math.floor(p.frameCount / 30) % 2;
     if (blinkRate === 0) {
-      p.text("PRESS ENTER TO START", CANVAS_WIDTH / 2, 340);
+      p.text("PRESS ENTER TO START", CANVAS_WIDTH / 2, 310);
     }
     p.pop();
     
     // Draw player preview
     p.push();
-    p.translate(CANVAS_WIDTH / 2, 370);
+    p.translate(CANVAS_WIDTH / 2, 360);
     p.fill(255, 50, 50);
     p.stroke(255);
     p.strokeWeight(2);
@@ -259,6 +237,21 @@ let gameInstance = new p5(p => {
       p.text(`Level ${gameState.currentLevel}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 10);
       p.text(`Time: ${(gameState.elapsedTime / 1000).toFixed(2)}s`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 20);
       p.text(`Attempts: ${gameState.deathCount + 1}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 50);
+      
+      // Show different prompt based on whether there's a next level
+      p.textSize(18);
+      const blinkRate = Math.floor(p.frameCount / 30) % 2;
+      if (blinkRate === 0) {
+        if (gameState.currentLevel < 4) {
+          p.text("PRESS ENTER FOR NEXT LEVEL", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 90);
+          p.textSize(14);
+          p.text("or R to restart this level", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 115);
+        } else {
+          p.text("ALL LEVELS COMPLETE!", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 90);
+          p.textSize(14);
+          p.text("Press R to restart from Level 1", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 115);
+        }
+      }
     } else {
       p.fill(255, 50, 50);
       p.textSize(40);
@@ -270,14 +263,15 @@ let gameInstance = new p5(p => {
       p.text(`Level ${gameState.currentLevel}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 10);
       p.text(`Progress: ${gameState.progress}%`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 20);
       p.text(`Attempts: ${gameState.deathCount + 1}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 50);
-    }
-    
-    // Restart prompt
-    p.fill(255);
-    p.textSize(20);
-    const blinkRate = Math.floor(p.frameCount / 30) % 2;
-    if (blinkRate === 0) {
-      p.text("PRESS R TO RESTART", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 100);
+      p.text(`Lives Used: 3/3`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 75);
+      
+      // Restart prompt
+      p.fill(255);
+      p.textSize(20);
+      const blinkRate = Math.floor(p.frameCount / 30) % 2;
+      if (blinkRate === 0) {
+        p.text("PRESS R TO RESTART FROM LEVEL 1", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 110);
+      }
     }
     p.pop();
   }
@@ -292,16 +286,12 @@ let gameInstance = new p5(p => {
       return;
     }
     
-    // Human controls - TAP BASED (only trigger on NEW key press, not held keys)
+    // Human controls - check if keys are currently pressed (allows holding)
     const spacePressed = p.keyIsDown(32);
     const upPressed = p.keyIsDown(38);
     
-    // Check if either key was just pressed (not held from previous frame)
-    const spaceJustPressed = isKeyJustPressed(spacePressed, previousKeys.space);
-    const upJustPressed = isKeyJustPressed(upPressed, previousKeys.up);
-    
-    // Only jump on NEW tap, not while key is held
-    if (spaceJustPressed || upJustPressed) {
+    // Apply jump/lift while key is held
+    if (spacePressed || upPressed) {
       gameState.player.jump();
     }
   }
@@ -313,13 +303,7 @@ let gameInstance = new p5(p => {
     // Handle key presses based on game phase
     switch (gameState.gamePhase) {
       case "START":
-        // Level selection with number keys 1-4
-        if (p.keyCode >= 49 && p.keyCode <= 52) { // Keys 1-4
-          gameState.currentLevel = p.keyCode - 48;
-          logGameInfo("Level selected", { level: gameState.currentLevel });
-          // Immediately load the selected level
-          resetGame();
-        } else if (p.keyCode === 13) { // ENTER
+        if (p.keyCode === 13) { // ENTER
           startGame();
         }
         break;
@@ -338,15 +322,22 @@ let gameInstance = new p5(p => {
         }
         break;
       case "GAME_OVER_WIN":
+        if (p.keyCode === 13 && gameState.currentLevel < 4) { // ENTER - next level
+          nextLevel();
+        } else if (p.keyCode === 82) { // R - restart current level
+          resetGame();
+        }
+        break;
       case "GAME_OVER_LOSE":
         if (p.keyCode === 82) { // R
+          gameState.currentLevel = 1; // Reset to level 1 on game over
           resetGame();
         }
         break;
     }
     
     // Prevent default for game keys
-    if ([32, 38, 37, 39, 40, 27, 13, 82, 49, 50, 51, 52].includes(p.keyCode)) {
+    if ([32, 38, 37, 39, 40, 27, 13, 82].includes(p.keyCode)) {
       return false;
     }
   };
@@ -368,6 +359,28 @@ let gameInstance = new p5(p => {
     logGameInfo("Game resumed", {});
   }
 
+  function nextLevel() {
+    // Advance to next level
+    if (gameState.currentLevel < 4) {
+      gameState.currentLevel++;
+      resetGame();
+      startGame(); // Auto-start the next level
+      logGameInfo("Advanced to next level", { level: gameState.currentLevel });
+    }
+  }
+
+  function restartLevel() {
+    // Restart the current level without resetting lives or death count
+    gameState.player.reset(gameState.level.startX, gameState.level.startY);
+    gameState.camera = { x: 0 };
+    gameState.progress = 0;
+    gameState.startTime = Date.now();
+    gameState.elapsedTime = 0;
+    gameState.gamePhase = "PLAYING";
+    
+    logGameInfo("Level restarted", { level: gameState.currentLevel, livesRemaining: gameState.lives });
+  }
+
   function resetGame() {
     // Initialize level with current level number
     gameState.level = new Level(gameState.currentLevel);
@@ -381,14 +394,11 @@ let gameInstance = new p5(p => {
     gameState.camera = { x: 0 };
     gameState.progress = 0;
     gameState.deathCount = 0;
+    gameState.lives = 3; // Reset lives to 3
     gameState.gamePhase = "START";
     gameState.levelLength = gameState.level.length;
     gameState.startTime = 0;
     gameState.elapsedTime = 0;
-    
-    // Reset key tracking
-    previousKeys.space = false;
-    previousKeys.up = false;
     
     logGameInfo("Game reset", { level: gameState.currentLevel });
   }

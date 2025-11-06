@@ -3,7 +3,7 @@
 import { gameState } from './globals.js';
 import { 
   OBSTACLE_DAMAGE, RIVAL_DAMAGE, BOSS_DAMAGE, 
-  POINTS_BOSS_DEFEAT 
+  POINTS_BOSS_DEFEAT, COIN_POINTS
 } from './globals.js';
 import { Particle } from './entities.js';
 
@@ -34,6 +34,19 @@ export function checkCollisions(p) {
       const index = gameState.obstacles.indexOf(obstacle);
       if (index > -1) {
         gameState.obstacles.splice(index, 1);
+      }
+    }
+  });
+
+  // Check collisions with coins
+  gameState.coins.forEach(coin => {
+    if (checkRectCollision(player, coin)) {
+      gameState.score += COIN_POINTS;
+      createCoinCollectEffect(p, coin.x, coin.y);
+      // Remove coin on collection
+      const index = gameState.coins.indexOf(coin);
+      if (index > -1) {
+        gameState.coins.splice(index, 1);
       }
     }
   });
@@ -95,5 +108,14 @@ function checkCircleRectCollision(circle, rect) {
 function createCollisionEffect(p, x, y) {
   for (let i = 0; i < 10; i++) {
     gameState.particles.push(new Particle(p, x, y, 'spark'));
+  }
+}
+
+function createCoinCollectEffect(p, x, y) {
+  for (let i = 0; i < 5; i++) {
+    const particle = new Particle(p, x, y, 'spark');
+    particle.vx = p.random(-3, 3);
+    particle.vy = p.random(-3, 3);
+    gameState.particles.push(particle);
   }
 }

@@ -3,7 +3,7 @@
 import { 
   PLAYER_CAR_WIDTH, PLAYER_CAR_HEIGHT, PLAYER_START_Y,
   BASELINE_SPEED, MAX_SPEED, SPEED_BOOST, CONTINUOUS_DECELERATION,
-  LANE_CHANGE_DISTANCE, BRAKE_FORCE, TAP_COOLDOWN,
+  LANE_CHANGE_SPEED, BRAKE_FORCE,
   MAX_HEALTH, DRIFT_SPEED_THRESHOLD, DRIFT_DURATION_FOR_BONUS,
   DRIFT_POINTS, DRIFT_BOOST_MULTIPLIER, NUM_LANES, LANE_WIDTH,
   TRACK_X_OFFSET, RIVAL_CAR_WIDTH, RIVAL_CAR_HEIGHT,
@@ -33,17 +33,6 @@ export class PlayerCar {
     this.exhaustParticles = [];
     this.driftTrails = [];
     this.color = [100, 220, 100];
-    
-    // Tap detection - track previous states
-    this.prevUpPressed = false;
-    this.prevLeftPressed = false;
-    this.prevRightPressed = false;
-    this.prevSpacePressed = false;
-    
-    // Cooldowns to prevent spam
-    this.leftCooldown = 0;
-    this.rightCooldown = 0;
-    this.brakeCooldown = 0;
   }
 
   update() {
@@ -54,89 +43,53 @@ export class PlayerCar {
 
     this.maxSpeed = MAX_SPEED * engineBoost;
     
-    // TAP DETECTION: Up Arrow/W - Speed Boost
-    const upJustPressed = gameState.inputState.up && !this.prevUpPressed;
-    if (upJustPressed) {
-      // Add significant speed boost on tap
+    // HOLD DETECTION: Up Arrow/W - Continuous Speed Boost
+    if (gameState.inputState.up) {
       const boost = SPEED_BOOST * accelBoost;
       this.speed = this.p.min(this.speed + boost, this.maxSpeed);
       
-      // Add exhaust particles for visual feedback
-      for (let i = 0; i < 8; i++) {
+      // Add exhaust particles periodically
+      if (this.p.frameCount % 3 === 0) {
         this.exhaustParticles.push({
           x: this.x,
           y: this.y + this.height / 2,
-          life: 25,
-          alpha: 180
+          life: 20,
+          alpha: 150
         });
       }
     }
-    this.prevUpPressed = gameState.inputState.up;
 
-    // TAP DETECTION: Left Arrow/A - Move Left One Lane
-    const leftJustPressed = gameState.inputState.left && !this.prevLeftPressed;
-    if (leftJustPressed && this.leftCooldown === 0) {
-      const moveDistance = LANE_CHANGE_DISTANCE * handlingBoost;
+    // HOLD DETECTION: Left Arrow/A - Continuous Move Left
+    if (gameState.inputState.left) {
       const minX = TRACK_X_OFFSET + LANE_WIDTH / 2;
-      const newTargetX = this.x - moveDistance;
-      
-      if (newTargetX >= minX) {
-        this.targetX = newTargetX;
-        this.leftCooldown = TAP_COOLDOWN;
-        
-        // Visual feedback - tilt
-        this.tiltAngle = -0.15;
-      }
+      const moveSpeed = LANE_CHANGE_SPEED * handlingBoost;
+      this.targetX = this.p.max(minX, this.x - moveSpeed);
+      this.tiltAngle = -0.15;
     }
-    this.prevLeftPressed = gameState.inputState.left;
 
-    // TAP DETECTION: Right Arrow/D - Move Right One Lane
-    const rightJustPressed = gameState.inputState.right && !this.prevRightPressed;
-    if (rightJustPressed && this.rightCooldown === 0) {
-      const moveDistance = LANE_CHANGE_DISTANCE * handlingBoost;
+    // HOLD DETECTION: Right Arrow/D - Continuous Move Right
+    if (gameState.inputState.right) {
       const maxX = TRACK_X_OFFSET + (NUM_LANES - 1) * LANE_WIDTH + LANE_WIDTH / 2;
-      const newTargetX = this.x + moveDistance;
-      
-      if (newTargetX <= maxX) {
-        this.targetX = newTargetX;
-        this.rightCooldown = TAP_COOLDOWN;
-        
-        // Visual feedback - tilt
-        this.tiltAngle = 0.15;
-      }
+      const moveSpeed = LANE_CHANGE_SPEED * handlingBoost;
+      this.targetX = this.p.min(maxX, this.x + moveSpeed);
+      this.tiltAngle = 0.15;
     }
-    this.prevRightPressed = gameState.inputState.right;
 
-    // TAP DETECTION: Space - Brake
-    const spaceJustPressed = gameState.inputState.space && !this.prevSpacePressed;
-    if (spaceJustPressed && this.brakeCooldown === 0) {
-      // Apply brake - reduce speed
+    // HOLD DETECTION: Space - Continuous Brake
+    if (gameState.inputState.space) {
       this.speed = this.p.max(0, this.speed - BRAKE_FORCE);
-      this.brakeCooldown = TAP_COOLDOWN;
-      
-      // Visual feedback - brake lights handled in render
     }
-    this.prevSpacePressed = gameState.inputState.space;
 
-    // Update cooldowns
-    if (this.leftCooldown > 0) this.leftCooldown--;
-    if (this.rightCooldown > 0) this.rightCooldown--;
-    if (this.brakeCooldown > 0) this.brakeCooldown--;
+    // Always decelerate gradually when not accelerating
+    if (!gameState.inputState.up) {
+      this.speed = this.p.max(0, this.speed - CONTINUOUS_DECELERATION);
+    }
 
-    // Always decelerate gradually (natural slowdown)
-    this.speed = this.p.max(0, this.speed - CONTINUOUS_DECELERATION);
+    // Move towards target position
+    this.x = this.targetX;
 
-    // Move towards target position (smooth movement)
-    const moveSpeed = 15; // Fast movement for tap-based controls
-    if (this.p.abs(this.x - this.targetX) > 1) {
-      if (this.x < this.targetX) {
-        this.x = this.p.min(this.x + moveSpeed, this.targetX);
-      } else if (this.x > this.targetX) {
-        this.x = this.p.max(this.x - moveSpeed, this.targetX);
-      }
-    } else {
-      this.x = this.targetX;
-      // Return tilt to neutral when stopped
+    // Return tilt to neutral when not steering
+    if (!gameState.inputState.left && !gameState.inputState.right) {
       this.tiltAngle = this.p.lerp(this.tiltAngle, 0, 0.2);
     }
 
@@ -149,9 +102,9 @@ export class PlayerCar {
       }
     }
 
-    // Simplified drift detection (visual only, no complex mechanics)
-    const isMoving = this.p.abs(this.x - this.targetX) > 1;
-    if (isMoving && this.speed > DRIFT_SPEED_THRESHOLD) {
+    // Simplified drift detection (visual only)
+    const isSteering = gameState.inputState.left || gameState.inputState.right;
+    if (isSteering && this.speed > DRIFT_SPEED_THRESHOLD) {
       this.isDrifting = true;
       this.driftFrames++;
       
@@ -171,7 +124,7 @@ export class PlayerCar {
         });
       }
 
-      // Drift bonus for sustained high-speed movement
+      // Drift bonus for sustained high-speed steering
       if (this.driftFrames >= DRIFT_DURATION_FOR_BONUS && !this.driftBonus) {
         this.driftBonus = true;
         gameState.score += DRIFT_POINTS * gameState.driftChainMultiplier;
@@ -260,8 +213,8 @@ export class PlayerCar {
       p.rect(-this.width / 2 - 3, this.height / 2 - 22, 6, 12);
       p.rect(this.width / 2 - 3, this.height / 2 - 22, 6, 12);
 
-      // Tail lights (brake lights) - show when brake was recently used
-      if (this.brakeCooldown > 0) {
+      // Tail lights (brake lights) - show when braking
+      if (gameState.inputState.space) {
         p.fill(255, 0, 0);
         p.noStroke();
         p.circle(-this.width / 2 + 5, this.height / 2 - 5, 4);
@@ -442,6 +395,54 @@ export class Obstacle {
         p.triangle(-this.width / 2, this.height / 2, this.width / 2, this.height / 2, 0, -this.height / 2);
         break;
     }
+
+    p.pop();
+  }
+
+  isOffScreen() {
+    return this.y > CANVAS_HEIGHT + 50;
+  }
+}
+
+export class Coin {
+  constructor(p, lane, y = -50) {
+    this.p = p;
+    this.lane = lane;
+    this.x = TRACK_X_OFFSET + lane * LANE_WIDTH + LANE_WIDTH / 2;
+    this.y = y;
+    this.width = 16;
+    this.height = 16;
+    this.rotation = 0;
+    this.rotationSpeed = 0.1;
+  }
+
+  update() {
+    this.y += gameState.scrollSpeed;
+    this.rotation += this.rotationSpeed;
+  }
+
+  render() {
+    const p = this.p;
+    p.push();
+    p.translate(this.x, this.y);
+    p.rotate(this.rotation);
+
+    // Outer circle (gold)
+    p.fill(255, 215, 0);
+    p.stroke(200, 170, 0);
+    p.strokeWeight(2);
+    p.circle(0, 0, this.width);
+
+    // Inner shine
+    p.fill(255, 240, 100);
+    p.noStroke();
+    p.circle(-2, -2, this.width * 0.4);
+
+    // Dollar sign or symbol
+    p.fill(200, 170, 0);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(10);
+    p.text('$', 0, 0);
 
     p.pop();
   }
