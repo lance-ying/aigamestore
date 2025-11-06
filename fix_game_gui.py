@@ -51,14 +51,14 @@ load_env_file()
 
 
 # Global HTTP server for serving games
-GAME_SERVER_PORT = 8765
+GAME_SERVER_PORT = 5141
 SCRIPT_DIR = Path(__file__).parent.resolve()  # Store the script directory
 game_server = None
 game_server_thread = None
 
 # Configuration for multiple game directories
 GAME_DIRECTORIES = {
-    "Game Platform": "public/games_platform",
+    "Game Platform": "public/games",
     "Batch 103125": "public/games_gen_halloween",
     "Batch 110325": "public/new_batch_110325",
     "Batch 110425": "public/batch_110425",
@@ -471,7 +471,7 @@ def fix_game_action(game_path: str, feedback: str) -> Tuple[str, gr.Dropdown, st
     
     try:
         iterator = FeedbackFixIterator(
-            model="anthropic:claude-4.5-sonnet",
+            model="anthropic:claude-3.5-haiku",  # Changed to Claude Haiku
             temperature=0.6,
             thinking=True,
             thinking_budget=8000,
@@ -493,6 +493,30 @@ def fix_game_action(game_path: str, feedback: str) -> Tuple[str, gr.Dropdown, st
             in_place=True,
         )
         
+        token_usage_info = ""
+        try:
+            call_history = iterator.api.get_call_history()
+            if call_history:
+                last_call = call_history[-1]
+                token_usage = last_call.get("token_usage", {})
+                input_tokens = token_usage.get("prompt_tokens") or token_usage.get("input_tokens")
+                output_tokens = token_usage.get("completion_tokens") or token_usage.get("output_tokens")
+                total_tokens = token_usage.get("total_tokens")
+                
+                if input_tokens is not None or output_tokens is not None:
+                    token_usage_info = "\n"
+                    token_usage_info += "Token Usage:\n"
+                    token_usage_info += "=" * 60 + "\n"
+                    if input_tokens is not None:
+                        token_usage_info += f"  Input tokens:  {input_tokens:,}\n"
+                    if output_tokens is not None:
+                        token_usage_info += f"  Output tokens: {output_tokens:,}\n"
+                    if total_tokens is not None:
+                        token_usage_info += f"  Total tokens:  {total_tokens:,}\n"
+                    token_usage_info += "=" * 60 + "\n"
+        except Exception as e:
+            token_usage_info = f"\n(Note: Could not retrieve token usage: {e})\n"
+        
         # Display analysis if present
         analysis = result.get("analysis")
         if analysis:
@@ -513,6 +537,8 @@ def fix_game_action(game_path: str, feedback: str) -> Tuple[str, gr.Dropdown, st
         else:
             status_lines.append("No files were updated. The AI may not have found issues to fix.")
             status_lines.append("")
+        
+        status_lines.append(token_usage_info)
         
         status_lines.append(f"Backup saved: {backup_path.name}")
         status_lines.append("Done!")
