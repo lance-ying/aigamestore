@@ -1,0 +1,61 @@
+export const LEVELS = [
+  {
+    name: "Tutorial",
+    vehicles: [
+      { x: 1, y: 2, length: 2, horizontal: true, target: true },
+      { x: 3, y: 0, length: 2, horizontal: false },
+      { x: 2, y: 3, length: 2, horizontal: true }
+    ]
+  },
+  {
+    name: "Easy Squeeze",
+    vehicles: [
+      { x: 0, y: 2, length: 2, horizontal: true, target: true },
+      { x: 2, y: 0, length: 3, horizontal: false },
+      { x: 3, y: 2, length: 2, horizontal: false },
+      { x: 0, y: 4, length: 2, horizontal: true },
+      { x: 4, y: 4, length: 2, horizontal: true }
+    ]
+  },
+  {
+    name: "Crowded Lot",
+    vehicles: [
+      { x: 1, y: 2, length: 2, horizontal: true, target: true },
+      { x: 0, y: 0, length: 2, horizontal: false },
+      { x: 3, y: 0, length: 3, horizontal: false },
+      { x: 5, y: 1, length: 2, horizontal: false },
+      { x: 1, y: 4, length: 3, horizontal: true },
+      { x: 0, y: 5, length: 2, horizontal: true },
+      { x: 4, y: 3, length: 3, horizontal: false }
+    ]
+  },
+  {
+    name: "Rush Hour",
+    vehicles: [
+      { x: 2, y: 2, length: 2, horizontal: true, target: true },
+      { x: 0, y: 0, length: 2, horizontal: true },
+      { x: 2, y: 0, length: 2, horizontal: false },
+      { x: 4, y: 0, length: 3, horizontal: false },
+      { x: 5, y: 3, length: 2, horizontal: false },
+      { x: 0, y: 3, length: 2, horizontal: true },
+      { x: 3, y: 4, length: 2, horizontal: true },
+      { x: 1, y: 4, length: 2, horizontal: false },
+      { x: 0, y: 5, length: 2, horizontal: true }
+    ]
+  },
+  {
+    name: "Gridlock",
+    vehicles: [
+      { x: 0, y: 2, length: 2, horizontal: true, target: true },
+      { x: 2, y: 0, length: 2, horizontal: false },
+      { x: 3, y: 1, length: 2, horizontal: true },
+      { x: 3, y: 2, length: 3, horizontal: false },
+      { x: 4, y: 1, length: 2, horizontal: false },
+      { x: 0, y: 3, length: 2, horizontal: true },
+      { x: 5, y: 3, length: 3, horizontal: false },
+      { x: 0, y: 4, length: 2, horizontal: false },
+      { x: 1, y: 5, length: 2, horizontal: true },
+      { x: 4, y: 5, length: 2, horizontal: true }
+    ]
+  }
+];
