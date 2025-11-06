@@ -150,3 +150,7 @@ export const LEVEL_CONFIGS = [
     gravity: 0.4
   }
 ];
+// Expose gameState to window for debugging and recording scripts
+if (typeof window !== 'undefined') {
+  window.getGameState = () => gameState;
+}

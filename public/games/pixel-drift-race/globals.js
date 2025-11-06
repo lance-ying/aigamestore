@@ -167,3 +167,7 @@ export const UPGRADE_EFFECTS = {
   acceleration: [1.2, 1.4, 1.6],
   handling: [1.2, 1.4, 1.6]
 };
+// Expose gameState to window for debugging and recording scripts
+if (typeof window !== 'undefined') {
+  window.getGameState = () => gameState;
+}

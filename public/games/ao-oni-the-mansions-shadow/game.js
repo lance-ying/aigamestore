@@ -43,17 +43,17 @@ let gameInstance = new p5(p => {
     if (gameState.controlMode !== "HUMAN") {
       const actions = getTestAction();
       
-      // Process test actions as discrete taps
+      // Process test actions - set key states for continuous movement
+      // Clear all movement keys first
+      gameState.keysPressed[37] = false; // left
+      gameState.keysPressed[38] = false; // up
+      gameState.keysPressed[39] = false; // right
+      gameState.keysPressed[40] = false; // down
+      
       for (const keyCode of actions) {
-        // Handle movement keys as discrete taps
-        if (keyCode === 37 && gameState.player && gameState.gamePhase === GAME_PHASES.PLAYING) {
-          gameState.player.moveByTap('left', gameState.isRunning, p);
-        } else if (keyCode === 39 && gameState.player && gameState.gamePhase === GAME_PHASES.PLAYING) {
-          gameState.player.moveByTap('right', gameState.isRunning, p);
-        } else if (keyCode === 38 && gameState.player && gameState.gamePhase === GAME_PHASES.PLAYING) {
-          gameState.player.moveByTap('up', gameState.isRunning, p);
-        } else if (keyCode === 40 && gameState.player && gameState.gamePhase === GAME_PHASES.PLAYING) {
-          gameState.player.moveByTap('down', gameState.isRunning, p);
+        // Handle movement keys as continuous (set pressed state)
+        if (keyCode === 37 || keyCode === 38 || keyCode === 39 || keyCode === 40) {
+          gameState.keysPressed[keyCode] = true;
         } else if (keyCode === 16) {
           gameState.isRunning = !gameState.isRunning;
         } else if (keyCode === 13 && gameState.gamePhase === GAME_PHASES.START) {
@@ -289,17 +289,9 @@ let gameInstance = new p5(p => {
           }
         }
         
-        // TAP-BASED MOVEMENT: Each arrow key press moves a fixed distance
-        if (gameState.player) {
-          if (p.keyCode === 37) { // Left
-            gameState.player.moveByTap('left', gameState.isRunning, p);
-          } else if (p.keyCode === 39) { // Right
-            gameState.player.moveByTap('right', gameState.isRunning, p);
-          } else if (p.keyCode === 38) { // Up
-            gameState.player.moveByTap('up', gameState.isRunning, p);
-          } else if (p.keyCode === 40) { // Down
-            gameState.player.moveByTap('down', gameState.isRunning, p);
-          }
+        // CONTINUOUS MOVEMENT: Track key pressed state
+        if (p.keyCode === 37 || p.keyCode === 38 || p.keyCode === 39 || p.keyCode === 40) {
+          gameState.keysPressed[p.keyCode] = true;
         }
       }
     }
@@ -316,7 +308,13 @@ let gameInstance = new p5(p => {
       timestamp: Date.now()
     });
 
-    // No longer tracking key release for movement (tap-based now)
+    if (gameState.controlMode === "HUMAN") {
+      // CONTINUOUS MOVEMENT: Track key released state
+      if (p.keyCode === 37 || p.keyCode === 38 || p.keyCode === 39 || p.keyCode === 40) {
+        gameState.keysPressed[p.keyCode] = false;
+      }
+    }
+
     return false;
   };
 

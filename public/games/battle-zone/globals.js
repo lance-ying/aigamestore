@@ -145,3 +145,7 @@ export function resetToLevel1() {
   gameState.currentLevel = 1;
   resetGame();
 }
+// Expose gameState to window for debugging and recording scripts
+if (typeof window !== 'undefined') {
+  window.getGameState = () => gameState;
+}

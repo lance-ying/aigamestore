@@ -86,3 +86,7 @@ export const SCORES = {
 export function getGameState() {
   return gameState;
 }
+// Expose gameState to window for debugging and recording scripts
+if (typeof window !== 'undefined') {
+  window.getGameState = () => gameState;
+}

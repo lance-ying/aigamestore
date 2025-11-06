@@ -293,6 +293,10 @@ function checkGameConditions(p) {
       framecount: p.frameCount,
       timestamp: Date.now()
     });
+    // Submit score to parent
+    if (typeof window.submitScore === 'function') {
+      window.submitScore(gameState.totalScore);
+    }
   } else if (gameState.currentMoves <= 0 && !allObjectivesMet) {
     // Lose
     gameState.gamePhase = GAME_PHASES.GAME_OVER_LOSE;
@@ -301,5 +305,9 @@ function checkGameConditions(p) {
       framecount: p.frameCount,
       timestamp: Date.now()
     });
+    // Submit score to parent
+    if (typeof window.submitScore === 'function') {
+      window.submitScore(gameState.totalScore);
+    }
   }
 }

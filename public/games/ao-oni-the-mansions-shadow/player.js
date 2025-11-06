@@ -5,8 +5,6 @@ export class Player {
   constructor(x, y) {
     this.x = x;
     this.y = y;
-    this.targetX = x;
-    this.targetY = y;
     this.width = PLAYER_SIZE;
     this.height = PLAYER_SIZE;
     this.speed = PLAYER_SPEED;
@@ -14,112 +12,89 @@ export class Player {
     this.hiding = false;
     this.hidingSpot = null;
     this.animFrame = 0;
-    this.isMoving = false;
-    this.moveSpeed = 8; // Pixels per frame for smooth interpolation
   }
 
   update(p) {
     if (this.hiding) return;
 
-    // Smooth interpolation to target position
-    if (this.isMoving) {
-      const dx = this.targetX - this.x;
-      const dy = this.targetY - this.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-
-      if (dist < 1) {
-        // Reached target
-        this.x = this.targetX;
-        this.y = this.targetY;
-        this.isMoving = false;
-      } else {
-        // Move towards target
-        const moveAmount = Math.min(this.moveSpeed, dist);
-        this.x += (dx / dist) * moveAmount;
-        this.y += (dy / dist) * moveAmount;
-        this.animFrame += 0.2;
-      }
-    }
-
-    // Clamp to canvas
-    this.x = p.constrain(this.x, this.width / 2, p.width - this.width / 2);
-    this.y = p.constrain(this.y, this.height / 2, p.height - this.height / 2);
-  }
-
-  // Tap-based movement: each tap moves a fixed distance with smooth animation
-  moveByTap(direction, sprint, p) {
-    if (this.hiding) return;
-    if (this.isMoving) return; // Don't accept new commands until current movement finishes
-
-    // Movement distance per tap (reduced for corridor navigation)
-    const normalDistance = 16;   // Half a tile for precise control
-    const sprintDistance = 24;   // 3/4 tile for faster movement
-    const distance = sprint ? sprintDistance : normalDistance;
-
+    // Continuous movement based on held keys
     let dx = 0;
     let dy = 0;
+    let moving = false;
 
-    // Set direction and calculate movement vector
-    switch(direction) {
-      case 'left':
-        dx = -distance;
-        this.direction = 3;
-        break;
-      case 'right':
-        dx = distance;
-        this.direction = 1;
-        break;
-      case 'up':
-        dy = -distance;
-        this.direction = 2;
-        break;
-      case 'down':
-        dy = distance;
-        this.direction = 0;
-        break;
+    // Check which keys are currently pressed
+    if (gameState.keysPressed[37]) { // Left
+      dx -= 1;
+      this.direction = 3;
+      moving = true;
+    }
+    if (gameState.keysPressed[39]) { // Right
+      dx += 1;
+      this.direction = 1;
+      moving = true;
+    }
+    if (gameState.keysPressed[38]) { // Up
+      dy -= 1;
+      this.direction = 2;
+      moving = true;
+    }
+    if (gameState.keysPressed[40]) { // Down
+      dy += 1;
+      this.direction = 0;
+      moving = true;
     }
 
-    const newX = this.x + dx;
-    const newY = this.y + dy;
-
-    // Check wall collisions
-    let canMoveX = true;
-    let canMoveY = true;
-
-    for (const wall of gameState.walls) {
-      if (this.checkCollision(newX, this.y, wall)) {
-        canMoveX = false;
-      }
-      if (this.checkCollision(this.x, newY, wall)) {
-        canMoveY = false;
-      }
+    // Normalize diagonal movement
+    if (dx !== 0 && dy !== 0) {
+      dx *= 0.707; // 1/sqrt(2)
+      dy *= 0.707;
     }
 
-    // Check door collisions (doors block movement when closed/locked)
-    for (const door of gameState.doors) {
-      if (!door.open) {
-        if (this.checkCollision(newX, this.y, door)) {
+    if (moving) {
+      // Calculate movement speed
+      const currentSpeed = gameState.isRunning ? PLAYER_SPRINT_SPEED : PLAYER_SPEED;
+      
+      const newX = this.x + dx * currentSpeed;
+      const newY = this.y + dy * currentSpeed;
+
+      // Check collisions separately for X and Y movement
+      let canMoveX = true;
+      let canMoveY = true;
+
+      // Check wall collisions
+      for (const wall of gameState.walls) {
+        if (this.checkCollision(newX, this.y, wall)) {
           canMoveX = false;
         }
-        if (this.checkCollision(this.x, newY, door)) {
+        if (this.checkCollision(this.x, newY, wall)) {
           canMoveY = false;
         }
       }
+
+      // Check door collisions (doors block movement when closed/locked)
+      for (const door of gameState.doors) {
+        if (!door.open) {
+          if (this.checkCollision(newX, this.y, door)) {
+            canMoveX = false;
+          }
+          if (this.checkCollision(this.x, newY, door)) {
+            canMoveY = false;
+          }
+        }
+      }
+
+      // Apply movement
+      if (canMoveX) this.x = newX;
+      if (canMoveY) this.y = newY;
+
+      // Update animation
+      this.animFrame += 0.2;
     }
 
-    // Set target position for smooth movement
-    if (canMoveX) this.targetX = newX;
-    if (canMoveY) this.targetY = newY;
-
-    // Clamp target to canvas
+    // Clamp to canvas
     if (p) {
-      this.targetX = p.constrain(this.targetX, this.width / 2, p.width - this.width / 2);
-      this.targetY = p.constrain(this.targetY, this.height / 2, p.height - this.height / 2);
-    }
-
-    // Start moving if target changed
-    if (this.targetX !== this.x || this.targetY !== this.y) {
-      this.isMoving = true;
+      this.x = p.constrain(this.x, this.width / 2, p.width - this.width / 2);
+      this.y = p.constrain(this.y, this.height / 2, p.height - this.height / 2);
     }
   }
 

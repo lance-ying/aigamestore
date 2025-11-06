@@ -102,3 +102,7 @@ export const COLLISION_BUFFER = 3;
 export const SURVIVAL_BONUS_INTERVAL = 300; // 5 seconds at 60 FPS
 export const SURVIVAL_BONUS_POINTS = 1;
 export const LEVEL_COMPLETE_BONUS = 100;
+// Expose gameState to window for debugging and recording scripts
+if (typeof window !== 'undefined') {
+  window.getGameState = () => gameState;
+}
