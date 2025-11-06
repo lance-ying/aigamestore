@@ -1,4 +1,4 @@
-// input.js - Input handling
+// input.js - Input handling (TAP-BASED for VLM compatibility)
 import { gameState, GAME_PHASES } from './globals.js';
 import { getDotAtPosition, areDotsAdjacent, colorsMatch, isSquareFormed, clearDots, applyGravity, fillEmptySpaces, checkAnchorObjective } from './grid.js';
 import { getColorName } from './levels.js';
@@ -13,6 +13,22 @@ export function handleKeyPressed(p, key, keyCode) {
     timestamp: Date.now()
   });
 
+  // TAP-BASED INPUT: Ignore if key is already pressed (prevent key repeat)
+  const keyId = `${keyCode}`;
+  if (gameState.keysPressed.has(keyId)) {
+    return; // Key is being held, ignore repeat events
+  }
+  
+  // Mark key as pressed
+  gameState.keysPressed.add(keyId);
+  
+  // Check input cooldown for movement/action keys
+  const now = Date.now();
+  const isMovementOrAction = (keyCode >= 37 && keyCode <= 40) || keyCode === 32 || keyCode === 16;
+  if (isMovementOrAction && (now - gameState.lastInputTime) < gameState.inputCooldown) {
+    return; // Too soon after last input
+  }
+
   if (gameState.controlMode !== "HUMAN") return;
 
   if (gameState.gamePhase === GAME_PHASES.START) {
@@ -24,10 +40,13 @@ export function handleKeyPressed(p, key, keyCode) {
       pauseGame(p);
     } else if (keyCode === 32) { // SPACE
       handleSpacePress(p);
+      gameState.lastInputTime = now;
     } else if (keyCode === 16) { // SHIFT
       handleShiftPress(p);
+      gameState.lastInputTime = now;
     } else if (keyCode >= 37 && keyCode <= 40) { // ARROW KEYS
       handleArrowPress(p, keyCode);
+      gameState.lastInputTime = now;
     }
   } else if (gameState.gamePhase === GAME_PHASES.PAUSED) {
     if (keyCode === 27) { // ESC
@@ -47,6 +66,10 @@ export function handleKeyReleased(p, key, keyCode) {
     framecount: p.frameCount,
     timestamp: Date.now()
   });
+
+  // TAP-BASED INPUT: Clear key from pressed set
+  const keyId = `${keyCode}`;
+  gameState.keysPressed.delete(keyId);
 
   if (gameState.controlMode !== "HUMAN") return;
 }
@@ -82,6 +105,7 @@ function returnToStart(p) {
   gameState.gamePhase = GAME_PHASES.START;
   gameState.currentLevel = 1;
   gameState.totalScore = 0;
+  gameState.keysPressed.clear(); // Reset key state
   p.logs.game_info.push({
     data: { phase: "START" },
     framecount: p.frameCount,
@@ -92,6 +116,7 @@ function returnToStart(p) {
 function handleSpacePress(p) {
   if (gameState.isAnimating) return;
   
+  // TAP-BASED: Single tap performs discrete action
   // If no path started, start building at current cursor position
   if (gameState.currentPath.length === 0) {
     const currentDot = getDotAtPosition(gameState.cursorX, gameState.cursorY);
@@ -121,7 +146,8 @@ function handleArrowPress(p, keyCode) {
   const oldX = gameState.cursorX;
   const oldY = gameState.cursorY;
   
-  // Move cursor
+  // TAP-BASED: Single tap moves cursor by ONE grid cell
+  // (For grid-based puzzle games, 1 cell per tap is the correct substantial movement)
   if (keyCode === 37) gameState.cursorX = Math.max(0, gameState.cursorX - 1); // LEFT
   if (keyCode === 39) gameState.cursorX = Math.min(gameState.gridCols - 1, gameState.cursorX + 1); // RIGHT
   if (keyCode === 38) gameState.cursorY = Math.max(0, gameState.cursorY - 1); // UP

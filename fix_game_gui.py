@@ -56,6 +56,14 @@ SCRIPT_DIR = Path(__file__).parent.resolve()  # Store the script directory
 game_server = None
 game_server_thread = None
 
+# Configuration for multiple game directories
+GAME_DIRECTORIES = {
+    "Game Platform": "public_platform/games",
+    "Batch 103125": "public/games_gen_halloween",
+    "Batch 110325": "public/new_batch_110325",
+    "Batch 110425": "public/batch_110425",
+}
+
 
 def start_game_server(games_dir: str = "public/games"):
     """Start a simple HTTP server to serve game files."""
@@ -230,12 +238,13 @@ def get_game_metadata(game_path: str) -> Dict[str, str]:
     return result
 
 
-def get_game_iframe_html(game_dir_name: str, cache_bust: bool = False) -> str:
+def get_game_iframe_html(game_relative_path_from_public: str, cache_bust: bool = False) -> str:
     """
     Generate HTML for game iframe with aggressive cache busting.
     
     Args:
-        game_dir_name: Directory name of the game
+        game_relative_path_from_public: The path of the game directory relative to the 'public' folder.
+                                      e.g., "games/snake-io" or "games_gen_halloween/bounce-and-collect-s0"
         cache_bust: If True, adds timestamp to force reload
         
     Returns:
@@ -247,7 +256,8 @@ def get_game_iframe_html(game_dir_name: str, cache_bust: bool = False) -> str:
     # Generate unique ID for the iframe
     iframe_id = f"game-iframe-{timestamp}"
     
-    game_url = f"http://localhost:{GAME_SERVER_PORT}/games/{game_dir_name}/index.html"
+    # Construct game_url using the provided relative path from public
+    game_url = f"http://localhost:{GAME_SERVER_PORT}/{game_relative_path_from_public}/index.html"
     
     # Add cache busting parameter to force reload
     if cache_bust:
@@ -356,9 +366,9 @@ def create_backup(game_dir: Path) -> Path:
 
 # Gradio event handlers
 
-def refresh_games() -> gr.Dropdown:
+def refresh_games(directory: str = "public/games") -> gr.Dropdown:
     """Refresh the games dropdown list."""
-    games = list_games()
+    games = list_games(directory)
     choices = []
     for g in games:
         display_name = g['title']
@@ -384,8 +394,17 @@ def on_game_selected_minimal(game_path: str) -> Tuple[str, gr.Dropdown]:
     
     game_dir = Path(game_path)
     
+    # Calculate the path relative to the 'public' directory for the HTTP server
+    public_root = SCRIPT_DIR / "public"
+    try:
+        game_relative_path_from_public = game_dir.relative_to(public_root)
+    except ValueError:
+        # If game_dir is not under public_root, fallback to just the name
+        # (this shouldn't happen in normal usage, but handle gracefully)
+        game_relative_path_from_public = Path(game_dir.name)
+    
     # Get iframe HTML
-    iframe_html = get_game_iframe_html(game_dir.name)
+    iframe_html = get_game_iframe_html(str(game_relative_path_from_public))
     
     # Get backups
     backups = list_backups(game_path)
@@ -406,8 +425,16 @@ def refresh_game_preview(game_path: str) -> str:
     
     game_dir = Path(game_path)
     
+    # Calculate the path relative to the 'public' directory for the HTTP server
+    public_root = SCRIPT_DIR / "public"
+    try:
+        game_relative_path_from_public = game_dir.relative_to(public_root)
+    except ValueError:
+        # If game_dir is not under public_root, fallback to just the name
+        game_relative_path_from_public = Path(game_dir.name)
+    
     # Get iframe HTML with cache busting enabled
-    return get_game_iframe_html(game_dir.name, cache_bust=True)
+    return get_game_iframe_html(str(game_relative_path_from_public), cache_bust=True)
 
 
 def fix_game_action(game_path: str, feedback: str) -> Tuple[str, gr.Dropdown, str]:
@@ -504,8 +531,13 @@ def fix_game_action(game_path: str, feedback: str) -> Tuple[str, gr.Dropdown, st
     backup_choices = backups if backups else [("No backups found", "")]
     
     # Generate updated iframe with cache busting to force reload
-    game_dir_name = Path(game_path).name
-    updated_iframe = get_game_iframe_html(game_dir_name, cache_bust=True)
+    game_dir = Path(game_path)
+    public_root = SCRIPT_DIR / "public"
+    try:
+        game_relative_path_from_public = game_dir.relative_to(public_root)
+    except ValueError:
+        game_relative_path_from_public = Path(game_dir.name)
+    updated_iframe = get_game_iframe_html(str(game_relative_path_from_public), cache_bust=True)
     
     return "\n".join(status_lines), gr.Dropdown(choices=backup_choices), updated_iframe
 
@@ -548,8 +580,13 @@ def restore_backup_action(game_path: str, backup_path: str) -> Tuple[str, str]:
         status_lines.append("The game has been restored to the backed up state.")
         
         # Generate updated iframe with cache busting to force reload
-        game_dir_name = Path(game_path).name
-        updated_iframe = get_game_iframe_html(game_dir_name, cache_bust=True)
+        game_dir = Path(game_path)
+        public_root = SCRIPT_DIR / "public"
+        try:
+            game_relative_path_from_public = game_dir.relative_to(public_root)
+        except ValueError:
+            game_relative_path_from_public = Path(game_dir.name)
+        updated_iframe = get_game_iframe_html(str(game_relative_path_from_public), cache_bust=True)
         
         return "\n".join(status_lines), updated_iframe
     
@@ -564,8 +601,9 @@ def build_interface():
     # Start game server
     start_game_server()
     
-    # Get initial games list
-    games = list_games()
+    # Get initial games list from first directory
+    initial_dir = list(GAME_DIRECTORIES.values())[0]
+    games = list_games(initial_dir)
     game_choices = []
     for g in games:
         display_name = g['title']
@@ -624,13 +662,21 @@ def build_interface():
             
             # Right: Controls (narrower)
             with gr.Column(scale=2):
+                # Directory selector dropdown
+                directory_dropdown = gr.Dropdown(
+                    choices=[(name, path) for name, path in GAME_DIRECTORIES.items()],
+                    value=initial_dir,
+                    label="Directory",
+                    interactive=True
+                )
+                
                 game_dropdown = gr.Dropdown(
                     choices=game_choices,
                     value=game_choices[0][1] if game_choices else "",
                     label="Game",
                     interactive=True
                 )
-                refresh_btn = gr.Button("Refresh", size="sm")
+                refresh_btn = gr.Button("Refresh Games List", size="sm")
                 
                 feedback_input = gr.Textbox(
                     label="Feedback",
@@ -654,8 +700,16 @@ def build_interface():
                     restore_btn = gr.Button("Restore")
         
         # Wire up events
+        # When directory changes, refresh game list
+        directory_dropdown.change(
+            fn=refresh_games,
+            inputs=[directory_dropdown],
+            outputs=[game_dropdown]
+        )
+        
         refresh_btn.click(
             fn=refresh_games,
+            inputs=[directory_dropdown],
             outputs=[game_dropdown]
         )
         

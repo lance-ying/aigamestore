@@ -66,13 +66,13 @@ export const gameState = {
   entities: []
 };
 
-// Level configurations
+// Level configurations - Progressive grid size increase with balanced win conditions
 export const LEVELS = [
   { level: 1, boardSize: 3, winLength: 3, aiDifficulty: "EASY", name: "Novice Grid" },
-  { level: 2, boardSize: 3, winLength: 3, aiDifficulty: "MEDIUM", name: "Apprentice Grid" },
-  { level: 3, boardSize: 3, winLength: 3, aiDifficulty: "HARD", name: "Master Grid" },
-  { level: 4, boardSize: 4, winLength: 4, aiDifficulty: "MEDIUM", name: "Grand Grid" },
-  { level: 5, boardSize: 4, winLength: 4, aiDifficulty: "HARD", name: "Ultimate Grid" }
+  { level: 2, boardSize: 4, winLength: 3, aiDifficulty: "EASY", name: "Apprentice Grid" },
+  { level: 3, boardSize: 5, winLength: 3, aiDifficulty: "MEDIUM", name: "Master Grid" },
+  { level: 4, boardSize: 6, winLength: 4, aiDifficulty: "MEDIUM", name: "Grand Grid" },
+  { level: 5, boardSize: 7, winLength: 4, aiDifficulty: "HARD", name: "Ultimate Grid" }
 ];
 
 // Scoring constants

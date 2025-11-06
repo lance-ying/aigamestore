@@ -1,0 +1,1968 @@
+You are an expert in reinforcement learning and game development. Create a clean, efficient Gym API that enables RL agents to learn the game. Focus on providing informative state representations and well-shaped rewards. The API should be minimal, efficient, and preserve all existing game functionality.
+
+<task>
+You are creating a Gym API wrapper for a p5.js browser-based game to enable reinforcement learning training.
+
+Your goal is to analyze the game code and generate a **gym_api.js** file that exposes a clean RL interface.
+
+<game_code>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">Snake.io</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Basic Movement)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Win Mode)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Guide your snake through three challenging levels, consuming glowing pellets and defeating AI opponents to grow longer. The arena wraps around like Pac-Man—go off one edge and appear on the opposite side! Avoid collisions with obstacles and other snakes. Reach the target length for each level to advance. Use your boost strategically to escape danger or chase opponents, but be careful—it costs you mass! Defeat AI snakes by making them crash into your body, then collect their remains to grow even larger.</p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Arrow Left/Right: Turn your snake left or right | Space or Shift: Activate speed boost (costs mass) | Enter: Start game or confirm menu selections | Escape: Pause/unpause game | R: Return to main menu from game over screen</p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="globals.js">
+// globals.js - Global constants and game state
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const TARGET_FPS = 60;
+
+// Game phase constants
+export const PHASE_START = "START";
+export const PHASE_PLAYING = "PLAYING";
+export const PHASE_PAUSED = "PAUSED";
+export const PHASE_GAME_OVER_WIN = "GAME_OVER_WIN";
+export const PHASE_GAME_OVER_LOSE = "GAME_OVER_LOSE";
+export const PHASE_LEVEL_COMPLETE = "LEVEL_COMPLETE";
+
+// Control modes
+export const CONTROL_HUMAN = "HUMAN";
+export const CONTROL_TEST_1 = "TEST_1";
+export const CONTROL_TEST_2 = "TEST_2";
+
+// Game state object
+export const gameState = {
+  player: null,
+  entities: [],
+  aiSnakes: [],
+  pellets: [],
+  massDrops: [],
+  obstacles: [],
+  score: 0,
+  currentLevel: 1,
+  gamePhase: PHASE_START,
+  controlMode: CONTROL_HUMAN,
+  playerLength: 0,
+  targetLength: 50,
+  framesSurvived: 0,
+  lastSurvivalBonus: 0,
+  playerSkinColor: [50, 200, 50],
+  levelStartTime: 0,
+  testModeTimer: 0,
+  testModeAction: null,
+  dynamicObstaclePhase: 0,
+};
+
+// Level configurations
+export const LEVEL_CONFIGS = {
+  1: {
+    name: "The Nursery",
+    targetLength: 50,
+    aiCount: 3,
+    aiStartLength: 5,
+    aiSpeed: 1.8,
+    aiAggression: 0.15,
+    pelletDensity: 30,
+    arenaSize: { width: CANVAS_WIDTH - 40, height: CANVAS_HEIGHT - 40 },
+    playerStartLength: 10,
+    staticObstacles: 0,
+    dynamicObstacles: false,
+  },
+  2: {
+    name: "The Gauntlet",
+    targetLength: 120,
+    aiCount: 5,
+    aiStartLength: 15,
+    aiSpeed: 2.4,
+    aiAggression: 0.35,
+    pelletDensity: 20,
+    arenaSize: { width: CANVAS_WIDTH - 40, height: CANVAS_HEIGHT - 40 },
+    playerStartLength: 15,
+    staticObstacles: 3,
+    dynamicObstacles: false,
+  },
+  3: {
+    name: "Apex Hunter Arena",
+    targetLength: 250,
+    aiCount: 8,
+    aiStartLength: 25,
+    aiSpeed: 3.0,
+    aiAggression: 0.65,
+    pelletDensity: 10,
+    arenaSize: { width: CANVAS_WIDTH - 40, height: CANVAS_HEIGHT - 40 },
+    playerStartLength: 20,
+    staticObstacles: 2,
+    dynamicObstacles: true,
+  },
+};
+
+// Snake constants
+export const SEGMENT_SIZE = 8;
+export const BASE_SPEED = 2.5;
+export const BOOST_SPEED = 5;
+export const BOOST_COST = 3;
+export const MIN_BOOST_LENGTH = 15;
+
+// Pellet constants
+export const PELLET_SIZE = 5;
+export const PELLET_VALUE = 1;
+export const MASS_VALUE = 5;
+
+// Collision constants
+export const COLLISION_BUFFER = 3;
+
+// Scoring constants
+export const SURVIVAL_BONUS_INTERVAL = 300; // 5 seconds at 60 FPS
+export const SURVIVAL_BONUS_POINTS = 1;
+export const LEVEL_COMPLETE_BONUS = 100;
+</file>
+
+<file name="ai.js">
+// ai.js - AI snake behaviors
+
+import { SEGMENT_SIZE, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export class AIController {
+  constructor(p, snake, config) {
+    this.p = p;
+    this.snake = snake;
+    this.config = config;
+    this.updateTimer = 0;
+    this.updateInterval = 3; // More frequent updates for better responsiveness
+    this.targetPellet = null;
+    this.panicMode = false;
+    this.aggressionTimer = 0;
+  }
+
+  update(pellets, massDrops, allSnakes, obstacles) {
+    if (!this.snake.isAlive) return;
+
+    this.updateTimer++;
+    if (this.updateTimer < this.updateInterval) return;
+    this.updateTimer = 0;
+    this.aggressionTimer++;
+
+    const head = this.snake.getHead();
+    
+    // Dynamic lookahead based on speed and length - more sophisticated
+    const speedMultiplier = this.snake.speed / 2;
+    const lengthFactor = Math.min(this.snake.segments.length / 30, 2.5);
+    const baseLookAhead = 80;
+    const lookAhead = baseLookAhead * lengthFactor * speedMultiplier;
+    
+    // Check for immediate danger with extended lookahead
+    const dangerInfo = this.checkDanger(allSnakes, obstacles, lookAhead);
+    
+    // Find nearest food with priority for mass drops
+    const allFood = [...pellets, ...massDrops];
+    let nearestFood = null;
+    let nearestDist = Infinity;
+    
+    for (let food of allFood) {
+      const dist = this.p.dist(head.x, head.y, food.pos.x, food.pos.y);
+      // Mass drops are worth more, so prioritize them
+      const effectiveDist = food.value > 1 ? dist * 0.7 : dist;
+      if (effectiveDist < nearestDist) {
+        nearestDist = effectiveDist;
+        nearestFood = food;
+      }
+    }
+
+    // Enhanced decision making with better priorities
+    if (dangerInfo.inDanger) {
+      // Critical: Avoid danger immediately with smart avoidance
+      this.panicMode = true;
+      this.avoidDanger(dangerInfo, allSnakes, obstacles, lookAhead);
+    } else {
+      this.panicMode = false;
+      
+      // Periodic aggression checks - more frequent at higher levels
+      const aggressionChance = this.config.aiAggression * (1 + this.aggressionTimer / 300);
+      
+      if (this.p.random() < aggressionChance && this.snake.segments.length > 15) {
+        // Try to find a target to cut off
+        const target = this.findCutoffTarget(allSnakes);
+        if (target) {
+          const targetSafe = this.isSafeDirection(target, allSnakes, obstacles, lookAhead * 0.6);
+          if (targetSafe) {
+            this.moveTowards(target);
+            this.aggressionTimer = 0; // Reset timer after aggressive action
+            return;
+          }
+        }
+      }
+      
+      // Smart food seeking with path validation
+      if (nearestFood) {
+        if (this.isSafeDirection(nearestFood.pos, allSnakes, obstacles, lookAhead * 0.7)) {
+          this.moveTowards(nearestFood.pos);
+        } else {
+          // Food path is dangerous, find alternate safe direction
+          this.findSafeDirection(allSnakes, obstacles, lookAhead);
+        }
+      } else {
+        // No food visible, maintain safe movement
+        this.findSafeDirection(allSnakes, obstacles, lookAhead);
+      }
+    }
+  }
+
+  checkDanger(allSnakes, obstacles, lookAhead) {
+    const head = this.snake.getHead();
+    const dangerPoints = [];
+    
+    // Check multiple points along projected path with higher resolution
+    const checkPoints = 8;
+    for (let i = 1; i <= checkPoints; i++) {
+      const distance = (lookAhead / checkPoints) * i;
+      const futurePos = this.p.createVector(
+        head.x + this.snake.direction.x * distance,
+        head.y + this.snake.direction.y * distance
+      );
+
+      // Wrap coordinates for boundary checking
+      this.wrapPosition(futurePos);
+
+      // Check obstacles with safety margin
+      for (let obstacle of obstacles) {
+        const bounds = obstacle.getBounds();
+        const obstacleMargin = 20; // Increased safety margin
+        if (futurePos.x > bounds.x - obstacleMargin && futurePos.x < bounds.x + bounds.width + obstacleMargin &&
+            futurePos.y > bounds.y - obstacleMargin && futurePos.y < bounds.y + bounds.height + obstacleMargin) {
+          dangerPoints.push({ pos: futurePos, type: 'obstacle', distance: distance, severity: 3 });
+        }
+      }
+
+      // Check all snakes including self
+      for (let otherSnake of allSnakes) {
+        if (!otherSnake.isAlive) continue;
+        
+        // For self, skip head segments to allow tight turns
+        const startIdx = otherSnake === this.snake ? 20 : 3;
+        const checkLength = otherSnake.segments.length;
+        
+        for (let j = startIdx; j < checkLength; j++) {
+          const segment = otherSnake.segments[j];
+          const dist = this.p.dist(futurePos.x, futurePos.y, segment.x, segment.y);
+          const safeDistance = SEGMENT_SIZE * 3; // Increased safety distance
+          
+          if (dist < safeDistance) {
+            const severity = otherSnake === this.snake ? 2 : 3;
+            dangerPoints.push({ 
+              pos: futurePos, 
+              type: otherSnake === this.snake ? 'self' : 'snake', 
+              distance: distance,
+              severity: severity
+            });
+            break;
+          }
+        }
+      }
+    }
+
+    return {
+      inDanger: dangerPoints.length > 0,
+      points: dangerPoints,
+      closestDanger: dangerPoints.length > 0 ? 
+        dangerPoints.reduce((min, p) => p.distance < min.distance ? p : min, dangerPoints[0]) : null
+    };
+  }
+
+  wrapPosition(pos) {
+    if (pos.x < 0) pos.x = CANVAS_WIDTH;
+    if (pos.x > CANVAS_WIDTH) pos.x = 0;
+    if (pos.y < 0) pos.y = CANVAS_HEIGHT;
+    if (pos.y > CANVAS_HEIGHT) pos.y = 0;
+  }
+
+  isSafeDirection(targetPos, allSnakes, obstacles, lookAhead) {
+    const head = this.snake.getHead();
+    const desiredDir = this.p.createVector(targetPos.x - head.x, targetPos.y - head.y);
+    desiredDir.normalize();
+    
+    // Check multiple points along path with higher resolution
+    const checkSteps = 5;
+    for (let i = 1; i <= checkSteps; i++) {
+      const checkDist = (lookAhead / checkSteps) * i;
+      const checkPos = this.p.createVector(
+        head.x + desiredDir.x * checkDist,
+        head.y + desiredDir.y * checkDist
+      );
+      
+      this.wrapPosition(checkPos);
+      
+      // Obstacle check with margin
+      for (let obstacle of obstacles) {
+        const bounds = obstacle.getBounds();
+        const margin = 15;
+        if (checkPos.x > bounds.x - margin && checkPos.x < bounds.x + bounds.width + margin &&
+            checkPos.y > bounds.y - margin && checkPos.y < bounds.y + bounds.height + margin) {
+          return false;
+        }
+      }
+      
+      // Snake check with appropriate starting index
+      for (let snake of allSnakes) {
+        if (!snake.isAlive) continue;
+        const startIdx = snake === this.snake ? 20 : 3;
+        
+        for (let j = startIdx; j < snake.segments.length; j++) {
+          const segment = snake.segments[j];
+          if (this.p.dist(checkPos.x, checkPos.y, segment.x, segment.y) < SEGMENT_SIZE * 2.5) {
+            return false;
+          }
+        }
+      }
+    }
+    
+    return true;
+  }
+
+  avoidDanger(dangerInfo, allSnakes, obstacles, lookAhead) {
+    const head = this.snake.getHead();
+    
+    // Try multiple escape angles with wider range
+    const testAngles = [-0.1, 0.1, -0.2, 0.2, -0.35, 0.35, -0.5, 0.5, -0.7, 0.7, -0.9, 0.9];
+    let bestAngle = null;
+    let bestScore = -Infinity;
+    
+    for (let angle of testAngles) {
+      const testDir = this.snake.direction.copy();
+      testDir.rotate(angle);
+      testDir.normalize();
+      
+      const score = this.scoreDirection(testDir, allSnakes, obstacles, head, lookAhead);
+      
+      if (score > bestScore) {
+        bestScore = score;
+        bestAngle = angle;
+      }
+    }
+    
+    // Turn in the best direction with urgency
+    if (bestAngle !== null) {
+      if (bestAngle < 0) {
+        this.snake.turnLeft();
+      } else {
+        this.snake.turnRight();
+      }
+      
+      // Extra turn if danger is very close
+      if (dangerInfo.closestDanger && dangerInfo.closestDanger.distance < 30) {
+        if (bestAngle < 0) {
+          this.snake.turnLeft();
+        } else {
+          this.snake.turnRight();
+        }
+      }
+    }
+  }
+
+  scoreDirection(direction, allSnakes, obstacles, startPos, lookAhead) {
+    let score = 150; // Higher base score
+    const testDistance = lookAhead * 1.2; // Look further ahead
+    
+    // Check multiple points along this direction
+    const steps = 6;
+    for (let i = 1; i <= steps; i++) {
+      const dist = (testDistance / steps) * i;
+      const pos = this.p.createVector(
+        startPos.x + direction.x * dist,
+        startPos.y + direction.y * dist
+      );
+      
+      this.wrapPosition(pos);
+      
+      // Penalty for obstacles - higher penalty for closer ones
+      for (let obstacle of obstacles) {
+        const bounds = obstacle.getBounds();
+        const centerX = bounds.x + bounds.width / 2;
+        const centerY = bounds.y + bounds.height / 2;
+        const obstacleDist = this.p.dist(pos.x, pos.y, centerX, centerY);
+        
+        if (obstacleDist < 60) {
+          const penalty = (60 - obstacleDist) * 3;
+          score -= penalty;
+        }
+      }
+      
+      // Penalty for snake bodies - weighted by distance
+      for (let snake of allSnakes) {
+        if (!snake.isAlive) continue;
+        const startIdx = snake === this.snake ? 20 : 0;
+        
+        for (let j = startIdx; j < snake.segments.length; j++) {
+          const segment = snake.segments[j];
+          const segmentDist = this.p.dist(pos.x, pos.y, segment.x, segment.y);
+          
+          if (segmentDist < SEGMENT_SIZE * 4) {
+            const penalty = (SEGMENT_SIZE * 4 - segmentDist) * 6;
+            score -= penalty;
+          }
+        }
+      }
+      
+      // Bonus for open space further ahead
+      if (i > steps / 2) {
+        score += 5;
+      }
+    }
+    
+    return score;
+  }
+
+  findSafeDirection(allSnakes, obstacles, lookAhead) {
+    const head = this.snake.getHead();
+    const testAngles = [-0.08, 0.08, -0.15, 0.15, -0.25, 0.25];
+    let bestAngle = 0;
+    let bestScore = -Infinity;
+    
+    for (let angle of testAngles) {
+      const testDir = this.snake.direction.copy();
+      testDir.rotate(angle);
+      testDir.normalize();
+      
+      const score = this.scoreDirection(testDir, allSnakes, obstacles, head, lookAhead);
+      
+      if (score > bestScore) {
+        bestScore = score;
+        bestAngle = angle;
+      }
+    }
+    
+    if (Math.abs(bestAngle) > 0.05) {
+      if (bestAngle < 0) {
+        this.snake.turnLeft();
+      } else {
+        this.snake.turnRight();
+      }
+    }
+  }
+
+  findCutoffTarget(allSnakes) {
+    const head = this.snake.getHead();
+    let bestTarget = null;
+    let bestScore = -Infinity;
+    
+    for (let otherSnake of allSnakes) {
+      if (otherSnake === this.snake || !otherSnake.isAlive) continue;
+      
+      const otherHead = otherSnake.getHead();
+      const dist = this.p.dist(head.x, head.y, otherHead.x, otherHead.y);
+      
+      // Look for snakes at optimal cutoff distance
+      if (dist > 50 && dist < 150) {
+        // Predict their future position more accurately
+        const predictionDistance = 50 + (dist * 0.3);
+        const predictedPos = this.p.createVector(
+          otherHead.x + otherSnake.direction.x * predictionDistance,
+          otherHead.y + otherSnake.direction.y * predictionDistance
+        );
+        
+        this.wrapPosition(predictedPos);
+        
+        // Score based on: closer is better, bigger snakes are better targets if we're bigger
+        const sizeAdvantage = this.snake.segments.length - otherSnake.segments.length;
+        const score = (150 - dist) + (sizeAdvantage > 0 ? sizeAdvantage * 2 : sizeAdvantage * 0.5);
+        
+        if (score > bestScore) {
+          bestScore = score;
+          bestTarget = predictedPos;
+        }
+      }
+    }
+    
+    return bestTarget;
+  }
+
+  moveTowards(target) {
+    const head = this.snake.getHead();
+    const desired = this.p.createVector(target.x - head.x, target.y - head.y);
+    
+    // Handle wrapping for shortest path
+    if (Math.abs(desired.x) > CANVAS_WIDTH / 2) {
+      desired.x = desired.x > 0 ? desired.x - CANVAS_WIDTH : desired.x + CANVAS_WIDTH;
+    }
+    if (Math.abs(desired.y) > CANVAS_HEIGHT / 2) {
+      desired.y = desired.y > 0 ? desired.y - CANVAS_HEIGHT : desired.y + CANVAS_HEIGHT;
+    }
+    
+    desired.normalize();
+    
+    const currentAngle = Math.atan2(this.snake.direction.y, this.snake.direction.x);
+    const desiredAngle = Math.atan2(desired.y, desired.x);
+    let angleDiff = desiredAngle - currentAngle;
+    
+    // Normalize angle difference to [-PI, PI]
+    while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
+    while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
+    
+    // Turn more smoothly
+    const turnThreshold = 0.05;
+    if (Math.abs(angleDiff) > turnThreshold) {
+      if (angleDiff < 0) {
+        this.snake.turnLeft();
+      } else {
+        this.snake.turnRight();
+      }
+    }
+  }
+}
+</file>
+
+<file name="game.js">
+// game.js - Main game logic
+
+import { 
+  gameState, 
+  CANVAS_WIDTH, 
+  CANVAS_HEIGHT, 
+  TARGET_FPS,
+  PHASE_START,
+  PHASE_PLAYING,
+  PHASE_PAUSED,
+  PHASE_GAME_OVER_WIN,
+  PHASE_GAME_OVER_LOSE,
+  PHASE_LEVEL_COMPLETE,
+  CONTROL_HUMAN,
+  LEVEL_CONFIGS,
+  PELLET_VALUE,
+  MASS_VALUE,
+  SURVIVAL_BONUS_INTERVAL,
+  SURVIVAL_BONUS_POINTS,
+  LEVEL_COMPLETE_BONUS,
+  BOOST_COST,
+} from './globals.js';
+
+import { Snake } from './entities.js';
+import { AIController } from './ai.js';
+import { 
+  checkSnakePelletCollision,
+  checkSnakeMassCollision,
+  checkSnakeBodyCollision,
+  checkSnakeObstacleCollision,
+} from './collision.js';
+import {
+  spawnPlayer,
+  spawnAISnakes,
+  spawnPellets,
+  spawnMassDrops,
+  spawnObstacles,
+} from './spawner.js';
+import { getTestAction } from './testing.js';
+import { renderUI, renderArena } from './ui.js';
+
+const p5 = window.p5;
+let aiControllers = [];
+let enterKeyPressed = false;
+
+let gameInstance = new p5(p => {
+  // Initialize logs
+  p.logs = {
+    game_info: [],
+    inputs: [],
+    player_info: []
+  };
+
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(TARGET_FPS);
+    p.randomSeed(42);
+    
+    logGameInfo('Game initialized', { phase: gameState.gamePhase });
+    
+    // Add global keyboard event listener for more reliable Enter key handling
+    document.addEventListener('keydown', function(event) {
+      if (event.key === 'Enter' || event.keyCode === 13) {
+        if (gameState.gamePhase === PHASE_LEVEL_COMPLETE) {
+          event.preventDefault();
+          logGameInfo('Global Enter handler: Level complete screen', { 
+            currentLevel: gameState.currentLevel 
+          });
+          advanceToNextLevel();
+        } else if (gameState.gamePhase === PHASE_START) {
+          event.preventDefault();
+          logGameInfo('Global Enter handler: Start screen');
+          initializeLevel(1);
+        }
+      }
+    });
+  };
+
+  p.draw = function() {
+    if (gameState.gamePhase === PHASE_START) {
+      renderUI(p);
+    } else if (gameState.gamePhase === PHASE_PLAYING) {
+      updateGame();
+      renderGame();
+    } else if (gameState.gamePhase === PHASE_PAUSED) {
+      renderGame();
+      renderUI(p);
+    } else if (gameState.gamePhase === PHASE_GAME_OVER_WIN || 
+               gameState.gamePhase === PHASE_GAME_OVER_LOSE ||
+               gameState.gamePhase === PHASE_LEVEL_COMPLETE) {
+      renderUI(p);
+    }
+    
+    // Reset enter key flag at end of frame
+    enterKeyPressed = false;
+  };
+
+  p.keyPressed = function() {
+    logInput('keyPressed', { key: p.key, keyCode: p.keyCode });
+
+    if (p.keyCode === 13) { // ENTER
+      if (enterKeyPressed) return false; // Prevent double-trigger within same frame
+      enterKeyPressed = true;
+      
+      if (gameState.gamePhase === PHASE_START) {
+        logGameInfo('Starting game from START screen', { level: 1 });
+        initializeLevel(1);
+      } else if (gameState.gamePhase === PHASE_LEVEL_COMPLETE) {
+        logGameInfo('Player pressed ENTER on level complete screen', { 
+          currentLevel: gameState.currentLevel 
+        });
+        advanceToNextLevel();
+      }
+      return false;
+    } else if (p.keyCode === 27) { // ESC
+      if (gameState.gamePhase === PHASE_PLAYING) {
+        gameState.gamePhase = PHASE_PAUSED;
+        logGameInfo('Game paused', { phase: gameState.gamePhase });
+      } else if (gameState.gamePhase === PHASE_PAUSED) {
+        gameState.gamePhase = PHASE_PLAYING;
+        logGameInfo('Game resumed', { phase: gameState.gamePhase });
+      }
+    } else if (p.keyCode === 82) { // R
+      if (gameState.gamePhase === PHASE_PAUSED ||
+          gameState.gamePhase === PHASE_GAME_OVER_WIN ||
+          gameState.gamePhase === PHASE_GAME_OVER_LOSE ||
+          gameState.gamePhase === PHASE_LEVEL_COMPLETE) {
+        resetToMainMenu();
+      }
+    }
+  };
+
+  function handlePlayerInput() {
+    if (!gameState.player || !gameState.player.isAlive) return;
+
+    // Continuous turning - check if keys are held down
+    if (p.keyIsDown(37) || p.keyIsDown(65)) { // LEFT or A
+      gameState.player.turnLeft();
+    }
+    if (p.keyIsDown(39) || p.keyIsDown(68)) { // RIGHT or D
+      gameState.player.turnRight();
+    }
+    
+    // Boost
+    if (p.keyIsDown(32) || p.keyIsDown(16)) { // SPACE or SHIFT
+      if (gameState.player.activateBoost()) {
+        const ejected = gameState.player.ejectMass(BOOST_COST);
+        const newMass = spawnMassDrops(p, ejected.map(e => e.pos), gameState.player.color);
+        gameState.massDrops.push(...newMass);
+      }
+    } else {
+      gameState.player.deactivateBoost();
+    }
+  }
+
+  function initializeLevel(levelNumber) {
+    logGameInfo('Initializing level', { 
+      level: levelNumber, 
+      previousPhase: gameState.gamePhase,
+      currentScore: gameState.score 
+    });
+    
+    const config = LEVEL_CONFIGS[levelNumber];
+    
+    if (!config) {
+      logGameInfo('ERROR: Invalid level number', { level: levelNumber });
+      return;
+    }
+    
+    // Preserve score when advancing levels (only reset on level 1 from start screen)
+    const preservedScore = (levelNumber === 1 && gameState.gamePhase === PHASE_START) ? 0 : gameState.score;
+    
+    // Set level state
+    gameState.currentLevel = levelNumber;
+    gameState.score = preservedScore;
+    gameState.gamePhase = PHASE_PLAYING;
+    gameState.targetLength = config.targetLength;
+    gameState.framesSurvived = 0;
+    gameState.lastSurvivalBonus = 0;
+    gameState.testModeTimer = 0;
+    
+    // Clear all entities
+    clearEntities();
+    
+    // Spawn new entities for this level
+    spawnLevelEntities(config);
+    
+    gameState.playerLength = gameState.player.getLength();
+    
+    logGameInfo('Level initialized successfully', { 
+      phase: gameState.gamePhase, 
+      level: levelNumber,
+      targetLength: config.targetLength,
+      playerLength: gameState.playerLength,
+      aiCount: gameState.aiSnakes.length,
+      score: gameState.score
+    });
+    logPlayerInfo();
+  }
+
+  function clearEntities() {
+    gameState.entities = [];
+    gameState.aiSnakes = [];
+    gameState.pellets = [];
+    gameState.massDrops = [];
+    gameState.obstacles = [];
+    gameState.player = null;
+    aiControllers = [];
+  }
+
+  function spawnLevelEntities(config) {
+    // Spawn player
+    gameState.player = spawnPlayer(p, config, gameState.playerSkinColor);
+    gameState.entities = [gameState.player];
+    
+    // Spawn AI snakes
+    gameState.aiSnakes = spawnAISnakes(p, config);
+    gameState.entities.push(...gameState.aiSnakes);
+    
+    // Spawn obstacles
+    gameState.obstacles = spawnObstacles(p, config);
+    
+    // Spawn pellets
+    gameState.pellets = spawnPellets(p, config.pelletDensity, [], gameState.obstacles);
+    
+    // Create AI controllers
+    aiControllers = [];
+    for (let snake of gameState.aiSnakes) {
+      aiControllers.push(new AIController(p, snake, config));
+    }
+  }
+
+  function advanceToNextLevel() {
+    const currentLevel = gameState.currentLevel;
+    
+    logGameInfo('Attempting to advance to next level', { 
+      currentLevel: currentLevel,
+      phase: gameState.gamePhase
+    });
+    
+    if (currentLevel >= 3) {
+      // All levels complete - show victory
+      gameState.gamePhase = PHASE_GAME_OVER_WIN;
+      logGameInfo('All levels complete - victory!', { 
+        finalScore: gameState.score 
+      });
+    } else {
+      // Advance to next level
+      const nextLevel = currentLevel + 1;
+      logGameInfo('Advancing to next level', { 
+        currentLevel: currentLevel, 
+        nextLevel: nextLevel,
+        score: gameState.score 
+      });
+      initializeLevel(nextLevel);
+    }
+  }
+
+  function resetToMainMenu() {
+    logGameInfo('Resetting to main menu', { previousPhase: gameState.gamePhase });
+    
+    gameState.gamePhase = PHASE_START;
+    gameState.currentLevel = 1;
+    gameState.score = 0;
+    gameState.playerLength = 0;
+    gameState.framesSurvived = 0;
+    gameState.lastSurvivalBonus = 0;
+    
+    clearEntities();
+    
+    logGameInfo('Reset complete', { phase: gameState.gamePhase });
+  }
+
+  function updateGame() {
+    if (!gameState.player) return;
+
+    const config = LEVEL_CONFIGS[gameState.currentLevel];
+
+    // Handle test mode input
+    if (gameState.controlMode !== CONTROL_HUMAN) {
+      const action = getTestAction(p);
+      if (action && gameState.player.isAlive) {
+        if (action.left) gameState.player.turnLeft();
+        if (action.right) gameState.player.turnRight();
+        if (action.boost && gameState.player.activateBoost()) {
+          const ejected = gameState.player.ejectMass(BOOST_COST);
+          const newMass = spawnMassDrops(p, ejected.map(e => e.pos), gameState.player.color);
+          gameState.massDrops.push(...newMass);
+        }
+      }
+    } else {
+      // Handle human input continuously for smooth turning
+      handlePlayerInput();
+    }
+
+    // Update player
+    if (gameState.player.isAlive) {
+      gameState.player.update();
+    }
+
+    // Update AI snakes
+    const allSnakes = [gameState.player, ...gameState.aiSnakes];
+    for (let i = 0; i < aiControllers.length; i++) {
+      const controller = aiControllers[i];
+      const snake = gameState.aiSnakes[i];
+      
+      if (snake.isAlive) {
+        controller.update(gameState.pellets, gameState.massDrops, allSnakes, gameState.obstacles);
+        snake.update();
+      }
+    }
+
+    // Update obstacles
+    for (let obstacle of gameState.obstacles) {
+      obstacle.update();
+    }
+
+    // Update pellets
+    for (let pellet of gameState.pellets) {
+      pellet.update();
+    }
+
+    // Check collisions for player
+    if (gameState.player.isAlive) {
+      // Pellets
+      const collectedPellets = checkSnakePelletCollision(p, gameState.player, gameState.pellets);
+      for (let pellet of collectedPellets) {
+        gameState.player.grow(1);
+        gameState.score += PELLET_VALUE;
+      }
+
+      // Mass
+      const collectedMass = checkSnakeMassCollision(p, gameState.player, gameState.massDrops);
+      for (let mass of collectedMass) {
+        gameState.player.grow(1);
+        gameState.score += MASS_VALUE;
+      }
+
+      // Body collisions
+      if (checkSnakeBodyCollision(p, gameState.player, allSnakes)) {
+        gameState.player.isAlive = false;
+        gameState.gamePhase = PHASE_GAME_OVER_LOSE;
+        logGameInfo('Player defeated - body collision', { 
+          phase: gameState.gamePhase,
+          finalScore: gameState.score
+        });
+      }
+
+      // Obstacle collisions
+      if (checkSnakeObstacleCollision(p, gameState.player, gameState.obstacles)) {
+        gameState.player.isAlive = false;
+        gameState.gamePhase = PHASE_GAME_OVER_LOSE;
+        logGameInfo('Player defeated - obstacle collision', { 
+          phase: gameState.gamePhase,
+          finalScore: gameState.score
+        });
+      }
+    }
+
+    // Check collisions for AI snakes
+    for (let i = gameState.aiSnakes.length - 1; i >= 0; i--) {
+      const snake = gameState.aiSnakes[i];
+      if (!snake.isAlive) continue;
+
+      // Pellets
+      const collectedPellets = checkSnakePelletCollision(p, snake, gameState.pellets);
+      for (let pellet of collectedPellets) {
+        snake.grow(1);
+      }
+
+      // Mass
+      const collectedMass = checkSnakeMassCollision(p, snake, gameState.massDrops);
+      for (let mass of collectedMass) {
+        snake.grow(1);
+      }
+
+      // Body collisions and obstacle collisions
+      if (checkSnakeBodyCollision(p, snake, allSnakes) ||
+          checkSnakeObstacleCollision(p, snake, gameState.obstacles)) {
+        const mass = snake.explode();
+        const newMass = spawnMassDrops(p, mass.map(m => m.pos), snake.color);
+        gameState.massDrops.push(...newMass);
+        gameState.aiSnakes.splice(i, 1);
+        aiControllers.splice(i, 1);
+      }
+    }
+
+    // Maintain pellet density
+    gameState.pellets = spawnPellets(p, config.pelletDensity, gameState.pellets, gameState.obstacles);
+
+    // Update player length and check win condition
+    if (gameState.player && gameState.player.isAlive) {
+      gameState.playerLength = gameState.player.getLength();
+      
+      // Check if level target is reached - ONLY call handleLevelComplete if still in PLAYING phase
+      if (gameState.playerLength >= config.targetLength && gameState.gamePhase === PHASE_PLAYING) {
+        handleLevelComplete();
+      }
+
+      // Survival bonus
+      gameState.framesSurvived++;
+      if (gameState.framesSurvived - gameState.lastSurvivalBonus >= SURVIVAL_BONUS_INTERVAL) {
+        gameState.score += SURVIVAL_BONUS_POINTS;
+        gameState.lastSurvivalBonus = gameState.framesSurvived;
+      }
+
+      // Log player info periodically
+      if (p.frameCount % 60 === 0) {
+        logPlayerInfo();
+      }
+    }
+  }
+
+  function handleLevelComplete() {
+    // Award level completion bonus
+    gameState.score += LEVEL_COMPLETE_BONUS;
+    
+    const currentLevel = gameState.currentLevel;
+    
+    if (currentLevel === 3) {
+      // Final level completed - instant win
+      gameState.gamePhase = PHASE_GAME_OVER_WIN;
+      logGameInfo('Final level complete - Game won!', { 
+        phase: gameState.gamePhase,
+        finalScore: gameState.score
+      });
+    } else {
+      // Level completed - show completion screen
+      gameState.gamePhase = PHASE_LEVEL_COMPLETE;
+      logGameInfo('Level complete - awaiting player input', { 
+        phase: gameState.gamePhase,
+        level: currentLevel,
+        score: gameState.score,
+        nextLevel: currentLevel + 1
+      });
+    }
+  }
+
+  function renderGame() {
+    renderArena(p);
+
+    // Render obstacles
+    for (let obstacle of gameState.obstacles) {
+      obstacle.render();
+    }
+
+    // Render pellets
+    for (let pellet of gameState.pellets) {
+      pellet.render();
+    }
+
+    // Render mass drops
+    for (let mass of gameState.massDrops) {
+      mass.render();
+    }
+
+    // Render snakes (AI first, then player on top)
+    for (let snake of gameState.aiSnakes) {
+      snake.render();
+    }
+    if (gameState.player) {
+      gameState.player.render();
+    }
+
+    // Render UI
+    renderUI(p);
+  }
+
+  function logGameInfo(message, data) {
+    p.logs.game_info.push({
+      message,
+      data,
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+
+  function logInput(inputType, data) {
+    p.logs.inputs.push({
+      input_type: inputType,
+      data,
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+
+  function logPlayerInfo() {
+    if (!gameState.player) return;
+    
+    const head = gameState.player.getHead();
+    p.logs.player_info.push({
+      screen_x: head.x,
+      screen_y: head.y,
+      game_x: head.x,
+      game_y: head.y,
+      length: gameState.playerLength,
+      score: gameState.score,
+      framecount: p.frameCount
+    });
+  }
+});
+
+// Expose game instance and state
+window.gameInstance = gameInstance;
+window.getGameState = function() {
+  return gameState;
+};
+
+// Control mode switching
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  gameState.testModeTimer = 0;
+  
+  // Update button states
+  const buttons = ['humanModeBtn', 'test_1_ModeBtn', 'test_2_ModeBtn'];
+  buttons.forEach(btnId => {
+    const btn = document.getElementById(btnId);
+    if (btn) {
+      btn.classList.remove('active');
+    }
+  });
+  
+  const modeMap = {
+    'HUMAN': 'humanModeBtn',
+    'TEST_1': 'test_1_ModeBtn',
+    'TEST_2': 'test_2_ModeBtn'
+  };
+  
+  const activeBtn = document.getElementById(modeMap[mode]);
+  if (activeBtn) {
+    activeBtn.classList.add('active');
+  }
+};
+</file>
+
+<file name="ui.js">
+// ui.js - UI rendering
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, PHASE_START, PHASE_PLAYING, PHASE_PAUSED, PHASE_GAME_OVER_WIN, PHASE_GAME_OVER_LOSE, PHASE_LEVEL_COMPLETE, LEVEL_CONFIGS } from './globals.js';
+
+export function renderUI(p) {
+  if (gameState.gamePhase === PHASE_START) {
+    renderStartScreen(p);
+  } else if (gameState.gamePhase === PHASE_PLAYING) {
+    renderPlayingUI(p);
+  } else if (gameState.gamePhase === PHASE_PAUSED) {
+    renderPlayingUI(p);
+    renderPausedOverlay(p);
+  } else if (gameState.gamePhase === PHASE_LEVEL_COMPLETE) {
+    renderLevelCompleteScreen(p);
+  } else if (gameState.gamePhase === PHASE_GAME_OVER_LOSE) {
+    renderGameOverScreen(p, false);
+  } else if (gameState.gamePhase === PHASE_GAME_OVER_WIN) {
+    renderGameOverScreen(p, true);
+  }
+}
+
+function renderStartScreen(p) {
+  p.background(34, 34, 34);
+  
+  // Title
+  p.fill(255);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text('SNAKE.IO', CANVAS_WIDTH / 2, 80);
+  
+  // Subtitle
+  p.textSize(20);
+  p.fill(150, 220, 50);
+  p.text('Multiplayer Survival', CANVAS_WIDTH / 2, 120);
+  
+  // Instructions
+  p.textSize(16);
+  p.fill(200);
+  p.textAlign(p.CENTER, p.TOP);
+  
+  const instructions = [
+    'OBJECTIVE:',
+    'Grow your snake by eating pellets and defeating AI opponents.',
+    'Reach the target length to complete each level!',
+    '',
+    'CONTROLS:',
+    'Arrow Keys: Turn Left/Right',
+    'Space/Shift: Speed Boost (costs mass)',
+    'ESC: Pause',
+    '',
+    'LEVELS:',
+    'Level 1: Reach 50 length',
+    'Level 2: Reach 120 length',
+    'Level 3: Reach 250 length',
+  ];
+  
+  let yPos = 170;
+  for (let line of instructions) {
+    if (line.includes('OBJECTIVE') || line.includes('CONTROLS') || line.includes('LEVELS')) {
+      p.fill(150, 220, 50);
+    } else {
+      p.fill(200);
+    }
+    p.text(line, CANVAS_WIDTH / 2, yPos);
+    yPos += 20;
+  }
+  
+  // Press Enter prompt
+  p.textSize(24);
+  p.fill(255, 220, 0);
+  const alpha = p.map(p.sin(p.frameCount * 0.1), -1, 1, 100, 255);
+  p.fill(255, 220, 0, alpha);
+  p.text('PRESS ENTER TO START', CANVAS_WIDTH / 2, CANVAS_HEIGHT - 40);
+}
+
+function renderPlayingUI(p) {
+  // Score and length
+  p.fill(255);
+  p.textAlign(p.LEFT, p.TOP);
+  p.textSize(16);
+  p.text(`SCORE: ${gameState.score} | LENGTH: ${gameState.playerLength}`, 10, 10);
+  
+  // Level
+  p.textAlign(p.RIGHT, p.TOP);
+  const config = LEVEL_CONFIGS[gameState.currentLevel];
+  p.text(`LEVEL ${gameState.currentLevel}: ${config.name}`, CANVAS_WIDTH - 10, 10);
+  
+  // Target length progress
+  p.textAlign(p.CENTER, p.TOP);
+  p.textSize(14);
+  p.fill(150, 220, 50);
+  p.text(`Target: ${gameState.playerLength}/${config.targetLength}`, CANVAS_WIDTH / 2, 10);
+  
+  // Progress bar
+  const barWidth = 200;
+  const barHeight = 8;
+  const barX = (CANVAS_WIDTH - barWidth) / 2;
+  const barY = 30;
+  
+  p.fill(60);
+  p.rect(barX, barY, barWidth, barHeight);
+  
+  const progress = Math.min(gameState.playerLength / config.targetLength, 1);
+  p.fill(150, 220, 50);
+  p.rect(barX, barY, barWidth * progress, barHeight);
+}
+
+function renderPausedOverlay(p) {
+  p.fill(0, 0, 0, 150);
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  p.fill(255);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text('PAUSED', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 40);
+  
+  p.textSize(20);
+  p.text('Press ESC to resume', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 20);
+  p.text('Press R to restart', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 50);
+}
+
+function renderLevelCompleteScreen(p) {
+  p.background(34, 34, 34);
+  
+  // Title
+  p.fill(100, 220, 100);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text('LEVEL COMPLETE!', CANVAS_WIDTH / 2, 80);
+  
+  // Level info
+  const config = LEVEL_CONFIGS[gameState.currentLevel];
+  p.textSize(24);
+  p.fill(150, 220, 50);
+  p.text(`${config.name} Conquered!`, CANVAS_WIDTH / 2, 130);
+  
+  // Stats
+  p.textSize(20);
+  p.fill(255);
+  p.text(`Score: ${gameState.score}`, CANVAS_WIDTH / 2, 180);
+  p.text(`Final Length: ${gameState.playerLength}`, CANVAS_WIDTH / 2, 210);
+  
+  // Next level preview
+  if (gameState.currentLevel < 3) {
+    const nextConfig = LEVEL_CONFIGS[gameState.currentLevel + 1];
+    p.textSize(18);
+    p.fill(200);
+    p.text(`Next: Level ${gameState.currentLevel + 1} - ${nextConfig.name}`, CANVAS_WIDTH / 2, 260);
+    p.textSize(16);
+    p.fill(150);
+    p.text(`Target Length: ${nextConfig.targetLength}`, CANVAS_WIDTH / 2, 285);
+    p.text(`AI Opponents: ${nextConfig.aiCount}`, CANVAS_WIDTH / 2, 305);
+  } else {
+    p.textSize(20);
+    p.fill(255, 220, 0);
+    p.text('Final Level Ahead!', CANVAS_WIDTH / 2, 260);
+  }
+  
+  // Instructions - pulsing effect
+  p.textSize(28);
+  const alpha = p.map(p.sin(p.frameCount * 0.1), -1, 1, 150, 255);
+  p.fill(255, 220, 0, alpha);
+  p.text('>>> PRESS ENTER TO CONTINUE <<<', CANVAS_WIDTH / 2, CANVAS_HEIGHT - 50);
+}
+
+function renderGameOverScreen(p, isWin) {
+  p.background(34, 34, 34);
+  
+  // Title
+  p.fill(isWin ? [100, 220, 100] : [220, 100, 100]);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  
+  if (isWin) {
+    p.text('VICTORY!', CANVAS_WIDTH / 2, 100);
+    p.textSize(24);
+    p.fill(150, 220, 50);
+    p.text('All levels conquered!', CANVAS_WIDTH / 2, 150);
+  } else {
+    p.text('GAME OVER', CANVAS_WIDTH / 2, 100);
+  }
+  
+  // Score
+  p.textSize(32);
+  p.fill(255);
+  p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, 200);
+  p.text(`Final Length: ${gameState.playerLength}`, CANVAS_WIDTH / 2, 240);
+  
+  // Level info
+  p.textSize(20);
+  p.fill(200);
+  p.text(`Level Reached: ${gameState.currentLevel}`, CANVAS_WIDTH / 2, 280);
+  
+  // Instructions
+  p.textSize(24);
+  p.fill(255, 220, 0);
+  const alpha = p.map(p.sin(p.frameCount * 0.1), -1, 1, 100, 255);
+  p.fill(255, 220, 0, alpha);
+  p.text('PRESS R TO RESTART', CANVAS_WIDTH / 2, CANVAS_HEIGHT - 40);
+}
+
+export function renderArena(p) {
+  // Dark background
+  p.background(34, 34, 34);
+  
+  // Grid pattern
+  p.stroke(50, 50, 50);
+  p.strokeWeight(1);
+  const gridSize = 20;
+  for (let x = 0; x < CANVAS_WIDTH; x += gridSize) {
+    p.line(x, 0, x, CANVAS_HEIGHT);
+  }
+  for (let y = 0; y < CANVAS_HEIGHT; y += gridSize) {
+    p.line(0, y, CANVAS_WIDTH, y);
+  }
+  p.noStroke();
+  
+  // Boundary
+  p.noFill();
+  p.stroke(150, 150, 150);
+  p.strokeWeight(3);
+  p.rect(20, 20, CANVAS_WIDTH - 40, CANVAS_HEIGHT - 40);
+  p.noStroke();
+}
+</file>
+
+<file name="collision.js">
+// collision.js - Collision detection
+
+import { SEGMENT_SIZE, CANVAS_WIDTH, CANVAS_HEIGHT, COLLISION_BUFFER } from './globals.js';
+
+export function checkSnakePelletCollision(p, snake, pellets) {
+  const head = snake.getHead();
+  const collectedPellets = [];
+  
+  for (let i = pellets.length - 1; i >= 0; i--) {
+    const pellet = pellets[i];
+    const dist = p.dist(head.x, head.y, pellet.pos.x, pellet.pos.y);
+    
+    if (dist < SEGMENT_SIZE + pellet.size) {
+      collectedPellets.push(pellet);
+      pellets.splice(i, 1);
+    }
+  }
+  
+  return collectedPellets;
+}
+
+export function checkSnakeMassCollision(p, snake, massDrops) {
+  const head = snake.getHead();
+  const collectedMass = [];
+  
+  for (let i = massDrops.length - 1; i >= 0; i--) {
+    const mass = massDrops[i];
+    const dist = p.dist(head.x, head.y, mass.pos.x, mass.pos.y);
+    
+    if (dist < SEGMENT_SIZE + mass.size) {
+      collectedMass.push(mass);
+      massDrops.splice(i, 1);
+    }
+  }
+  
+  return collectedMass;
+}
+
+export function checkSnakeBodyCollision(p, snake, otherSnakes) {
+  const head = snake.getHead();
+  
+  // Check collision with other snakes
+  for (let otherSnake of otherSnakes) {
+    if (!otherSnake.isAlive) continue;
+    
+    const startIdx = otherSnake === snake ? 10 : 0;
+    
+    for (let i = startIdx; i < otherSnake.segments.length; i++) {
+      const segment = otherSnake.segments[i];
+      const dist = p.dist(head.x, head.y, segment.x, segment.y);
+      
+      if (dist < SEGMENT_SIZE - COLLISION_BUFFER) {
+        return true;
+      }
+    }
+  }
+  
+  return false;
+}
+
+export function checkSnakeBoundaryCollision(snake) {
+  // NOTE: Boundary collision is DISABLED - Pac-Man style wrapping is now enabled
+  // Boundaries no longer kill snakes; they wrap around to the opposite side
+  // This function is kept for compatibility but always returns false
+  return false;
+}
+
+export function checkSnakeObstacleCollision(p, snake, obstacles) {
+  const head = snake.getHead();
+  
+  for (let obstacle of obstacles) {
+    const bounds = obstacle.getBounds();
+    
+    if (collideCircleRect(
+      head.x, head.y, SEGMENT_SIZE,
+      bounds.x, bounds.y, bounds.width, bounds.height
+    )) {
+      return true;
+    }
+  }
+  
+  return false;
+}
+
+// Custom circle-rect collision detection
+function collideCircleRect(cx, cy, diameter, rx, ry, rw, rh) {
+  const radius = diameter / 2;
+  
+  // Find the closest point on the rectangle to the circle
+  const closestX = Math.max(rx, Math.min(cx, rx + rw));
+  const closestY = Math.max(ry, Math.min(cy, ry + rh));
+  
+  // Calculate the distance between the circle's center and this closest point
+  const distanceX = cx - closestX;
+  const distanceY = cy - closestY;
+  
+  // If the distance is less than the circle's radius, there's a collision
+  const distanceSquared = (distanceX * distanceX) + (distanceY * distanceY);
+  return distanceSquared < (radius * radius);
+}
+</file>
+
+<file name="testing.js">
+// testing.js - Automated testing controllers
+
+import { gameState, CONTROL_TEST_1, CONTROL_TEST_2 } from './globals.js';
+
+export function getTestAction(p) {
+  if (gameState.controlMode === CONTROL_TEST_1) {
+    return getTest1Action(p);
+  } else if (gameState.controlMode === CONTROL_TEST_2) {
+    return getTest2Action(p);
+  }
+  return null;
+}
+
+function getTest1Action(p) {
+  // Basic testing - move around and collect pellets
+  gameState.testModeTimer++;
+  
+  if (gameState.testModeTimer % 120 < 60) {
+    return { left: true, right: false, boost: false };
+  } else {
+    return { left: false, right: true, boost: false };
+  }
+}
+
+function getTest2Action(p) {
+  // Win mode - aggressively collect and boost
+  if (!gameState.player || !gameState.player.isAlive) {
+    return { left: false, right: false, boost: false };
+  }
+  
+  const head = gameState.player.getHead();
+  
+  // Find nearest food
+  const allFood = [...gameState.pellets, ...gameState.massDrops];
+  let nearestFood = null;
+  let nearestDist = Infinity;
+  
+  for (let food of allFood) {
+    const dist = p.dist(head.x, head.y, food.pos.x, food.pos.y);
+    if (dist < nearestDist) {
+      nearestDist = dist;
+      nearestFood = food;
+    }
+  }
+  
+  if (!nearestFood) {
+    return { left: false, right: false, boost: false };
+  }
+  
+  // Calculate angle to food
+  const desired = p.createVector(nearestFood.pos.x - head.x, nearestFood.pos.y - head.y);
+  desired.normalize();
+  
+  const angleDiff = gameState.player.direction.angleBetween(desired);
+  
+  const shouldBoost = nearestDist > 100 && gameState.player.segments.length > 20;
+  
+  if (Math.abs(angleDiff) > 0.3) {
+    return {
+      left: angleDiff < 0,
+      right: angleDiff > 0,
+      boost: false
+    };
+  }
+  
+  return { left: false, right: false, boost: shouldBoost };
+}
+</file>
+
+<file name="entities.js">
+// entities.js - Entity classes
+
+import { SEGMENT_SIZE, BASE_SPEED, BOOST_SPEED, BOOST_COST, MIN_BOOST_LENGTH, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export class Snake {
+  constructor(p, x, y, length, color, isPlayer = false) {
+    this.p = p;
+    this.segments = [];
+    this.direction = p.createVector(1, 0);
+    this.speed = BASE_SPEED;
+    this.baseSpeed = BASE_SPEED;
+    this.color = color;
+    this.isPlayer = isPlayer;
+    this.isBoosting = false;
+    this.isAlive = true;
+    this.turnRate = 0.08; // Smaller turn rate for smoother curves
+    
+    // Initialize segments
+    for (let i = 0; i < length; i++) {
+      this.segments.push(p.createVector(x - i * SEGMENT_SIZE, y));
+    }
+  }
+
+  getHead() {
+    return this.segments[0];
+  }
+
+  getLength() {
+    return this.segments.length;
+  }
+
+  turnLeft() {
+    if (!this.isAlive) return;
+    // Rotate direction by small angle for smooth turning
+    const angle = -this.turnRate;
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    const newX = this.direction.x * cos - this.direction.y * sin;
+    const newY = this.direction.x * sin + this.direction.y * cos;
+    this.direction.x = newX;
+    this.direction.y = newY;
+    this.direction.normalize();
+  }
+
+  turnRight() {
+    if (!this.isAlive) return;
+    // Rotate direction by small angle for smooth turning
+    const angle = this.turnRate;
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    const newX = this.direction.x * cos - this.direction.y * sin;
+    const newY = this.direction.x * sin + this.direction.y * cos;
+    this.direction.x = newX;
+    this.direction.y = newY;
+    this.direction.normalize();
+  }
+
+  activateBoost() {
+    if (!this.isAlive || this.segments.length < MIN_BOOST_LENGTH) return false;
+    this.isBoosting = true;
+    this.speed = BOOST_SPEED;
+    return true;
+  }
+
+  deactivateBoost() {
+    this.isBoosting = false;
+    this.speed = this.baseSpeed;
+  }
+
+  update() {
+    if (!this.isAlive) return;
+
+    // Move head
+    const head = this.getHead();
+    const newHead = this.p.createVector(
+      head.x + this.direction.x * this.speed,
+      head.y + this.direction.y * this.speed
+    );
+
+    // Wrap around boundaries (Pac-Man style)
+    if (newHead.x < 0) newHead.x = CANVAS_WIDTH;
+    if (newHead.x > CANVAS_WIDTH) newHead.x = 0;
+    if (newHead.y < 0) newHead.y = CANVAS_HEIGHT;
+    if (newHead.y > CANVAS_HEIGHT) newHead.y = 0;
+
+    // Add new head
+    this.segments.unshift(newHead);
+
+    // Remove tail (maintain length)
+    this.segments.pop();
+  }
+
+  grow(amount = 1) {
+    if (!this.isAlive) return;
+    
+    for (let i = 0; i < amount; i++) {
+      const tail = this.segments[this.segments.length - 1];
+      const beforeTail = this.segments[this.segments.length - 2] || tail;
+      const direction = this.p.createVector(tail.x - beforeTail.x, tail.y - beforeTail.y);
+      direction.normalize();
+      const newSegment = this.p.createVector(
+        tail.x + direction.x * SEGMENT_SIZE,
+        tail.y + direction.y * SEGMENT_SIZE
+      );
+      this.segments.push(newSegment);
+    }
+  }
+
+  ejectMass(count) {
+    if (!this.isAlive || this.segments.length <= count) return [];
+    
+    const ejected = [];
+    for (let i = 0; i < count && this.segments.length > MIN_BOOST_LENGTH; i++) {
+      const tail = this.segments.pop();
+      ejected.push({
+        pos: tail.copy(),
+        color: this.color,
+      });
+    }
+    return ejected;
+  }
+
+  explode() {
+    if (!this.isAlive) return [];
+    
+    this.isAlive = false;
+    const mass = [];
+    for (let segment of this.segments) {
+      mass.push({
+        pos: segment.copy(),
+        color: this.color,
+      });
+    }
+    return mass;
+  }
+
+  render() {
+    if (!this.isAlive) return;
+    
+    const p = this.p;
+    
+    // Draw body segments
+    for (let i = this.segments.length - 1; i >= 0; i--) {
+      const segment = this.segments[i];
+      const alpha = i === 0 ? 255 : 200;
+      
+      if (i === 0) {
+        // Head - slightly larger and darker
+        p.fill(this.color[0] * 0.7, this.color[1] * 0.7, this.color[2] * 0.7, alpha);
+        p.circle(segment.x, segment.y, SEGMENT_SIZE * 1.5);
+        
+        // Eyes
+        const eyeOffset = SEGMENT_SIZE * 0.4;
+        const eyeDir = this.direction.copy().normalize();
+        const eyePerpendicular = p.createVector(-eyeDir.y, eyeDir.x);
+        
+        p.fill(255);
+        p.circle(
+          segment.x + eyeDir.x * 2 + eyePerpendicular.x * eyeOffset,
+          segment.y + eyeDir.y * 2 + eyePerpendicular.y * eyeOffset,
+          3
+        );
+        p.circle(
+          segment.x + eyeDir.x * 2 - eyePerpendicular.x * eyeOffset,
+          segment.y + eyeDir.y * 2 - eyePerpendicular.y * eyeOffset,
+          3
+        );
+      } else {
+        // Body
+        p.fill(this.color[0], this.color[1], this.color[2], alpha);
+        p.circle(segment.x, segment.y, SEGMENT_SIZE);
+      }
+    }
+
+    // Boost visual effect
+    if (this.isBoosting && this.isPlayer) {
+      const tail = this.segments[this.segments.length - 1];
+      p.noFill();
+      p.stroke(255, 200, 0, 100);
+      p.strokeWeight(2);
+      p.circle(tail.x, tail.y, SEGMENT_SIZE * 2);
+      p.noStroke();
+    }
+  }
+}
+
+export class Pellet {
+  constructor(p, x, y, type = 'normal') {
+    this.p = p;
+    this.pos = p.createVector(x, y);
+    this.type = type;
+    this.glowPhase = 0;
+    this.size = type === 'normal' ? 5 : 4;
+    this.value = type === 'normal' ? 1 : 5;
+  }
+
+  update() {
+    this.glowPhase += 0.1;
+  }
+
+  render() {
+    const p = this.p;
+    const glowIntensity = p.map(p.sin(this.glowPhase), -1, 1, 150, 255);
+    
+    if (this.type === 'normal') {
+      // Glowing pellet
+      p.fill(255, 220, 0, 100);
+      p.circle(this.pos.x, this.pos.y, this.size * 2);
+      p.fill(255, 200, 0, glowIntensity);
+      p.circle(this.pos.x, this.pos.y, this.size);
+    } else {
+      // Mass (no glow)
+      p.fill(this.color || [150, 150, 150]);
+      p.circle(this.pos.x, this.pos.y, this.size);
+    }
+  }
+}
+
+export class MassDrop {
+  constructor(p, x, y, color) {
+    this.p = p;
+    this.pos = p.createVector(x, y);
+    this.color = color;
+    this.size = 4;
+    this.value = 5;
+  }
+
+  render() {
+    const p = this.p;
+    p.fill(this.color[0], this.color[1], this.color[2]);
+    p.circle(this.pos.x, this.pos.y, this.size);
+  }
+}
+
+export class Obstacle {
+  constructor(p, x, y, width, height, isDynamic = false) {
+    this.p = p;
+    this.pos = p.createVector(x, y);
+    this.width = width;
+    this.height = height;
+    this.isDynamic = isDynamic;
+    this.phase = 0;
+    this.maxScale = 1.5;
+    this.minScale = 0.5;
+  }
+
+  update() {
+    if (this.isDynamic) {
+      this.phase += 0.02;
+    }
+  }
+
+  getScale() {
+    if (!this.isDynamic) return 1;
+    return this.p.map(this.p.sin(this.phase), -1, 1, this.minScale, this.maxScale);
+  }
+
+  render() {
+    const p = this.p;
+    const scale = this.getScale();
+    
+    p.fill(85, 85, 85);
+    p.stroke(120, 120, 120);
+    p.strokeWeight(2);
+    p.rectMode(p.CENTER);
+    p.rect(this.pos.x, this.pos.y, this.width * scale, this.height * scale);
+    p.noStroke();
+    p.rectMode(p.CORNER);
+  }
+
+  getBounds() {
+    const scale = this.getScale();
+    return {
+      x: this.pos.x - (this.width * scale) / 2,
+      y: this.pos.y - (this.height * scale) / 2,
+      width: this.width * scale,
+      height: this.height * scale,
+    };
+  }
+}
+</file>
+
+<file name="spawner.js">
+// spawner.js - Entity spawning logic
+
+import { Snake, Pellet, MassDrop, Obstacle } from './entities.js';
+import { CANVAS_WIDTH, CANVAS_HEIGHT, SEGMENT_SIZE } from './globals.js';
+
+export function spawnPlayer(p, config, skinColor) {
+  const x = CANVAS_WIDTH / 2;
+  const y = CANVAS_HEIGHT / 2;
+  return new Snake(p, x, y, config.playerStartLength, skinColor, true);
+}
+
+export function spawnAISnakes(p, config) {
+  const aiSnakes = [];
+  const colors = [
+    [220, 50, 50],   // Red
+    [50, 50, 220],   // Blue
+    [220, 220, 50],  // Yellow
+    [220, 50, 220],  // Magenta
+    [50, 220, 220],  // Cyan
+    [220, 120, 50],  // Orange
+    [120, 50, 220],  // Purple
+    [50, 220, 120],  // Green-Cyan
+  ];
+  
+  for (let i = 0; i < config.aiCount; i++) {
+    let x, y;
+    let attempts = 0;
+    
+    do {
+      x = p.random(60, CANVAS_WIDTH - 60);
+      y = p.random(60, CANVAS_HEIGHT - 60);
+      attempts++;
+    } while (attempts < 50 && p.dist(x, y, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2) < 150);
+    
+    const color = colors[i % colors.length];
+    const snake = new Snake(p, x, y, config.aiStartLength, color, false);
+    snake.baseSpeed = config.aiSpeed;
+    snake.speed = config.aiSpeed;
+    aiSnakes.push(snake);
+  }
+  
+  return aiSnakes;
+}
+
+export function spawnPellets(p, count, existingPellets, obstacles) {
+  const pellets = [...existingPellets];
+  
+  while (pellets.length < count) {
+    let x, y;
+    let valid = false;
+    let attempts = 0;
+    
+    while (!valid && attempts < 100) {
+      x = p.random(40, CANVAS_WIDTH - 40);
+      y = p.random(40, CANVAS_HEIGHT - 40);
+      valid = true;
+      
+      // Check not too close to obstacles
+      for (let obstacle of obstacles) {
+        const bounds = obstacle.getBounds();
+        if (x > bounds.x - 20 && x < bounds.x + bounds.width + 20 &&
+            y > bounds.y - 20 && y < bounds.y + bounds.height + 20) {
+          valid = false;
+          break;
+        }
+      }
+      
+      attempts++;
+    }
+    
+    if (valid) {
+      pellets.push(new Pellet(p, x, y, 'normal'));
+    }
+  }
+  
+  return pellets;
+}
+
+export function spawnMassDrops(p, positions, color) {
+  const drops = [];
+  
+  for (let pos of positions) {
+    // Add some spread
+    const spreadX = p.random(-10, 10);
+    const spreadY = p.random(-10, 10);
+    drops.push(new MassDrop(p, pos.x + spreadX, pos.y + spreadY, color));
+  }
+  
+  return drops;
+}
+
+export function spawnObstacles(p, config) {
+  const obstacles = [];
+  
+  for (let i = 0; i < config.staticObstacles; i++) {
+    const width = p.random(40, 80);
+    const height = p.random(40, 80);
+    const x = p.random(60 + width / 2, CANVAS_WIDTH - 60 - width / 2);
+    const y = p.random(60 + height / 2, CANVAS_HEIGHT - 60 - height / 2);
+    
+    // Don't spawn near center
+    if (p.dist(x, y, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2) > 100) {
+      obstacles.push(new Obstacle(p, x, y, width, height, false));
+    }
+  }
+  
+  if (config.dynamicObstacles) {
+    // Central dynamic obstacle
+    obstacles.push(new Obstacle(p, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2, 60, 60, true));
+  }
+  
+  return obstacles;
+}
+</file>
+</game_code>
+
+<requirements>
+The gym_api.js file must expose a window.gymAPI object with these methods:
+
+1. **reset()**: Reset the game to initial state and return initial observation
+   - Should set the game to PLAYING phase
+   - Initialize level 1
+   - Clear any existing entities
+   - Return: {done: false, reward: 0}
+
+2. **step(action)**: Execute one action and return the result
+   - action format: {left: bool, right: bool, boost: bool}
+   - Apply the action to the player
+   - Let the game update for one frame
+   - Calculate reward based on:
+     * Score delta (primary)
+     * Length increase (secondary)
+     * Survival bonus (tertiary)
+     * Death penalty (-100 if player dies)
+   - Return: {
+       reward: number,
+       done: boolean,  // true if game over (win or lose)
+       info: {score, level, length, phase}
+     }
+
+3. **getState()**: Return structured state for RL observation (only if observation_type is "state")
+   - Return an object with:
+     * player: {x, y, angle, length, speed, isBoosting}
+     * nearestPellet: {x, y, distance} (or null if none)
+     * nearestEnemy: {x, y, distance} (or null if none)
+     * nearestObstacle: {x, y, distance} (or null if none)
+     * level: number
+     * score: number
+     * targetLength: number
+   - All coordinates should be normalized to [0, 1] range
+   - Angles should be in radians
+
+4. **getInfo()**: Return debug information
+   - Return: {
+       phase: string,
+       level: number,
+       score: number,
+       playerLength: number,
+       targetLength: number,
+       aiSnakeCount: number,
+       pelletCount: number
+     }
+
+<implementation_guidelines>
+- Import from globals.js and game.js as needed
+- Hook into the existing game loop - don't create a new one
+- The gym_api.js should be a NEW FILE that imports and wraps existing game logic
+- Use the existing gameState object from globals.js
+- For step(), you should:
+  1. Store the action in a variable that the game loop can read
+  2. Let the existing game update once
+  3. Calculate reward based on state changes
+  4. Return the result
+- For reset(), trigger the existing game initialization
+- Preserve all existing game functionality
+- The API should work alongside existing test modes (TEST_1, TEST_2)
+
+<observation_type>
+state
+</observation_type>
+</requirements>
+</task>
+
+<output_instructions>
+Your response must have TWO sections:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Game structure: [description of how the game is organized]
+- Key state variables: [list the important variables for RL]
+- Action mapping: [how RL actions map to game inputs]
+- Reward function: [strategy for calculating rewards]
+- Integration points: [where gym_api.js hooks into existing code]
+</analysis>
+
+2. Then, output the complete gym_api.js file:
+<code filename="gym_api.js">
+// Complete implementation of gym_api.js
+// Include all necessary imports and the window.gymAPI object
+</code>
+
+Important:
+- The gym_api.js file should be COMPLETE and ready to use
+- Include proper error handling
+- Add comments explaining the reward function
+- Make sure the API is synchronous (no async/await)
+- The file should be added to index.html via <script type="module" src="gym_api.js"></script>
+</output_instructions>
