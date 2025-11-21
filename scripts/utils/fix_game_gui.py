@@ -3,7 +3,7 @@
 Gradio GUI for fixing games with natural language feedback.
 
 This provides a web-based interface to:
-- Browse games in public/games/
+- Browse games in games/games/
 - Preview games in an iframe
 - Write feedback and apply fixes
 - Manage backups
@@ -65,26 +65,28 @@ game_server_thread = None
 
 # Configuration for multiple game directories
 GAME_DIRECTORIES = {
-    "Games": "public/games",
-    "Game Platform": "public_platform/games",
-    "Batch 103125": "public/games_gen_halloween",
-    "Batch 110325": "public/new_batch_110325",
-    "Batch 110425": "public/batch_110425",
-    "Games 111125": "public/games_111125",
-    "old games": "public/games_old",
+    "Games": "games/games",
+    "Game Platform": "games/archive/public_platform/games",
+    "Batch 103125": "games/archive/games_gen_halloween",
+    "Batch 110325": "games/archive/new_batch_110325",
+    "Batch 110425": "games/archive/batch_110425",
+    "Games 111125": "games/archive/archive/games_111125",
+    "old games": "games/archive/games_old",
 }
 
 
-def start_game_server(games_dir: str = "public/games"):
+def start_game_server(games_dir: str = "games/games"):
     """Start a simple HTTP server to serve game files."""
     global game_server, game_server_thread
     
     if game_server is not None:
         return  # Already running
     
-    # Change to the public directory (parent of games_dir)
-    public_dir = PROJECT_ROOT / "public"
-    os.chdir(public_dir)
+    # Change to the games directory (base directory for serving)
+    games_base_dir = PROJECT_ROOT / "games"
+    if not games_base_dir.exists():
+        raise FileNotFoundError(f"Games directory not found: {games_base_dir}")
+    os.chdir(games_base_dir)
     
     class QuietHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         def log_message(self, format, *args):
@@ -139,7 +141,7 @@ def count_backups(game_path: str) -> int:
     return count
 
 
-def list_games(games_dir: str = "public/games") -> List[Dict[str, str]]:
+def list_games(games_dir: str = "games/games") -> List[Dict[str, str]]:
     """
     Scan games directory and return list of games with metadata.
     
@@ -248,13 +250,13 @@ def get_game_metadata(game_path: str) -> Dict[str, str]:
     return result
 
 
-def get_game_iframe_html(game_relative_path_from_public: str, cache_bust: bool = False, level: int = None) -> str:
+def get_game_iframe_html(game_relative_path_from_games: str, cache_bust: bool = False, level: int = None) -> str:
     """
     Generate HTML for game iframe with aggressive cache busting.
     
     Args:
-        game_relative_path_from_public: The path of the game directory relative to the 'public' folder.
-                                      e.g., "games/snake-io" or "games_gen_halloween/bounce-and-collect-s0"
+        game_relative_path_from_games: The path of the game directory relative to the 'games' folder.
+                                      e.g., "games/snake-io" or "archive/games_gen_halloween/bounce-and-collect-s0"
         cache_bust: If True, adds timestamp to force reload
         
     Returns:
@@ -266,8 +268,8 @@ def get_game_iframe_html(game_relative_path_from_public: str, cache_bust: bool =
     # Generate unique ID for the iframe
     iframe_id = f"game-iframe-{timestamp}"
     
-    # Construct game_url using the provided relative path from public
-    game_url = f"http://localhost:{GAME_SERVER_PORT}/{game_relative_path_from_public}/index.html"
+    # Construct game_url using the provided relative path from games
+    game_url = f"http://localhost:{GAME_SERVER_PORT}/{game_relative_path_from_games}/index.html"
     
     # Add level parameter if specified
     params = []
@@ -587,7 +589,7 @@ def create_backup(game_dir: Path) -> Path:
 
 # Gradio event handlers
 
-def refresh_games(directory: str = "public/games") -> gr.Dropdown:
+def refresh_games(directory: str = "games/games") -> gr.Dropdown:
     """Refresh the games dropdown list."""
     games = list_games(directory)
     choices = []
@@ -615,17 +617,17 @@ def on_game_selected_minimal(game_path: str) -> Tuple[str, gr.Dropdown]:
     
     game_dir = Path(game_path)
     
-    # Calculate the path relative to the 'public' directory for the HTTP server
-    public_root = SCRIPT_DIR / "public"
+    # Calculate the path relative to the 'games' directory for the HTTP server
+    games_root = SCRIPT_DIR / "games"
     try:
-        game_relative_path_from_public = game_dir.relative_to(public_root)
+        game_relative_path_from_games = game_dir.relative_to(games_root)
     except ValueError:
-        # If game_dir is not under public_root, fallback to just the name
+        # If game_dir is not under games_root, fallback to just the name
         # (this shouldn't happen in normal usage, but handle gracefully)
-        game_relative_path_from_public = Path(game_dir.name)
+        game_relative_path_from_games = Path(game_dir.name)
     
     # Get iframe HTML
-    iframe_html = get_game_iframe_html(str(game_relative_path_from_public))
+    iframe_html = get_game_iframe_html(str(game_relative_path_from_games))
     
     # Get backups
     backups = list_backups(game_path)
@@ -645,14 +647,14 @@ def load_level_in_game(game_path: str, level: int) -> str:
         return refresh_game_preview(game_path)
     
     game_dir = Path(game_path)
-    public_root = SCRIPT_DIR / "public"
+    games_root = SCRIPT_DIR / "games"
     try:
-        game_relative_path_from_public = game_dir.relative_to(public_root)
+        game_relative_path_from_games = game_dir.relative_to(games_root)
     except ValueError:
-        game_relative_path_from_public = Path(game_dir.name)
+        game_relative_path_from_games = Path(game_dir.name)
     
     # Get iframe HTML with level parameter
-    return get_game_iframe_html(str(game_relative_path_from_public), cache_bust=True, level=level)
+    return get_game_iframe_html(str(game_relative_path_from_games), cache_bust=True, level=level)
 
 def refresh_game_preview(game_path: str) -> str:
     """
@@ -666,16 +668,16 @@ def refresh_game_preview(game_path: str) -> str:
     
     game_dir = Path(game_path)
     
-    # Calculate the path relative to the 'public' directory for the HTTP server
-    public_root = SCRIPT_DIR / "public"
+    # Calculate the path relative to the 'games' directory for the HTTP server
+    games_root = SCRIPT_DIR / "games"
     try:
-        game_relative_path_from_public = game_dir.relative_to(public_root)
+        game_relative_path_from_games = game_dir.relative_to(games_root)
     except ValueError:
-        # If game_dir is not under public_root, fallback to just the name
-        game_relative_path_from_public = Path(game_dir.name)
+        # If game_dir is not under games_root, fallback to just the name
+        game_relative_path_from_games = Path(game_dir.name)
     
     # Get iframe HTML with cache busting enabled
-    return get_game_iframe_html(str(game_relative_path_from_public), cache_bust=True)
+    return get_game_iframe_html(str(game_relative_path_from_games), cache_bust=True)
 
 
 def fix_game_action(game_path: str, feedback: str) -> Tuple[str, gr.Dropdown, str]:
@@ -799,12 +801,12 @@ def fix_game_action(game_path: str, feedback: str) -> Tuple[str, gr.Dropdown, st
     
     # Generate updated iframe with cache busting to force reload
     game_dir = Path(game_path)
-    public_root = SCRIPT_DIR / "public"
+    games_root = SCRIPT_DIR / "games"
     try:
-        game_relative_path_from_public = game_dir.relative_to(public_root)
+        game_relative_path_from_games = game_dir.relative_to(games_root)
     except ValueError:
-        game_relative_path_from_public = Path(game_dir.name)
-    updated_iframe = get_game_iframe_html(str(game_relative_path_from_public), cache_bust=True)
+        game_relative_path_from_games = Path(game_dir.name)
+    updated_iframe = get_game_iframe_html(str(game_relative_path_from_games), cache_bust=True)
     
     return "\n".join(status_lines), gr.Dropdown(choices=backup_choices), updated_iframe
 
@@ -848,12 +850,12 @@ def restore_backup_action(game_path: str, backup_path: str) -> Tuple[str, str]:
         
         # Generate updated iframe with cache busting to force reload
         game_dir = Path(game_path)
-        public_root = SCRIPT_DIR / "public"
+        games_root = SCRIPT_DIR / "games"
         try:
-            game_relative_path_from_public = game_dir.relative_to(public_root)
+            game_relative_path_from_games = game_dir.relative_to(games_root)
         except ValueError:
-            game_relative_path_from_public = Path(game_dir.name)
-        updated_iframe = get_game_iframe_html(str(game_relative_path_from_public), cache_bust=True)
+            game_relative_path_from_games = Path(game_dir.name)
+        updated_iframe = get_game_iframe_html(str(game_relative_path_from_games), cache_bust=True)
         
         return "\n".join(status_lines), updated_iframe
     

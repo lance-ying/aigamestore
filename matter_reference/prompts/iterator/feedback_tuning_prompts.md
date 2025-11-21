@@ -138,3 +138,4 @@ Where:
 4. **Preserve Architecture**: Don't change physics engine (p5.js or Matter.js) unless explicitly requested
 5. **Avoid Regressions**: Don't break existing functionality while fixing issues
 
+
