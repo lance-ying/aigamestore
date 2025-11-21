@@ -76,9 +76,10 @@ export const LEVELS = [
     tubes: [
       { capacity: 4, colors: ['red', 'blue', 'yellow', 'purple'] },
       { capacity: 4, colors: ['blue', 'green', 'red', 'blue'] },
-      { capacity: 3, colors: ['green', 'yellow', 'purple'] },
-      { capacity: 4, colors: ['yellow', 'red', 'green', 'purple'] },
-      { capacity: 4, colors: ['purple', 'red', 'green', 'yellow'] },
+      { capacity: 4, colors: ['green', 'yellow', 'purple', 'red'] },
+      { capacity: 4, colors: ['yellow', 'purple', 'green', 'yellow'] },
+      { capacity: 4, colors: ['purple', 'red', 'green', 'blue'] },
+      { capacity: 4, colors: [] },
       { capacity: 4, colors: [] }
     ]
   },
@@ -87,11 +88,12 @@ export const LEVELS = [
     maxMoves: 35,
     tubes: [
       { capacity: 4, colors: ['red', 'blue', 'yellow', 'purple'] },
-      { capacity: 3, colors: ['blue', 'green', 'red'] },
-      { capacity: 3, colors: ['green', 'yellow', 'purple'] },
+      { capacity: 4, colors: ['blue', 'green', 'orange', 'red'] },
+      { capacity: 4, colors: ['green', 'yellow', 'purple', 'orange'] },
       { capacity: 4, colors: ['yellow', 'red', 'green', 'orange'] },
       { capacity: 4, colors: ['purple', 'orange', 'green', 'yellow'] },
-      { capacity: 4, colors: ['orange', 'blue', 'red', 'blue'] },
+      { capacity: 4, colors: ['blue', 'red', 'purple', 'blue'] },
+      { capacity: 4, colors: [] },
       { capacity: 4, colors: [] }
     ]
   },
@@ -100,12 +102,13 @@ export const LEVELS = [
     maxMoves: 50,
     tubes: [
       { capacity: 4, colors: ['red', 'blue', 'yellow', 'purple'] },
-      { capacity: 3, colors: ['blue', 'green', 'red'] },
-      { capacity: 2, colors: ['green', 'yellow'] },
-      { capacity: 4, colors: ['yellow', 'red', 'green', 'orange'] },
-      { capacity: 4, colors: ['purple', 'orange', 'green', 'pink'] },
-      { capacity: 3, colors: ['orange', 'blue', 'pink'] },
-      { capacity: 4, colors: ['pink', 'red', 'yellow', 'blue'] },
+      { capacity: 4, colors: ['blue', 'green', 'orange', 'red'] },
+      { capacity: 4, colors: ['green', 'yellow', 'pink', 'orange'] },
+      { capacity: 4, colors: ['yellow', 'red', 'green', 'pink'] },
+      { capacity: 4, colors: ['purple', 'orange', 'pink', 'yellow'] },
+      { capacity: 4, colors: ['blue', 'red', 'purple', 'pink'] },
+      { capacity: 4, colors: ['orange', 'purple', 'green', 'blue'] },
+      { capacity: 4, colors: [] },
       { capacity: 4, colors: [] }
     ]
   }

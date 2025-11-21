@@ -39,6 +39,7 @@ import gradio as gr
 
 # Import existing fix_game logic
 from iterators.feedback_fix import FeedbackFixIterator
+from utils.saving_utils.fix_log_writer import save_fix_log
 
 # Load environment variables
 def load_env_file() -> None:
@@ -636,25 +637,26 @@ def on_game_selected_minimal(game_path: str) -> Tuple[str, gr.Dropdown]:
     return iframe_html, gr.Dropdown(choices=backup_choices)
 
 
-def load_level_in_game(game_path: str, level: int) -> str:
-    """
-    Load a specific level in the game iframe.
-    
-    Returns:
-        Updated iframe HTML with level parameter
-    """
-    if not game_path or level is None or level < 1:
-        return refresh_game_preview(game_path)
-    
-    game_dir = Path(game_path)
-    games_root = SCRIPT_DIR / "games"
-    try:
-        game_relative_path_from_games = game_dir.relative_to(games_root)
-    except ValueError:
-        game_relative_path_from_games = Path(game_dir.name)
-    
-    # Get iframe HTML with level parameter
-    return get_game_iframe_html(str(game_relative_path_from_games), cache_bust=True, level=level)
+# COMMENTED OUT: Level selector functionality
+# def load_level_in_game(game_path: str, level: int) -> str:
+#     """
+#     Load a specific level in the game iframe.
+#     
+#     Returns:
+#         Updated iframe HTML with level parameter
+#     """
+#     if not game_path or level is None or level < 1:
+#         return refresh_game_preview(game_path)
+#     
+#     game_dir = Path(game_path)
+#     games_root = SCRIPT_DIR / "games"
+#     try:
+#         game_relative_path_from_games = game_dir.relative_to(games_root)
+#     except ValueError:
+#         game_relative_path_from_games = Path(game_dir.name)
+#     
+#     # Get iframe HTML with level parameter
+#     return get_game_iframe_html(str(game_relative_path_from_games), cache_bust=True, level=level)
 
 def refresh_game_preview(game_path: str) -> str:
     """
@@ -783,6 +785,55 @@ def fix_game_action(game_path: str, feedback: str) -> Tuple[str, gr.Dropdown, st
         
         status_lines.append(token_usage_info)
         
+        # Save fix log
+        log_saved = False
+        log_path = None
+        try:
+            # Collect all data for logging
+            call_history = iterator.api.get_call_history()
+            token_usage_dict = {}
+            if call_history:
+                last_call = call_history[-1]
+                token_usage = last_call.get("token_usage", {})
+                token_usage_dict = {
+                    "input_tokens": token_usage.get("prompt_tokens") or token_usage.get("input_tokens"),
+                    "output_tokens": token_usage.get("completion_tokens") or token_usage.get("output_tokens"),
+                    "total_tokens": token_usage.get("total_tokens"),
+                }
+            
+            fix_log_data = {
+                "feedback": feedback,
+                "analysis": result.get("analysis"),
+                "system_prompt": result.get("system_prompt", ""),
+                "user_prompt": result.get("user_prompt", ""),
+                "full_response": result.get("full_response") or result.get("response", ""),
+                "thinking": result.get("thinking", ""),
+                "updated_files": result.get("updated_files", []),
+                "backup_path": str(backup_path),
+                "model": iterator.model,
+                "temperature": iterator.temperature,
+                "thinking": iterator.thinking,
+                "thinking_budget": iterator.thinking_budget,
+                "use_planning": True,  # Always True in GUI
+                "token_usage": token_usage_dict,
+                "success": True,
+                "error": None,
+            }
+            
+            log_path = save_fix_log(game_dir, fix_log_data)
+            log_saved = True
+            # Show relative path from game directory
+            try:
+                relative_log_path = log_path.relative_to(game_dir)
+                status_lines.append(f"Fix log saved: {relative_log_path}")
+            except ValueError:
+                status_lines.append(f"Fix log saved: {log_path.name}")
+            status_lines.append("")
+        except Exception as log_error:
+            # Don't fail the fix operation if logging fails
+            status_lines.append(f"(Note: Could not save fix log: {log_error})")
+            status_lines.append("")
+        
         status_lines.append(f"Backup saved: {backup_path.name}")
         status_lines.append("Done!")
         status_lines.append("")
@@ -790,10 +841,44 @@ def fix_game_action(game_path: str, feedback: str) -> Tuple[str, gr.Dropdown, st
         status_lines.append("Try the game again. If issues persist:")
         status_lines.append("  - Restore from backup")
         status_lines.append("  - Or provide more detailed feedback")
+        if log_saved and log_path:
+            try:
+                relative_log_path = log_path.relative_to(game_dir)
+                status_lines.append(f"  - View fix log: {game_dir.name}/{relative_log_path}")
+            except ValueError:
+                status_lines.append(f"  - View fix log: {log_path}")
         
     except Exception as e:
         status_lines.append(f"\nError during fix generation: {e}")
         status_lines.append(f"\nBackup preserved at: {backup_path}")
+        
+        # Try to save error log
+        try:
+            # Get model info from iterator if available
+            model_name = "anthropic:claude-4.5-sonnet"
+            temperature = 0.6
+            thinking = True
+            thinking_budget = 8000
+            if 'iterator' in locals():
+                model_name = iterator.model
+                temperature = iterator.temperature
+                thinking = iterator.thinking
+                thinking_budget = iterator.thinking_budget
+            
+            error_log_data = {
+                "feedback": feedback,
+                "backup_path": str(backup_path),
+                "model": model_name,
+                "temperature": temperature,
+                "thinking": thinking,
+                "thinking_budget": thinking_budget,
+                "use_planning": True,
+                "success": False,
+                "error": str(e),
+            }
+            save_fix_log(game_dir, error_log_data)
+        except Exception:
+            pass  # Ignore logging errors for error cases
     
     # Update backup list
     backups = list_backups(game_path)
@@ -924,68 +1009,68 @@ def build_interface():
     with gr.Blocks(title="Game Fix", theme=gr.themes.Monochrome(), css=custom_css) as app:
         
         with gr.Row():
-            # Left: Level Selector Panel (narrow)
-            with gr.Column(scale=1, min_width=200):
-                level_selector_html = gr.HTML(value="""
-                    <div style="background: #0d1117; border: 1px solid #30363d; border-radius: 4px; padding: 15px; font-family: monospace; color: #c9d1d9;">
-                        <h3 style="margin: 0 0 15px 0; color: #00ff00; font-size: 14px;">Level Selector</h3>
-                        <div style="margin-bottom: 10px;">
-                            <label style="display: block; margin-bottom: 5px; font-size: 12px; color: #8b949e;">Current Level:</label>
-                            <div id="dev-current-level-display" style="font-size: 18px; font-weight: bold; color: #00ff00;">-</div>
-                        </div>
-                        <div style="margin-bottom: 15px;">
-                            <label style="display: block; margin-bottom: 5px; font-size: 12px; color: #8b949e;">Jump to Level:</label>
-                            <input type="number" id="dev-level-input-gradio" 
-                                   style="width: 100%; padding: 8px; background: #21262d; color: #c9d1d9; border: 1px solid #30363d; border-radius: 4px; font-size: 14px; box-sizing: border-box;"
-                                   min="1" placeholder="Enter level">
-                        </div>
-                        <div style="display: flex; gap: 5px; margin-bottom: 10px;">
-                            <button id="dev-load-level-btn" 
-                                    style="flex: 1; padding: 8px; background: #00ff00; color: #000; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;">
-                                Load
-                            </button>
-                        </div>
-                        <div style="display: flex; gap: 5px; margin-bottom: 15px;">
-                            <button id="dev-prev-level-btn" 
-                                    style="flex: 1; padding: 8px; background: #21262d; color: #c9d1d9; border: 1px solid #30363d; border-radius: 4px; cursor: pointer; font-size: 12px;">
-                                ◀ Prev
-                            </button>
-                            <button id="dev-next-level-btn" 
-                                    style="flex: 1; padding: 8px; background: #21262d; color: #c9d1d9; border: 1px solid #30363d; border-radius: 4px; cursor: pointer; font-size: 12px;">
-                                Next ▶
-                            </button>
-                        </div>
-                        <div style="padding-top: 15px; border-top: 1px solid #30363d; font-size: 11px; color: #8b949e;">
-                            <div>Shortcuts in game:</div>
-                            <div>L - Level selector</div>
-                            <div>N/P - Next/Prev</div>
-                            <div>I - Info overlay</div>
-                        </div>
-                    </div>
-                    <script>
-                    // Ensure level selector buttons are set up when this component loads
-                    // This script runs in the level selector component context
-                    (function() {
-                        // Mark that level selector is ready
-                        window.levelSelectorReady = true;
-                        
-                        // Trigger global setup function if it exists
-                        if (window.setupLevelSelectorGlobally) {
-                            setTimeout(window.setupLevelSelectorGlobally, 100);
-                        }
-                        
-                        // Also try to set up directly after a short delay
-                        setTimeout(function() {
-                            var loadBtn = document.getElementById('dev-load-level-btn');
-                            if (loadBtn && !loadBtn.dataset.setup) {
-                                if (window.setupLevelSelectorGlobally) {
-                                    window.setupLevelSelectorGlobally();
-                                }
-                            }
-                        }, 500);
-                    })();
-                    </script>
-                """)
+            # Left: Level Selector Panel (narrow) - COMMENTED OUT
+            # with gr.Column(scale=1, min_width=200):
+            #     level_selector_html = gr.HTML(value="""
+            #         <div style="background: #0d1117; border: 1px solid #30363d; border-radius: 4px; padding: 15px; font-family: monospace; color: #c9d1d9;">
+            #             <h3 style="margin: 0 0 15px 0; color: #00ff00; font-size: 14px;">Level Selector</h3>
+            #             <div style="margin-bottom: 10px;">
+            #                 <label style="display: block; margin-bottom: 5px; font-size: 12px; color: #8b949e;">Current Level:</label>
+            #                 <div id="dev-current-level-display" style="font-size: 18px; font-weight: bold; color: #00ff00;">-</div>
+            #             </div>
+            #             <div style="margin-bottom: 15px;">
+            #                 <label style="display: block; margin-bottom: 5px; font-size: 12px; color: #8b949e;">Jump to Level:</label>
+            #                 <input type="number" id="dev-level-input-gradio" 
+            #                        style="width: 100%; padding: 8px; background: #21262d; color: #c9d1d9; border: 1px solid #30363d; border-radius: 4px; font-size: 14px; box-sizing: border-box;"
+            #                        min="1" placeholder="Enter level">
+            #             </div>
+            #             <div style="display: flex; gap: 5px; margin-bottom: 10px;">
+            #                 <button id="dev-load-level-btn" 
+            #                         style="flex: 1; padding: 8px; background: #00ff00; color: #000; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;">
+            #                     Load
+            #                 </button>
+            #             </div>
+            #             <div style="display: flex; gap: 5px; margin-bottom: 15px;">
+            #                 <button id="dev-prev-level-btn" 
+            #                         style="flex: 1; padding: 8px; background: #21262d; color: #c9d1d9; border: 1px solid #30363d; border-radius: 4px; cursor: pointer; font-size: 12px;">
+            #                     ◀ Prev
+            #                 </button>
+            #                 <button id="dev-next-level-btn" 
+            #                         style="flex: 1; padding: 8px; background: #21262d; color: #c9d1d9; border: 1px solid #30363d; border-radius: 4px; cursor: pointer; font-size: 12px;">
+            #                     Next ▶
+            #                 </button>
+            #             </div>
+            #             <div style="padding-top: 15px; border-top: 1px solid #30363d; font-size: 11px; color: #8b949e;">
+            #                 <div>Shortcuts in game:</div>
+            #                 <div>L - Level selector</div>
+            #                 <div>N/P - Next/Prev</div>
+            #                 <div>I - Info overlay</div>
+            #             </div>
+            #         </div>
+            #         <script>
+            #         // Ensure level selector buttons are set up when this component loads
+            #         // This script runs in the level selector component context
+            #         (function() {
+            #             // Mark that level selector is ready
+            #             window.levelSelectorReady = true;
+            #             
+            #             // Trigger global setup function if it exists
+            #             if (window.setupLevelSelectorGlobally) {
+            #                 setTimeout(window.setupLevelSelectorGlobally, 100);
+            #             }
+            #             
+            #             // Also try to set up directly after a short delay
+            #             setTimeout(function() {
+            #                 var loadBtn = document.getElementById('dev-load-level-btn');
+            #                 if (loadBtn && !loadBtn.dataset.setup) {
+            #                     if (window.setupLevelSelectorGlobally) {
+            #                         window.setupLevelSelectorGlobally();
+            #                     }
+            #                 }
+            #             }, 500);
+            #         })();
+            #         </script>
+            #     """)
             
             # Right: Game Preview (wider)
             with gr.Column(scale=5):

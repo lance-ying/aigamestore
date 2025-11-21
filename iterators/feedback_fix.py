@@ -264,8 +264,11 @@ ensure the result remains playable. Avoid regressions.
             "analysis": analysis,
             "updated_files": updated,
             "response": response_text,
+            "full_response": response_text,  # Alias for consistency
             "thinking": thinking_text,
             "num_files_updated": len(updated),
+            "system_prompt": system_prompt,  # Include prompts for logging
+            "user_prompt": user_prompt,
         }
 
 
