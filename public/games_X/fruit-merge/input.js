@@ -21,9 +21,15 @@ function handleKeyDown(e) {
     timestamp: Date.now()
   });
   
-  // Prevent repeat events
-  if (keys[keyCode]) return;
+  // Set key state (for continuous input)
   keys[keyCode] = true;
+  
+  // Prevent repeat events for action keys only
+  const isActionKey = keyCode === 32 || keyCode === 40 || keyCode === 83 || 
+                      keyCode === 13 || keyCode === 27 || keyCode === 82;
+  
+  if (isActionKey && keys[`action_${keyCode}`]) return;
+  if (isActionKey) keys[`action_${keyCode}`] = true;
   
   // ENTER to start
   if (keyCode === 13 && gameState.gamePhase === 'START') {
@@ -63,23 +69,7 @@ function handleKeyDown(e) {
       return;
     }
     
-    // Movement with increased distance for tap-based controls
-    const currentFruitRadius = FRUIT_TYPES[gameState.currentFruitType].radius;
-    const moveDistance = 50; // Increased from 15 to 50 for better tap-based control
-    const minX = CONTAINER_X - CONTAINER_WIDTH / 2 + currentFruitRadius;
-    const maxX = CONTAINER_X + CONTAINER_WIDTH / 2 - currentFruitRadius;
-    
-    // Left arrow or A
-    if (keyCode === 37 || keyCode === 65) {
-      gameState.dropX = Math.max(minX, gameState.dropX - moveDistance);
-    }
-    
-    // Right arrow or D
-    if (keyCode === 39 || keyCode === 68) {
-      gameState.dropX = Math.min(maxX, gameState.dropX + moveDistance);
-    }
-    
-    // Down arrow or S for faster drop
+    // Down arrow or S for drop
     if (keyCode === 40 || keyCode === 83) {
       dropCurrentFruit(false);
     }
@@ -89,6 +79,7 @@ function handleKeyDown(e) {
 function handleKeyUp(e) {
   const keyCode = e.keyCode;
   keys[keyCode] = false;
+  keys[`action_${keyCode}`] = false;
   
   logs.inputs.push({
     input_type: 'keyup',
@@ -99,8 +90,23 @@ function handleKeyUp(e) {
 }
 
 export function updateInput() {
-  // Input is handled via single key presses in handleKeyDown
-  // This function can be kept for future frame-based input needs
+  // Continuous movement input - runs every frame
+  if (gameState.gamePhase === 'PLAYING' && !gameState.isDropping) {
+    const currentFruitRadius = FRUIT_TYPES[gameState.currentFruitType].radius;
+    const moveDistance = 3; // Reduced from 5 to 3 for slower movement
+    const minX = CONTAINER_X - CONTAINER_WIDTH / 2 + currentFruitRadius;
+    const maxX = CONTAINER_X + CONTAINER_WIDTH / 2 - currentFruitRadius;
+    
+    // Left arrow (37) or A (65)
+    if (keys[37] || keys[65]) {
+      gameState.dropX = Math.max(minX, gameState.dropX - moveDistance);
+    }
+    
+    // Right arrow (39) or D (68)
+    if (keys[39] || keys[68]) {
+      gameState.dropX = Math.min(maxX, gameState.dropX + moveDistance);
+    }
+  }
 }
 
 export { keys };

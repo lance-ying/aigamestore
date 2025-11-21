@@ -51,7 +51,7 @@ export function renderCaseInfo(p) {
   p.fill(40, 40, 50, 230);
   p.stroke(80, 80, 100);
   p.strokeWeight(2);
-  p.rect(420, 50, 170, 140, 4);
+  p.rect(420, 50, 170, 160, 4);
   
   p.fill(220, 220, 240);
   p.noStroke();
@@ -62,15 +62,22 @@ export function renderCaseInfo(p) {
   p.textSize(10);
   p.text(caseData.title, 430, 80, 150);
   
+  // Add investigation lead
+  p.textSize(9);
+  p.fill(100, 200, 255);
+  p.text("LEAD:", 430, 105);
+  p.fill(180, 180, 200);
+  p.text(`Investigate "${caseData.keywords[0]}" - a ${caseData.keywords[1]} who was researching ${caseData.keywords[2]}.`, 430, 117, 150);
+  
   p.textSize(9);
   p.fill(180, 180, 200);
-  p.text("OBJECTIVES:", 430, 110);
+  p.text("OBJECTIVES:", 430, 145);
   
   caseData.objectives.forEach((obj, i) => {
     const completed = i < gameState.objectivesCompleted;
     p.fill(completed ? [100, 200, 100] : [180, 180, 200]);
     const marker = completed ? "✓" : "○";
-    p.text(`${marker} ${obj}`, 430, 125 + i * 12, 150);
+    p.text(`${marker} ${obj}`, 430, 160 + i * 12, 150);
   });
   
   p.pop();

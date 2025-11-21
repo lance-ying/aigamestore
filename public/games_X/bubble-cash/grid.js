@@ -5,7 +5,7 @@ import { createBubble } from './bubble.js';
 
 export function getGridPosition(row, col) {
   const offsetX = (row % 2 === 1) ? BUBBLE_RADIUS : 0;
-  const x = col * BUBBLE_DIAMETER + BUBBLE_RADIUS + offsetX + 50;
+  const x = col * BUBBLE_DIAMETER + BUBBLE_RADIUS + offsetX + 60;
   const y = row * (BUBBLE_DIAMETER * 0.866) + BUBBLE_RADIUS + 30;
   return { x, y };
 }
@@ -33,24 +33,24 @@ export function findNearestGridPosition(x, y) {
 
 export function createLevelLayout(level) {
   const layouts = [
-    // Level 1: Easy - sparse, clear clusters
+    // Level 1: Easy - sparse, clear clusters (centered)
     [
-      [0, 0, 1, 1, 0, 0, -1, -1, -1, -1, -1, -1],
-      [0, 1, 1, 0, 0, -1, -1, -1, -1, -1, -1],
-      [2, 2, 0, 0, 1, 1, -1, -1, -1, -1, -1, -1],
-      [2, 0, 0, 1, 1, -1, -1, -1, -1, -1, -1],
-      [3, 3, 3, 0, 0, -1, -1, -1, -1, -1, -1, -1]
+      [-1, -1, -1, 0, 0, 1, 1, 0, 0, -1, -1, -1],
+      [-1, -1, -1, 0, 1, 1, 0, 0, -1, -1, -1],
+      [-1, -1, 2, 2, 0, 0, 1, 1, -1, -1, -1, -1],
+      [-1, -1, 2, 0, 0, 1, 1, -1, -1, -1, -1],
+      [-1, -1, 3, 3, 3, 0, 0, -1, -1, -1, -1, -1]
     ],
-    // Level 2: Medium - denser, more colors
+    // Level 2: Medium - denser, more colors (centered)
     [
-      [0, 1, 2, 3, 0, 1, 2, 3, -1, -1, -1, -1],
-      [1, 0, 3, 2, 1, 0, 3, -1, -1, -1, -1],
-      [2, 3, 0, 1, 2, 3, 0, 1, -1, -1, -1, -1],
-      [0, 1, 2, 3, 0, 1, 2, -1, -1, -1, -1],
-      [1, 0, 4, 4, 1, 0, 3, 2, -1, -1, -1, -1],
-      [2, 4, 4, 1, 0, 3, 2, -1, -1, -1, -1]
+      [-1, -1, 0, 1, 2, 3, 0, 1, 2, 3, -1, -1],
+      [-1, -1, 1, 0, 3, 2, 1, 0, 3, -1, -1],
+      [-1, -1, 2, 3, 0, 1, 2, 3, 0, 1, -1, -1],
+      [-1, -1, 0, 1, 2, 3, 0, 1, 2, -1, -1],
+      [-1, -1, 1, 0, 4, 4, 1, 0, 3, 2, -1, -1],
+      [-1, -1, 2, 4, 4, 1, 0, 3, 2, -1, -1]
     ],
-    // Level 3: Hard - very dense, complex patterns
+    // Level 3: Hard - very dense, complex patterns (full width)
     [
       [0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5],
       [5, 4, 3, 2, 1, 0, 5, 4, 3, 2, 1],

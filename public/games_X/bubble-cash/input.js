@@ -1,7 +1,6 @@
 // input.js - Input handling
 
 import { gameState } from './globals.js';
-import { TAP_ROTATION_MULTIPLIER } from './shooter.js';
 
 export function handleKeyPressed(p) {
   // Log input
@@ -35,14 +34,21 @@ export function handleKeyPressed(p) {
       fireProjectile(p);
     } else if (p.keyCode === 90) { // Z
       swapBubbles();
-    } else if (p.keyCode === 37) { // LEFT ARROW
-      if (gameState.player) {
-        gameState.player.rotateLeft(TAP_ROTATION_MULTIPLIER);
-      }
-    } else if (p.keyCode === 39) { // RIGHT ARROW
-      if (gameState.player) {
-        gameState.player.rotateRight(TAP_ROTATION_MULTIPLIER);
-      }
+    }
+  }
+}
+
+export function handleContinuousInput(p) {
+  if (gameState.gamePhase !== 'PLAYING' || gameState.controlMode !== 'HUMAN') return;
+
+  if (p.keyIsDown(37)) { // LEFT ARROW
+    if (gameState.player) {
+      gameState.player.rotateLeft();
+    }
+  }
+  if (p.keyIsDown(39)) { // RIGHT ARROW
+    if (gameState.player) {
+      gameState.player.rotateRight();
     }
   }
 }

@@ -2,6 +2,12 @@
 
 import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, PHASE_START, PHASE_PLAYING, PHASE_PAUSED, PHASE_GAME_OVER_WIN, PHASE_GAME_OVER_LOSE, PHASE_LEVEL_COMPLETE, LEVEL_CONFIGS } from './globals.js';
 
+let damageFlashFrames = 0;
+
+export function setDamageFlash(frames) {
+  damageFlashFrames = frames;
+}
+
 export function renderUI(p) {
   if (gameState.gamePhase === PHASE_START) {
     renderStartScreen(p);
@@ -42,6 +48,7 @@ function renderStartScreen(p) {
     'OBJECTIVE:',
     'Grow your snake by eating pellets and defeating AI opponents.',
     'Reach the target length to complete each level!',
+    'You have 3 lives - respawn when you die!',
     '',
     'CONTROLS:',
     'Arrow Keys: Turn Left/Right',
@@ -54,7 +61,7 @@ function renderStartScreen(p) {
     'Level 3: Reach 250 length',
   ];
   
-  let yPos = 170;
+  let yPos = 160;
   for (let line of instructions) {
     if (line.includes('OBJECTIVE') || line.includes('CONTROLS') || line.includes('LEVELS')) {
       p.fill(150, 220, 50);
@@ -62,7 +69,7 @@ function renderStartScreen(p) {
       p.fill(200);
     }
     p.text(line, CANVAS_WIDTH / 2, yPos);
-    yPos += 20;
+    yPos += 18;
   }
   
   // Press Enter prompt
@@ -74,13 +81,30 @@ function renderStartScreen(p) {
 }
 
 function renderPlayingUI(p) {
-  // Score and length
+  // Damage flash overlay
+  if (damageFlashFrames > 0) {
+    const flashAlpha = p.map(damageFlashFrames, 0, 30, 0, 120);
+    p.fill(220, 50, 50, flashAlpha);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    damageFlashFrames--;
+  }
+
+  // Score, length, and lives
   p.fill(255);
   p.textAlign(p.LEFT, p.TOP);
   p.textSize(16);
   p.text(`SCORE: ${gameState.score} | LENGTH: ${gameState.playerLength}`, 10, 10);
   
+  // Lives with heart symbols
+  let livesText = 'LIVES: ';
+  for (let i = 0; i < gameState.lives; i++) {
+    livesText += '♥ ';
+  }
+  p.fill(220, 50, 50);
+  p.text(livesText, 10, 30);
+  
   // Level
+  p.fill(255);
   p.textAlign(p.RIGHT, p.TOP);
   const config = LEVEL_CONFIGS[gameState.currentLevel];
   p.text(`LEVEL ${gameState.currentLevel}: ${config.name}`, CANVAS_WIDTH - 10, 10);
@@ -103,6 +127,15 @@ function renderPlayingUI(p) {
   const progress = Math.min(gameState.playerLength / config.targetLength, 1);
   p.fill(150, 220, 50);
   p.rect(barX, barY, barWidth * progress, barHeight);
+  
+  // Invincibility indicator
+  if (gameState.player && gameState.player.isInvincible()) {
+    p.textAlign(p.CENTER, p.BOTTOM);
+    p.textSize(14);
+    const invincAlpha = p.map(p.sin(p.frameCount * 0.2), -1, 1, 100, 255);
+    p.fill(100, 200, 255, invincAlpha);
+    p.text('★ INVINCIBLE ★', CANVAS_WIDTH / 2, CANVAS_HEIGHT - 10);
+  }
 }
 
 function renderPausedOverlay(p) {
@@ -140,20 +173,24 @@ function renderLevelCompleteScreen(p) {
   p.text(`Score: ${gameState.score}`, CANVAS_WIDTH / 2, 180);
   p.text(`Final Length: ${gameState.playerLength}`, CANVAS_WIDTH / 2, 210);
   
+  // Lives remaining
+  p.fill(220, 50, 50);
+  p.text(`Lives Remaining: ${gameState.lives}`, CANVAS_WIDTH / 2, 240);
+  
   // Next level preview
   if (gameState.currentLevel < 3) {
     const nextConfig = LEVEL_CONFIGS[gameState.currentLevel + 1];
     p.textSize(18);
     p.fill(200);
-    p.text(`Next: Level ${gameState.currentLevel + 1} - ${nextConfig.name}`, CANVAS_WIDTH / 2, 260);
+    p.text(`Next: Level ${gameState.currentLevel + 1} - ${nextConfig.name}`, CANVAS_WIDTH / 2, 280);
     p.textSize(16);
     p.fill(150);
-    p.text(`Target Length: ${nextConfig.targetLength}`, CANVAS_WIDTH / 2, 285);
-    p.text(`AI Opponents: ${nextConfig.aiCount}`, CANVAS_WIDTH / 2, 305);
+    p.text(`Target Length: ${nextConfig.targetLength}`, CANVAS_WIDTH / 2, 305);
+    p.text(`AI Opponents: ${nextConfig.aiCount}`, CANVAS_WIDTH / 2, 325);
   } else {
     p.textSize(20);
     p.fill(255, 220, 0);
-    p.text('Final Level Ahead!', CANVAS_WIDTH / 2, 260);
+    p.text('Final Level Ahead!', CANVAS_WIDTH / 2, 280);
   }
   
   // Instructions - pulsing effect

@@ -20,7 +20,7 @@ export function drawStartScreen(p) {
   p.fill(220, 220, 220);
   p.textSize(14);
   p.textAlign(p.CENTER, p.TOP);
-  const desc = "Control a numbered block racing forward.\nAbsorb smaller numbers to grow your value.\nAvoid larger numbers and deadly hazards!\nBreak walls at the end of each level.";
+  const desc = "Control a numbered block racing forward.\nCollect smaller/equal numbers to grow.\nAVOID larger numbers - they end your run!\nBreak through walls at level end to win.";
   let yPos = 170;
   for (let line of desc.split('\n')) {
     p.text(line, CANVAS_WIDTH / 2, yPos);
@@ -141,14 +141,23 @@ function drawGameUI(p) {
   p.textAlign(p.LEFT, p.TOP);
   p.text(`Level: ${gameState.currentLevel}`, 10, 10);
   
-  // Player number
+  // Player number with instruction
   if (gameState.player) {
+    // Player current number display
     p.fill(255, 255, 100);
     p.stroke(0);
     p.strokeWeight(3);
     p.textAlign(p.CENTER, p.BOTTOM);
     p.textSize(24);
-    p.text(`Number: ${gameState.player.value}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT - 20);
+    p.text(`Your Number: ${gameState.player.value}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT - 50);
+    
+    // Instruction reminder
+    p.noStroke();
+    p.textSize(14);
+    p.fill(150, 255, 150);
+    p.text(`Collect ≤ ${gameState.player.value}`, CANVAS_WIDTH / 2 - 80, CANVAS_HEIGHT - 20);
+    p.fill(255, 100, 100);
+    p.text(`AVOID > ${gameState.player.value}`, CANVAS_WIDTH / 2 + 80, CANVAS_HEIGHT - 20);
   }
 }
 

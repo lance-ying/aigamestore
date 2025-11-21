@@ -13,7 +13,7 @@ function initGame() {
   const p5 = window.p5;
   
   if (!p5) {
-    console.error('p5.js not loaded! Retrying...');
+    console.log('p5.js not loaded yet, retrying...');
     // Retry after a short delay
     setTimeout(initGame, 100);
     return;
@@ -164,14 +164,8 @@ function initGame() {
   });
 }
 
-// Wait for window to fully load (including all scripts) before initializing
-if (document.readyState === 'complete') {
-  // Already loaded
-  initGame();
-} else {
-  // Wait for load event (ensures all external scripts are loaded)
-  window.addEventListener('load', initGame);
-}
+// Start initialization immediately with built-in retry mechanism
+initGame();
 
 // Expose getGameState function
 window.getGameState = function() {

@@ -45,16 +45,16 @@ export function handleKeyPressed(p, key, keyCode) {
     }
   }
 
-  // Gameplay controls - TAP-BASED for both movement and tilt
+  // Gameplay controls - CONTINUOUS movement based on inputState
   if (gameState.gamePhase === PHASE_PLAYING && gameState.player) {
     if (keyCode === KEY_LEFT) {
-      gameState.player.moveLeft();
+      gameState.inputState.left = true;
     } else if (keyCode === KEY_RIGHT) {
-      gameState.player.moveRight();
+      gameState.inputState.right = true;
     } else if (keyCode === KEY_Q) {
-      gameState.player.tiltLeft();
+      gameState.inputState.tiltLeft = true;
     } else if (keyCode === KEY_E) {
-      gameState.player.tiltRight();
+      gameState.inputState.tiltRight = true;
     }
   }
 }
@@ -68,7 +68,18 @@ export function handleKeyReleased(p, key, keyCode) {
     timestamp: Date.now()
   });
   
-  // Note: Tilt is now tap-based, so no need to track key release for Q/E
+  // Release continuous movement controls
+  if (gameState.gamePhase === PHASE_PLAYING) {
+    if (keyCode === KEY_LEFT) {
+      gameState.inputState.left = false;
+    } else if (keyCode === KEY_RIGHT) {
+      gameState.inputState.right = false;
+    } else if (keyCode === KEY_Q) {
+      gameState.inputState.tiltLeft = false;
+    } else if (keyCode === KEY_E) {
+      gameState.inputState.tiltRight = false;
+    }
+  }
 }
 
 function startGame(p) {

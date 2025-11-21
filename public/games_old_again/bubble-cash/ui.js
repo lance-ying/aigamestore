@@ -1,0 +1,126 @@
+// ui.js - UI rendering
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, LOSE_LINE_Y } from './globals.js';
+
+export function drawUI(p) {
+  p.push();
+  p.textAlign(p.LEFT, p.TOP);
+  p.textSize(20);
+  p.fill(255);
+  p.noStroke();
+
+  // Score
+  p.text(`SCORE: ${gameState.score}`, 10, 10);
+
+  // Timer
+  p.textAlign(p.CENTER, p.TOP);
+  const minutes = Math.floor(gameState.timerRemaining / 60);
+  const seconds = Math.floor(gameState.timerRemaining % 60);
+  const timeStr = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  p.text(`TIME: ${timeStr}`, CANVAS_WIDTH / 2, 10);
+
+  // Level
+  p.textAlign(p.RIGHT, p.TOP);
+  p.text(`LEVEL: ${gameState.currentLevel}`, CANVAS_WIDTH - 10, 10);
+
+  // Lose line indicator
+  p.stroke(255, 0, 0, 100);
+  p.strokeWeight(2);
+  p.line(0, LOSE_LINE_Y, CANVAS_WIDTH, LOSE_LINE_Y);
+
+  p.pop();
+}
+
+export function drawStartScreen(p) {
+  p.push();
+  p.background(20, 30, 50);
+
+  // Title
+  p.textAlign(p.CENTER, p.CENTER);
+  p.fill(255, 220, 100);
+  p.textSize(48);
+  p.noStroke();
+  p.text('BUBBLE CASH', CANVAS_WIDTH / 2, 80);
+
+  // Instructions
+  p.fill(255);
+  p.textSize(16);
+  p.text('Clear all bubbles before time runs out!', CANVAS_WIDTH / 2, 150);
+  p.text('Match 3+ bubbles of the same color to pop them', CANVAS_WIDTH / 2, 180);
+
+  // Controls
+  p.textSize(14);
+  p.text('ARROW KEYS: Aim', CANVAS_WIDTH / 2, 230);
+  p.text('SPACE: Fire Bubble', CANVAS_WIDTH / 2, 250);
+  p.text('Z: Swap Bubbles', CANVAS_WIDTH / 2, 270);
+  p.text('ESC: Pause', CANVAS_WIDTH / 2, 290);
+
+  // Start prompt
+  p.fill(255, 255, 100);
+  p.textSize(24);
+  p.text('PRESS ENTER TO START', CANVAS_WIDTH / 2, 350);
+
+  p.pop();
+}
+
+export function drawPausedIndicator(p) {
+  p.push();
+  p.textAlign(p.RIGHT, p.TOP);
+  p.fill(255, 255, 100);
+  p.textSize(18);
+  p.noStroke();
+  p.text('PAUSED', CANVAS_WIDTH - 10, 40);
+  p.pop();
+}
+
+export function drawGameOverScreen(p, isWin) {
+  p.push();
+  p.fill(0, 0, 0, 150);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+  p.textAlign(p.CENTER, p.CENTER);
+  p.fill(isWin ? [100, 255, 100] : [255, 100, 100]);
+  p.textSize(48);
+  p.noStroke();
+  p.text(isWin ? 'YOU WIN!' : 'GAME OVER', CANVAS_WIDTH / 2, 120);
+
+  p.fill(255);
+  p.textSize(24);
+  p.text(`FINAL SCORE: ${gameState.finalScore}`, CANVAS_WIDTH / 2, 200);
+
+  p.fill(255, 255, 100);
+  p.textSize(20);
+  p.text('PRESS R TO RESTART', CANVAS_WIDTH / 2, 280);
+
+  p.pop();
+}
+
+export function drawLevelTransition(p) {
+  p.push();
+  p.fill(0, 0, 0, 150);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+  p.textAlign(p.CENTER, p.CENTER);
+  p.fill(100, 255, 100);
+  p.textSize(36);
+  p.noStroke();
+  p.text(`LEVEL ${gameState.currentLevel - 1} COMPLETE!`, CANVAS_WIDTH / 2, 150);
+
+  p.fill(255);
+  p.textSize(24);
+  const bonus = calculateTimeBonusForDisplay();
+  p.text(`Time Bonus: +${bonus}`, CANVAS_WIDTH / 2, 200);
+  p.text(`Score: ${gameState.score}`, CANVAS_WIDTH / 2, 230);
+
+  p.fill(255, 255, 100);
+  p.textSize(20);
+  p.text(`GET READY FOR LEVEL ${gameState.currentLevel}!`, CANVAS_WIDTH / 2, 280);
+
+  p.pop();
+}
+
+function calculateTimeBonusForDisplay() {
+  return Math.floor(gameState.timerRemaining * 5);
+}

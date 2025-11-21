@@ -51,7 +51,7 @@ function renderStartScreen(p) {
   const descY = 160;
   p.text('Guide falling objects into the target zone', CANVAS_WIDTH / 2, descY);
   p.text('Complete 5 challenging levels', CANVAS_WIDTH / 2, descY + 25);
-  p.text('Watch out for obstacles and moving targets!', CANVAS_WIDTH / 2, descY + 50);
+  p.text('Limited objects per level - catch enough to win!', CANVAS_WIDTH / 2, descY + 50);
   
   // Instructions
   p.textSize(16);
@@ -134,19 +134,13 @@ function renderLevelCompleteScreen(p) {
   p.fill(200);
   p.text(`Objects Caught: ${gameState.levelObjectives.objectsCaught}/${gameState.levelObjectives.objectsRequired}`, 
     CANVAS_WIDTH / 2, 220);
-  p.text(`Time Remaining: ${gameState.levelObjectives.timeRemaining}s`, CANVAS_WIDTH / 2, 245);
   
   // Bonuses
-  const timeBonus = gameState.levelObjectives.timeRemaining * 10;
-  const perfect = gameState.levelObjectives.objectsCaught === gameState.levelObjectives.totalObjects;
+  const perfect = gameState.levelObjectives.objectsLost === 0;
   
-  if (timeBonus > 0) {
-    p.fill(255, 255, 100);
-    p.text(`Time Bonus: +${timeBonus}`, CANVAS_WIDTH / 2, 280);
-  }
   if (perfect) {
     p.fill(255, 200, 100);
-    p.text('Perfect Bonus: +200', CANVAS_WIDTH / 2, 305);
+    p.text('Perfect Bonus: +200', CANVAS_WIDTH / 2, 255);
   }
   
   // Next level prompt

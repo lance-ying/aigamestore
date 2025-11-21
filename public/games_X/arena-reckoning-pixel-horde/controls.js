@@ -3,108 +3,33 @@
 import { gameState, GAME_PHASES, CONTROL_MODES, PLAYER_CONFIG, LEVEL_CONFIGS } from './globals.js';
 import { Player } from './player.js';
 
-// Track key states for tap detection
-const prevKeyStates = {
-  left: false,
-  right: false,
-  up: false,
-  down: false
-};
-
-const currKeyStates = {
-  left: false,
-  right: false,
-  up: false,
-  down: false
-};
-
-// Target position for smooth movement
-let targetX = null;
-let targetY = null;
-let isMovingToTarget = false;
-
 export function handleHumanInput(p) {
   const player = gameState.player;
   if (!player) return;
   
-  // Update current key states
-  currKeyStates.left = p.keyIsDown(37) || p.keyIsDown(65);
-  currKeyStates.right = p.keyIsDown(39) || p.keyIsDown(68);
-  currKeyStates.up = p.keyIsDown(38) || p.keyIsDown(87);
-  currKeyStates.down = p.keyIsDown(40) || p.keyIsDown(83);
+  // Movement
+  player.vx = 0;
+  player.vy = 0;
   
-  // Tap-based movement distance (same as before)
-  const tapDistance = 25;
-  
-  // Detect taps (key just pressed this frame, not held from previous frame)
-  const leftTapped = currKeyStates.left && !prevKeyStates.left;
-  const rightTapped = currKeyStates.right && !prevKeyStates.right;
-  const upTapped = currKeyStates.up && !prevKeyStates.up;
-  const downTapped = currKeyStates.down && !prevKeyStates.down;
-  
-  // If a tap occurred, set new target position
-  if (leftTapped || rightTapped || upTapped || downTapped) {
-    // Calculate discrete movement vector
-    let dx = 0;
-    let dy = 0;
-    
-    if (leftTapped) dx -= tapDistance;
-    if (rightTapped) dx += tapDistance;
-    if (upTapped) dy -= tapDistance;
-    if (downTapped) dy += tapDistance;
-    
-    // Normalize diagonal movement
-    if (dx !== 0 && dy !== 0) {
-      const factor = 1 / Math.sqrt(2);
-      dx *= factor;
-      dy *= factor;
-    }
-    
-    // Set target position
-    targetX = player.x + dx;
-    targetY = player.y + dy;
-    isMovingToTarget = true;
+  if (p.keyIsDown(37) || p.keyIsDown(65)) { // Left
+    player.vx = -player.speed;
+  }
+  if (p.keyIsDown(39) || p.keyIsDown(68)) { // Right
+    player.vx = player.speed;
+  }
+  if (p.keyIsDown(38) || p.keyIsDown(87)) { // Up
+    player.vy = -player.speed;
+  }
+  if (p.keyIsDown(40) || p.keyIsDown(83)) { // Down
+    player.vy = player.speed;
   }
   
-  // Smooth movement towards target
-  if (isMovingToTarget && targetX !== null && targetY !== null) {
-    const distToTarget = Math.sqrt(
-      Math.pow(targetX - player.x, 2) + 
-      Math.pow(targetY - player.y, 2)
-    );
-    
-    // If close enough to target, snap to it and stop
-    if (distToTarget < 0.5) {
-      player.x = targetX;
-      player.y = targetY;
-      isMovingToTarget = false;
-      player.vx = 0;
-      player.vy = 0;
-    } else {
-      // Smooth easing towards target (ease-out)
-      // Move 20% of remaining distance each frame for smooth deceleration
-      const easeFactor = 0.2;
-      const dx = (targetX - player.x) * easeFactor;
-      const dy = (targetY - player.y) * easeFactor;
-      
-      player.x += dx;
-      player.y += dy;
-      
-      // Set velocity for visual effects (if needed)
-      player.vx = dx;
-      player.vy = dy;
-    }
-  } else {
-    // No movement
-    player.vx = 0;
-    player.vy = 0;
+  // Normalize diagonal movement
+  if (player.vx !== 0 && player.vy !== 0) {
+    const factor = 1 / Math.sqrt(2);
+    player.vx *= factor;
+    player.vy *= factor;
   }
-  
-  // Update previous key states for next frame
-  prevKeyStates.left = currKeyStates.left;
-  prevKeyStates.right = currKeyStates.right;
-  prevKeyStates.up = currKeyStates.up;
-  prevKeyStates.down = currKeyStates.down;
 }
 
 export function handleTestingInput(p) {
@@ -255,11 +180,6 @@ function startGame(p) {
   gameState.bossDefeated = false;
   gameState.testingFrameCount = 0;
   
-  // Reset movement state
-  targetX = null;
-  targetY = null;
-  isMovingToTarget = false;
-  
   gameState.gamePhase = GAME_PHASES.PLAYING;
   
   p.logs.game_info.push({
@@ -277,11 +197,6 @@ function resetGame(p) {
   gameState.enemies = [];
   gameState.availableUpgrades = [];
   gameState.gamePhase = GAME_PHASES.START;
-  
-  // Reset movement state
-  targetX = null;
-  targetY = null;
-  isMovingToTarget = false;
   
   p.logs.game_info.push({
     data: { phase: "START" },

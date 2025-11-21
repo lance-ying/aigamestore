@@ -11,8 +11,8 @@ export function spawnEntities(p) {
     spawnObstacle(p, spawnZ);
   }
   
-  // Spawn coins - reduced from 0.3 to 0.1 to prevent excessive coins
-  if (p.random() < 0.1) {
+  // Spawn coins - reduced to 0.02 to prevent excessive coins
+  if (p.random() < 0.02) {
     spawnCoins(p, spawnZ);
   }
   
@@ -52,28 +52,27 @@ function spawnCoins(p, z) {
   const pattern = p.floor(p.random(0, 3));
   
   if (pattern === 0) {
-    // Single lane of coins
+    // Single lane of coins - reduced from 5 to 3
     const lane = p.floor(p.random(0, 3));
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 3; i++) {
       const coin = new Coin(p, lane, z + i * 50, 0);
       gameState.coins.push(coin);
       gameState.entities.push(coin);
     }
   } else if (pattern === 1) {
-    // Zigzag pattern
-    for (let i = 0; i < 5; i++) {
+    // Zigzag pattern - reduced from 5 to 3
+    for (let i = 0; i < 3; i++) {
       const lane = (i % 3);
       const coin = new Coin(p, lane, z + i * 50, 0);
       gameState.coins.push(coin);
       gameState.entities.push(coin);
     }
   } else {
-    // All lanes
-    for (let lane = 0; lane < 3; lane++) {
-      const coin = new Coin(p, lane, z, 0);
-      gameState.coins.push(coin);
-      gameState.entities.push(coin);
-    }
+    // Single coin per lane (simplified from all lanes)
+    const lane = p.floor(p.random(0, 3));
+    const coin = new Coin(p, lane, z, 0);
+    gameState.coins.push(coin);
+    gameState.entities.push(coin);
   }
 }
 

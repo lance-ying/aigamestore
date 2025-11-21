@@ -10,6 +10,7 @@ export class SushiCat {
     this.startRadius = 15;
     this.radius = this.startRadius;
     this.maxRadius = 30;
+    this.currentBodyRadius = this.startRadius; // Track the actual current body radius
     
     this.body = Bodies.circle(x, y, this.radius, {
       label: 'player',
@@ -31,8 +32,12 @@ export class SushiCat {
     const growthFactor = gameState.bellyMeter / 100;
     this.radius = this.startRadius + (this.maxRadius - this.startRadius) * growthFactor;
     
-    // Update Matter.js body radius
-    Body.scale(this.body, this.radius / this.body.circleRadius, this.radius / this.body.circleRadius);
+    // Only scale if radius changed significantly
+    if (Math.abs(this.radius - this.currentBodyRadius) > 0.5) {
+      const scaleFactor = this.radius / this.currentBodyRadius;
+      Body.scale(this.body, scaleFactor, scaleFactor);
+      this.currentBodyRadius = this.radius;
+    }
     
     // Log position if changed significantly
     const dx = Math.abs(this.body.position.x - gameState.lastPlayerLogX);
@@ -55,7 +60,6 @@ export class SushiCat {
     if (this.body.position.y > CANVAS_HEIGHT + 100) {
       this.remove();
       gameState.catDropped = false;
-      gameState.dropsRemaining--;
       
       // Check lose condition
       if (gameState.dropsRemaining <= 0 && gameState.bellyMeter < 100) {

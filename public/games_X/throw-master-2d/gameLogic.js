@@ -151,14 +151,14 @@ export function updateGame(p) {
     checkKnifeCollisions(p, knife, i);
   }
   
-  // Update enemies
+  // Update enemies (now with hostage/player seeking)
   gameState.enemiesRemaining = 0;
   for (const enemy of gameState.enemies) {
     if (enemy.active) {
-      enemy.update();
+      enemy.update(gameState.hostages, gameState.player);
       gameState.enemiesRemaining++;
       
-      // Check collision with hostages
+      // Check collision with hostages (deal damage over time)
       for (const hostage of gameState.hostages) {
         if (hostage.alive) {
           const enemyBounds = enemy.getBounds();
@@ -168,16 +168,42 @@ export function updateGame(p) {
             enemyBounds.x, enemyBounds.y, enemyBounds.radius,
             hostageBounds.x, hostageBounds.y, hostageBounds.radius + 5
           )) {
-            hostage.kill();
-            gameState.gamePhase = GAME_PHASES.GAME_OVER_LOSE;
-            
-            p.logs.game_info.push({
-              data: { gamePhase: gameState.gamePhase, reason: "hostage_killed" },
-              framecount: p.frameCount,
-              timestamp: Date.now()
-            });
-            return;
+            // Deal damage if attack is ready
+            if (enemy.canAttack()) {
+              hostage.takeDamage(enemy.damage);
+              enemy.resetAttackTimer();
+              
+              // Check if hostage died
+              if (!hostage.alive) {
+                gameState.gamePhase = GAME_PHASES.GAME_OVER_LOSE;
+                
+                p.logs.game_info.push({
+                  data: { gamePhase: gameState.gamePhase, reason: "hostage_killed" },
+                  framecount: p.frameCount,
+                  timestamp: Date.now()
+                });
+                return;
+              }
+            }
           }
+        }
+      }
+      
+      // Check collision with player (optional - enemies can also attack player)
+      if (gameState.player) {
+        const enemyBounds = enemy.getBounds();
+        const playerBounds = {
+          x: gameState.player.x,
+          y: gameState.player.y,
+          radius: gameState.player.radius
+        };
+        
+        if (circleCircleCollision(
+          enemyBounds.x, enemyBounds.y, enemyBounds.radius,
+          playerBounds.x, playerBounds.y, playerBounds.radius
+        )) {
+          // Player takes damage (optional - for now just slow down enemy)
+          // Could add player health system later
         }
       }
     }

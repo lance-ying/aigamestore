@@ -11,8 +11,8 @@ export function checkCollisions(p, player) {
     // Only check collision if obstacle is close enough (in z-space)
     if (obstacle.z > 150) continue;
     
-    // Skip collision if jetpack is active
-    if (player.jetpackActive) continue;
+    // Skip collision if jetpack is active or invincible
+    if (player.jetpackActive || player.invincible) continue;
     
     const obstacleBoxes = obstacle.getBoundingBoxes();
     
@@ -35,8 +35,28 @@ export function checkCollisions(p, player) {
             timestamp: Date.now()
           });
         } else {
-          // Game over
-          return { collision: true, type: 'obstacle' };
+          // Lose a life
+          gameState.lives--;
+          
+          p.logs.player_info.push({
+            screen_x: player.x,
+            screen_y: player.y,
+            game_x: player.x,
+            game_y: player.y,
+            event: "life_lost",
+            lives_remaining: gameState.lives,
+            framecount: p.frameCount,
+            timestamp: Date.now()
+          });
+          
+          if (gameState.lives <= 0) {
+            // Game over
+            return { collision: true, type: 'obstacle' };
+          } else {
+            // Grant brief invincibility (2 seconds at 60fps)
+            player.activateInvincibility(120);
+            obstacle.active = false; // Remove the obstacle that hit the player
+          }
         }
       }
     }

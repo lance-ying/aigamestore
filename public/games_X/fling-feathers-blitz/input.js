@@ -7,6 +7,9 @@ const Matter = window.Matter;
 const Body = Matter.Body;
 
 export function handleKeyPressed(p, key, keyCode) {
+  // Track key state for continuous controls
+  gameState.keysPressed[keyCode] = true;
+
   // Log input
   p.logs.inputs.push({
     input_type: 'keyPressed',
@@ -66,38 +69,12 @@ export function handleKeyPressed(p, key, keyCode) {
   if (keyCode === 90 && gameState.gamePhase === "PLAYING") {
     activateBirdAbility(p);
   }
-
-  // Arrow keys - Adjust aim when aiming (tap-based with substantial movement per tap)
-  if (gameState.isAiming) {
-    const pullSpeed = 12; // Increased from 3 to 12 (4x) for tap-based VLM control
-
-    if (keyCode === 37) { // LEFT
-      gameState.slingshotPullPos.x -= pullSpeed;
-    }
-    if (keyCode === 39) { // RIGHT
-      gameState.slingshotPullPos.x += pullSpeed;
-    }
-    if (keyCode === 38) { // UP
-      gameState.slingshotPullPos.y -= pullSpeed;
-    }
-    if (keyCode === 40) { // DOWN
-      gameState.slingshotPullPos.y += pullSpeed;
-    }
-
-    // Clamp to max pull distance
-    const dist = Math.sqrt(
-      gameState.slingshotPullPos.x * gameState.slingshotPullPos.x +
-      gameState.slingshotPullPos.y * gameState.slingshotPullPos.y
-    );
-    if (dist > MAX_PULL_DISTANCE) {
-      const scale = MAX_PULL_DISTANCE / dist;
-      gameState.slingshotPullPos.x *= scale;
-      gameState.slingshotPullPos.y *= scale;
-    }
-  }
 }
 
 export function handleKeyReleased(p, key, keyCode) {
+  // Track key state for continuous controls
+  gameState.keysPressed[keyCode] = false;
+
   // Log input
   p.logs.inputs.push({
     input_type: 'keyReleased',
@@ -108,7 +85,41 @@ export function handleKeyReleased(p, key, keyCode) {
 }
 
 export function updateAiming(p) {
-  // No longer need continuous update since we handle in keyPressed
+  // Continuous aim adjustment when aiming and arrow keys are held
+  if (gameState.isAiming && gameState.slingshotPullPos) {
+    const pullSpeed = 2; // Continuous speed per frame (slower than tap-based)
+    let changed = false;
+
+    if (gameState.keysPressed[37]) { // LEFT
+      gameState.slingshotPullPos.x -= pullSpeed;
+      changed = true;
+    }
+    if (gameState.keysPressed[39]) { // RIGHT
+      gameState.slingshotPullPos.x += pullSpeed;
+      changed = true;
+    }
+    if (gameState.keysPressed[38]) { // UP
+      gameState.slingshotPullPos.y -= pullSpeed;
+      changed = true;
+    }
+    if (gameState.keysPressed[40]) { // DOWN
+      gameState.slingshotPullPos.y += pullSpeed;
+      changed = true;
+    }
+
+    // Clamp to max pull distance if changed
+    if (changed) {
+      const dist = Math.sqrt(
+        gameState.slingshotPullPos.x * gameState.slingshotPullPos.x +
+        gameState.slingshotPullPos.y * gameState.slingshotPullPos.y
+      );
+      if (dist > MAX_PULL_DISTANCE) {
+        const scale = MAX_PULL_DISTANCE / dist;
+        gameState.slingshotPullPos.x *= scale;
+        gameState.slingshotPullPos.y *= scale;
+      }
+    }
+  }
 }
 
 export function updateTestingControls(p) {
@@ -177,6 +188,7 @@ function startGame(p) {
   gameState.activeBirds = [];
   gameState.isAiming = false;
   gameState.particleEffects = [];
+  gameState.keysPressed = {};
   
   // Load high score
   const savedHighScore = localStorage.getItem('flingFeathersHighScore');
@@ -216,6 +228,7 @@ function loadNextLevel(p) {
   gameState.activeBirds = [];
   gameState.isAiming = false;
   gameState.particleEffects = [];
+  gameState.keysPressed = {};
   
   p.logs.game_info.push({
     data: { phase: "PLAYING", level: gameState.currentLevel },
@@ -240,6 +253,7 @@ function restartGame(p) {
   gameState.birdsRemaining = [];
   gameState.isAiming = false;
   gameState.particleEffects = [];
+  gameState.keysPressed = {};
   
   p.logs.game_info.push({
     data: { phase: "START" },

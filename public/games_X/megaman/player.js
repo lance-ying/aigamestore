@@ -18,6 +18,7 @@ export class Player {
     this.animTimer = 0;
     this.magnetPlatforms = [];
     this.magnetBeamActive = false;
+    this.jumpReleased = true; // Track if jump key has been released since last jump
   }
 
   update(p, keys) {
@@ -54,10 +55,17 @@ export class Player {
     this.aimUp = keys.up;
     this.aimDown = keys.down && !this.onGround;
 
-    // TAP-BASED JUMP - Press once to jump
-    if (keys.jump && this.onGround) {
+    // HOLD-BASED JUMP with single-jump-per-press prevention
+    // Player can hold jump button, but only jumps once per key press
+    if (!keys.jump) {
+      // Jump key released - allow next jump
+      this.jumpReleased = true;
+    }
+
+    if (keys.jump && this.onGround && this.jumpReleased) {
       this.vy = JUMP_POWER;
       this.onGround = false;
+      this.jumpReleased = false; // Prevent additional jumps until key is released
     }
 
     // Gravity
@@ -122,7 +130,7 @@ export class Player {
       this.animFrame = (this.animFrame + 1) % 3;
     }
 
-    // TAP-BASED SHOOTING - Press once to shoot
+    // HOLD-BASED SHOOTING - Hold to continuously shoot (with cooldown)
     if (keys.shoot && this.shootCooldown === 0) {
       this.shoot(p);
       this.shootCooldown = 15;
@@ -244,6 +252,7 @@ export class Player {
       this.vy = 0;
       gameState.playerHealth = gameState.maxPlayerHealth;
       gameState.invincibilityFrames = 120;
+      this.jumpReleased = true; // Reset jump state on respawn
     }
   }
 

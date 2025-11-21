@@ -25,7 +25,8 @@ export class Player {
     this.forwardSpeed = 3;
     this.jumpForce = 0.15;
     this.isJumping = false;
-    this.canJump = true;
+    this.canJump = false;
+    this.onGround = false; // Track ground contact via collisions - start false since player spawns in air
     this.lastLoggedX = x;
     this.lastLoggedY = y;
     this.onVanishingPlatform = null;
@@ -40,8 +41,8 @@ export class Player {
       });
     }
     
-    // Check if on ground (for jump ability)
-    this.checkGroundContact();
+    // Update jump ability based on ground contact
+    this.updateJumpAbility();
     
     // Log position if changed significantly
     const dx = Math.abs(this.body.position.x - this.lastLoggedX);
@@ -70,14 +71,14 @@ export class Player {
     }
   }
   
-  checkGroundContact() {
-    // Simple ground check - if velocity is near zero and there's a platform below
-    const onGround = Math.abs(this.body.velocity.y) < 0.5;
-    this.canJump = onGround;
-    
-    if (onGround && this.isJumping) {
+  updateJumpAbility() {
+    // Can jump if on ground and not currently jumping
+    if (this.onGround && this.isJumping && Math.abs(this.body.velocity.y) < 1) {
+      // Landed after a jump
       this.isJumping = false;
     }
+    
+    this.canJump = this.onGround && !this.isJumping;
   }
   
   jump() {

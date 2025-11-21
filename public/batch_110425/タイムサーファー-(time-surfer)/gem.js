@@ -1,3 +1,5 @@
+import { gameState } from './globals.js';
+
 export class Gem {
   constructor(p, x, y) {
     this.p = p;
@@ -52,7 +54,7 @@ export class Gem {
 
   checkCollision(player) {
     if (this.collected) return false;
-    const dist = this.p.dist(this.x, this.y, player.x + player.p.gameState.scrollOffset, player.y);
+    const dist = this.p.dist(this.x, this.y, player.x + gameState.scrollOffset, player.y);
     return dist < this.radius + player.radius;
   }
 }

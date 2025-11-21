@@ -36,7 +36,7 @@ function renderStartScreen(p) {
   // Description
   p.textSize(12);
   p.fill(200);
-  p.text("Survive three levels of increasing monster hordes!", CANVAS_WIDTH / 2, 160);
+  p.text("Survive nine levels of increasing monster hordes!", CANVAS_WIDTH / 2, 160);
   p.text("Collect EXP gems to level up and choose upgrades.", CANVAS_WIDTH / 2, 180);
   p.text("Defeat bosses and survive to claim victory!", CANVAS_WIDTH / 2, 200);
   
@@ -122,7 +122,7 @@ function renderGameUI(p) {
     p.textAlign(p.CENTER, p.TOP);
     p.textSize(12);
     p.text(`TIME: ${minutes}:${secs.toString().padStart(2, '0')}`, CANVAS_WIDTH / 2, 30);
-    p.text(`Level ${gameState.currentLevel}/3`, CANVAS_WIDTH / 2, 50);
+    p.text(`Level ${gameState.currentLevel}/9`, CANVAS_WIDTH / 2, 50);
   }
   
   p.pop();
@@ -258,7 +258,7 @@ function renderGameOver(p) {
     
     p.textSize(16);
     p.fill(255);
-    p.text("You survived the Pixel Horde!", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 20);
+    p.text("You conquered all 9 levels!", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 20);
   } else {
     p.textSize(36);
     p.fill(255, 100, 100);

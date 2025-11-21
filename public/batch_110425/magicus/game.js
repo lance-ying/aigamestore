@@ -7,14 +7,15 @@ import {
   PHASE_START,
   PHASE_PLAYING,
   PHASE_PAUSED,
+  PHASE_STAGE_TRANSITION,
   PHASE_GAME_OVER_WIN,
   PHASE_GAME_OVER_LOSE
 } from './globals.js';
 
 import { Player, Enemy } from './entities.js';
-import { initializeGrid, findAllMatches, applyGravity, hasValidMoves } from './grid.js';
+import { initializeGrid, findAllMatches, applyGravity, hasValidMoves, swapCells } from './grid.js';
 import { calculateMatchDamage, chargeMeter, enemyTurn, checkGameOver } from './combat.js';
-import { drawStartScreen, drawGame, drawGameOver } from './rendering.js';
+import { drawStartScreen, drawGame, drawGameOver, drawStageTransition } from './rendering.js';
 import { handleKeyPressed, processAutomatedInput } from './input.js';
 import get_automated_testing_action from './automated_testing_controller.js';
 
@@ -62,6 +63,10 @@ let gameInstance = new p5(p => {
         drawGame(p);
         updateGame(p);
         break;
+      case PHASE_STAGE_TRANSITION:
+        drawStageTransition(p);
+        updateTransition(p);
+        break;
       case PHASE_GAME_OVER_WIN:
       case PHASE_GAME_OVER_LOSE:
         drawGameOver(p);
@@ -69,9 +74,49 @@ let gameInstance = new p5(p => {
     }
   };
   
+  // Update transition phase
+  function updateTransition(p) {
+    gameState.transitionTimer++;
+    
+    // After 120 frames (2 seconds), advance to next stage
+    if (gameState.transitionTimer > 120) {
+      gameState.stage++;
+      gameState.currentEnemy = new Enemy(gameState.stage);
+      gameState.enemyHP = gameState.currentEnemy.hp;
+      gameState.enemyMaxHP = gameState.currentEnemy.maxHP;
+      gameState.isPlayerTurn = true;
+      gameState.gamePhase = PHASE_PLAYING;
+      gameState.transitionTimer = 0;
+      
+      p.logs.game_info.push({
+        data: { gamePhase: PHASE_PLAYING, stage: gameState.stage },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  }
+  
   // Update game logic
   function updateGame(p) {
     if (gameState.gamePhase !== PHASE_PLAYING) return;
+    
+    // Handle invalid swap animation
+    if (gameState.invalidSwap) {
+      gameState.invalidSwapTimer++;
+      
+      if (gameState.invalidSwapTimer > 20) {
+        // Swap back to original position
+        if (gameState.invalidSwapCells) {
+          swapCells(gameState.grid,
+                   gameState.invalidSwapCells.x1, gameState.invalidSwapCells.y1,
+                   gameState.invalidSwapCells.x2, gameState.invalidSwapCells.y2);
+        }
+        gameState.invalidSwap = false;
+        gameState.invalidSwapTimer = 0;
+        gameState.invalidSwapCells = null;
+      }
+      return;
+    }
     
     // Handle animations
     if (gameState.animating) {
@@ -85,7 +130,8 @@ let gameInstance = new p5(p => {
         // Check if enemy defeated
         if (checkGameOver()) {
           if (gameState.gamePhase === PHASE_GAME_OVER_WIN || 
-              gameState.gamePhase === PHASE_GAME_OVER_LOSE) {
+              gameState.gamePhase === PHASE_GAME_OVER_LOSE ||
+              gameState.gamePhase === PHASE_STAGE_TRANSITION) {
             p.logs.game_info.push({
               data: { gamePhase: gameState.gamePhase, finalScore: gameState.score },
               framecount: p.frameCount,
@@ -93,13 +139,6 @@ let gameInstance = new p5(p => {
             });
             return;
           }
-          
-          // Next stage
-          gameState.stage++;
-          gameState.currentEnemy = new Enemy(gameState.stage);
-          gameState.enemyHP = gameState.currentEnemy.hp;
-          gameState.enemyMaxHP = gameState.currentEnemy.maxHP;
-          gameState.isPlayerTurn = true;
         }
       }
       return;
@@ -191,6 +230,15 @@ let gameInstance = new p5(p => {
           framecount: p.frameCount,
           timestamp: Date.now()
         });
+      } else if (gameState.gamePhase === PHASE_STAGE_TRANSITION) {
+        // Allow skipping transition
+        gameState.stage++;
+        gameState.currentEnemy = new Enemy(gameState.stage);
+        gameState.enemyHP = gameState.currentEnemy.hp;
+        gameState.enemyMaxHP = gameState.currentEnemy.maxHP;
+        gameState.isPlayerTurn = true;
+        gameState.gamePhase = PHASE_PLAYING;
+        gameState.transitionTimer = 0;
       }
       return false;
     }
@@ -260,6 +308,10 @@ let gameInstance = new p5(p => {
     gameState.animating = false;
     gameState.elementalMeters = [0, 0, 0, 0, 0];
     gameState.entities = [gameState.player, gameState.currentEnemy];
+    gameState.invalidSwap = false;
+    gameState.invalidSwapTimer = 0;
+    gameState.invalidSwapCells = null;
+    gameState.transitionTimer = 0;
     
     gameState.gamePhase = PHASE_PLAYING;
   }

@@ -11,6 +11,8 @@ export class Panel {
     this.x = 0;
     this.y = 0;
     this.selected = false;
+    this.selectionOrder = 0; // 0 = not selected, 1 = first, 2 = second
+    this.highlighted = false; // Cursor highlight
     
     // Animation
     this.animationOffset = 0;
@@ -30,7 +32,7 @@ export class Panel {
     
     // Selection pulse
     if (this.selected) {
-      this.animationOffset = Math.sin(frameCount * 0.1) * 2;
+      this.animationOffset = Math.sin(frameCount * 0.15) * 3;
     } else {
       this.animationOffset = 0;
     }
@@ -40,15 +42,22 @@ export class Panel {
     p.push();
     p.translate(this.x, this.y);
     
-    // Background
+    // Background with selection and cursor highlights
     if (this.selected) {
-      p.fill(255, 255, 100);
+      // Strong highlight for selected panels
+      p.fill(255, 255, 150);
       p.stroke(255, 200, 0);
+      p.strokeWeight(4);
+    } else if (this.highlighted) {
+      // Cursor highlight
+      p.fill(100, 100, 150);
+      p.stroke(150, 150, 255);
+      p.strokeWeight(3);
     } else {
       p.fill(80, 80, 100);
       p.stroke(50, 50, 70);
+      p.strokeWeight(2);
     }
-    p.strokeWeight(3);
     p.rect(2 + this.animationOffset, 2, this.width - 4, this.height - 4, 5);
     
     // Ground/path
@@ -59,11 +68,39 @@ export class Panel {
     // Draw content based on type
     this.drawContent(p);
     
-    // Panel number
-    p.fill(255, 255, 255, 150);
-    p.textAlign(p.LEFT, p.TOP);
-    p.textSize(10);
-    p.text(this.index, 5, 5);
+    // Panel type label for clarity
+    p.fill(255, 255, 255, 200);
+    p.textAlign(p.CENTER, p.TOP);
+    p.textSize(9);
+    const typeLabel = this.type === PANEL_START ? "START" : 
+                      this.type === PANEL_EXIT ? "EXIT" :
+                      this.type === PANEL_SAFE ? "SAFE" :
+                      this.type === PANEL_SPIKE ? "SPIKE" :
+                      this.type === PANEL_ENEMY ? "ENEMY" :
+                      this.type === PANEL_GAP ? "GAP" : "";
+    p.text(typeLabel, this.width / 2, 5);
+    
+    // Selection order indicator
+    if (this.selected && this.selectionOrder > 0) {
+      p.fill(255, 200, 0);
+      p.stroke(100, 50, 0);
+      p.strokeWeight(2);
+      p.ellipse(this.width - 15, 20, 20, 20);
+      p.fill(0, 0, 0);
+      p.noStroke();
+      p.textAlign(p.CENTER, p.CENTER);
+      p.textSize(12);
+      p.textStyle(p.BOLD);
+      p.text(this.selectionOrder, this.width - 15, 20);
+      p.textStyle(p.NORMAL);
+    }
+    
+    // Cursor indicator
+    if (this.highlighted && !this.selected) {
+      p.fill(150, 150, 255, 200);
+      p.noStroke();
+      p.triangle(this.width / 2 - 5, -5, this.width / 2 + 5, -5, this.width / 2, 0);
+    }
     
     p.pop();
   }
@@ -137,109 +174,105 @@ export class Panel {
 export function createLevelPanels(world, level) {
   const panels = [];
   
-  // World 0: Basic levels
+  // World 0: Tutorial levels - EXIT positioned in middle, requiring path creation
   if (world === 0) {
     if (level === 0) {
-      // Tutorial level: simple arrangement
+      // EXIT at position 2 (early), spike blocking - swap spike with safe
+      panels.push(new Panel(PANEL_START, 0));
+      panels.push(new Panel(PANEL_SPIKE, 1));
+      panels.push(new Panel(PANEL_EXIT, 2));
+      panels.push(new Panel(PANEL_SAFE, 3));
+    } else if (level === 1) {
+      // EXIT at position 3, spike blocking - need to swap spike with safe panel
+      panels.push(new Panel(PANEL_START, 0));
+      panels.push(new Panel(PANEL_SAFE, 1));
+      panels.push(new Panel(PANEL_SPIKE, 2));
+      panels.push(new Panel(PANEL_EXIT, 3));
+      panels.push(new Panel(PANEL_SAFE, 4));
+      panels.push(new Panel(PANEL_SPIKE, 5));
+    } else if (level === 2) {
+      // EXIT at position 3, enemy blocking
+      panels.push(new Panel(PANEL_START, 0));
+      panels.push(new Panel(PANEL_SAFE, 1));
+      panels.push(new Panel(PANEL_ENEMY, 2));
+      panels.push(new Panel(PANEL_EXIT, 3));
+      panels.push(new Panel(PANEL_SAFE, 4));
+      panels.push(new Panel(PANEL_SPIKE, 5));
+    }
+  }
+  // World 1: Intermediate - EXIT in various middle positions
+  else if (world === 1) {
+    if (level === 0) {
+      // EXIT at position 3
+      panels.push(new Panel(PANEL_START, 0));
+      panels.push(new Panel(PANEL_SAFE, 1));
+      panels.push(new Panel(PANEL_SPIKE, 2));
+      panels.push(new Panel(PANEL_EXIT, 3));
+      panels.push(new Panel(PANEL_SAFE, 4));
+      panels.push(new Panel(PANEL_ENEMY, 5));
+      panels.push(new Panel(PANEL_GAP, 6));
+    } else if (level === 1) {
+      // EXIT at position 4 (middle)
+      panels.push(new Panel(PANEL_START, 0));
+      panels.push(new Panel(PANEL_SPIKE, 1));
+      panels.push(new Panel(PANEL_SAFE, 2));
+      panels.push(new Panel(PANEL_GAP, 3));
+      panels.push(new Panel(PANEL_EXIT, 4));
+      panels.push(new Panel(PANEL_SAFE, 5));
+      panels.push(new Panel(PANEL_ENEMY, 6));
+      panels.push(new Panel(PANEL_SPIKE, 7));
+    } else if (level === 2) {
+      // EXIT at position 3
+      panels.push(new Panel(PANEL_START, 0));
+      panels.push(new Panel(PANEL_SAFE, 1));
+      panels.push(new Panel(PANEL_SPIKE, 2));
+      panels.push(new Panel(PANEL_EXIT, 3));
+      panels.push(new Panel(PANEL_SAFE, 4));
+      panels.push(new Panel(PANEL_ENEMY, 5));
+      panels.push(new Panel(PANEL_SAFE, 6));
+      panels.push(new Panel(PANEL_GAP, 7));
+      panels.push(new Panel(PANEL_SPIKE, 8));
+    }
+  }
+  // World 2: Advanced - Complex arrangements
+  else if (world === 2) {
+    if (level === 0) {
+      // EXIT at position 4
+      panels.push(new Panel(PANEL_START, 0));
+      panels.push(new Panel(PANEL_SPIKE, 1));
+      panels.push(new Panel(PANEL_SAFE, 2));
+      panels.push(new Panel(PANEL_ENEMY, 3));
+      panels.push(new Panel(PANEL_EXIT, 4));
+      panels.push(new Panel(PANEL_SAFE, 5));
+      panels.push(new Panel(PANEL_GAP, 6));
+      panels.push(new Panel(PANEL_SAFE, 7));
+      panels.push(new Panel(PANEL_SPIKE, 8));
+    } else if (level === 1) {
+      // EXIT at position 5 (middle)
       panels.push(new Panel(PANEL_START, 0));
       panels.push(new Panel(PANEL_SAFE, 1));
       panels.push(new Panel(PANEL_SPIKE, 2));
       panels.push(new Panel(PANEL_SAFE, 3));
-      panels.push(new Panel(PANEL_EXIT, 4));
-    } else if (level === 1) {
-      panels.push(new Panel(PANEL_START, 0));
-      panels.push(new Panel(PANEL_SPIKE, 1));
-      panels.push(new Panel(PANEL_SAFE, 2));
-      panels.push(new Panel(PANEL_SPIKE, 3));
-      panels.push(new Panel(PANEL_SAFE, 4));
+      panels.push(new Panel(PANEL_GAP, 4));
       panels.push(new Panel(PANEL_EXIT, 5));
+      panels.push(new Panel(PANEL_SAFE, 6));
+      panels.push(new Panel(PANEL_ENEMY, 7));
+      panels.push(new Panel(PANEL_SPIKE, 8));
+      panels.push(new Panel(PANEL_SAFE, 9));
     } else if (level === 2) {
-      panels.push(new Panel(PANEL_START, 0));
-      panels.push(new Panel(PANEL_ENEMY, 1));
-      panels.push(new Panel(PANEL_SAFE, 2));
-      panels.push(new Panel(PANEL_SPIKE, 3));
-      panels.push(new Panel(PANEL_SAFE, 4));
-      panels.push(new Panel(PANEL_EXIT, 5));
-    }
-  }
-  // World 1: Intermediate
-  else if (world === 1) {
-    if (level === 0) {
+      // EXIT at position 5, complex pattern
       panels.push(new Panel(PANEL_START, 0));
       panels.push(new Panel(PANEL_SPIKE, 1));
-      panels.push(new Panel(PANEL_ENEMY, 2));
-      panels.push(new Panel(PANEL_SAFE, 3));
-      panels.push(new Panel(PANEL_SAFE, 4));
-      panels.push(new Panel(PANEL_SPIKE, 5));
-      panels.push(new Panel(PANEL_EXIT, 6));
-    } else if (level === 1) {
-      panels.push(new Panel(PANEL_START, 0));
-      panels.push(new Panel(PANEL_GAP, 1));
       panels.push(new Panel(PANEL_SAFE, 2));
       panels.push(new Panel(PANEL_ENEMY, 3));
       panels.push(new Panel(PANEL_SAFE, 4));
-      panels.push(new Panel(PANEL_SPIKE, 5));
-      panels.push(new Panel(PANEL_EXIT, 6));
-    } else if (level === 2) {
-      panels.push(new Panel(PANEL_START, 0));
-      panels.push(new Panel(PANEL_ENEMY, 1));
-      panels.push(new Panel(PANEL_SPIKE, 2));
-      panels.push(new Panel(PANEL_GAP, 3));
-      panels.push(new Panel(PANEL_SAFE, 4));
-      panels.push(new Panel(PANEL_SAFE, 5));
-      panels.push(new Panel(PANEL_ENEMY, 6));
-      panels.push(new Panel(PANEL_EXIT, 7));
-    }
-  }
-  // World 2: Advanced
-  else if (world === 2) {
-    if (level === 0) {
-      panels.push(new Panel(PANEL_START, 0));
-      panels.push(new Panel(PANEL_SPIKE, 1));
-      panels.push(new Panel(PANEL_ENEMY, 2));
-      panels.push(new Panel(PANEL_SAFE, 3));
-      panels.push(new Panel(PANEL_GAP, 4));
-      panels.push(new Panel(PANEL_SPIKE, 5));
-      panels.push(new Panel(PANEL_SAFE, 6));
-      panels.push(new Panel(PANEL_EXIT, 7));
-    } else if (level === 1) {
-      panels.push(new Panel(PANEL_START, 0));
-      panels.push(new Panel(PANEL_GAP, 1));
-      panels.push(new Panel(PANEL_ENEMY, 2));
-      panels.push(new Panel(PANEL_SPIKE, 3));
-      panels.push(new Panel(PANEL_SAFE, 4));
-      panels.push(new Panel(PANEL_ENEMY, 5));
-      panels.push(new Panel(PANEL_SAFE, 6));
-      panels.push(new Panel(PANEL_SPIKE, 7));
-      panels.push(new Panel(PANEL_EXIT, 8));
-    } else if (level === 2) {
-      panels.push(new Panel(PANEL_START, 0));
-      panels.push(new Panel(PANEL_ENEMY, 1));
-      panels.push(new Panel(PANEL_GAP, 2));
-      panels.push(new Panel(PANEL_SPIKE, 3));
-      panels.push(new Panel(PANEL_SAFE, 4));
-      panels.push(new Panel(PANEL_ENEMY, 5));
+      panels.push(new Panel(PANEL_EXIT, 5));
       panels.push(new Panel(PANEL_GAP, 6));
       panels.push(new Panel(PANEL_SAFE, 7));
       panels.push(new Panel(PANEL_SPIKE, 8));
-      panels.push(new Panel(PANEL_EXIT, 9));
+      panels.push(new Panel(PANEL_SAFE, 9));
+      panels.push(new Panel(PANEL_ENEMY, 10));
     }
-  }
-  
-  // Shuffle panels (except start and exit)
-  if (panels.length > 2) {
-    const middle = panels.slice(1, panels.length - 1);
-    for (let i = middle.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [middle[i], middle[j]] = [middle[j], middle[i]];
-    }
-    // Reassemble
-    const shuffled = [panels[0], ...middle, panels[panels.length - 1]];
-    // Update indices
-    shuffled.forEach((panel, idx) => {
-      panel.index = idx;
-    });
-    return shuffled;
   }
   
   return panels;

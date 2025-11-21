@@ -57,14 +57,30 @@ export function updateWallBreaking(p) {
         data: { 
           wallBroken: currentWall.index,
           wallValue: currentWall.value,
-          playerValue: gameState.player.value 
+          playerValue: gameState.player.value,
+          result: 'success'
         },
         framecount: p.frameCount,
         timestamp: Date.now()
       });
     } else {
-      // Failed to break wall
-      gameOver(p, false);
+      // Failed to break wall - skip it with penalty
+      currentWall.fail();
+      const penalty = Math.min(gameState.score, 100); // Lose up to 100 points
+      gameState.score -= penalty;
+      gameState.currentWallIndex++;
+      
+      p.logs.game_info.push({
+        data: { 
+          wallSkipped: currentWall.index,
+          wallValue: currentWall.value,
+          playerValue: gameState.player.value,
+          penalty: penalty,
+          result: 'failed'
+        },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
     }
   }
   
@@ -81,12 +97,18 @@ export function drawWallBreaking(p) {
   p.fill(255, 255, 100);
   p.textAlign(p.CENTER, p.CENTER);
   p.textSize(32);
-  p.text("WALL BREAKING!", 300, 50);
+  p.text("LEVEL END - WALL BREAKING!", 300, 40);
+  
+  // Draw explanation
+  p.textSize(16);
+  p.fill(200, 200, 255);
+  p.text("You reached the end of the track!", 300, 70);
+  p.text("Break walls if your number ≥ wall number to earn bonus points!", 300, 90);
   
   // Draw player info
-  p.textSize(20);
-  p.fill(100, 255, 100);
-  p.text(`Your Number: ${gameState.player.value}`, 300, 100);
+  p.textSize(22);
+  p.fill(150, 255, 150);
+  p.text(`Your Number: ${gameState.player.value}`, 300, 120);
   
   // Position walls
   const visibleWalls = gameState.walls.slice(0, Math.min(5, gameState.walls.length));
@@ -98,7 +120,7 @@ export function drawWallBreaking(p) {
     wall.x = startX + i * spacing;
     
     // Highlight current wall
-    if (wall.index === gameState.currentWallIndex && !wall.broken) {
+    if (wall.index === gameState.currentWallIndex && !wall.broken && !wall.failed) {
       wall.shake();
       
       // Draw indicator
@@ -109,6 +131,16 @@ export function drawWallBreaking(p) {
         wall.x - 10, wall.y - wall.height / 2 - 15,
         wall.x + 10, wall.y - wall.height / 2 - 15
       );
+      
+      // Show comparison
+      p.textSize(16);
+      if (gameState.player.value >= wall.value) {
+        p.fill(100, 255, 100);
+        p.text("✓ CAN BREAK!", wall.x, wall.y + wall.height / 2 + 25);
+      } else {
+        p.fill(255, 100, 100);
+        p.text("✗ TOO WEAK", wall.x, wall.y + wall.height / 2 + 25);
+      }
     } else {
       wall.shakeX = 0;
       wall.shakeY = 0;
@@ -142,17 +174,6 @@ function levelComplete(p) {
       level: gameState.currentLevel,
       score: gameState.score 
     },
-    framecount: p.frameCount,
-    timestamp: Date.now()
-  });
-}
-
-function gameOver(p, isWin) {
-  gameState.gamePhase = GAME_PHASES.GAME_OVER;
-  gameState.framesSincePhaseChange = 0;
-  
-  p.logs.game_info.push({
-    data: { phase: "GAME_OVER", win: isWin, finalScore: gameState.score },
     framecount: p.frameCount,
     timestamp: Date.now()
   });

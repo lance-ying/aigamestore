@@ -4,8 +4,6 @@ import { gameState, CANVAS_WIDTH, SHOOTER_Y, BUBBLE_RADIUS } from './globals.js'
 import { createBubble } from './bubble.js';
 import { getRandomColorFromGrid } from './grid.js';
 
-export const TAP_ROTATION_MULTIPLIER = 4; // Multiplier for tap-based rotation
-
 export class Shooter {
   constructor(x, y) {
     this.x = x;
@@ -14,15 +12,15 @@ export class Shooter {
     this.rotationSpeed = 0.05;
   }
 
-  rotateLeft(multiplier = 1) {
-    this.angle -= this.rotationSpeed * multiplier;
+  rotateLeft() {
+    this.angle -= this.rotationSpeed;
     const minAngle = -Math.PI + 0.1;
     if (this.angle < minAngle) this.angle = minAngle;
     gameState.shooterAngle = this.angle;
   }
 
-  rotateRight(multiplier = 1) {
-    this.angle += this.rotationSpeed * multiplier;
+  rotateRight() {
+    this.angle += this.rotationSpeed;
     const maxAngle = -0.1;
     if (this.angle > maxAngle) this.angle = maxAngle;
     gameState.shooterAngle = this.angle;

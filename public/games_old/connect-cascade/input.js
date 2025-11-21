@@ -1,8 +1,9 @@
 // input.js - Input handling
 import { gameState, GAME_PHASES } from './globals.js';
 import { getDotAtPosition, areDotsAdjacent, colorsMatch, isSquareFormed, clearDots, applyGravity, fillEmptySpaces, checkAnchorObjective } from './grid.js';
-import { getColorName } from './levels.js';
+import { getColorName, getLevelConfig } from './levels.js';
 import { SCORE_VALUES } from './globals.js';
+import { initializeGrid } from './grid.js';
 
 export function handleKeyPressed(p, key, keyCode) {
   // Log input
@@ -33,8 +34,14 @@ export function handleKeyPressed(p, key, keyCode) {
     if (keyCode === 27) { // ESC
       unpauseGame(p);
     }
-  } else if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN || gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE) {
-    if (keyCode === 82) { // R
+  } else if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN) {
+    if (keyCode === 13) { // ENTER - advance to next level
+      advanceToNextLevel(p);
+    } else if (keyCode === 82) { // R - restart from level 1
+      returnToStart(p);
+    }
+  } else if (gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE) {
+    if (keyCode === 82) { // R - restart from level 1
       returnToStart(p);
     }
   }
@@ -82,8 +89,52 @@ function returnToStart(p) {
   gameState.gamePhase = GAME_PHASES.START;
   gameState.currentLevel = 1;
   gameState.totalScore = 0;
+  const config = getLevelConfig(gameState.currentLevel);
+  gameState.levelConfig = config;
+  gameState.currentMoves = config.movesLimit;
+  gameState.maxMoves = config.movesLimit;
+  gameState.levelObjectives = JSON.parse(JSON.stringify(config.objectives));
+  gameState.score = 0;
+  gameState.cursorX = 0;
+  gameState.cursorY = 0;
+  gameState.currentSelectedDot = null;
+  gameState.currentPath = [];
+  gameState.isAnimating = false;
+  initializeGrid(p, config);
   p.logs.game_info.push({
     data: { phase: "START" },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function advanceToNextLevel(p) {
+  // Check if there's a next level
+  if (gameState.currentLevel >= 10) {
+    // Already at max level, restart
+    returnToStart(p);
+    return;
+  }
+  
+  // Advance to next level
+  gameState.currentLevel++;
+  const config = getLevelConfig(gameState.currentLevel);
+  gameState.levelConfig = config;
+  gameState.currentMoves = config.movesLimit;
+  gameState.maxMoves = config.movesLimit;
+  gameState.levelObjectives = JSON.parse(JSON.stringify(config.objectives));
+  gameState.score = 0;
+  gameState.cursorX = 0;
+  gameState.cursorY = 0;
+  gameState.currentSelectedDot = null;
+  gameState.currentPath = [];
+  gameState.isAnimating = false;
+  initializeGrid(p, config);
+  
+  // Start playing the new level
+  gameState.gamePhase = GAME_PHASES.PLAYING;
+  p.logs.game_info.push({
+    data: { phase: "PLAYING", level: gameState.currentLevel },
     framecount: p.frameCount,
     timestamp: Date.now()
   });

@@ -195,7 +195,7 @@ export function renderLevelComplete(p) {
   const pulse = p.sin(p.frameCount * 0.1) * 20 + 235;
   p.fill(pulse, 200, 100);
   
-  if (gameState.currentLevel < 5) {
+  if (gameState.currentLevel < 14) {
     p.text('PRESS SPACE FOR NEXT LEVEL', CANVAS_WIDTH / 2, 320);
   } else {
     p.text('PRESS SPACE TO FINISH', CANVAS_WIDTH / 2, 320);

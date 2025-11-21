@@ -21,8 +21,8 @@ export function initLevel(levelNumber) {
     objectsLost: 0,
     totalObjects: config.totalObjects,
     objectsSpawned: 0,
-    timeLimit: config.timeLimit,
-    timeRemaining: config.timeLimit
+    timeLimit: 0,
+    timeRemaining: 0
   };
 
   // Create player platform
@@ -71,14 +71,11 @@ export function updateLevel(p, deltaTime) {
   const config = LEVEL_CONFIGS[gameState.currentLevel - 1];
   if (!config) return;
 
-  // Update time
-  gameState.levelObjectives.timeRemaining = Math.max(0, 
-    gameState.levelObjectives.timeLimit - Math.floor((Date.now() - gameState.levelStartTime) / 1000)
-  );
-
-  // Spawn objects continuously (no limit on total objects)
-  if (p.frameCount % config.objectSpawnInterval === 0) {
-    spawnObject(config);
+  // Spawn objects only until totalObjects limit is reached
+  if (gameState.levelObjectives.objectsSpawned < gameState.levelObjectives.totalObjects) {
+    if (p.frameCount % config.objectSpawnInterval === 0) {
+      spawnObject(config);
+    }
   }
 
   // Update player - now uses inputState for tilt controls
@@ -147,8 +144,9 @@ export function updateLevel(p, deltaTime) {
   if (gameState.levelObjectives.objectsCaught >= gameState.levelObjectives.objectsRequired) {
     endLevel(true, p);
   }
-  // Check lose conditions
-  else if (gameState.levelObjectives.timeRemaining <= 0 && 
+  // Check lose condition - failed if all objects spawned but not enough caught
+  else if (gameState.levelObjectives.objectsSpawned >= gameState.levelObjectives.totalObjects &&
+           gameState.fallingObjects.length === 0 &&
            gameState.levelObjectives.objectsCaught < gameState.levelObjectives.objectsRequired) {
     endLevel(false, p);
   }
@@ -168,11 +166,7 @@ function spawnObject(config) {
 
 function endLevel(won, p) {
   if (won) {
-    // Calculate bonuses
-    const timeBonus = gameState.levelObjectives.timeRemaining * 10;
-    gameState.score += timeBonus;
-    gameState.levelScore += timeBonus;
-
+    // Calculate bonuses - perfect bonus only
     // Perfect bonus - awarded if caught all required without missing any
     if (gameState.levelObjectives.objectsLost === 0 && 
         gameState.levelObjectives.objectsCaught >= gameState.levelObjectives.objectsRequired) {
@@ -257,19 +251,11 @@ function renderLevelUI(p) {
   p.textAlign(p.RIGHT, p.TOP);
   p.text(`SCORE: ${gameState.score}`, CANVAS_WIDTH - 10, 10);
   
-  // Timer
-  p.textAlign(p.CENTER, p.TOP);
-  const minutes = Math.floor(gameState.levelObjectives.timeRemaining / 60);
-  const seconds = gameState.levelObjectives.timeRemaining % 60;
-  const timeColor = gameState.levelObjectives.timeRemaining < 10 ? [255, 100, 100] : [255, 255, 255];
-  p.fill(...timeColor);
-  p.text(`TIME: ${minutes}:${seconds.toString().padStart(2, '0')}`, CANVAS_WIDTH / 2, 10);
-  
   // Objectives
   p.textAlign(p.CENTER, p.TOP);
   p.fill(255);
   p.textSize(14);
-  p.text(`Objects: ${gameState.levelObjectives.objectsCaught}/${gameState.levelObjectives.objectsRequired}`, 
+  p.text(`Objects: ${gameState.levelObjectives.objectsCaught}/${gameState.levelObjectives.objectsRequired} | Remaining: ${gameState.levelObjectives.totalObjects - gameState.levelObjectives.objectsSpawned}`, 
     CANVAS_WIDTH / 2, 35);
   
   p.pop();

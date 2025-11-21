@@ -3,21 +3,26 @@
 import { SEGMENT_SIZE, BASE_SPEED, BOOST_SPEED, BOOST_COST, MIN_BOOST_LENGTH, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
 
 export class Snake {
-  constructor(p, x, y, length, color, isPlayer = false) {
+  constructor(p, x, y, length, color, isPlayer = false, direction = null, speed = null, isBoosting = false) {
     this.p = p;
     this.segments = [];
-    this.direction = p.createVector(1, 0);
-    this.speed = BASE_SPEED;
+    this.direction = direction ? direction.copy() : p.createVector(1, 0);
     this.baseSpeed = BASE_SPEED;
+    this.speed = speed !== null ? speed : BASE_SPEED;
     this.color = color;
     this.isPlayer = isPlayer;
-    this.isBoosting = false;
+    this.isBoosting = isBoosting;
     this.isAlive = true;
     this.turnRate = 0.08; // Smaller turn rate for smoother curves
+    this.invincibilityFrames = 0; // Add invincibility after taking damage
+    this.maxInvincibilityFrames = 90; // 1.5 seconds at 60 FPS
     
-    // Initialize segments
+    // Initialize segments along the direction vector
     for (let i = 0; i < length; i++) {
-      this.segments.push(p.createVector(x - i * SEGMENT_SIZE, y));
+      this.segments.push(p.createVector(
+        x - i * SEGMENT_SIZE * this.direction.x,
+        y - i * SEGMENT_SIZE * this.direction.y
+      ));
     }
   }
 
@@ -70,6 +75,11 @@ export class Snake {
   update() {
     if (!this.isAlive) return;
 
+    // Update invincibility frames
+    if (this.invincibilityFrames > 0) {
+      this.invincibilityFrames--;
+    }
+
     // Move head
     const head = this.getHead();
     const newHead = this.p.createVector(
@@ -106,6 +116,40 @@ export class Snake {
     }
   }
 
+  // New method: take damage instead of dying
+  takeDamage(amount = 8) {
+    if (!this.isAlive || this.invincibilityFrames > 0) return false;
+    
+    // Remove segments from tail
+    const actualDamage = Math.min(amount, this.segments.length - 5); // Always keep at least 5 segments
+    for (let i = 0; i < actualDamage; i++) {
+      if (this.segments.length > 5) {
+        this.segments.pop();
+      }
+    }
+    
+    // Add invincibility frames
+    this.invincibilityFrames = this.maxInvincibilityFrames;
+    
+    // Push back slightly to prevent immediate re-collision
+    const head = this.getHead();
+    const pushBackDistance = 15;
+    head.x -= this.direction.x * pushBackDistance;
+    head.y -= this.direction.y * pushBackDistance;
+    
+    // Check if snake is now too small to continue
+    if (this.segments.length <= 5) {
+      this.isAlive = false;
+      return true; // Signal that snake died from damage
+    }
+    
+    return false; // Snake survived the damage
+  }
+
+  isInvincible() {
+    return this.invincibilityFrames > 0;
+  }
+
   ejectMass(count) {
     if (!this.isAlive || this.segments.length <= count) return [];
     
@@ -139,10 +183,13 @@ export class Snake {
     
     const p = this.p;
     
+    // Calculate alpha based on invincibility (flashing effect)
+    const baseAlpha = this.invincibilityFrames > 0 && this.invincibilityFrames % 10 < 5 ? 100 : 255;
+    
     // Draw body segments
     for (let i = this.segments.length - 1; i >= 0; i--) {
       const segment = this.segments[i];
-      const alpha = i === 0 ? 255 : 200;
+      const alpha = i === 0 ? baseAlpha : Math.min(baseAlpha, 200);
       
       if (i === 0) {
         // Head - slightly larger and darker
@@ -154,7 +201,7 @@ export class Snake {
         const eyeDir = this.direction.copy().normalize();
         const eyePerpendicular = p.createVector(-eyeDir.y, eyeDir.x);
         
-        p.fill(255);
+        p.fill(255, alpha);
         p.circle(
           segment.x + eyeDir.x * 2 + eyePerpendicular.x * eyeOffset,
           segment.y + eyeDir.y * 2 + eyePerpendicular.y * eyeOffset,
@@ -176,7 +223,7 @@ export class Snake {
     if (this.isBoosting && this.isPlayer) {
       const tail = this.segments[this.segments.length - 1];
       p.noFill();
-      p.stroke(255, 200, 0, 100);
+      p.stroke(255, 200, 0, baseAlpha * 0.4);
       p.strokeWeight(2);
       p.circle(tail.x, tail.y, SEGMENT_SIZE * 2);
       p.noStroke();

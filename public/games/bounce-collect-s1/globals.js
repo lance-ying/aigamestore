@@ -1,0 +1,201 @@
+// globals.js - Global constants and game state
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+export const GAME_PHASES = {
+  START: "START",
+  PLAYING: "PLAYING",
+  PAUSED: "PAUSED",
+  GAME_OVER_WIN: "GAME_OVER_WIN",
+  GAME_OVER_LOSE: "GAME_OVER_LOSE"
+};
+
+export const CONTROL_MODES = {
+  HUMAN: "HUMAN",
+  TEST_1: "TEST_1",
+  TEST_2: "TEST_2",
+  TEST_3: "TEST_3",
+  TEST_4: "TEST_4",
+  TEST_5: "TEST_5",
+  TEST_6: "TEST_6",
+  TEST_7: "TEST_7"
+};
+
+export const gameState = {
+  player: null,
+  entities: [],
+  balls: [],
+  pegs: [],
+  multiplierGates: [],
+  bins: [],
+  score: 0,
+  dropsRemaining: 10,
+  currentLevel: 1,
+  targetScore: 500,
+  gamePhase: GAME_PHASES.START,
+  controlMode: CONTROL_MODES.HUMAN,
+  engine: null,
+  world: null,
+  dropperX: CANVAS_WIDTH / 2,
+  ballsInPlay: 0,
+  levelComplete: false,
+  testFrameCounter: 0,
+  pauseTestFrames: 0
+};
+
+export const LEVELS = [
+  {
+    level: 1,
+    targetScore: 500,
+    drops: 10,
+    pegs: [
+      // Top row - blocking center
+      { x: 280, y: 80, radius: 8 },
+      { x: 320, y: 80, radius: 8 },
+      // Second row - wide spread
+      { x: 150, y: 120, radius: 8 },
+      { x: 250, y: 120, radius: 8 },
+      { x: 350, y: 120, radius: 8 },
+      { x: 450, y: 120, radius: 8 },
+      // Third row - offset
+      { x: 200, y: 170, radius: 8 },
+      { x: 300, y: 170, radius: 8 },
+      { x: 400, y: 170, radius: 8 },
+      // Fourth row - blocking straight paths
+      { x: 150, y: 220, radius: 8 },
+      { x: 250, y: 220, radius: 8 },
+      { x: 350, y: 220, radius: 8 },
+      { x: 450, y: 220, radius: 8 }
+    ],
+    multipliers: [
+      { x: 200, y: 270, width: 60, height: 10, value: 2 },
+      { x: 400, y: 270, width: 60, height: 10, value: 2 }
+    ]
+  },
+  {
+    level: 2,
+    targetScore: 1500,
+    drops: 12,
+    pegs: [
+      // Static pegs - dense top section
+      { x: 180, y: 80, radius: 8 },
+      { x: 240, y: 80, radius: 8 },
+      { x: 360, y: 80, radius: 8 },
+      { x: 420, y: 80, radius: 8 },
+      // Moving pegs - horizontal movement
+      { x: 300, y: 80, radius: 8, moving: true, moveRange: 40, moveSpeed: 0.02 },
+      // Second row - offset
+      { x: 150, y: 120, radius: 8 },
+      { x: 210, y: 120, radius: 8 },
+      { x: 330, y: 120, radius: 8 },
+      { x: 390, y: 120, radius: 8 },
+      { x: 450, y: 120, radius: 8 },
+      { x: 270, y: 120, radius: 8, moving: true, moveRange: 50, moveSpeed: 0.025 },
+      // Third row - blocking
+      { x: 180, y: 160, radius: 8 },
+      { x: 240, y: 160, radius: 8 },
+      { x: 300, y: 160, radius: 8 },
+      { x: 360, y: 160, radius: 8 },
+      { x: 420, y: 160, radius: 8 },
+      // Fourth row - more obstacles
+      { x: 200, y: 200, radius: 8 },
+      { x: 280, y: 200, radius: 8 },
+      { x: 320, y: 200, radius: 8 },
+      { x: 400, y: 200, radius: 8 }
+    ],
+    multipliers: [
+      { x: 220, y: 250, width: 50, height: 10, value: 2 },
+      { x: 380, y: 250, width: 50, height: 10, value: 3 }
+    ]
+  },
+  {
+    level: 3,
+    targetScore: 3500,
+    drops: 14,
+    pegs: [
+      // Very dense top with moving pegs
+      { x: 120, y: 70, radius: 8 },
+      { x: 180, y: 70, radius: 8, moving: true, moveRange: 30, moveSpeed: 0.03 },
+      { x: 240, y: 70, radius: 8 },
+      { x: 300, y: 70, radius: 8, moving: true, moveRange: 35, moveSpeed: 0.028 },
+      { x: 360, y: 70, radius: 8 },
+      { x: 420, y: 70, radius: 8, moving: true, moveRange: 30, moveSpeed: 0.032 },
+      { x: 480, y: 70, radius: 8 },
+      // Second row
+      { x: 150, y: 110, radius: 8 },
+      { x: 210, y: 110, radius: 8, moving: true, moveRange: 45, moveSpeed: 0.025 },
+      { x: 270, y: 110, radius: 8 },
+      { x: 330, y: 110, radius: 8 },
+      { x: 390, y: 110, radius: 8, moving: true, moveRange: 40, moveSpeed: 0.027 },
+      { x: 450, y: 110, radius: 8 },
+      // Third row - zigzag pattern
+      { x: 120, y: 150, radius: 8 },
+      { x: 200, y: 150, radius: 8 },
+      { x: 280, y: 150, radius: 8, moving: true, moveRange: 35, moveSpeed: 0.03 },
+      { x: 320, y: 150, radius: 8 },
+      { x: 400, y: 150, radius: 8 },
+      { x: 480, y: 150, radius: 8 },
+      // Fourth row - tight spacing
+      { x: 160, y: 190, radius: 8 },
+      { x: 220, y: 190, radius: 8 },
+      { x: 280, y: 190, radius: 8 },
+      { x: 340, y: 190, radius: 8 },
+      { x: 400, y: 190, radius: 8 },
+      { x: 460, y: 190, radius: 8 }
+    ],
+    multipliers: [
+      { x: 150, y: 240, width: 50, height: 10, value: 2 },
+      { x: 300, y: 240, width: 50, height: 10, value: 4 },
+      { x: 450, y: 240, width: 50, height: 10, value: 2 }
+    ]
+  },
+  {
+    level: 4,
+    targetScore: 6000,
+    drops: 15,
+    pegs: [
+      // Center blockade with movement
+      { x: 280, y: 75, radius: 8, moving: true, moveRange: 50, moveSpeed: 0.035 },
+      { x: 320, y: 75, radius: 8, moving: true, moveRange: 50, moveSpeed: 0.035 },
+      { x: 300, y: 95, radius: 8 },
+      // Wide spread with many moving pegs
+      { x: 120, y: 95, radius: 8 },
+      { x: 180, y: 95, radius: 8, moving: true, moveRange: 40, moveSpeed: 0.03 },
+      { x: 240, y: 95, radius: 8 },
+      { x: 360, y: 95, radius: 8 },
+      { x: 420, y: 95, radius: 8, moving: true, moveRange: 40, moveSpeed: 0.028 },
+      { x: 480, y: 95, radius: 8 },
+      // Diamond pattern
+      { x: 150, y: 135, radius: 8, moving: true, moveRange: 35, moveSpeed: 0.032 },
+      { x: 225, y: 135, radius: 8 },
+      { x: 300, y: 135, radius: 8, moving: true, moveRange: 45, moveSpeed: 0.029 },
+      { x: 375, y: 135, radius: 8 },
+      { x: 450, y: 135, radius: 8, moving: true, moveRange: 35, moveSpeed: 0.031 },
+      // Lower obstacles
+      { x: 120, y: 175, radius: 8 },
+      { x: 200, y: 175, radius: 8, moving: true, moveRange: 40, moveSpeed: 0.027 },
+      { x: 280, y: 175, radius: 8 },
+      { x: 320, y: 175, radius: 8 },
+      { x: 400, y: 175, radius: 8, moving: true, moveRange: 40, moveSpeed: 0.033 },
+      { x: 480, y: 175, radius: 8 },
+      // Final row
+      { x: 160, y: 215, radius: 8 },
+      { x: 240, y: 215, radius: 8, moving: true, moveRange: 50, moveSpeed: 0.03 },
+      { x: 360, y: 215, radius: 8, moving: true, moveRange: 50, moveSpeed: 0.03 },
+      { x: 440, y: 215, radius: 8 }
+    ],
+    multipliers: [
+      { x: 180, y: 255, width: 45, height: 10, value: 3 },
+      { x: 420, y: 255, width: 45, height: 10, value: 3 }
+    ]
+  }
+];
+
+export const BIN_CONFIG = [
+  { x: 60, width: 80, value: 10, color: [100, 150, 255] },
+  { x: 150, width: 80, value: 20, color: [120, 200, 255] },
+  { x: 240, width: 80, value: 50, color: [150, 220, 255] },
+  { x: 330, width: 80, value: 20, color: [120, 200, 255] },
+  { x: 420, width: 80, value: 10, color: [100, 150, 255] }
+];

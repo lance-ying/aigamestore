@@ -103,12 +103,19 @@ function startGame() {
   gameState.gameSpeed = 5;
   gameState.lastPowerupDistance = 0;
   gameState.framesSinceStart = 0;
+  gameState.lives = 3;
   
   // Clear entities
   gameState.entities = [];
   gameState.obstacles = [];
   gameState.coins = [];
   gameState.powerups = [];
+  
+  // Reset player state
+  if (gameState.player) {
+    gameState.player.invincible = false;
+    gameState.player.invincibilityTimer = 0;
+  }
 }
 
 function resetGame() {
@@ -120,10 +127,17 @@ function resetGame() {
   gameState.gameSpeed = 5;
   gameState.lastPowerupDistance = 0;
   gameState.framesSinceStart = 0;
+  gameState.lives = 3;
   
   // Clear entities
   gameState.entities = [];
   gameState.obstacles = [];
   gameState.coins = [];
   gameState.powerups = [];
+  
+  // Reset player state
+  if (gameState.player) {
+    gameState.player.invincible = false;
+    gameState.player.invincibilityTimer = 0;
+  }
 }

@@ -1,9 +1,9 @@
 // Game state and constants
 export const CANVAS_WIDTH = 600;
 export const CANVAS_HEIGHT = 400;
-export const PLAYER_SPEED = 5.5;
-export const PLAYER_SPRINT_SPEED = 8.5;
-export const PLAYER_COVER_SPEED = 3.0;
+export const PLAYER_SPEED = 2.5;
+export const PLAYER_SPRINT_SPEED = 4;
+export const PLAYER_COVER_SPEED = 1.5;
 export const BULLET_SPEED = 6;
 export const ENEMY_SPEED = 1.2;
 export const ENEMY_BULLET_SPEED = 3;
@@ -105,6 +105,19 @@ export const KEY = {
   KEY_4: 52
 };
 
+// Level difficulty configurations
+export const LEVEL_CONFIGS = {
+  1: { requiredKills: 6, numEnemies: 8, numObstacles: 15, healthPickups: 6, ammoPickups: 8 },
+  2: { requiredKills: 8, numEnemies: 10, numObstacles: 18, healthPickups: 7, ammoPickups: 10 },
+  3: { requiredKills: 10, numEnemies: 12, numObstacles: 22, healthPickups: 8, ammoPickups: 12 },
+  4: { requiredKills: 12, numEnemies: 15, numObstacles: 28, healthPickups: 8, ammoPickups: 14 },
+  5: { requiredKills: 15, numEnemies: 18, numObstacles: 32, healthPickups: 9, ammoPickups: 16 },
+  6: { requiredKills: 17, numEnemies: 21, numObstacles: 36, healthPickups: 10, ammoPickups: 18 },
+  7: { requiredKills: 20, numEnemies: 25, numObstacles: 42, healthPickups: 10, ammoPickups: 20 },
+  8: { requiredKills: 24, numEnemies: 30, numObstacles: 48, healthPickups: 11, ammoPickups: 22 },
+  9: { requiredKills: 28, numEnemies: 35, numObstacles: 55, healthPickups: 12, ammoPickups: 25 }
+};
+
 // Get game state function (exposed globally)
 export function getGameState() {
   return gameState;
@@ -128,12 +141,9 @@ export function resetGame() {
   // Randomize mission type
   gameState.mission = Math.random() < 0.5 ? "elimination" : "extraction";
   
-  // Make level 1 much easier with fewer required kills
-  if (gameState.currentLevel === 1) {
-    gameState.requiredKills = 3 + Math.floor(Math.random() * 2); // 3-4 required kills for level 1
-  } else {
-    gameState.requiredKills = 8 + gameState.currentLevel * 2 + Math.floor(Math.random() * 3);
-  }
+  // Get level config or default to level 9 config if beyond
+  const levelConfig = LEVEL_CONFIGS[gameState.currentLevel] || LEVEL_CONFIGS[9];
+  gameState.requiredKills = levelConfig.requiredKills;
 }
 
 export function nextLevel() {

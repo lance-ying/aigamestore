@@ -74,8 +74,8 @@ let gameInstance = new p5(p => {
 
   // Draw function
   p.draw = function() {
-    // Nice gradient background
-    drawGradientBackground();
+    // Simple solid background
+    p.background(50, 120, 70);
     
     // Game state handling
     switch(gameState.gamePhase) {
@@ -119,16 +119,6 @@ let gameInstance = new p5(p => {
     }
   };
 
-  // Draw gradient background
-  function drawGradientBackground() {
-    for (let y = 0; y < CANVAS_HEIGHT; y++) {
-      const inter = p.map(y, 0, CANVAS_HEIGHT, 0, 1);
-      const c = p.lerpColor(p.color(60, 140, 80), p.color(40, 90, 50), inter);
-      p.stroke(c);
-      p.line(0, y, CANVAS_WIDTH, y);
-    }
-  }
-
   // Handle automated action
   function handleAutomatedAction(keyCode) {
     // Simulate key press
@@ -170,23 +160,21 @@ let gameInstance = new p5(p => {
 
   // Start screen
   function drawStartScreen() {
-    drawGradientBackground();
+    p.background(50, 120, 70);
     
     // Draw path
     drawPath();
     
-    // Title with glow effect
+    // Title
     p.push();
-    p.drawingContext.shadowBlur = 20;
-    p.drawingContext.shadowColor = 'rgba(255, 215, 0, 0.8)';
     p.fill(255, 215, 0);
     p.textSize(42);
     p.textStyle(p.BOLD);
     p.text("🐵 MONKEY DEFENSE 🎯", CANVAS_WIDTH / 2, 80);
     p.pop();
     
-    // Instructions with nice styling
-    p.fill(255, 255, 255, 240);
+    // Instructions
+    p.fill(255);
     p.textSize(16);
     p.textStyle(p.NORMAL);
     p.text("Defend against 15 waves of balloons!", CANVAS_WIDTH / 2, 130);
@@ -194,9 +182,8 @@ let gameInstance = new p5(p => {
     p.text("Place towers strategically to pop balloons", CANVAS_WIDTH / 2, 160);
     p.text("Don't let balloons reach the exit!", CANVAS_WIDTH / 2, 180);
     
-    // Start prompt with pulsing effect
-    const pulseAlpha = 200 + Math.sin(p.frameCount * 0.1) * 55;
-    p.fill(255, 215, 0, pulseAlpha);
+    // Start prompt
+    p.fill(255, 215, 0);
     p.textSize(22);
     p.textStyle(p.BOLD);
     p.text("⚡ PRESS ENTER TO START ⚡", CANVAS_WIDTH / 2, 320);
@@ -205,17 +192,12 @@ let gameInstance = new p5(p => {
     drawMonkeyLogo(CANVAS_WIDTH / 2, 250);
   }
 
-  // Monkey logo for start screen with better styling
+  // Monkey logo for start screen
   function drawMonkeyLogo(x, y) {
     p.push();
     p.translate(x, y);
     
-    // Shadow
-    p.fill(0, 0, 0, 50);
-    p.noStroke();
-    p.ellipse(2, 4, 52, 52);
-    
-    // Body with gradient effect
+    // Body
     p.fill(139, 69, 19);
     p.stroke(80, 40, 10);
     p.strokeWeight(2);
@@ -229,7 +211,7 @@ let gameInstance = new p5(p => {
     p.fill(222, 184, 135);
     p.ellipse(0, 0, 30, 30);
     
-    // Eyes with shine
+    // Eyes
     p.fill(0);
     p.noStroke();
     p.ellipse(-8, -5, 7, 7);
@@ -247,7 +229,7 @@ let gameInstance = new p5(p => {
     p.pop();
   }
 
-  // Game over screen with better styling
+  // Game over screen
   function drawGameOverScreen(isWin) {
     p.push();
     p.fill(0, 0, 0, 180);
@@ -255,30 +237,22 @@ let gameInstance = new p5(p => {
     p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
     
     if (isWin) {
-      // Victory with glow
-      p.drawingContext.shadowBlur = 30;
-      p.drawingContext.shadowColor = 'rgba(0, 255, 0, 0.8)';
       p.fill(0, 255, 0);
       p.textSize(48);
       p.textStyle(p.BOLD);
       p.text("🎉 VICTORY! 🎉", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 40);
-      p.drawingContext.shadowBlur = 0;
       
-      p.fill(255, 255, 200);
+      p.fill(255);
       p.textSize(18);
       p.textStyle(p.NORMAL);
       p.text("You defended against all waves!", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
     } else {
-      // Game over with red glow
-      p.drawingContext.shadowBlur = 30;
-      p.drawingContext.shadowColor = 'rgba(255, 0, 0, 0.8)';
       p.fill(255, 50, 50);
       p.textSize(48);
       p.textStyle(p.BOLD);
       p.text("💥 GAME OVER 💥", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 40);
-      p.drawingContext.shadowBlur = 0;
       
-      p.fill(255, 200, 200);
+      p.fill(255);
       p.textSize(18);
       p.textStyle(p.NORMAL);
       p.text("The balloons broke through your defense", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
@@ -288,8 +262,7 @@ let gameInstance = new p5(p => {
     p.textSize(20);
     p.text("Final Score: " + gameState.score, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 30);
     
-    const pulseAlpha = 200 + Math.sin(p.frameCount * 0.1) * 55;
-    p.fill(255, 215, 0, pulseAlpha);
+    p.fill(255, 215, 0);
     p.textSize(22);
     p.textStyle(p.BOLD);
     p.text("PRESS R TO RESTART", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 80);
@@ -302,13 +275,10 @@ let gameInstance = new p5(p => {
     p.fill(0, 0, 0, 150);
     p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
     
-    p.drawingContext.shadowBlur = 20;
-    p.drawingContext.shadowColor = 'rgba(255, 255, 255, 0.5)';
     p.fill(255);
     p.textSize(36);
     p.textStyle(p.BOLD);
     p.text("⏸ PAUSED ⏸", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
-    p.drawingContext.shadowBlur = 0;
     
     p.textSize(16);
     p.textStyle(p.NORMAL);
@@ -336,6 +306,12 @@ let gameInstance = new p5(p => {
       // Check if wave is complete
       const activeBalloonsCount = gameState.entities.balloons.filter(b => !b.popped).length;
       if (activeBalloonsCount === 0 && gameState.currentWaveBalloons.length === 0) {
+        // Award wave completion bonus
+        const waveBonus = 50 + (gameState.wave * 10);
+        gameState.money += waveBonus;
+        gameState.waveCompletionBonus = waveBonus;
+        gameState.bonusDisplayTimer = 180; // Display for 3 seconds
+        
         gameState.waveStarted = false;
         gameState.wave++;
         gameState.waveTimer = 0;
@@ -351,6 +327,11 @@ let gameInstance = new p5(p => {
           });
         }
       }
+    }
+    
+    // Update bonus display timer
+    if (gameState.bonusDisplayTimer > 0) {
+      gameState.bonusDisplayTimer--;
     }
     
     // Update towers
@@ -440,7 +421,7 @@ let gameInstance = new p5(p => {
 
   // Game drawing
   function drawGame() {
-    drawGradientBackground();
+    p.background(50, 120, 70);
     
     // Draw grass texture
     drawGrassTexture();
@@ -486,11 +467,11 @@ let gameInstance = new p5(p => {
     p.pop();
   }
 
-  // Draw the path with better styling
+  // Draw the path
   function drawPath() {
     p.push();
     
-    // Outer border (darker)
+    // Outer border
     p.noFill();
     p.stroke(60, 40, 20);
     p.strokeWeight(36);
@@ -509,7 +490,7 @@ let gameInstance = new p5(p => {
     }
     p.endShape();
     
-    // Lighter center line
+    // Center line
     p.stroke(180, 140, 90);
     p.strokeWeight(28);
     p.beginShape();
@@ -518,46 +499,26 @@ let gameInstance = new p5(p => {
     }
     p.endShape();
     
-    // Center detail lines
-    p.stroke(200, 160, 110, 150);
-    p.strokeWeight(2);
-    p.strokeCap(p.ROUND);
-    p.beginShape();
-    for (const point of gameState.path) {
-      p.vertex(point.x, point.y - 5);
-    }
-    p.endShape();
-    p.beginShape();
-    for (const point of gameState.path) {
-      p.vertex(point.x, point.y + 5);
-    }
-    p.endShape();
-    
     p.pop();
   }
 
-  // Draw UI elements with better styling
+  // Draw UI elements
   function drawUI() {
     p.push();
     
-    // Top bar with gradient and shadow
-    p.drawingContext.shadowBlur = 10;
-    p.drawingContext.shadowColor = 'rgba(0, 0, 0, 0.5)';
-    const gradient = p.drawingContext.createLinearGradient(0, 0, 0, 45);
-    gradient.addColorStop(0, 'rgba(40, 40, 40, 0.95)');
-    gradient.addColorStop(1, 'rgba(25, 25, 25, 0.95)');
-    p.drawingContext.fillStyle = gradient;
-    p.drawingContext.fillRect(0, 0, CANVAS_WIDTH, 45);
-    p.drawingContext.shadowBlur = 0;
+    // Top bar
+    p.fill(40, 40, 40, 230);
+    p.noStroke();
+    p.rect(0, 0, CANVAS_WIDTH, 45);
     
-    // Money with icon and glow
+    // Money
     p.fill(255, 215, 0);
     p.textSize(18);
     p.textAlign(p.LEFT, p.CENTER);
     p.textStyle(p.BOLD);
     p.text("💰 $" + gameState.money, 20, 22);
     
-    // Lives with heart icon
+    // Lives
     p.fill(255, 100, 100);
     p.text("❤️ " + gameState.lives, 120, 22);
     
@@ -576,15 +537,23 @@ let gameInstance = new p5(p => {
     p.textAlign(p.RIGHT, p.CENTER);
     p.text("⭐ " + gameState.score, CANVAS_WIDTH - 20, 22);
     
-    // Bottom bar with gradient
-    const bottomGradient = p.drawingContext.createLinearGradient(0, CANVAS_HEIGHT - 45, 0, CANVAS_HEIGHT);
-    bottomGradient.addColorStop(0, 'rgba(25, 25, 25, 0.95)');
-    bottomGradient.addColorStop(1, 'rgba(40, 40, 40, 0.95)');
-    p.drawingContext.fillStyle = bottomGradient;
-    p.drawingContext.fillRect(0, CANVAS_HEIGHT - 45, CANVAS_WIDTH, 45);
+    // Wave completion bonus notification
+    if (gameState.bonusDisplayTimer > 0) {
+      const alpha = Math.min(255, gameState.bonusDisplayTimer * 2);
+      p.fill(255, 215, 0, alpha);
+      p.textAlign(p.CENTER, p.CENTER);
+      p.textSize(24);
+      p.textStyle(p.BOLD);
+      p.text("Wave Bonus: +$" + gameState.waveCompletionBonus, CANVAS_WIDTH / 2, 70);
+    }
     
-    // Selected tower info with better styling
-    p.fill(255, 255, 255);
+    // Bottom bar
+    p.fill(40, 40, 40, 230);
+    p.noStroke();
+    p.rect(0, CANVAS_HEIGHT - 45, CANVAS_WIDTH, 45);
+    
+    // Selected tower info
+    p.fill(255);
     p.textAlign(p.LEFT, p.CENTER);
     p.textSize(16);
     const towerConfig = TOWER_TYPES[gameState.cursor.selectedTower];
@@ -603,7 +572,7 @@ let gameInstance = new p5(p => {
     p.pop();
   }
 
-  // Draw cursor with improved visuals
+  // Draw cursor
   function drawCursor() {
     p.push();
     
@@ -629,25 +598,17 @@ let gameInstance = new p5(p => {
     if (!gameState.cursor.hoveredTower && !isOverPath) {
       const towerConfig = TOWER_TYPES[gameState.cursor.selectedTower];
       
-      // Range circle with glow
+      // Range circle
       p.noFill();
       p.stroke(255, 255, 255, 100);
       p.strokeWeight(2);
       p.ellipse(gameState.cursor.x, gameState.cursor.y, towerConfig.range * 2);
       
-      // Inner glow
-      p.stroke(255, 255, 255, 50);
-      p.strokeWeight(1);
-      p.ellipse(gameState.cursor.x, gameState.cursor.y, towerConfig.range * 2 - 4);
-      
-      // Tower preview with shadow
-      p.drawingContext.shadowBlur = 8;
-      p.drawingContext.shadowColor = 'rgba(0, 0, 0, 0.5)';
+      // Tower preview
       p.fill(...towerConfig.color, 180);
       p.stroke(255, 255, 255, 180);
       p.strokeWeight(2);
       p.ellipse(gameState.cursor.x, gameState.cursor.y, 18, 18);
-      p.drawingContext.shadowBlur = 0;
       
       // Show if can afford
       if (gameState.money < towerConfig.cost) {
@@ -668,14 +629,11 @@ let gameInstance = new p5(p => {
     if (gameState.cursor.hoveredTower) {
       const tower = gameState.cursor.hoveredTower;
       
-      // Tooltip background with shadow
-      p.drawingContext.shadowBlur = 10;
-      p.drawingContext.shadowColor = 'rgba(0, 0, 0, 0.6)';
+      // Tooltip background
       p.fill(30, 30, 30, 240);
       p.stroke(100, 100, 255);
       p.strokeWeight(2);
-      p.rect(gameState.cursor.x + 15, gameState.cursor.y - 40, 130, 55, 5);
-      p.drawingContext.shadowBlur = 0;
+      p.rect(gameState.cursor.x + 15, gameState.cursor.y - 40, 130, 55);
       
       p.fill(255, 255, 100);
       p.textSize(13);
@@ -699,20 +657,11 @@ let gameInstance = new p5(p => {
       }
     }
     
-    // Cursor box with glow effect
-    const glowSize = 2 + Math.sin(p.frameCount * 0.1) * 1;
-    p.drawingContext.shadowBlur = glowSize * 3;
-    p.drawingContext.shadowColor = 'rgba(255, 255, 255, 0.8)';
+    // Cursor box
     p.noFill();
-    p.stroke(255, 255, 255);
+    p.stroke(255);
     p.strokeWeight(2);
-    p.rect(gameState.cursor.x - 12, gameState.cursor.y - 12, 24, 24, 3);
-    p.drawingContext.shadowBlur = 0;
-    
-    // Inner accent
-    p.stroke(255, 255, 100, 150);
-    p.strokeWeight(1);
-    p.rect(gameState.cursor.x - 10, gameState.cursor.y - 10, 20, 20, 2);
+    p.rect(gameState.cursor.x - 12, gameState.cursor.y - 12, 24, 24);
     
     p.pop();
   }
@@ -827,6 +776,8 @@ let gameInstance = new p5(p => {
     gameState.currentWaveBalloons = [];
     gameState.cursor.selectedTower = "DART";
     gameState.cursor.hoveredTower = null;
+    gameState.waveCompletionBonus = 0;
+    gameState.bonusDisplayTimer = 0;
     
     p.logs.game_info.push({
       "game_status": gameState.gamePhase,

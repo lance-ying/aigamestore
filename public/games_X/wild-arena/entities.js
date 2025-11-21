@@ -9,16 +9,9 @@ export class Player {
     this.y = y;
     this.radius = 15;
     this.speed = 3;
-    this.tapMoveDistance = 25; // Distance moved per tap (increased for tap-based control)
-    this.maxHealth = 150; // Increased from 100
-    this.health = 150; // Increased from 100
+    this.maxHealth = 100;
+    this.health = 100;
     this.facingAngle = 0;
-    
-    // Smooth movement system
-    this.targetDx = 0;
-    this.targetDy = 0;
-    this.movementFramesLeft = 0;
-    this.movementSpeed = 5; // Pixels per frame (25 / 5 = 5 frames for smooth movement)
     
     // Weapon system
     this.weapons = ['PISTOL', 'SHOTGUN', 'RIFLE'];
@@ -57,7 +50,7 @@ export class Player {
     if (inputs.weapon2) this.switchWeapon(1);
     if (inputs.weapon3) this.switchWeapon(2);
 
-    // Movement - SMOOTH TAP-BASED (interpolated over multiple frames)
+    // Movement
     let dx = 0;
     let dy = 0;
 
@@ -66,47 +59,23 @@ export class Player {
       dx = this.p.cos(this.facingAngle) * this.ability.dashSpeed;
       dy = this.p.sin(this.facingAngle) * this.ability.dashSpeed;
       this.ability.dashFrames--;
-      // Cancel any pending smooth movement during dash
-      this.movementFramesLeft = 0;
-    } else if (this.movementFramesLeft > 0) {
-      // Continue smooth movement from previous tap
-      dx = this.targetDx;
-      dy = this.targetDy;
-      this.movementFramesLeft--;
     } else {
-      // Check for new tap input
-      let newTapDx = 0;
-      let newTapDy = 0;
-      
-      if (inputs.up) newTapDy -= this.tapMoveDistance;
-      if (inputs.down) newTapDy += this.tapMoveDistance;
-      if (inputs.left) newTapDx -= this.tapMoveDistance;
-      if (inputs.right) newTapDx += this.tapMoveDistance;
+      // Normal movement
+      if (inputs.up) dy -= this.speed;
+      if (inputs.down) dy += this.speed;
+      if (inputs.left) dx -= this.speed;
+      if (inputs.right) dx += this.speed;
 
-      // If there's a new tap input, set up smooth movement
-      if (newTapDx !== 0 || newTapDy !== 0) {
-        // Normalize diagonal movement
-        if (newTapDx !== 0 && newTapDy !== 0) {
-          const magnitude = Math.sqrt(newTapDx * newTapDx + newTapDy * newTapDy);
-          newTapDx = (newTapDx / magnitude) * this.tapMoveDistance;
-          newTapDy = (newTapDy / magnitude) * this.tapMoveDistance;
-        }
-        
-        // Calculate frames needed for smooth movement
-        const totalDistance = Math.sqrt(newTapDx * newTapDx + newTapDy * newTapDy);
-        this.movementFramesLeft = Math.ceil(totalDistance / this.movementSpeed);
-        
-        // Calculate per-frame movement
-        this.targetDx = newTapDx / this.movementFramesLeft;
-        this.targetDy = newTapDy / this.movementFramesLeft;
-        
-        // Apply first frame of movement
-        dx = this.targetDx;
-        dy = this.targetDy;
-        this.movementFramesLeft--;
-        
-        // Update facing angle based on movement direction
-        this.facingAngle = Math.atan2(newTapDy, newTapDx);
+      // Normalize diagonal movement
+      if (dx !== 0 && dy !== 0) {
+        const magnitude = Math.sqrt(dx * dx + dy * dy);
+        dx = (dx / magnitude) * this.speed;
+        dy = (dy / magnitude) * this.speed;
+      }
+
+      // Update facing angle based on movement
+      if (dx !== 0 || dy !== 0) {
+        this.facingAngle = Math.atan2(dy, dx);
       }
     }
 
@@ -116,16 +85,9 @@ export class Player {
 
     if (newX - this.radius >= 0 && newX + this.radius <= CANVAS_WIDTH) {
       this.x = newX;
-    } else {
-      // Hit boundary, cancel remaining smooth movement
-      this.movementFramesLeft = 0;
     }
-    
     if (newY - this.radius >= 0 && newY + this.radius <= CANVAS_HEIGHT) {
       this.y = newY;
-    } else {
-      // Hit boundary, cancel remaining smooth movement
-      this.movementFramesLeft = 0;
     }
 
     // Obstacle collision
@@ -133,8 +95,6 @@ export class Player {
       if (this.p.collideCircleCircle(this.x, this.y, this.radius * 2, obstacle.x, obstacle.y, obstacle.radius * 2)) {
         this.x -= dx;
         this.y -= dy;
-        // Cancel remaining smooth movement on collision
-        this.movementFramesLeft = 0;
         break;
       }
     }
@@ -240,53 +200,53 @@ export class Enemy {
     this.attackCooldown = 0;
     this.defeatAnimation = 0;
 
-    // Type-specific stats (reduced speed by ~35%, reduced damage by ~35%, increased attack rate by ~50%)
+    // Type-specific stats
     switch (type) {
       case 'GRUNT':
-        this.speed = 0.78; // Was 1.2
+        this.speed = 1.2;
         this.maxHealth = 30;
         this.health = 30;
-        this.damage = 7; // Was 10
+        this.damage = 10;
         this.range = 30;
-        this.attackRate = 90; // Was 60
+        this.attackRate = 60;
         this.color = [200, 50, 50];
         break;
       case 'RANGER':
-        this.speed = 0.65; // Was 1.0
+        this.speed = 1.0;
         this.maxHealth = 25;
         this.health = 25;
-        this.damage = 8; // Was 12
+        this.damage = 12;
         this.range = 180;
-        this.attackRate = 135; // Was 90
+        this.attackRate = 90;
         this.color = [220, 100, 50];
         break;
       case 'BRUISER':
-        this.speed = 0.98; // Was 1.5
+        this.speed = 1.5;
         this.maxHealth = 60;
         this.health = 60;
-        this.damage = 13; // Was 20
+        this.damage = 20;
         this.range = 35;
-        this.attackRate = 75; // Was 50
+        this.attackRate = 50;
         this.radius = 16;
         this.color = [180, 30, 30];
         break;
       case 'SCOUT':
-        this.speed = 1.6; // Was 2.5
+        this.speed = 2.5;
         this.maxHealth = 15;
         this.health = 15;
-        this.damage = 5; // Was 8
+        this.damage = 8;
         this.range = 25;
-        this.attackRate = 60; // Was 40
+        this.attackRate = 40;
         this.radius = 10;
         this.color = [230, 150, 50];
         break;
       case 'BOSS':
-        this.speed = 0.85; // Was 1.3
+        this.speed = 1.3;
         this.maxHealth = 150;
         this.health = 150;
-        this.damage = 16; // Was 25
+        this.damage = 25;
         this.range = 200;
-        this.attackRate = 112; // Was 75
+        this.attackRate = 75;
         this.radius = 25;
         this.color = [150, 20, 20];
         break;

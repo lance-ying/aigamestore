@@ -49,7 +49,7 @@ let gameInstance = new p5(p => {
       timestamp: Date.now()
     });
     
-    // Game phase controls (work regardless of control mode)
+    // Game phase controls
     if (p.keyCode === 13) { // ENTER
       if (gameState.gamePhase === GAME_PHASES.START) {
         startGame(p);
@@ -82,9 +82,25 @@ let gameInstance = new p5(p => {
       }
     }
     
-    // Track key states for HUMAN mode during gameplay
+    // Gameplay controls (only in HUMAN mode)
     if (gameState.controlMode === "HUMAN" && gameState.gamePhase === GAME_PHASES.PLAYING) {
       gameState.keysPressed[p.keyCode] = true;
+      
+      if (p.keyCode === 32) { // SPACE - Attack
+        if (gameState.player && Date.now() - gameState.lastAttackTime > gameState.player.currentSkull.attackSpeed) {
+          gameState.player.attack(p);
+          gameState.lastAttackTime = Date.now();
+        }
+      } else if (p.keyCode === 16) { // SHIFT - Dash
+        if (gameState.player && Date.now() - gameState.lastDashTime > 1000) {
+          gameState.player.dash();
+          gameState.lastDashTime = Date.now();
+        }
+      } else if (p.keyCode === 90) { // Z - Swap skull
+        if (gameState.player) {
+          gameState.player.swapSkull();
+        }
+      }
     }
     
     return false;

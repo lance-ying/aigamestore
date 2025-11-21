@@ -1,22 +1,6 @@
 import { gameState, GAME_PHASES, CONTROL_MODES, ROBOT_MASTERS } from './globals.js';
 import { Stage } from './stage.js';
 
-// Track key taps (keys pressed this frame) for actions like jump and shoot
-const keyTaps = {
-  jump: false,
-  shoot: false
-};
-
-// Track previous frame key states for edge detection
-const prevKeyStates = {
-  left: false,
-  right: false,
-  up: false,
-  down: false,
-  jump: false,
-  shoot: false
-};
-
 export function handleKeyPressed(p) {
   const key = p.key.toLowerCase();
   const keyCode = p.keyCode;
@@ -65,46 +49,19 @@ export function handleKeyPressed(p) {
 
 export function getKeys(p) {
   if (gameState.controlMode === CONTROL_MODES.HUMAN) {
-    // Get current key states
-    const currentStates = {
-      left: p.keyIsDown(37),   // Arrow Left
-      right: p.keyIsDown(39),  // Arrow Right
-      up: p.keyIsDown(38),     // Arrow Up
-      down: p.keyIsDown(40),   // Arrow Down
-      jump: p.keyIsDown(90),   // Z key = 90
-      shoot: p.keyIsDown(32)   // Space key = 32
-    };
-
-    // Set taps for newly pressed keys (jump and shoot only)
-    keyTaps.jump = currentStates.jump && !prevKeyStates.jump;
-    keyTaps.shoot = currentStates.shoot && !prevKeyStates.shoot;
-
-    // Update previous states
-    prevKeyStates.left = currentStates.left;
-    prevKeyStates.right = currentStates.right;
-    prevKeyStates.up = currentStates.up;
-    prevKeyStates.down = currentStates.down;
-    prevKeyStates.jump = currentStates.jump;
-    prevKeyStates.shoot = currentStates.shoot;
-
-    // Return continuous hold states for movement, taps for actions
+    // Return raw key states - all are HOLD-based (continuous)
+    // Using p.keyIsDown() returns true as long as the key is held down
     return {
-      left: currentStates.left,      // Hold-based
-      right: currentStates.right,    // Hold-based
-      up: currentStates.up,          // Hold-based
-      down: currentStates.down,      // Hold-based
-      jump: keyTaps.jump,            // Tap-based
-      shoot: keyTaps.shoot           // Tap-based
+      left: p.keyIsDown(37),   // Arrow Left - HOLD to move continuously
+      right: p.keyIsDown(39),  // Arrow Right - HOLD to move continuously
+      up: p.keyIsDown(38),     // Arrow Up - HOLD to aim continuously
+      down: p.keyIsDown(40),   // Arrow Down - HOLD to aim continuously
+      jump: p.keyIsDown(90),   // Z key - HOLD to jump (player.js handles single-jump-per-press)
+      shoot: p.keyIsDown(32)   // Space key - HOLD to shoot continuously (with cooldown)
     };
   } else {
     return getTestKeys(p);
   }
-}
-
-export function clearKeyTaps() {
-  // Clear taps after they've been read
-  keyTaps.jump = false;
-  keyTaps.shoot = false;
 }
 
 function getTestKeys(p) {

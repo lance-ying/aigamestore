@@ -1,4 +1,4 @@
-import { gameState, GAME_PHASES } from './globals.js';
+import { gameState, GAME_PHASES, GRID_SIZE } from './globals.js';
 import { LEVELS } from './levels.js';
 import { Vehicle } from './vehicle.js';
 
@@ -59,14 +59,34 @@ function handleGameplayInput(p, keyCode) {
   const vehicles = gameState.entities;
   
   if (keyCode === 32) { // SPACE
-    if (gameState.selectedVehicle !== null) {
-      gameState.isGrabbing = !gameState.isGrabbing;
-      vehicles[gameState.selectedVehicle].grabbed = gameState.isGrabbing;
+    if (!gameState.isGrabbing) {
+      // Try to grab vehicle under cursor
+      const vehicleUnderCursor = getVehicleAtCursor();
+      if (vehicleUnderCursor !== null) {
+        gameState.selectedVehicle = vehicleUnderCursor;
+        gameState.isGrabbing = true;
+        vehicles[vehicleUnderCursor].grabbed = true;
+        vehicles[vehicleUnderCursor].selected = true;
+      }
+    } else {
+      // Release grabbed vehicle
+      if (gameState.selectedVehicle !== null) {
+        vehicles[gameState.selectedVehicle].grabbed = false;
+        vehicles[gameState.selectedVehicle].selected = false;
+        gameState.isGrabbing = false;
+        gameState.selectedVehicle = null;
+      }
     }
   } else if (!gameState.isGrabbing) {
-    // Navigate between vehicles
-    if (keyCode === 37 || keyCode === 38 || keyCode === 39 || keyCode === 40) {
-      selectNextVehicle(keyCode);
+    // Move cursor
+    if (keyCode === 37) { // LEFT
+      gameState.cursorX = Math.max(0, gameState.cursorX - 1);
+    } else if (keyCode === 39) { // RIGHT
+      gameState.cursorX = Math.min(GRID_SIZE - 1, gameState.cursorX + 1);
+    } else if (keyCode === 38) { // UP
+      gameState.cursorY = Math.max(0, gameState.cursorY - 1);
+    } else if (keyCode === 40) { // DOWN
+      gameState.cursorY = Math.min(GRID_SIZE - 1, gameState.cursorY + 1);
     }
   } else {
     // Move grabbed vehicle - ONE tap = ONE grid cell move
@@ -100,61 +120,23 @@ function handleGameplayInput(p, keyCode) {
   }
 }
 
-function selectNextVehicle(keyCode) {
+function getVehicleAtCursor() {
   const vehicles = gameState.entities;
-  if (vehicles.length === 0) return;
-
-  if (gameState.selectedVehicle === null) {
-    gameState.selectedVehicle = 0;
-  } else {
-    const current = vehicles[gameState.selectedVehicle];
-    let bestIdx = gameState.selectedVehicle;
-    let bestDist = Infinity;
-
-    for (let i = 0; i < vehicles.length; i++) {
-      if (i === gameState.selectedVehicle) continue;
-      const v = vehicles[i];
-      let dist = 0;
-      let valid = false;
-
-      if (keyCode === 37 && v.gridX < current.gridX) { // LEFT
-        dist = current.gridX - v.gridX;
-        valid = true;
-      } else if (keyCode === 39 && v.gridX > current.gridX) { // RIGHT
-        dist = v.gridX - current.gridX;
-        valid = true;
-      } else if (keyCode === 38 && v.gridY < current.gridY) { // UP
-        dist = current.gridY - v.gridY;
-        valid = true;
-      } else if (keyCode === 40 && v.gridY > current.gridY) { // DOWN
-        dist = v.gridY - current.gridY;
-        valid = true;
-      }
-
-      if (valid && dist < bestDist) {
-        bestDist = dist;
-        bestIdx = i;
+  const cursorX = gameState.cursorX;
+  const cursorY = gameState.cursorY;
+  
+  for (let i = 0; i < vehicles.length; i++) {
+    const vehicle = vehicles[i];
+    const cells = vehicle.getCells();
+    
+    for (let cell of cells) {
+      if (cell.x === cursorX && cell.y === cursorY) {
+        return i;
       }
     }
-
-    // If no vehicle found in the spatial direction, cycle through array
-    if (bestIdx === gameState.selectedVehicle) {
-      if (keyCode === 37 || keyCode === 38) { // LEFT or UP - cycle backwards
-        bestIdx = gameState.selectedVehicle - 1;
-        if (bestIdx < 0) bestIdx = vehicles.length - 1;
-      } else if (keyCode === 39 || keyCode === 40) { // RIGHT or DOWN - cycle forwards
-        bestIdx = gameState.selectedVehicle + 1;
-        if (bestIdx >= vehicles.length) bestIdx = 0;
-      }
-    }
-
-    gameState.selectedVehicle = bestIdx;
   }
-
-  // Update selection
-  vehicles.forEach((v, i) => {
-    v.selected = (i === gameState.selectedVehicle);
-  });
+  
+  return null;
 }
 
 function startGame() {
@@ -172,6 +154,8 @@ function resetGame(p) {
   gameState.moveCount = 0;
   gameState.levelComplete = false;
   gameState.particles = [];
+  gameState.cursorX = 0;
+  gameState.cursorY = 0;
   logGameInfo(p, "Game reset");
 }
 
@@ -182,6 +166,8 @@ function loadLevel(levelIndex) {
   gameState.moveCount = 0;
   gameState.levelComplete = false;
   gameState.particles = [];
+  gameState.cursorX = 0;
+  gameState.cursorY = 2;
 
   const level = LEVELS[levelIndex];
   level.vehicles.forEach(vData => {
@@ -194,11 +180,6 @@ function loadLevel(levelIndex) {
     );
     gameState.entities.push(vehicle);
   });
-
-  if (gameState.entities.length > 0) {
-    gameState.selectedVehicle = 0;
-    gameState.entities[0].selected = true;
-  }
 }
 
 function logGameInfo(p, data) {

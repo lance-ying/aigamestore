@@ -37,7 +37,7 @@ import {
   spawnObstacles,
 } from './spawner.js';
 import { getTestAction } from './testing.js';
-import { renderUI, renderArena } from './ui.js';
+import { renderUI, renderArena, setDamageFlash } from './ui.js';
 
 const p5 = window.p5;
 let aiControllers = [];
@@ -167,12 +167,16 @@ let gameInstance = new p5(p => {
       return;
     }
     
-    // Preserve score when advancing levels (only reset on level 1 from start screen)
+    // Preserve score when advancing levels, reset lives only when starting from main menu
     const preservedScore = (levelNumber === 1 && gameState.gamePhase === PHASE_START) ? 0 : gameState.score;
+    const resetLives = (levelNumber === 1 && gameState.gamePhase === PHASE_START);
     
     // Set level state
     gameState.currentLevel = levelNumber;
     gameState.score = preservedScore;
+    if (resetLives) {
+      gameState.lives = 3;
+    }
     gameState.gamePhase = PHASE_PLAYING;
     gameState.targetLength = config.targetLength;
     gameState.framesSurvived = 0;
@@ -193,7 +197,8 @@ let gameInstance = new p5(p => {
       targetLength: config.targetLength,
       playerLength: gameState.playerLength,
       aiCount: gameState.aiSnakes.length,
-      score: gameState.score
+      score: gameState.score,
+      lives: gameState.lives
     });
     logPlayerInfo();
   }
@@ -262,6 +267,7 @@ let gameInstance = new p5(p => {
     gameState.gamePhase = PHASE_START;
     gameState.currentLevel = 1;
     gameState.score = 0;
+    gameState.lives = 3;
     gameState.playerLength = 0;
     gameState.framesSurvived = 0;
     gameState.lastSurvivalBonus = 0;
@@ -269,6 +275,73 @@ let gameInstance = new p5(p => {
     clearEntities();
     
     logGameInfo('Reset complete', { phase: gameState.gamePhase });
+  }
+
+  function handlePlayerDeath() {
+    gameState.lives--;
+    logGameInfo('Player died', { 
+      livesRemaining: gameState.lives,
+      cause: 'collision'
+    });
+
+    // Trigger damage flash effect
+    setDamageFlash(30); // Strong flash on death
+
+    if (gameState.lives <= 0) {
+      gameState.gamePhase = PHASE_GAME_OVER_LOSE;
+      logGameInfo('Game over - no lives remaining', { 
+        phase: gameState.gamePhase,
+        finalScore: gameState.score
+      });
+    } else {
+      // Respawn player while preserving their state
+      respawnPlayer();
+    }
+  }
+
+  function respawnPlayer() {
+    const config = LEVEL_CONFIGS[gameState.currentLevel];
+    
+    // Get current player state before they die
+    const currentHead = gameState.player ? gameState.player.getHead() : { x: CANVAS_WIDTH / 2, y: CANVAS_HEIGHT / 2 };
+    const currentDirection = gameState.player ? gameState.player.direction.copy() : null;
+    const currentSpeed = gameState.player ? gameState.player.speed : null;
+    const wasBoosting = gameState.player ? gameState.player.isBoosting : false;
+    
+    // Clear any mass drops from the previous death
+    gameState.massDrops = [];
+    
+    // Respawn player at their current location with preserved direction and speed
+    const respawnX = currentHead.x;
+    const respawnY = currentHead.y;
+    gameState.player = new Snake(
+      p, 
+      respawnX, 
+      respawnY, 
+      config.playerStartLength, 
+      gameState.playerSkinColor, 
+      true,
+      currentDirection,
+      currentSpeed,
+      wasBoosting
+    );
+    
+    // Set invincibility frames for respawn protection
+    gameState.player.invincibilityFrames = gameState.player.maxInvincibilityFrames;
+    
+    gameState.entities[0] = gameState.player; // Replace first entity which should be player
+    
+    gameState.playerLength = gameState.player.getLength();
+    
+    logGameInfo('Player respawned with preserved state', { 
+      lives: gameState.lives,
+      playerLength: gameState.playerLength,
+      respawnX: respawnX,
+      respawnY: respawnY,
+      direction: { x: currentDirection?.x, y: currentDirection?.y },
+      speed: currentSpeed,
+      boosting: wasBoosting
+    });
   }
 
   function updateGame() {
@@ -336,24 +409,34 @@ let gameInstance = new p5(p => {
         gameState.score += MASS_VALUE;
       }
 
-      // Body collisions
+      // Body collisions - now causes damage instead of instant death
       if (checkSnakeBodyCollision(p, gameState.player, allSnakes)) {
-        gameState.player.isAlive = false;
-        gameState.gamePhase = PHASE_GAME_OVER_LOSE;
-        logGameInfo('Player defeated - body collision', { 
-          phase: gameState.gamePhase,
-          finalScore: gameState.score
-        });
+        const died = gameState.player.takeDamage(8);
+        if (died) {
+          handlePlayerDeath();
+        } else {
+          // Trigger visual feedback for damage
+          setDamageFlash(15);
+          logGameInfo('Player took damage from body collision', { 
+            newLength: gameState.player.getLength(),
+            invincibilityFrames: gameState.player.invincibilityFrames
+          });
+        }
       }
 
-      // Obstacle collisions
+      // Obstacle collisions - now causes damage instead of instant death
       if (checkSnakeObstacleCollision(p, gameState.player, gameState.obstacles)) {
-        gameState.player.isAlive = false;
-        gameState.gamePhase = PHASE_GAME_OVER_LOSE;
-        logGameInfo('Player defeated - obstacle collision', { 
-          phase: gameState.gamePhase,
-          finalScore: gameState.score
-        });
+        const died = gameState.player.takeDamage(6);
+        if (died) {
+          handlePlayerDeath();
+        } else {
+          // Trigger visual feedback for damage
+          setDamageFlash(12);
+          logGameInfo('Player took damage from obstacle collision', { 
+            newLength: gameState.player.getLength(),
+            invincibilityFrames: gameState.player.invincibilityFrames
+          });
+        }
       }
     }
 

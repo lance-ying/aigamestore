@@ -164,22 +164,27 @@ let gameInstance = new p5(p => {
   }
   
   function renderAllEntities(p) {
+    // Sort entities by z-value (highest z first = furthest away first) for proper depth ordering
+    const sortedObstacles = [...gameState.obstacles].sort((a, b) => b.z - a.z);
+    const sortedCoins = [...gameState.coins].sort((a, b) => b.z - a.z);
+    const sortedPowerups = [...gameState.powerups].sort((a, b) => b.z - a.z);
+    
     // Render obstacles
-    for (const obstacle of gameState.obstacles) {
+    for (const obstacle of sortedObstacles) {
       if (obstacle.active) {
         obstacle.render();
       }
     }
     
     // Render coins
-    for (const coin of gameState.coins) {
+    for (const coin of sortedCoins) {
       if (coin.active && !coin.collected) {
         coin.render();
       }
     }
     
     // Render powerups
-    for (const powerup of gameState.powerups) {
+    for (const powerup of sortedPowerups) {
       if (powerup.active && !powerup.collected) {
         powerup.render();
       }

@@ -15,10 +15,19 @@ export function handleInput(p) {
   let vy = 0;
 
   if (gameState.controlMode === CONTROL_MODES.HUMAN) {
-    // Human mode uses discrete tap-based movement
-    // No continuous movement from held keys
-    vx = 0;
-    vy = 0;
+    // Human mode uses continuous movement with held keys
+    if (p.keyIsDown(37)) { // LEFT
+      vx -= gameState.player.speed;
+    }
+    if (p.keyIsDown(39)) { // RIGHT
+      vx += gameState.player.speed;
+    }
+    if (p.keyIsDown(38)) { // UP
+      vy -= gameState.player.speed;
+    }
+    if (p.keyIsDown(40)) { // DOWN
+      vy += gameState.player.speed;
+    }
   } else {
     // Automated testing - keep continuous movement for test modes
     const action = getTestAction(p);
@@ -69,53 +78,6 @@ function getTestAction(p) {
   return null;
 }
 
-function movePlayerDiscrete(p, dx, dy) {
-  if (!gameState.player) return;
-  
-  const player = gameState.player;
-  
-  // Don't allow new movement if already moving
-  if (player.isMoving) return;
-  
-  const targetX = player.x + dx;
-  const targetY = player.y + dy;
-  
-  // Constrain target to bounds
-  const constrainedX = p.constrain(targetX, player.size / 2, CANVAS_WIDTH - player.size / 2);
-  const constrainedY = p.constrain(targetY, player.size / 2, CANVAS_HEIGHT - player.size / 2);
-  
-  // Check if target position would collide with walls
-  const oldX = player.x;
-  const oldY = player.y;
-  player.x = constrainedX;
-  player.y = constrainedY;
-  
-  let willCollide = false;
-  for (let wall of gameState.walls) {
-    if (player.collidesWithWall(wall)) {
-      willCollide = true;
-      break;
-    }
-  }
-  
-  // Restore position
-  player.x = oldX;
-  player.y = oldY;
-  
-  // If no collision, set the target for smooth movement
-  if (!willCollide) {
-    player.setTargetPosition(constrainedX, constrainedY);
-    
-    // Log the movement
-    p.logs.inputs.push({
-      input_type: 'discreteMove',
-      data: { dx, dy, targetX: constrainedX, targetY: constrainedY },
-      framecount: p.frameCount,
-      timestamp: Date.now()
-    });
-  }
-}
-
 export function handleKeyPressed(p) {
   // Log input
   p.logs.inputs.push({
@@ -124,23 +86,6 @@ export function handleKeyPressed(p) {
     framecount: p.frameCount,
     timestamp: Date.now()
   });
-
-  // Arrow keys - discrete tap-based movement (HUMAN mode only)
-  if (gameState.gamePhase === GAME_PHASES.PLAYING && gameState.controlMode === CONTROL_MODES.HUMAN) {
-    if (p.keyCode === 37) { // LEFT
-      movePlayerDiscrete(p, -25, 0);
-      return;
-    } else if (p.keyCode === 39) { // RIGHT
-      movePlayerDiscrete(p, 25, 0);
-      return;
-    } else if (p.keyCode === 38) { // UP
-      movePlayerDiscrete(p, 0, -25);
-      return;
-    } else if (p.keyCode === 40) { // DOWN
-      movePlayerDiscrete(p, 0, 25);
-      return;
-    }
-  }
 
   // ENTER - Start game
   if (p.keyCode === 13) {

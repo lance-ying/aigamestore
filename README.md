@@ -35,22 +35,22 @@ Flags:
 
 ### Direct module usage
 - Generators:
-  - Baseline: `python generate_game.py --config configs/generators/concept_and_game.yaml`
-  - Single prompt: `python generate_game.py --config configs/generators/single_prompt_with_testing.yaml --concept path/to/concept.yaml`
+  - Baseline: `python scripts/cli/generate_game.py --config configs/generators/concept_and_game.yaml`
+  - Single prompt: `python scripts/cli/generate_game.py --config configs/generators/single_prompt_with_testing.yaml --concept path/to/concept.yaml`
 - Evaluators:
   - Basic test (saves results to evaluation/basic_test and prints rich panel):
-    - `python evaluate_game.py --config configs/evaluators/basic_testing.yaml --game_folder /abs/path/to/game_dir --debug`
+    - `python scripts/cli/evaluate_game.py --config configs/evaluators/basic_testing.yaml --game_folder /abs/path/to/game_dir --debug`
     - Artifacts under `evaluation/basic_test/`:
       - `results.json` (includes `start_on_enter` and `interaction`)
       - `keypress_log.json` (per-key state snapshots)
       - `feedback.md` (used by basic bug-fix iterator)
   - VLM (Gemini) evaluation (records videos, writes evaluation/vlm/results.json):
-    - `python evaluate_game.py --config configs/evaluators/vlm.yaml --game_folder /abs/path/to/game_dir`
+    - `python scripts/cli/evaluate_game.py --config configs/evaluators/vlm.yaml --game_folder /abs/path/to/game_dir`
 - Iterators:
-  - Vibe coding (out-of-place default): `python iterate_game.py --config configs/iterators/vibe_coding.yaml [--output_dir /abs/output]`
+  - Vibe coding (out-of-place default): `python scripts/cli/iterate_game.py --config configs/iterators/vibe_coding.yaml [--output_dir /abs/output]`
   - Basic bug fix (in-place; reads `evaluation/basic_test/feedback.md`):
-    - `python iterate_game.py --config configs/iterators/code_iterator.yaml --mode basic_bug_fix --game_folder /abs/path/to/game_dir`
-  - VLM feedback (out-of-place default): `python iterate_game.py --config configs/iterators/vlm_feedback.yaml [--output_dir /abs/output]`
+    - `python scripts/cli/iterate_game.py --config configs/iterators/code_iterator.yaml --mode basic_bug_fix --game_folder /abs/path/to/game_dir`
+  - VLM feedback (out-of-place default): `python scripts/cli/iterate_game.py --config configs/iterators/vlm_feedback.yaml [--output_dir /abs/output]`
 
 Notes
 - Iterator modes:
@@ -60,6 +60,13 @@ Notes
 
 ### Repository Structure
 - `generators/`, `evaluators/`, `iterators/`, `pipelines/`, `configs/`, `llm_interface/`, `utils/`, `prompts/`, `html_templates/`
+- `scripts/cli/` - Main CLI scripts (generate_game.py, evaluate_game.py, iterate_game.py, expand_concept.py)
+- `scripts/rl/` - Reinforcement learning tools (train_rl.py, gym_wrapper.py, etc.)
+- `scripts/tests/` - Test scripts
+- `scripts/utils/` - Utility scripts
+- `scripts/js/` - JavaScript utilities
+- `docs/` - Documentation files
+- `data/` - Data files
 
 ### Gemini model selection for VLM
 Configure the VLM evaluator’s model via pipeline YAML (default `gemini-2.5-flash`, optionally `gemini-2.5-pro`). See Gemini model versions: https://ai.google.dev/gemini-api/docs/models#model-versions

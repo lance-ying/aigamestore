@@ -23,31 +23,56 @@ export class Player {
     this.isDashing = false;
     this.dashDuration = 0;
     this.hitFlash = 0;
-    this.friction = 0.85; // Friction for tap-based movement
   }
 
   update(p, keys) {
-    // TAP-BASED MOVEMENT: Apply impulse on key press, not continuous movement
-    const tapImpulse = this.movementSpeedStat * 3; // 3x multiplier for tap-based control
+    // Reset velocity to 0 first, then set based on current keys
+    // This prevents residual velocity from previous inputs
+    this.vx = 0;
+    this.vy = 0;
     
-    // Check for movement taps and apply velocity impulses
-    if (keysJustPressed.w || keysJustPressed.up) {
-      this.vy -= tapImpulse;
+    const moveSpeed = this.movementSpeedStat;
+    
+    // Check for continuous movement based on held keys
+    if (keys.w || keys.up) {
+      this.vy = -moveSpeed;
     }
-    if (keysJustPressed.s || keysJustPressed.down) {
-      this.vy += tapImpulse;
+    if (keys.s || keys.down) {
+      this.vy = moveSpeed;
     }
-    if (keysJustPressed.a || keysJustPressed.left) {
-      this.vx -= tapImpulse;
+    if (keys.a || keys.left) {
+      this.vx = -moveSpeed;
     }
-    if (keysJustPressed.d || keysJustPressed.right) {
-      this.vx += tapImpulse;
+    if (keys.d || keys.right) {
+      this.vx = moveSpeed;
     }
     
-    // Handle dash boost
+    // Handle opposing keys canceling out
+    if ((keys.w || keys.up) && (keys.s || keys.down)) {
+      this.vy = 0;
+    }
+    if ((keys.a || keys.left) && (keys.d || keys.right)) {
+      this.vx = 0;
+    }
+    
+    // Normalize diagonal movement
+    if ((keys.w || keys.up || keys.s || keys.down) && 
+        (keys.a || keys.left || keys.d || keys.right)) {
+      const magnitude = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
+      if (magnitude > 0) {
+        this.vx = (this.vx / magnitude) * moveSpeed;
+        this.vy = (this.vy / magnitude) * moveSpeed;
+      }
+    }
+    
+    // Handle dash boost (triggered by just pressed)
+    if (keysJustPressed.shift || keysJustPressed.shift) {
+      this.activateDash();
+    }
+    
     if (this.isDashing) {
       // Dash multiplies current velocity
-      const dashMultiplier = 1.5;
+      const dashMultiplier = 2.0;
       this.vx *= dashMultiplier;
       this.vy *= dashMultiplier;
       
@@ -56,14 +81,6 @@ export class Player {
         this.isDashing = false;
       }
     }
-    
-    // Apply friction to slow down over time
-    this.vx *= this.friction;
-    this.vy *= this.friction;
-    
-    // Stop almost-zero velocity to prevent drift
-    if (Math.abs(this.vx) < 0.1) this.vx = 0;
-    if (Math.abs(this.vy) < 0.1) this.vy = 0;
     
     // Apply velocity to position
     this.x += this.vx;
@@ -90,7 +107,7 @@ export class Player {
   activateDash() {
     if (this.dashCooldown <= 0 && (this.vx !== 0 || this.vy !== 0)) {
       this.isDashing = true;
-      this.dashDuration = 8;
+      this.dashDuration = 15;
       this.dashCooldown = 120;
     }
   }

@@ -23,9 +23,15 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 
+# Add parent directory to path to allow imports from root
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.resolve()))
+
 # Import VLM evaluation
 from evaluators.vlm.run import evaluate_game_folder
 from evaluators.vlm.gemini_api import GeminiEvaluator
+
+# Import fix iterator
+from iterators.feedback_fix import FeedbackFixIterator
 
 # Load environment variables
 def load_env_file() -> None:
@@ -295,6 +301,66 @@ Be specific about what you observe in the video."""
         }
 
 
+def fix_failing_game(game_path: Path, evaluation_feedback: str, verbose: bool = False) -> Dict[str, Any]:
+    """Fix a game that failed evaluation using the evaluation feedback."""
+    game_title = get_game_title(game_path)
+    
+    # Find the actual game directory (parent if it's nested)
+    if game_path.name.startswith('sample'):
+        game_dir = game_path.parent
+    else:
+        game_dir = game_path
+    
+    if verbose:
+        print(f"\n  Attempting to fix: {game_title}")
+        print(f"  Game directory: {game_dir}")
+    
+    try:
+        iterator = FeedbackFixIterator(
+            model="anthropic:claude-4.5-sonnet",
+            temperature=0.6,
+            thinking=True,
+            thinking_budget=8000,
+        )
+        
+        result = iterator.iterate(
+            game_dir=str(game_dir),
+            feedback=evaluation_feedback,
+            debug_prompts=False,
+            use_planning=True,
+            in_place=True,
+        )
+        
+        num_files = result.get("num_files_updated", 0)
+        updated_files = result.get("updated_files", [])
+        
+        if verbose:
+            if num_files > 0:
+                print(f"  ✓ Fixed {num_files} file(s)")
+                for file in updated_files:
+                    print(f"    - {file}")
+            else:
+                print(f"  ! No files were updated")
+        
+        return {
+            "status": "fixed" if num_files > 0 else "no_changes",
+            "num_files_updated": num_files,
+            "updated_files": updated_files,
+            "analysis": result.get("analysis", "")
+        }
+    
+    except Exception as e:
+        if verbose:
+            print(f"  ✗ Fix failed: {e}")
+        
+        return {
+            "status": "fix_failed",
+            "error": str(e),
+            "num_files_updated": 0,
+            "updated_files": []
+        }
+
+
 async def batch_evaluate_games(
     games_dir: str = "games",
     model: str = "gemini-2.5-flash",
@@ -302,7 +368,8 @@ async def batch_evaluate_games(
     resolution: Optional[tuple] = None,
     max_games: Optional[int] = None,
     only_csv_games: bool = False,
-    verbose: bool = True
+    verbose: bool = True,
+    auto_fix: bool = False
 ) -> Dict[str, Any]:
     """
     Batch evaluate all games in the directory.
@@ -315,6 +382,7 @@ async def batch_evaluate_games(
         max_games: Optional limit on number of games to evaluate
         only_csv_games: If True, only evaluate CSV-generated games
         verbose: Show progress during evaluation
+        auto_fix: If True, attempt to fix games that fail evaluation
     """
     print("="*80)
     print("Batch Gameplay Evaluation using VLM")
@@ -368,6 +436,28 @@ async def batch_evaluate_games(
             print(f"  ✓ Completed ({eval_count} test modes evaluated)")
         else:
             print(f"  ✗ Failed: {result.get('error', 'Unknown error')}")
+        
+        # Try to auto-fix if requested and evaluation failed
+        if auto_fix and result['status'] != 'completed':
+            print(f"\n  Auto-fixing game...")
+            
+            # Collect feedback from evaluations
+            evaluation_feedback = result.get('error', 'Game evaluation failed. Please fix any issues preventing the game from running properly.')
+            
+            # Get more detailed feedback if available
+            if result.get('evaluations'):
+                feedback_parts = []
+                for eval_result in result.get('evaluations', []):
+                    if eval_result.get('feedback'):
+                        feedback_parts.append(eval_result['feedback'])
+                if feedback_parts:
+                    evaluation_feedback = "\n".join(feedback_parts)
+            
+            fix_result = fix_failing_game(game_path, evaluation_feedback, verbose)
+            result['fix_result'] = fix_result
+            
+            if fix_result['status'] in ['fixed', 'no_changes']:
+                print(f"  ✓ Fix completed")
         
         # Add small delay between games to ensure server cleanup
         if i < len(games):
@@ -476,6 +566,11 @@ def main():
         action="store_true",
         help="Suppress verbose output during evaluation"
     )
+    parser.add_argument(
+        "--auto-fix",
+        action="store_true",
+        help="Attempt to fix games that fail evaluation"
+    )
     
     args = parser.parse_args()
     
@@ -496,7 +591,8 @@ def main():
         resolution=resolution,
         max_games=args.max_games,
         only_csv_games=args.only_csv_games,
-        verbose=not args.quiet
+        verbose=not args.quiet,
+        auto_fix=args.auto_fix
     ))
     
     # Print summary

@@ -17,15 +17,14 @@ export class Player {
 
   jump() {
     if (this.mode === PLAYER_MODES.CUBE) {
-      // Cube mode: Only jump when on ground (tap-based, already works correctly)
+      // Cube mode: Jump when on ground (continuous input - can hold key to jump repeatedly on landing)
       if (this.onGround) {
         this.velocityY = JUMP_FORCE;
         this.isJumping = true;
         this.onGround = false;
       }
     } else if (this.mode === PLAYER_MODES.SHIP) {
-      // Ship mode: Apply single impulse per tap (not continuous)
-      // SHIP_LIFT is now -7 (was -0.5) to compensate for single taps instead of continuous holding
+      // Ship mode: Continuous lift while key is held
       this.velocityY += SHIP_LIFT;
     }
   }

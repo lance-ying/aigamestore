@@ -8,15 +8,18 @@ import { gameState, JELLY_HEIGHTS, CANVAS_HEIGHT } from './globals.js';
 export class Player {
   constructor(p, x, y) {
     this.p = p;
-    this.x = x;
+    this.screenX = x; // Fixed screen position
+    this.x = x; // World X position (will move with camera)
     this.y = y;
     this.targetHeight = JELLY_HEIGHTS.MEDIUM;
     this.currentHeight = JELLY_HEIGHTS.MEDIUM;
+    this.targetY = y;
+    this.currentY = y;
     this.width = 40;
     this.heightState = "MEDIUM";
     
     // Create Matter.js body
-    this.body = Bodies.rectangle(x, y, this.width, this.currentHeight, {
+    this.body = Bodies.rectangle(this.x, this.y, this.width, this.currentHeight, {
       label: 'player',
       friction: 0,
       restitution: 0,
@@ -33,19 +36,38 @@ export class Player {
   setHeight(state) {
     this.heightState = state;
     this.targetHeight = JELLY_HEIGHTS[state];
+    
+    // Set target Y position based on height state
+    const groundY = CANVAS_HEIGHT - 20;
+    
+    if (state === "TALL") {
+      // Position high up to fit through TOP gaps
+      this.targetY = 140;
+    } else if (state === "MEDIUM") {
+      // Position in middle to fit through MIDDLE gaps
+      this.targetY = 240;
+    } else { // FLAT
+      // Position low to fit through BOTTOM gaps
+      this.targetY = groundY - this.targetHeight / 2 - 5;
+    }
   }
   
   update() {
+    // Update world X position to move with camera
+    this.x = this.screenX + gameState.cameraX;
+    
     // Smoothly transition to target height
-    const lerp = 0.3;
-    this.currentHeight += (this.targetHeight - this.currentHeight) * lerp;
+    const heightLerp = 0.3;
+    this.currentHeight += (this.targetHeight - this.currentHeight) * heightLerp;
+    
+    // Smoothly transition to target Y position
+    const yLerp = 0.2;
+    this.currentY += (this.targetY - this.currentY) * yLerp;
     
     // Update Matter.js body size and position
     World.remove(gameState.world, this.body);
-    const groundY = CANVAS_HEIGHT - 20;
-    const newY = groundY - this.currentHeight / 2;
     
-    this.body = Bodies.rectangle(this.x, newY, this.width, this.currentHeight, {
+    this.body = Bodies.rectangle(this.x, this.currentY, this.width, this.currentHeight, {
       label: 'player',
       friction: 0,
       restitution: 0,
@@ -54,16 +76,16 @@ export class Player {
     });
     World.add(gameState.world, this.body);
     
-    this.y = newY;
+    this.y = this.currentY;
     
     // Log player position if moved significantly
     const dx = Math.abs(this.x - this.lastLoggedX);
     const dy = Math.abs(this.y - this.lastLoggedY);
     if (dx > 10 || dy > 10) {
       this.p.logs.player_info.push({
-        screen_x: this.x,
+        screen_x: this.screenX,
         screen_y: this.y,
-        game_x: this.x + gameState.cameraX,
+        game_x: this.x,
         game_y: this.y,
         framecount: this.p.frameCount,
         timestamp: Date.now()
@@ -89,8 +111,8 @@ export class Player {
     // Draw jelly with wobbly effect
     const wobble = this.p.sin(this.p.frameCount * 0.2) * 2;
     this.p.rect(
-      this.x - this.width / 2 + wobble,
-      this.y - this.currentHeight / 2,
+      this.screenX - this.width / 2 + wobble,
+      this.currentY - this.currentHeight / 2,
       this.width,
       this.currentHeight,
       5
@@ -98,13 +120,13 @@ export class Player {
     
     // Draw face
     this.p.fill(255);
-    const eyeY = this.y - this.currentHeight / 4;
-    this.p.ellipse(this.x - 8, eyeY, 6, 8);
-    this.p.ellipse(this.x + 8, eyeY, 6, 8);
+    const eyeY = this.currentY - this.currentHeight / 4;
+    this.p.ellipse(this.screenX - 8, eyeY, 6, 8);
+    this.p.ellipse(this.screenX + 8, eyeY, 6, 8);
     
     this.p.fill(0);
-    this.p.ellipse(this.x - 8, eyeY, 3, 4);
-    this.p.ellipse(this.x + 8, eyeY, 3, 4);
+    this.p.ellipse(this.screenX - 8, eyeY, 3, 4);
+    this.p.ellipse(this.screenX + 8, eyeY, 3, 4);
     
     this.p.pop();
   }
@@ -125,8 +147,8 @@ export class Obstacle {
     this.bodies = [];
     
     if (gapPosition === "TOP") {
-      // Gap at top (need TALL jelly)
-      const bottomHeight = fullHeight * 0.7;
+      // Gap at top (need TALL jelly positioned HIGH)
+      const bottomHeight = fullHeight * 0.65;
       const bottomBody = Bodies.rectangle(
         x, groundY - bottomHeight / 2,
         this.width, bottomHeight,
@@ -135,8 +157,8 @@ export class Obstacle {
       this.bodies.push(bottomBody);
       World.add(gameState.world, bottomBody);
     } else if (gapPosition === "MIDDLE") {
-      // Gap in middle (need MEDIUM jelly)
-      const barHeight = fullHeight * 0.25;
+      // Gap in middle (need MEDIUM jelly positioned MIDDLE)
+      const barHeight = fullHeight * 0.3;
       const topBody = Bodies.rectangle(
         x, 20 + barHeight / 2,
         this.width, barHeight,
@@ -151,8 +173,8 @@ export class Obstacle {
       World.add(gameState.world, topBody);
       World.add(gameState.world, bottomBody);
     } else { // BOTTOM
-      // Gap at bottom (need FLAT jelly)
-      const topHeight = fullHeight * 0.7;
+      // Gap at bottom (need FLAT jelly positioned LOW)
+      const topHeight = fullHeight * 0.65;
       const topBody = Bodies.rectangle(
         x, 20 + topHeight / 2,
         this.width, topHeight,
@@ -167,7 +189,7 @@ export class Obstacle {
   
   update() {
     // Check if player passed this obstacle
-    if (!this.passed && gameState.player && gameState.player.x > this.x + this.width) {
+    if (!this.passed && gameState.player && gameState.player.x > this.x + this.width / 2) {
       this.passed = true;
       gameState.consecutivePasses++;
       gameState.score += 10;
@@ -225,7 +247,7 @@ export class Diamond {
   update() {
     this.rotation += 0.05;
     
-    // Check collection
+    // Check collection using world coordinates
     if (!this.collected && gameState.player) {
       const dx = this.x - gameState.player.x;
       const dy = this.y - gameState.player.y;

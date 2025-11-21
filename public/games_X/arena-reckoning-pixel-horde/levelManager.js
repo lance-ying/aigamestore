@@ -16,9 +16,11 @@ export function checkLevelCompletion(p, currentTime) {
   // Check if required bosses are defeated
   let bossRequirementMet = true;
   
-  if (gameState.currentLevel === 2) {
+  if (gameState.currentLevel === 6 || gameState.currentLevel === 8) {
+    // Levels with miniboss
     bossRequirementMet = !gameState.miniBossSpawned || gameState.bossDefeated;
-  } else if (gameState.currentLevel === 3) {
+  } else if (gameState.currentLevel === 9) {
+    // Final level with boss
     bossRequirementMet = !gameState.bossSpawned || gameState.bossDefeated;
   }
   
@@ -33,7 +35,7 @@ export function checkLevelCompletion(p, currentTime) {
     }
     
     // Check if this was the final level
-    if (gameState.currentLevel === 3) {
+    if (gameState.currentLevel === 9) {
       gameState.gamePhase = GAME_PHASES.GAME_OVER_WIN;
       p.logs.game_info.push({
         data: { phase: "GAME_OVER_WIN", finalScore: gameState.score },

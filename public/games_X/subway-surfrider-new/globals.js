@@ -17,7 +17,7 @@ export const PLAYER_WIDTH = 30;
 export const PLAYER_HEIGHT = 50;
 
 export const JUMP_HEIGHT = 100;
-export const JUMP_DURATION = 30; // frames
+export const JUMP_DURATION = 45; // frames - increased from 30 for floatier jump
 export const SLIDE_DURATION = 20; // frames
 
 export const INITIAL_GAME_SPEED = 5;
@@ -92,6 +92,7 @@ export const gameState = {
   gameSpeed: INITIAL_GAME_SPEED,
   lastPowerupDistance: 0,
   framesSinceStart: 0,
+  lives: 3,
   highScores: []
 };
 

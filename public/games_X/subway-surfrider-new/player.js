@@ -28,6 +28,10 @@ export class Player {
     this.magnetActive = false;
     this.magnetTimer = 0;
     
+    // Invincibility after taking damage
+    this.invincible = false;
+    this.invincibilityTimer = 0;
+    
     // Animation
     this.bobOffset = 0;
   }
@@ -77,6 +81,11 @@ export class Player {
     this.magnetTimer = duration;
   }
   
+  activateInvincibility(duration) {
+    this.invincible = true;
+    this.invincibilityTimer = duration;
+  }
+  
   update() {
     const p = this.p;
     
@@ -101,6 +110,14 @@ export class Player {
       this.magnetTimer--;
       if (this.magnetTimer <= 0) {
         this.magnetActive = false;
+      }
+    }
+    
+    // Update invincibility timer
+    if (this.invincible) {
+      this.invincibilityTimer--;
+      if (this.invincibilityTimer <= 0) {
+        this.invincible = false;
       }
     }
     
@@ -174,6 +191,13 @@ export class Player {
       p.strokeWeight(4);
       p.noFill();
       p.rect(box.x - 5, box.y - 5, box.width + 10, box.height + 10, 5);
+    }
+    
+    // Flash if invincible
+    if (this.invincible && p.frameCount % 10 < 5) {
+      p.fill(255, 255, 255, 150);
+      p.noStroke();
+      p.rect(box.x - 3, box.y - 3, box.width + 6, box.height + 6, 5);
     }
     
     // Draw player body

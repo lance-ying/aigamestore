@@ -44,8 +44,15 @@ let gameInstance = new p5(p => {
   };
   
   p.draw = function() {
-    // Update Matter.js physics
-    Engine.update(gameState.engine, 1000 / 60);
+    // Update Matter.js physics with multiple substeps to prevent tunneling
+    const substeps = 4;
+    const timestep = (1000 / 60) / substeps;
+    for (let i = 0; i < substeps; i++) {
+      Engine.update(gameState.engine, timestep);
+    }
+    
+    // Handle continuous input for aiming and power
+    handleContinuousInput(p);
     
     // Update and render based on game phase
     switch (gameState.gamePhase) {
@@ -66,6 +73,41 @@ let gameInstance = new p5(p => {
         break;
     }
   };
+  
+  function handleContinuousInput(p) {
+    // Only handle continuous input during player's aiming phase
+    if (gameState.gamePhase !== "PLAYING" || 
+        gameState.playingPhase !== "AIMING" || 
+        gameState.controlMode !== "HUMAN") {
+      return;
+    }
+    
+    // Continuous aim adjustment
+    if (p.keyIsDown(37)) { // Arrow Left
+      if (!p.keyIsDown(16)) { // Not holding Shift
+        gameState.aimAngle -= 0.02;
+      }
+    }
+    
+    if (p.keyIsDown(39)) { // Arrow Right
+      if (!p.keyIsDown(16)) { // Not holding Shift
+        gameState.aimAngle += 0.02;
+      }
+    }
+    
+    // Continuous power adjustment
+    if (p.keyIsDown(38)) { // Arrow Up
+      if (!p.keyIsDown(16)) { // Not holding Shift
+        gameState.shotPower = Math.min(gameState.maxShotPower, gameState.shotPower + 1);
+      }
+    }
+    
+    if (p.keyIsDown(40)) { // Arrow Down
+      if (!p.keyIsDown(16)) { // Not holding Shift
+        gameState.shotPower = Math.max(0, gameState.shotPower - 1);
+      }
+    }
+  }
   
   p.keyPressed = function() {
     // Log input
@@ -119,39 +161,22 @@ let gameInstance = new p5(p => {
     }
     
     // Gameplay controls (only during PLAYING phase)
-    if (gameState.gamePhase === "PLAYING" && gameState.playingPhase === "AIMING" && gameState.currentTurn === "PLAYER" && gameState.controlMode === "HUMAN") {
-      // Aim controls
-      if (p.keyCode === 37) { // Arrow Left
-        if (p.keyIsDown(16)) { // Shift + Left = Left spin
-          gameState.spinEffect.x = Math.max(-1, gameState.spinEffect.x - 0.2);
-        } else {
-          gameState.aimAngle -= 0.05;
-        }
+    if (gameState.gamePhase === "PLAYING" && gameState.playingPhase === "AIMING" && gameState.controlMode === "HUMAN") {
+      // Spin controls (discrete)
+      if (p.keyCode === 37 && p.keyIsDown(16)) { // Shift + Left = Left spin
+        gameState.spinEffect.x = Math.max(-1, gameState.spinEffect.x - 0.2);
       }
       
-      if (p.keyCode === 39) { // Arrow Right
-        if (p.keyIsDown(16)) { // Shift + Right = Right spin
-          gameState.spinEffect.x = Math.min(1, gameState.spinEffect.x + 0.2);
-        } else {
-          gameState.aimAngle += 0.05;
-        }
+      if (p.keyCode === 39 && p.keyIsDown(16)) { // Shift + Right = Right spin
+        gameState.spinEffect.x = Math.min(1, gameState.spinEffect.x + 0.2);
       }
       
-      // Power controls
-      if (p.keyCode === 38) { // Arrow Up
-        if (p.keyIsDown(16)) { // Shift + Up = Top spin
-          gameState.spinEffect.y = Math.max(-1, gameState.spinEffect.y - 0.2);
-        } else {
-          gameState.shotPower = Math.min(gameState.maxShotPower, gameState.shotPower + 5);
-        }
+      if (p.keyCode === 38 && p.keyIsDown(16)) { // Shift + Up = Top spin
+        gameState.spinEffect.y = Math.max(-1, gameState.spinEffect.y - 0.2);
       }
       
-      if (p.keyCode === 40) { // Arrow Down
-        if (p.keyIsDown(16)) { // Shift + Down = Back spin
-          gameState.spinEffect.y = Math.min(1, gameState.spinEffect.y + 0.2);
-        } else {
-          gameState.shotPower = Math.max(0, gameState.shotPower - 5);
-        }
+      if (p.keyCode === 40 && p.keyIsDown(16)) { // Shift + Down = Back spin
+        gameState.spinEffect.y = Math.min(1, gameState.spinEffect.y + 0.2);
       }
       
       // Execute shot

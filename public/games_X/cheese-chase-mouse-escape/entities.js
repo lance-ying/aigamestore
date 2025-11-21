@@ -1,4 +1,5 @@
-import { gameState } from './globals.js';
+import { gameState, CANVAS_HEIGHT } from './globals.js';
+import { handlePlayerHit } from './collision.js';
 
 export class Player {
   constructor(p, x, y) {
@@ -10,9 +11,7 @@ export class Player {
     this.vx = 0;
     this.vy = 0;
     this.onGround = false;
-    this.acceleration = 0.5;  // Acceleration rate
-    this.friction = 0.85;     // Friction when no input
-    this.maxSpeed = 3;        // Maximum horizontal speed
+    this.moveSpeed = 3;
     this.jumpPower = -8;
     this.gravity = 0.4;
     this.facingRight = true;
@@ -40,16 +39,17 @@ export class Player {
       }
     }
     
-    // Keep player in bounds
+    // Keep player in horizontal bounds
     this.x = this.p.constrain(this.x, this.w / 2, 600 - this.w / 2);
-    if (this.y > 400) {
-      this.y = 400;
-      this.vy = 0;
-      this.onGround = true;
+    
+    // Check if player fell off the map
+    if (this.y > CANVAS_HEIGHT + 20) {
+      handlePlayerHit(this.p);
+      return;
     }
     
     // Animation
-    if (Math.abs(this.vx) > 0.5 && this.onGround) {
+    if (this.vx !== 0 && this.onGround) {
       this.animTimer++;
       if (this.animTimer > 8) {
         this.animFrame = (this.animFrame + 1) % 2;
@@ -121,32 +121,17 @@ export class Player {
   }
 
   moveLeft() {
-    // Apply acceleration instead of instant velocity
-    this.vx -= this.acceleration;
-    // Cap at max speed
-    if (this.vx < -this.maxSpeed) {
-      this.vx = -this.maxSpeed;
-    }
+    this.vx = -this.moveSpeed;
     this.facingRight = false;
   }
 
   moveRight() {
-    // Apply acceleration instead of instant velocity
-    this.vx += this.acceleration;
-    // Cap at max speed
-    if (this.vx > this.maxSpeed) {
-      this.vx = this.maxSpeed;
-    }
+    this.vx = this.moveSpeed;
     this.facingRight = true;
   }
 
   stopMove() {
-    // Apply friction instead of instant stop
-    this.vx *= this.friction;
-    // Stop completely when very slow
-    if (Math.abs(this.vx) < 0.1) {
-      this.vx = 0;
-    }
+    this.vx = 0;
   }
 }
 

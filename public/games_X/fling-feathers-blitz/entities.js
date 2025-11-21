@@ -61,7 +61,10 @@ export class Bird {
         miniBirds.push(miniBird);
       }
       this.active = false;
-      World.remove(gameState.matterWorld, this.body);
+      if (this.body && gameState.matterWorld) {
+        World.remove(gameState.matterWorld, this.body);
+        this.body = null; // Clear reference to prevent stale body issues
+      }
       return miniBirds;
     } else if (this.birdType === BIRD_TYPES.YELLOW) {
       // Speed boost
@@ -104,17 +107,21 @@ export class Pig {
     this.health -= amount;
     if (this.health <= 0) {
       this.active = false;
-      World.remove(gameState.matterWorld, this.body);
-      
-      // Add score
-      const points = this.isLarge ? SCORE_LARGE_PIG : SCORE_SMALL_PIG;
-      gameState.score += points;
-      gameState.levelScore += points;
-      gameState.pigsRemaining--;
-      
-      // Particle effect
-      const particles = createParticleEffect(this.body.position.x, this.body.position.y, [100, 200, 100], 10);
-      gameState.particleEffects.push(...particles);
+      if (this.body && gameState.matterWorld) {
+        const pos = { x: this.body.position.x, y: this.body.position.y };
+        World.remove(gameState.matterWorld, this.body);
+        this.body = null; // Clear reference to prevent stale body issues
+        
+        // Add score
+        const points = this.isLarge ? SCORE_LARGE_PIG : SCORE_SMALL_PIG;
+        gameState.score += points;
+        gameState.levelScore += points;
+        gameState.pigsRemaining--;
+        
+        // Particle effect
+        const particles = createParticleEffect(pos.x, pos.y, [100, 200, 100], 10);
+        gameState.particleEffects.push(...particles);
+      }
       
       return true;
     }
@@ -157,17 +164,21 @@ export class StructureBlock {
     this.health -= amount;
     if (this.health <= 0) {
       this.active = false;
-      World.remove(gameState.matterWorld, this.body);
-      
-      // Add score
-      const points = this.material === 'WOOD' ? SCORE_WOOD_BLOCK : SCORE_STONE_BLOCK;
-      gameState.score += points;
-      gameState.levelScore += points;
-      
-      // Particle effect
-      const color = this.material === 'WOOD' ? [139, 90, 43] : [120, 120, 120];
-      const particles = createParticleEffect(this.body.position.x, this.body.position.y, color, 6);
-      gameState.particleEffects.push(...particles);
+      if (this.body && gameState.matterWorld) {
+        const pos = { x: this.body.position.x, y: this.body.position.y };
+        const color = this.material === 'WOOD' ? [139, 90, 43] : [120, 120, 120];
+        World.remove(gameState.matterWorld, this.body);
+        this.body = null; // Clear reference to prevent stale body issues
+        
+        // Add score
+        const points = this.material === 'WOOD' ? SCORE_WOOD_BLOCK : SCORE_STONE_BLOCK;
+        gameState.score += points;
+        gameState.levelScore += points;
+        
+        // Particle effect
+        const particles = createParticleEffect(pos.x, pos.y, color, 6);
+        gameState.particleEffects.push(...particles);
+      }
       
       return true;
     }

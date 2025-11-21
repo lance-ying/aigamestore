@@ -1,4 +1,4 @@
-import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, GROUND_Y, SLINGSHOT_X, SLINGSHOT_Y, BIRD_TYPES, LAUNCH_POWER_MULTIPLIER, GRAVITY, BIRD_AIR_FRICTION } from './globals.js';
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, GROUND_Y, SLINGSHOT_X, SLINGSHOT_Y, BIRD_TYPES, LAUNCH_POWER_MULTIPLIER, GRAVITY, BIRD_AIR_FRICTION, MAX_PULL_DISTANCE } from './globals.js';
 
 export function renderGame(p) {
   // Background
@@ -54,7 +54,7 @@ function renderStartScreen(p) {
   p.fill(255);
   p.textSize(12);
   p.text("SPACE: Press to aim, press again to launch", CANVAS_WIDTH / 2, 245);
-  p.text("ARROW KEYS: Adjust slingshot aim", CANVAS_WIDTH / 2, 265);
+  p.text("ARROW KEYS: Hold to adjust slingshot aim", CANVAS_WIDTH / 2, 265);
   p.text("Z: Activate bird's special ability", CANVAS_WIDTH / 2, 285);
   p.text("ESC: Pause    R: Restart", CANVAS_WIDTH / 2, 305);
   
@@ -102,6 +102,7 @@ function renderGameplay(p) {
   // Trajectory preview when aiming
   if (gameState.isAiming) {
     renderTrajectoryPreview(p);
+    renderAimingInfo(p);
   }
 }
 
@@ -299,46 +300,122 @@ function renderUI(p) {
   p.text(`PIGS: ${gameState.pigsRemaining}`, 10, 80);
 }
 
+function renderAimingInfo(p) {
+  if (!gameState.slingshotPullPos) return;
+  
+  const pullX = gameState.slingshotPullPos.x;
+  const pullY = gameState.slingshotPullPos.y;
+  
+  // Calculate launch velocity (opposite direction of pull)
+  const vx = -pullX * LAUNCH_POWER_MULTIPLIER;
+  const vy = -pullY * LAUNCH_POWER_MULTIPLIER;
+  
+  // Calculate angle in degrees (0 degrees = right, 90 degrees = up)
+  const angleRad = Math.atan2(-vy, vx); // negative vy because y-axis is inverted in screen coords
+  let angleDeg = angleRad * (180 / Math.PI);
+  // Normalize to 0-360 range
+  if (angleDeg < 0) angleDeg += 360;
+  
+  // Calculate power as percentage of max pull distance
+  const pullDistance = Math.sqrt(pullX * pullX + pullY * pullY);
+  const powerPercent = Math.round((pullDistance / MAX_PULL_DISTANCE) * 100);
+  
+  // Display info in top-right corner to avoid obstructing trajectory
+  const boxWidth = 110;
+  const boxHeight = 40;
+  const displayX = CANVAS_WIDTH - boxWidth - 10;
+  const displayY = 10;
+  
+  // Background box
+  p.fill(0, 0, 0, 180);
+  p.noStroke();
+  p.rect(displayX, displayY, boxWidth, boxHeight, 5);
+  
+  // Text
+  p.fill(255, 255, 100);
+  p.textAlign(p.LEFT, p.TOP);
+  p.textSize(12);
+  p.text(`Angle: ${Math.round(angleDeg)}°`, displayX + 5, displayY + 5);
+  p.text(`Power: ${powerPercent}%`, displayX + 5, displayY + 23);
+}
+
 function renderTrajectoryPreview(p) {
   if (!gameState.slingshotPullPos) return;
+  
+  const Matter = window.Matter;
+  if (!Matter) return; // Matter.js not loaded yet
+  
+  const Engine = Matter.Engine;
+  const World = Matter.World;
+  const Bodies = Matter.Bodies;
+  const Body = Matter.Body;
   
   const startX = SLINGSHOT_X;
   const startY = SLINGSHOT_Y;
   
   // Initial velocity using the same multiplier as actual launch
-  let vx = -gameState.slingshotPullPos.x * LAUNCH_POWER_MULTIPLIER;
-  let vy = -gameState.slingshotPullPos.y * LAUNCH_POWER_MULTIPLIER;
+  const vx = -gameState.slingshotPullPos.x * LAUNCH_POWER_MULTIPLIER;
+  const vy = -gameState.slingshotPullPos.y * LAUNCH_POWER_MULTIPLIER;
   
-  // Current position
-  let x = startX;
-  let y = startY;
+  // Create a temporary Matter.js engine for trajectory simulation
+  const tempEngine = Engine.create({
+    gravity: { x: 0, y: GRAVITY }
+  });
   
-  p.stroke(255, 255, 255, 150);
-  p.strokeWeight(2);
-  p.noFill();
+  // Create a temporary bird body (small circle, same properties as actual bird)
+  const tempBird = Bodies.circle(startX, startY, 10, {
+    frictionAir: BIRD_AIR_FRICTION,
+    density: 0.001
+  });
   
-  // Simulate trajectory matching Matter.js physics
-  // Use GRAVITY directly per frame (not scaled)
-  for (let t = 0; t < 60; t++) {
-    // Draw point every 3 frames for dotted effect
-    if (t % 3 === 0) {
-      p.point(x, y);
+  // Set initial velocity
+  Body.setVelocity(tempBird, { x: vx, y: vy });
+  
+  // Create temporary ground
+  const tempGround = Bodies.rectangle(CANVAS_WIDTH / 2, GROUND_Y + 25, CANVAS_WIDTH, 50, {
+    isStatic: true
+  });
+  
+  // Add to temporary world
+  World.add(tempEngine.world, [tempBird, tempGround]);
+  
+  // Simulate trajectory by running physics updates
+  const trajectoryPoints = [];
+  const dotSpacing = 4;
+  
+  // Show only 1/2 of full trajectory (40 frames instead of 80)
+  for (let frame = 0; frame < 40; frame++) {
+    // Update physics (60fps = 1000/60 ms per frame)
+    Engine.update(tempEngine, 1000 / 60);
+    
+    // Record position at intervals
+    if (frame % dotSpacing === 0) {
+      trajectoryPoints.push({
+        x: tempBird.position.x,
+        y: tempBird.position.y
+      });
     }
     
-    // Apply gravity (same as Matter.js applies per frame)
-    vy += GRAVITY;
-    
-    // Apply air friction (like Matter.js does)
-    vx *= (1 - BIRD_AIR_FRICTION);
-    vy *= (1 - BIRD_AIR_FRICTION);
-    
-    // Update position
-    x += vx;
-    y += vy;
-    
-    // Stop if trajectory goes off screen or hits ground
-    if (y > GROUND_Y || x < 0 || x > CANVAS_WIDTH) break;
+    // Stop if bird hits ground or goes off screen
+    if (tempBird.position.y > GROUND_Y || 
+        tempBird.position.x < 0 || 
+        tempBird.position.x > CANVAS_WIDTH || 
+        tempBird.position.y < 0) {
+      break;
+    }
   }
+  
+  // Clean up temporary engine
+  World.clear(tempEngine.world, false);
+  Engine.clear(tempEngine);
+  
+  // Draw trajectory points
+  p.noStroke();
+  p.fill(255, 255, 255, 180);
+  
+  trajectoryPoints.forEach(point => {
+    p.ellipse(point.x, point.y, 4, 4);
+  });
 }
 
 function renderPauseOverlay(p) {

@@ -98,7 +98,24 @@ class VLMGamePlayer:
         # Initialize action history for trace
         self.action_history: list[Dict[str, Any]] = []
         
+        # Check if this is a public_platform game
+        self.is_public_platform = self._is_public_platform_game(game_url)
+        
         logger.info(f"Initialized VLM Game Player with {self.provider}:{self.model}")
+        if self.is_public_platform:
+            logger.info("Detected public_platform game - will capture canvas only")
+    
+    def _is_public_platform_game(self, game_url: str) -> bool:
+        """
+        Check if the game URL is from the public_platform directory.
+        
+        Args:
+            game_url: URL of the game
+            
+        Returns:
+            True if it's a public_platform game, False otherwise
+        """
+        return "public_platform" in game_url
     
     def _parse_model_name(self, model_name: str) -> tuple[str, str]:
         """Parse model name into provider and model."""
@@ -451,7 +468,13 @@ class VLMGamePlayer:
                     
                     # Take screenshot
                     screenshot_file = screenshot_path / f"turn_{turn:04d}.png"
-                    page.screenshot(path=str(screenshot_file))
+                    
+                    # For public_platform games, capture only the canvas
+                    # For other games, capture the full page
+                    if self.is_public_platform:
+                        canvas.screenshot(path=str(screenshot_file))
+                    else:
+                        page.screenshot(path=str(screenshot_file))
                     
                     # Get action from VLM (with history if enabled)
                     action = self.get_action_from_llm(str(screenshot_file), include_history=include_history)

@@ -44,8 +44,8 @@ function drawStartScreen(p) {
     "on the right side of the parking lot.",
     "",
     "HOW TO PLAY:",
-    "• Arrow Keys: Select different vehicles",
-    "• Space: Grab/Release the selected vehicle",
+    "• Arrow Keys: Move cursor on the grid",
+    "• Space: Grab vehicle under cursor",
     "• Arrow Keys (while grabbed): Slide vehicle",
     "• Vehicles can only move along their orientation"
   ];
@@ -73,6 +73,11 @@ function drawStartScreen(p) {
 function drawPlayingScreen(p) {
   // Draw grid background
   drawGrid(p);
+
+  // Draw cursor (before vehicles so it's under them)
+  if (!gameState.isGrabbing) {
+    drawCursor(p);
+  }
 
   // Draw exit indicator
   drawExit(p);
@@ -114,6 +119,47 @@ function drawPlayingScreen(p) {
     p.textSize(32);
     p.text("LEVEL COMPLETE!", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
   }
+}
+
+function drawCursor(p) {
+  const x = GRID_OFFSET_X + gameState.cursorX * CELL_SIZE;
+  const y = GRID_OFFSET_Y + gameState.cursorY * CELL_SIZE;
+  
+  // Pulsing glow effect
+  const pulseAlpha = 150 + Math.sin(p.frameCount * 0.15) * 50;
+  
+  // Outer glow
+  p.fill(100, 200, 255, pulseAlpha * 0.3);
+  p.noStroke();
+  p.rect(x - 2, y - 2, CELL_SIZE + 4, CELL_SIZE + 4, 3);
+  
+  // Main cursor highlight
+  p.fill(100, 200, 255, pulseAlpha * 0.5);
+  p.stroke(100, 200, 255, pulseAlpha);
+  p.strokeWeight(3);
+  p.rect(x, y, CELL_SIZE, CELL_SIZE, 3);
+  
+  // Corner markers
+  const cornerSize = 8;
+  p.strokeWeight(3);
+  p.stroke(100, 200, 255, pulseAlpha);
+  p.noFill();
+  
+  // Top-left
+  p.line(x, y + cornerSize, x, y);
+  p.line(x, y, x + cornerSize, y);
+  
+  // Top-right
+  p.line(x + CELL_SIZE - cornerSize, y, x + CELL_SIZE, y);
+  p.line(x + CELL_SIZE, y, x + CELL_SIZE, y + cornerSize);
+  
+  // Bottom-left
+  p.line(x, y + CELL_SIZE - cornerSize, x, y + CELL_SIZE);
+  p.line(x, y + CELL_SIZE, x + cornerSize, y + CELL_SIZE);
+  
+  // Bottom-right
+  p.line(x + CELL_SIZE - cornerSize, y + CELL_SIZE, x + CELL_SIZE, y + CELL_SIZE);
+  p.line(x + CELL_SIZE, y + CELL_SIZE, x + CELL_SIZE, y + CELL_SIZE - cornerSize);
 }
 
 function drawGrid(p) {
@@ -192,9 +238,6 @@ function drawUIPanel(p) {
 }
 
 function drawInstructions(p) {
-  const vehicle = gameState.entities[gameState.selectedVehicle];
-  if (!vehicle) return;
-
   p.fill(60, 65, 70, 230);
   p.noStroke();
   p.rect(10, CANVAS_HEIGHT - 70, 200, 60, 5);
@@ -210,7 +253,7 @@ function drawInstructions(p) {
     p.text("Arrow Keys: Move", 20, CANVAS_HEIGHT - 45);
     p.text("Space: Release", 20, CANVAS_HEIGHT - 30);
   } else {
-    p.text("Arrow Keys: Select", 20, CANVAS_HEIGHT - 60);
+    p.text("Arrow Keys: Move cursor", 20, CANVAS_HEIGHT - 60);
     p.text("Space: Grab vehicle", 20, CANVAS_HEIGHT - 45);
   }
 }

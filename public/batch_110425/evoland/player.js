@@ -13,6 +13,7 @@ export class Player {
     this.hp = 100;
     this.attackCooldown = 0;
     this.attackRange = 40;
+    this.attackWidth = 30;
     this.attackDamage = 15;
     this.invulnerable = 0;
     this.dodgeCooldown = 0;
@@ -22,6 +23,8 @@ export class Player {
     this.direction = 'down'; // up, down, left, right
     this.animFrame = 0;
     this.animTimer = 0;
+    this.isAttacking = false;
+    this.attackAnimTimer = 0;
   }
   
   update() {
@@ -34,6 +37,15 @@ export class Player {
     if (this.attackCooldown > 0) this.attackCooldown--;
     if (this.invulnerable > 0) this.invulnerable--;
     if (this.dodgeCooldown > 0) this.dodgeCooldown--;
+    
+    // Update attack animation
+    if (this.isAttacking) {
+      this.attackAnimTimer++;
+      if (this.attackAnimTimer > 10) {
+        this.isAttacking = false;
+        this.attackAnimTimer = 0;
+      }
+    }
     
     if (this.isDodging && this.dodgeDuration > 0) {
       this.dodgeDuration--;
@@ -81,10 +93,14 @@ export class Player {
       this.y = oldY;
     }
     
-    // Update camera if scrolling is unlocked
+    // Update camera with smooth interpolation if scrolling is unlocked
     if (gameState.hasScrolling) {
-      gameState.cameraX = this.p.constrain(this.x - CANVAS_WIDTH / 2, 0, gameState.worldWidth - CANVAS_WIDTH);
-      gameState.cameraY = this.p.constrain(this.y - CANVAS_HEIGHT / 2, 0, gameState.worldHeight - CANVAS_HEIGHT);
+      const targetCameraX = this.p.constrain(this.x - CANVAS_WIDTH / 2, 0, gameState.worldWidth - CANVAS_WIDTH);
+      const targetCameraY = this.p.constrain(this.y - CANVAS_HEIGHT / 2, 0, gameState.worldHeight - CANVAS_HEIGHT);
+      
+      // Smooth camera movement with lerp (0.1 = smooth, 1.0 = instant)
+      gameState.cameraX = this.p.lerp(gameState.cameraX, targetCameraX, 0.1);
+      gameState.cameraY = this.p.lerp(gameState.cameraY, targetCameraY, 0.1);
     }
   }
   
@@ -106,16 +122,67 @@ export class Player {
     return true;
   }
   
+  getAttackHitbox() {
+    // Calculate attack hitbox based on direction
+    let hitboxX, hitboxY, hitboxW, hitboxH;
+    
+    switch(this.direction) {
+      case 'up':
+        hitboxX = this.x - this.attackWidth / 2;
+        hitboxY = this.y - this.height / 2 - this.attackRange;
+        hitboxW = this.attackWidth;
+        hitboxH = this.attackRange;
+        break;
+      case 'down':
+        hitboxX = this.x - this.attackWidth / 2;
+        hitboxY = this.y + this.height / 2;
+        hitboxW = this.attackWidth;
+        hitboxH = this.attackRange;
+        break;
+      case 'left':
+        hitboxX = this.x - this.width / 2 - this.attackRange;
+        hitboxY = this.y - this.attackWidth / 2;
+        hitboxW = this.attackRange;
+        hitboxH = this.attackWidth;
+        break;
+      case 'right':
+        hitboxX = this.x + this.width / 2;
+        hitboxY = this.y - this.attackWidth / 2;
+        hitboxW = this.attackRange;
+        hitboxH = this.attackWidth;
+        break;
+    }
+    
+    return { x: hitboxX, y: hitboxY, w: hitboxW, h: hitboxH };
+  }
+  
   attack() {
     if (this.attackCooldown > 0) return;
     
     this.attackCooldown = 20;
+    this.isAttacking = true;
+    this.attackAnimTimer = 0;
     
-    // Check for enemies in range
+    const hitbox = this.getAttackHitbox();
+    
+    // Check for enemies in directional hitbox
     for (let enemy of gameState.enemies) {
       if (!enemy.dead) {
-        const dist = this.p.dist(this.x, this.y, enemy.x, enemy.y);
-        if (dist < this.attackRange) {
+        // Check if enemy overlaps with attack hitbox
+        const enemyLeft = enemy.x - enemy.width / 2;
+        const enemyRight = enemy.x + enemy.width / 2;
+        const enemyTop = enemy.y - enemy.height / 2;
+        const enemyBottom = enemy.y + enemy.height / 2;
+        
+        const hitboxRight = hitbox.x + hitbox.w;
+        const hitboxBottom = hitbox.y + hitbox.h;
+        
+        const overlaps = !(enemyRight < hitbox.x || 
+                          enemyLeft > hitboxRight ||
+                          enemyBottom < hitbox.y ||
+                          enemyTop > hitboxBottom);
+        
+        if (overlaps) {
           enemy.takeDamage(this.attackDamage);
         }
       }
@@ -125,7 +192,7 @@ export class Player {
     for (let chest of gameState.chests) {
       if (!chest.opened) {
         const dist = this.p.dist(this.x, this.y, chest.x, chest.y);
-        if (dist < this.attackRange) {
+        if (dist < this.attackRange + 20) {
           chest.open();
         }
       }
@@ -174,6 +241,38 @@ export class Player {
     if (this.invulnerable > 0 && this.p.frameCount % 4 < 2) {
       this.p.pop();
       return;
+    }
+    
+    // Draw attack animation (sword slash)
+    if (this.isAttacking) {
+      const progress = this.attackAnimTimer / 10;
+      const hitbox = this.getAttackHitbox();
+      
+      this.p.noFill();
+      this.p.stroke(gameState.hasColor ? [255, 255, 150, 200 * (1 - progress)] : [255, 200 * (1 - progress)]);
+      this.p.strokeWeight(3);
+      
+      // Draw attack arc/slash based on direction
+      if (this.direction === 'up' || this.direction === 'down') {
+        const centerX = hitbox.x + hitbox.w / 2;
+        const centerY = this.direction === 'up' ? hitbox.y : hitbox.y + hitbox.h;
+        const radius = this.attackRange;
+        const startAngle = this.direction === 'up' ? this.p.PI : 0;
+        const endAngle = this.direction === 'up' ? this.p.TWO_PI : this.p.PI;
+        this.p.arc(centerX, centerY, radius * 2, radius * 2, startAngle, endAngle);
+      } else {
+        const centerX = this.direction === 'left' ? hitbox.x : hitbox.x + hitbox.w;
+        const centerY = hitbox.y + hitbox.h / 2;
+        const radius = this.attackRange;
+        const startAngle = this.direction === 'left' ? this.p.HALF_PI : -this.p.HALF_PI;
+        const endAngle = this.direction === 'left' ? this.p.PI + this.p.HALF_PI : this.p.HALF_PI;
+        this.p.arc(centerX, centerY, radius * 2, radius * 2, startAngle, endAngle);
+      }
+      
+      // Draw hitbox outline for debugging (optional, can be removed)
+      // this.p.noFill();
+      // this.p.stroke(255, 0, 0, 100);
+      // this.p.rect(hitbox.x, hitbox.y, hitbox.w, hitbox.h);
     }
     
     // Draw player based on evolution stage

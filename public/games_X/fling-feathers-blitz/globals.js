@@ -18,7 +18,8 @@ export const gameState = {
   totalLevels: 5,
   matterEngine: null,
   matterWorld: null,
-  groundBody: null
+  groundBody: null,
+  keysPressed: {} // Track which keys are currently held down
 };
 
 // Canvas dimensions
@@ -54,3 +55,7 @@ export const BIRD_TYPES = {
   BLUE: 'BLUE',
   YELLOW: 'YELLOW'
 };
+// Expose gameState to window for debugging and recording scripts
+if (typeof window !== 'undefined') {
+  window.getGameState = () => gameState;
+}

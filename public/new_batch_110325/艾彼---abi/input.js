@@ -187,6 +187,22 @@ function interact(p) {
   
   if (interactable) {
     if (interactable.type === 'switch') {
+      // Check if character can activate this switch
+      if (!interactable.object.canActivate(character)) {
+        // Log failed attempt
+        p.logs.game_info.push({
+          data: { 
+            action: 'switch_activation_failed', 
+            switchId: interactable.object.id, 
+            requiredCharacter: interactable.object.requiredCharacter,
+            currentCharacter: character.type
+          },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+        return;
+      }
+      
       interactable.object.toggle();
       p.logs.game_info.push({
         data: { action: 'toggle_switch', switchId: interactable.object.id, active: interactable.object.active },

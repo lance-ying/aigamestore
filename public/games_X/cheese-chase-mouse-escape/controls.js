@@ -1,11 +1,5 @@
 import { gameState, GAME_PHASES } from './globals.js';
 
-// Track key states for smooth movement
-const keyStates = {
-  left: false,
-  right: false
-};
-
 export function handleKeyPressed(p, key, keyCode) {
   // Log input
   p.logs.inputs.push({
@@ -53,20 +47,9 @@ export function handleKeyPressed(p, key, keyCode) {
   }
 
   // Gameplay controls
-  if (gameState.gamePhase === GAME_PHASES.PLAYING && gameState.player && gameState.controlMode === 'HUMAN') {
-    // Arrow Up - Jump
-    if (keyCode === 38) {
+  if (gameState.gamePhase === GAME_PHASES.PLAYING && gameState.player) {
+    if (keyCode === 38) { // Arrow Up
       gameState.player.jump();
-    }
-    
-    // Arrow Left - Track key state for smooth movement
-    if (keyCode === 37) {
-      keyStates.left = true;
-    }
-    
-    // Arrow Right - Track key state for smooth movement
-    if (keyCode === 39) {
-      keyStates.right = true;
     }
   }
 }
@@ -79,30 +62,21 @@ export function handleKeyReleased(p, key, keyCode) {
     framecount: p.frameCount,
     timestamp: Date.now()
   });
-  
-  // Release key states for smooth movement
-  if (keyCode === 37) {
-    keyStates.left = false;
-  }
-  if (keyCode === 39) {
-    keyStates.right = false;
-  }
 }
 
 export function handlePlayerMovement(p) {
   if (gameState.gamePhase !== GAME_PHASES.PLAYING || !gameState.player) return;
 
   if (gameState.controlMode === 'HUMAN') {
-    // Human mode now uses smooth velocity-based movement
-    if (keyStates.left && !keyStates.right) {
+    if (p.keyIsDown(37)) { // Arrow Left
       gameState.player.moveLeft();
-    } else if (keyStates.right && !keyStates.left) {
+    } else if (p.keyIsDown(39)) { // Arrow Right
       gameState.player.moveRight();
     } else {
       gameState.player.stopMove();
     }
   } else {
-    // Automated testing mode - keep velocity-based movement
+    // Automated testing mode
     handleAutomatedControls(p);
   }
 }
@@ -158,10 +132,6 @@ export function startGame(p) {
   gameState.score = 0;
   gameState.lives = 3;
   
-  // Reset key states
-  keyStates.left = false;
-  keyStates.right = false;
-  
   p.logs.game_info.push({
     event: 'game_started',
     data: {},
@@ -185,10 +155,6 @@ export function resetToStart(p) {
   gameState.invulnerable = false;
   gameState.invulnerableTimer = 0;
   gameState.levelTransitionTimer = 0;
-  
-  // Reset key states
-  keyStates.left = false;
-  keyStates.right = false;
   
   p.logs.game_info.push({
     event: 'reset_to_start',

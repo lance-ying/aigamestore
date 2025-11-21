@@ -178,64 +178,165 @@ export const ENEMY_TYPES = {
   }
 };
 
-// Level configurations - Increased spawn rates and enemy variety
+// Level configurations - 9 levels with progressive difficulty
 export const LEVEL_CONFIGS = {
+  // EASY LEVELS (1-3) - Tutorial and basic introduction
   1: {
-    duration: 120000, // 120 seconds
-    name: "The Training Grounds",
-    clearMessage: "Level 1 Cleared! Prepare for the Swarm.",
-    completionBonus: 500,
+    duration: 60000, // 60 seconds
+    name: "First Steps",
+    clearMessage: "Level 1 Complete! You're getting the hang of it!",
+    completionBonus: 300,
     spawnConfig: [
-      { time: 0, type: "GOBLIN", rate: 1200, maxEnemies: 10 },
-      { time: 0, type: "SPIDER", rate: 5000, maxEnemies: 10, groupSize: 2 },
-      { time: 10000, type: "IMP", rate: 6000, maxEnemies: 12 },
-      { time: 15000, type: "BRUTE", rate: 8000, maxEnemies: 14 },
-      { time: 30000, type: "SPIDER", rate: 3500, maxEnemies: 16, groupSize: 3 },
-      { time: 40000, type: "GOBLIN", rate: 900, maxEnemies: 18, speedMultiplier: 1.1 },
-      { time: 60000, type: "IMP", rate: 4500, maxEnemies: 20 },
-      { time: 80000, type: "BRUTE", rate: 6000, maxEnemies: 22 }
+      { time: 0, type: "GOBLIN", rate: 2000, maxEnemies: 5 },
+      { time: 15000, type: "SPIDER", rate: 4000, maxEnemies: 6, groupSize: 1 },
+      { time: 30000, type: "GOBLIN", rate: 1500, maxEnemies: 8 }
     ]
   },
   2: {
-    duration: 180000, // 180 seconds
-    name: "The Swarm Plains",
-    clearMessage: "Level 2 Cleared! The Boss Approaches...",
-    completionBonus: 1000,
+    duration: 75000, // 75 seconds
+    name: "Growing Threat",
+    clearMessage: "Level 2 Complete! The challenge increases!",
+    completionBonus: 400,
     spawnConfig: [
-      { time: 0, type: "GOBLIN", rate: 1000, maxEnemies: 18 },
-      { time: 0, type: "SPIDER", rate: 5000, maxEnemies: 18, groupSize: 3 },
-      { time: 0, type: "IMP", rate: 7000, maxEnemies: 18 },
-      { time: 5000, type: "BRUTE", rate: 5000, maxEnemies: 20 },
-      { time: 10000, type: "WRAITH", rate: 6000, maxEnemies: 22 },
-      { time: 20000, type: "SPIDER", rate: 3500, maxEnemies: 25, groupSize: 4 },
-      { time: 30000, type: "GOBLIN", rate: 700, maxEnemies: 28, speedMultiplier: 1.2 },
-      { time: 45000, type: "IMP", rate: 4500, maxEnemies: 30 },
-      { time: 60000, type: "WRAITH", rate: 4000, maxEnemies: 32 },
-      { time: 90000, type: "BRUTE", rate: 4000, maxEnemies: 35, healthMultiplier: 1.2 },
-      { time: 120000, type: "NECROMANCER", rate: 8000, maxEnemies: 38 },
-      { time: 150000, type: "MINIBOSS", rate: 999999, maxEnemies: 40, once: true }
+      { time: 0, type: "GOBLIN", rate: 1800, maxEnemies: 8 },
+      { time: 0, type: "SPIDER", rate: 3500, maxEnemies: 8, groupSize: 2 },
+      { time: 20000, type: "IMP", rate: 5000, maxEnemies: 10 },
+      { time: 40000, type: "SPIDER", rate: 2500, maxEnemies: 12, groupSize: 2 }
     ]
   },
   3: {
-    duration: 240000, // 240 seconds
-    name: "The Dark Sanctum",
-    clearMessage: "Level 3 Cleared! You are a Monster Survivor!",
-    completionBonus: 2000,
+    duration: 90000, // 90 seconds
+    name: "Rising Danger",
+    clearMessage: "Level 3 Complete! You're ready for tougher challenges!",
+    completionBonus: 500,
     spawnConfig: [
-      { time: 0, type: "GOBLIN", rate: 800, maxEnemies: 35, speedMultiplier: 1.2, healthMultiplier: 1.5 },
-      { time: 0, type: "SPIDER", rate: 3500, maxEnemies: 35, groupSize: 4, speedMultiplier: 1.1 },
-      { time: 0, type: "IMP", rate: 6000, maxEnemies: 35 },
-      { time: 0, type: "BRUTE", rate: 5500, maxEnemies: 35, healthMultiplier: 1.3 },
-      { time: 5000, type: "WRAITH", rate: 4500, maxEnemies: 38, speedMultiplier: 1.1 },
-      { time: 10000, type: "NECROMANCER", rate: 7000, maxEnemies: 40 },
-      { time: 20000, type: "GOLEM", rate: 9000, maxEnemies: 42 },
-      { time: 30000, type: "SPIDER", rate: 2500, maxEnemies: 45, groupSize: 5 },
-      { time: 45000, type: "GOBLIN", rate: 600, maxEnemies: 48, speedMultiplier: 1.3 },
-      { time: 60000, type: "IMP", rate: 4000, maxEnemies: 50 },
-      { time: 75000, type: "WRAITH", rate: 3500, maxEnemies: 52 },
-      { time: 90000, type: "BRUTE", rate: 4000, maxEnemies: 55, healthMultiplier: 1.5 },
-      { time: 105000, type: "NECROMANCER", rate: 5500, maxEnemies: 58 },
-      { time: 120000, type: "BOSS", rate: 999999, maxEnemies: 60, once: true }
+      { time: 0, type: "GOBLIN", rate: 1500, maxEnemies: 10 },
+      { time: 0, type: "SPIDER", rate: 3000, maxEnemies: 10, groupSize: 2 },
+      { time: 15000, type: "IMP", rate: 4000, maxEnemies: 12 },
+      { time: 30000, type: "BRUTE", rate: 6000, maxEnemies: 14 },
+      { time: 50000, type: "SPIDER", rate: 2000, maxEnemies: 16, groupSize: 3 }
+    ]
+  },
+  
+  // MEDIUM LEVELS (4-6) - Moderate challenge with more variety
+  4: {
+    duration: 120000, // 120 seconds
+    name: "The Proving Grounds",
+    clearMessage: "Level 4 Complete! Your skills are improving!",
+    completionBonus: 700,
+    spawnConfig: [
+      { time: 0, type: "GOBLIN", rate: 1200, maxEnemies: 12 },
+      { time: 0, type: "SPIDER", rate: 4000, maxEnemies: 12, groupSize: 2 },
+      { time: 10000, type: "IMP", rate: 5000, maxEnemies: 14 },
+      { time: 20000, type: "BRUTE", rate: 6000, maxEnemies: 16 },
+      { time: 30000, type: "WRAITH", rate: 7000, maxEnemies: 18 },
+      { time: 50000, type: "SPIDER", rate: 2500, maxEnemies: 20, groupSize: 3 },
+      { time: 70000, type: "GOBLIN", rate: 1000, maxEnemies: 22, speedMultiplier: 1.1 }
+    ]
+  },
+  5: {
+    duration: 150000, // 150 seconds
+    name: "Escalating Chaos",
+    clearMessage: "Level 5 Complete! The horde grows stronger!",
+    completionBonus: 900,
+    spawnConfig: [
+      { time: 0, type: "GOBLIN", rate: 1100, maxEnemies: 15 },
+      { time: 0, type: "SPIDER", rate: 3500, maxEnemies: 15, groupSize: 3 },
+      { time: 0, type: "IMP", rate: 5500, maxEnemies: 15 },
+      { time: 15000, type: "BRUTE", rate: 5000, maxEnemies: 18 },
+      { time: 25000, type: "WRAITH", rate: 5500, maxEnemies: 20 },
+      { time: 40000, type: "NECROMANCER", rate: 8000, maxEnemies: 22 },
+      { time: 60000, type: "SPIDER", rate: 2500, maxEnemies: 25, groupSize: 4 },
+      { time: 80000, type: "IMP", rate: 4000, maxEnemies: 28 },
+      { time: 100000, type: "BRUTE", rate: 4000, maxEnemies: 30, healthMultiplier: 1.1 }
+    ]
+  },
+  6: {
+    duration: 180000, // 180 seconds
+    name: "Trial by Fire",
+    clearMessage: "Level 6 Complete! A mini-boss defeated!",
+    completionBonus: 1200,
+    spawnConfig: [
+      { time: 0, type: "GOBLIN", rate: 1000, maxEnemies: 18 },
+      { time: 0, type: "SPIDER", rate: 4000, maxEnemies: 18, groupSize: 3 },
+      { time: 0, type: "IMP", rate: 6000, maxEnemies: 18 },
+      { time: 10000, type: "BRUTE", rate: 5000, maxEnemies: 22 },
+      { time: 20000, type: "WRAITH", rate: 5000, maxEnemies: 25 },
+      { time: 35000, type: "NECROMANCER", rate: 7000, maxEnemies: 28 },
+      { time: 50000, type: "SPIDER", rate: 3000, maxEnemies: 30, groupSize: 4 },
+      { time: 70000, type: "GOBLIN", rate: 800, maxEnemies: 32, speedMultiplier: 1.2 },
+      { time: 90000, type: "IMP", rate: 4000, maxEnemies: 35 },
+      { time: 120000, type: "WRAITH", rate: 4000, maxEnemies: 38 },
+      { time: 150000, type: "MINIBOSS", rate: 999999, maxEnemies: 40, once: true }
+    ]
+  },
+  
+  // HARD LEVELS (7-9) - Ultimate challenge
+  7: {
+    duration: 210000, // 210 seconds (3.5 minutes)
+    name: "Into the Abyss",
+    clearMessage: "Level 7 Complete! The darkness deepens...",
+    completionBonus: 1500,
+    spawnConfig: [
+      { time: 0, type: "GOBLIN", rate: 900, maxEnemies: 25, speedMultiplier: 1.15 },
+      { time: 0, type: "SPIDER", rate: 3000, maxEnemies: 25, groupSize: 4 },
+      { time: 0, type: "IMP", rate: 5000, maxEnemies: 25 },
+      { time: 0, type: "BRUTE", rate: 5000, maxEnemies: 25, healthMultiplier: 1.2 },
+      { time: 10000, type: "WRAITH", rate: 4500, maxEnemies: 30, speedMultiplier: 1.1 },
+      { time: 20000, type: "NECROMANCER", rate: 6500, maxEnemies: 32 },
+      { time: 35000, type: "GOLEM", rate: 8000, maxEnemies: 35 },
+      { time: 50000, type: "SPIDER", rate: 2200, maxEnemies: 40, groupSize: 5 },
+      { time: 70000, type: "GOBLIN", rate: 700, maxEnemies: 45, speedMultiplier: 1.25 },
+      { time: 90000, type: "IMP", rate: 3500, maxEnemies: 48 },
+      { time: 120000, type: "WRAITH", rate: 3500, maxEnemies: 50 },
+      { time: 150000, type: "BRUTE", rate: 4000, maxEnemies: 52, healthMultiplier: 1.3 }
+    ]
+  },
+  8: {
+    duration: 240000, // 240 seconds (4 minutes)
+    name: "Nightmare Realm",
+    clearMessage: "Level 8 Complete! One more challenge remains!",
+    completionBonus: 1800,
+    spawnConfig: [
+      { time: 0, type: "GOBLIN", rate: 800, maxEnemies: 30, speedMultiplier: 1.2, healthMultiplier: 1.3 },
+      { time: 0, type: "SPIDER", rate: 2800, maxEnemies: 30, groupSize: 4, speedMultiplier: 1.1 },
+      { time: 0, type: "IMP", rate: 4500, maxEnemies: 30 },
+      { time: 0, type: "BRUTE", rate: 4500, maxEnemies: 30, healthMultiplier: 1.3 },
+      { time: 5000, type: "WRAITH", rate: 4000, maxEnemies: 35, speedMultiplier: 1.15 },
+      { time: 15000, type: "NECROMANCER", rate: 6000, maxEnemies: 38 },
+      { time: 25000, type: "GOLEM", rate: 7500, maxEnemies: 42 },
+      { time: 40000, type: "SPIDER", rate: 2000, maxEnemies: 48, groupSize: 5 },
+      { time: 60000, type: "GOBLIN", rate: 650, maxEnemies: 52, speedMultiplier: 1.3 },
+      { time: 80000, type: "IMP", rate: 3200, maxEnemies: 55 },
+      { time: 100000, type: "WRAITH", rate: 3200, maxEnemies: 58 },
+      { time: 120000, type: "MINIBOSS", rate: 999999, maxEnemies: 60, once: true, healthMultiplier: 1.2 },
+      { time: 150000, type: "NECROMANCER", rate: 5000, maxEnemies: 62 },
+      { time: 180000, type: "BRUTE", rate: 3500, maxEnemies: 65, healthMultiplier: 1.4 }
+    ]
+  },
+  9: {
+    duration: 300000, // 300 seconds (5 minutes)
+    name: "The Final Reckoning",
+    clearMessage: "Level 9 Complete! YOU ARE THE ULTIMATE SURVIVOR!",
+    completionBonus: 2500,
+    spawnConfig: [
+      { time: 0, type: "GOBLIN", rate: 700, maxEnemies: 35, speedMultiplier: 1.25, healthMultiplier: 1.5 },
+      { time: 0, type: "SPIDER", rate: 2500, maxEnemies: 35, groupSize: 5, speedMultiplier: 1.15 },
+      { time: 0, type: "IMP", rate: 4000, maxEnemies: 35, healthMultiplier: 1.2 },
+      { time: 0, type: "BRUTE", rate: 4000, maxEnemies: 35, healthMultiplier: 1.4 },
+      { time: 5000, type: "WRAITH", rate: 3500, maxEnemies: 40, speedMultiplier: 1.2 },
+      { time: 10000, type: "NECROMANCER", rate: 5500, maxEnemies: 45 },
+      { time: 20000, type: "GOLEM", rate: 7000, maxEnemies: 50 },
+      { time: 35000, type: "SPIDER", rate: 1800, maxEnemies: 55, groupSize: 6 },
+      { time: 50000, type: "GOBLIN", rate: 600, maxEnemies: 60, speedMultiplier: 1.35 },
+      { time: 70000, type: "IMP", rate: 3000, maxEnemies: 65 },
+      { time: 90000, type: "WRAITH", rate: 3000, maxEnemies: 68 },
+      { time: 110000, type: "BRUTE", rate: 3200, maxEnemies: 70, healthMultiplier: 1.5 },
+      { time: 130000, type: "NECROMANCER", rate: 4500, maxEnemies: 72 },
+      { time: 150000, type: "GOLEM", rate: 5500, maxEnemies: 75, healthMultiplier: 1.3 },
+      { time: 180000, type: "SPIDER", rate: 1500, maxEnemies: 78, groupSize: 6 },
+      { time: 210000, type: "GOBLIN", rate: 500, maxEnemies: 80, speedMultiplier: 1.4 },
+      { time: 240000, type: "BOSS", rate: 999999, maxEnemies: 85, once: true, healthMultiplier: 1.3, speedMultiplier: 1.1 }
     ]
   }
 };

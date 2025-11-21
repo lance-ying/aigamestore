@@ -216,13 +216,21 @@ export function renderGameOverScreen(p) {
     p.text("★".repeat(stars) + "☆".repeat(3 - stars), CANVAS_WIDTH / 2, yOffset + 20);
   }
   
-  p.textSize(20);
-  p.fill(100, 255, 100);
-  p.text("PRESS R TO RESTART", CANVAS_WIDTH / 2, CANVAS_HEIGHT - 60);
-  
-  if (isWin && gameState.currentLevel < 5) {
+  // Different instructions based on win/lose
+  if (isWin) {
+    p.textSize(20);
+    p.fill(100, 255, 100);
+    if (gameState.currentLevel < 10) {
+      p.text("PRESS ENTER FOR NEXT LEVEL", CANVAS_WIDTH / 2, CANVAS_HEIGHT - 60);
+    } else {
+      p.text("YOU COMPLETED ALL LEVELS!", CANVAS_WIDTH / 2, CANVAS_HEIGHT - 60);
+    }
     p.textSize(16);
     p.fill(200, 200, 200);
-    p.text("(Next level will be available in full version)", CANVAS_WIDTH / 2, CANVAS_HEIGHT - 30);
+    p.text("Press R to restart from Level 1", CANVAS_WIDTH / 2, CANVAS_HEIGHT - 30);
+  } else {
+    p.textSize(20);
+    p.fill(100, 255, 100);
+    p.text("PRESS R TO RESTART", CANVAS_WIDTH / 2, CANVAS_HEIGHT - 40);
   }
 }

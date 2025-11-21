@@ -70,7 +70,8 @@ let gameInstance = new p5(p => {
         break;
         
       case "PLAYING":
-        if (gameState.controlMode !== "HUMAN") {
+        // Only use automated testing controller for non-RL, non-HUMAN modes
+        if (gameState.controlMode !== "HUMAN" && gameState.controlMode !== "RL") {
           handleAutomatedInputs(p);
         }
         
@@ -82,7 +83,27 @@ let gameInstance = new p5(p => {
         
         gameState.timeElapsed += 1/60;
         
-        gameState.player.update(p, keys);
+        // Handle input - RL mode takes precedence over other input methods
+        let inputKeys = keys;
+        
+        if (window.gymAPI && window.gymAPI.isRLMode && window.gymAPI.isRLMode()) {
+          // RL mode active - read actions from RL agent
+          const rlAction = window.gymAPI.getRLAction();
+          
+          // Convert action object to keys format (string properties, not keycodes)
+          inputKeys = {
+            left: rlAction.left || false,
+            right: rlAction.right || false,
+            up: rlAction.up || false,
+            down: rlAction.down || false,
+            shoot: rlAction.shoot || false,
+            sprint: rlAction.sprint || false,
+            crouch: rlAction.crouch || false,
+          };
+        }
+        // Otherwise use normal keyboard input (keys object from input.js)
+        
+        gameState.player.update(p, inputKeys);
         
         p.logs.player_info.push({
           "screen_x": gameState.player.x - gameState.level.cameraX,

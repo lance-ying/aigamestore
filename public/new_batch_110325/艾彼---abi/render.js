@@ -32,7 +32,7 @@ export function renderStartScreen(p) {
   p.textAlign(p.CENTER, p.TOP);
   const desc = [
     "Guide Abi and DD through a post-apocalyptic world.",
-    "Solve environmental puzzles to uncover humanity's fate.",
+    "Both characters are ESSENTIAL to solve puzzles.",
     "Use Abi's agility and DD's strength to progress."
   ];
   let yPos = 160;
@@ -159,6 +159,14 @@ export function renderGame(p) {
   if (activeChar) {
     const interactable = getInteractableObject(activeChar, gameState);
     if (interactable) {
+      let promptText = "Press Z to interact";
+      
+      // Check if character can actually interact with this switch
+      if (interactable.type === 'switch' && !interactable.object.canActivate(activeChar)) {
+        const requiredChar = interactable.object.requiredCharacter;
+        promptText = `Switch requires ${requiredChar}`;
+      }
+      
       p.push();
       p.fill(255, 255, 100);
       p.noStroke();
@@ -166,7 +174,7 @@ export function renderGame(p) {
       p.textSize(12);
       const screenX = activeChar.x - gameState.cameraX;
       const screenY = activeChar.y - gameState.cameraY - activeChar.height - 20;
-      p.text("Press Z to interact", screenX, screenY);
+      p.text(promptText, screenX, screenY);
       p.pop();
     }
   }
@@ -280,7 +288,9 @@ export function renderGameOver(p) {
       "",
       "Abi and DD are their legacy,",
       "guardians of a world waiting for the return",
-      "of those who once walked upon it."
+      "of those who once walked upon it.",
+      "",
+      "Both were essential. Together, they succeeded."
     ];
     let yPos = 150;
     for (const line of message) {
@@ -290,7 +300,7 @@ export function renderGameOver(p) {
     
     p.fill(150, 220, 255);
     p.textSize(14);
-    p.text(`Stories Discovered: ${gameState.storyUnlocked.length}`, CANVAS_WIDTH / 2, 340);
+    p.text(`Stories Discovered: ${gameState.storyUnlocked.length}`, CANVAS_WIDTH / 2, 360);
   }
   
   // Restart prompt
@@ -299,5 +309,5 @@ export function renderGameOver(p) {
   p.textSize(16);
   const pulse = Math.sin(p.frameCount * 0.1) * 20 + 235;
   p.fill(pulse, 220, 100);
-  p.text("PRESS R TO RESTART", CANVAS_WIDTH / 2, 380);
+  p.text("PRESS R TO RESTART", CANVAS_WIDTH / 2, 385);
 }

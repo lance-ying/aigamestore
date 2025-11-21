@@ -69,7 +69,7 @@ export function handleKeyPressed(p) {
   
   // SPACE - Advance to next level (from LEVEL_COMPLETE phase)
   if (keyCode === 32 && gameState.gamePhase === GAME_PHASES.LEVEL_COMPLETE) {
-    if (gameState.currentLevel < 5) {
+    if (gameState.currentLevel < 14) {
       advanceToNextLevel(p);
     } else {
       gameState.gamePhase = GAME_PHASES.GAME_OVER_WIN;

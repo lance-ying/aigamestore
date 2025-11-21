@@ -149,7 +149,7 @@ export class Wall {
 }
 
 export class Switch {
-  constructor(x, y, id, p) {
+  constructor(x, y, id, p, requiredCharacter = null) {
     this.x = x;
     this.y = y;
     this.id = id;
@@ -157,6 +157,12 @@ export class Switch {
     this.active = false;
     this.width = 30;
     this.height = 40;
+    this.requiredCharacter = requiredCharacter; // null, CHAR_ABI, or CHAR_DD
+  }
+  
+  canActivate(character) {
+    if (this.requiredCharacter === null) return true;
+    return character.type === this.requiredCharacter;
   }
   
   toggle() {
@@ -177,12 +183,28 @@ export class Switch {
     const screenX = this.x - cameraX;
     const screenY = this.y - cameraY;
     
-    // Base
-    p.fill(80);
+    // Base - color indicates required character
+    let baseColor = [80, 80, 80];
+    if (this.requiredCharacter === 'ABI') {
+      baseColor = [60, 100, 140]; // Blue tint for Abi
+    } else if (this.requiredCharacter === 'DD') {
+      baseColor = [140, 80, 50]; // Orange tint for DD
+    }
+    
+    p.fill(...baseColor);
     p.stroke(0);
     p.strokeWeight(2);
     p.rectMode(p.CENTER);
     p.rect(screenX, screenY, this.width, this.height, 4);
+    
+    // Character icon if required
+    if (this.requiredCharacter) {
+      p.fill(0);
+      p.noStroke();
+      p.textAlign(p.CENTER, p.CENTER);
+      p.textSize(10);
+      p.text(this.requiredCharacter === 'ABI' ? 'A' : 'D', screenX, screenY + 12);
+    }
     
     // Switch indicator
     const indicatorY = this.active ? screenY - 8 : screenY + 8;

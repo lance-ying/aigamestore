@@ -65,18 +65,7 @@ export const gameState = {
   zoneDamageTimer: 0,
   framesSinceStart: 0,
   testModeActions: [],
-  transitionTimer: 0,
-  keyTaps: {
-    up: false,
-    down: false,
-    left: false,
-    right: false,
-    fire: false,
-    ability: false,
-    weapon1: false,
-    weapon2: false,
-    weapon3: false
-  }
+  transitionTimer: 0
 };
 
 // Level configurations

@@ -12,11 +12,13 @@ export class Player {
     this.baseSpeed = speed;
     this.angle = 0;
     this.maxAngle = Math.PI / 6; // 30 degrees max tilt
-    this.tapMoveDistance = speed * 5; // 5x the base speed for tap-based movement
-    this.tiltIncrement = 0.10; // Angle change per tap (about 6 degrees) - increased for more aggressive tilting
+    this.tiltSpeed = 0.03; // Continuous tilt rate per frame
+    this.angleReturnSpeed = 0.02; // Speed of returning to neutral angle
+    this.tapMoveDistance = speed * 6; // Increased for AI discrete movement
+    this.tiltIncrement = 0.10; // For AI discrete tilting
   }
 
-  // Discrete movement methods for tap-based control
+  // Discrete movement methods for AI control
   moveLeft() {
     this.x -= this.tapMoveDistance;
     this.x = Math.max(this.width / 2, this.x);
@@ -27,7 +29,7 @@ export class Player {
     this.x = Math.min(CANVAS_WIDTH - this.width / 2, this.x);
   }
 
-  // Discrete tilt methods for tap-based control
+  // Discrete tilt methods for AI control
   tiltLeft() {
     this.angle -= this.tiltIncrement;
     this.angle = Math.max(-this.maxAngle, this.angle);
@@ -39,10 +41,36 @@ export class Player {
   }
 
   update() {
+    // Continuous horizontal movement based on inputState
+    if (gameState.inputState.left) {
+      this.x -= this.speed;
+    }
+    if (gameState.inputState.right) {
+      this.x += this.speed;
+    }
+
+    // Continuous tilting based on inputState
+    if (gameState.inputState.tiltLeft) {
+      this.angle -= this.tiltSpeed;
+      this.angle = Math.max(-this.maxAngle, this.angle);
+    } else if (gameState.inputState.tiltRight) {
+      this.angle += this.tiltSpeed;
+      this.angle = Math.min(this.maxAngle, this.angle);
+    } else {
+      // Gradually return to neutral angle when no tilt input
+      if (Math.abs(this.angle) > 0.001) {
+        if (this.angle > 0) {
+          this.angle = Math.max(0, this.angle - this.angleReturnSpeed);
+        } else {
+          this.angle = Math.min(0, this.angle + this.angleReturnSpeed);
+        }
+      } else {
+        this.angle = 0;
+      }
+    }
+
     // Keep within bounds
     this.x = Math.max(this.width / 2, Math.min(CANVAS_WIDTH - this.width / 2, this.x));
-    // Note: angle is now controlled directly by tiltLeft/tiltRight methods
-    // and persists without auto-return to neutral
   }
 
   render(p) {
@@ -95,7 +123,7 @@ export class FallingObject {
     this.rotationSpeed = (Math.random() - 0.5) * 0.1;
     this.active = true;
     this.bounceCount = 0;
-    this.restitution = 0.65; // Bounce coefficient
+    this.restitution = 0.88; // Increased bounce coefficient for higher bounces
     this.minBounceVelocity = 1.0; // Minimum velocity after bounce
     this.collisionCooldown = 0; // Frames to wait before processing same collision
   }
@@ -111,9 +139,9 @@ export class FallingObject {
     this.y += this.vy;
     this.rotation += this.rotationSpeed;
 
-    // Apply air resistance
-    this.vx *= 0.995;
-    this.vy *= 0.998;
+    // Reduced air resistance for better momentum preservation
+    this.vx *= 0.998;
+    this.vy *= 0.999;
 
     // Decrement collision cooldown
     if (this.collisionCooldown > 0) {
@@ -176,8 +204,8 @@ export class FallingObject {
       // Calculate bounce angle based on platform tilt
       const hitOffset = (this.x - platform.x) / (platform.width / 2);
       
-      // Apply bounce with platform angle influence
-      const baseVelocity = Math.abs(this.vy) * 0.75;
+      // Apply bounce with increased velocity multiplier for higher bounces
+      const baseVelocity = Math.abs(this.vy) * 0.90; // Increased from 0.75
       this.vy = -baseVelocity;
       
       // Add horizontal velocity based on:
@@ -241,7 +269,7 @@ export class FallingObject {
         
         // Bounce velocity
         this.vy = Math.abs(this.vy) * this.restitution * pushDir;
-        this.vx *= 0.8;
+        this.vx *= 0.85;
         
         // Add small horizontal nudge to help slide off
         this.vx += (Math.random() - 0.5) * 0.5;

@@ -59,86 +59,86 @@ export const LEVEL_CONFIGS = [
     level: 1,
     name: "The Drop",
     objectsRequired: 5,
-    totalObjects: 7,
-    timeLimit: 60,
-    objectSpeed: 1.5,
-    objectSpawnInterval: 120,
+    totalObjects: 8,
+    timeLimit: 0,
+    objectSpeed: 3.0,
+    objectSpawnInterval: 180,
     targetWidth: 80,
     targetSpeed: 0,
     platformWidth: 120,
-    platformSpeed: 4,
+    platformSpeed: 7,
     obstacles: [],
-    gravity: 0.2
+    gravity: 0.4
   },
   {
     level: 2,
     name: "Bouncing Walls",
     objectsRequired: 7,
-    totalObjects: 10,
-    timeLimit: 70,
-    objectSpeed: 2,
-    objectSpawnInterval: 100,
+    totalObjects: 12,
+    timeLimit: 0,
+    objectSpeed: 3.5,
+    objectSpawnInterval: 170,
     targetWidth: 100,
     targetSpeed: 0,
     platformWidth: 100,
-    platformSpeed: 5,
+    platformSpeed: 8,
     obstacles: [
       { x: 150, y: 150, width: 8, height: 80, type: 'static', angle: -0.3 },
       { x: 450, y: 250, width: 8, height: 80, type: 'static', angle: 0.25 }
     ],
-    gravity: 0.25
+    gravity: 0.45
   },
   {
     level: 3,
     name: "Shifting Sands",
     objectsRequired: 8,
-    totalObjects: 12,
-    timeLimit: 80,
-    objectSpeed: 2.5,
-    objectSpawnInterval: 90,
+    totalObjects: 14,
+    timeLimit: 0,
+    objectSpeed: 4.0,
+    objectSpawnInterval: 160,
     targetWidth: 90,
     targetSpeed: 1,
     platformWidth: 90,
-    platformSpeed: 5.5,
+    platformSpeed: 8.5,
     obstacles: [
       { x: 150, y: 120, width: 8, height: 100, type: 'static', angle: -0.35 },
       { x: 450, y: 200, width: 8, height: 100, type: 'static', angle: 0.3 },
       { x: 300, y: 160, width: 80, height: 8, type: 'static', angle: -0.2 }
     ],
-    gravity: 0.3
+    gravity: 0.5
   },
   {
     level: 4,
     name: "The Gauntlet",
     objectsRequired: 9,
-    totalObjects: 15,
-    timeLimit: 90,
-    objectSpeed: 3,
-    objectSpawnInterval: 80,
+    totalObjects: 16,
+    timeLimit: 0,
+    objectSpeed: 4.5,
+    objectSpawnInterval: 150,
     targetWidth: 70,
     targetSpeed: 2,
     platformWidth: 80,
-    platformSpeed: 6,
+    platformSpeed: 9,
     obstacles: [
       { x: 150, y: 100, width: 8, height: 120, type: 'static', angle: -0.4 },
       { x: 450, y: 180, width: 8, height: 120, type: 'static', angle: 0.35 },
       { x: 300, y: 140, width: 100, height: 8, type: 'static', angle: 0.25 },
       { x: 350, y: 280, width: 80, height: 8, type: 'moving', moveRange: 100, moveSpeed: 1, angle: -0.3 }
     ],
-    gravity: 0.35
+    gravity: 0.55
   },
   {
     level: 5,
     name: "The Funnel",
     objectsRequired: 10,
-    totalObjects: 15,
-    timeLimit: 100,
-    objectSpeed: 3.5,
-    objectSpawnInterval: 75,
+    totalObjects: 18,
+    timeLimit: 0,
+    objectSpeed: 5.0,
+    objectSpawnInterval: 140,
     targetWidth: 60,
     targetSpeed: 2.5,
     platformWidth: 70,
-    platformSpeed: 7,
+    platformSpeed: 10,
     obstacles: [
       { x: 120, y: 80, width: 8, height: 140, type: 'static', angle: -0.45 },
       { x: 480, y: 80, width: 8, height: 140, type: 'static', angle: 0.4 },
@@ -147,6 +147,10 @@ export const LEVEL_CONFIGS = [
       { x: 180, y: 180, width: 60, height: 8, type: 'moving', moveRange: 80, moveSpeed: 1.5, angle: -0.25 },
       { x: 420, y: 260, width: 60, height: 8, type: 'moving', moveRange: 80, moveSpeed: 1.2, angle: 0.35 }
     ],
-    gravity: 0.4
+    gravity: 0.6
   }
 ];
+// Expose gameState to window for debugging and recording scripts
+if (typeof window !== 'undefined') {
+  window.getGameState = () => gameState;
+}

@@ -17,6 +17,26 @@ export function renderUI(p, player) {
     p.fill(255, 215, 0);
     p.text(`COINS: ${gameState.coinsCollected.toString().padStart(3, '0')}`, 10, 30);
     
+    // Lives - display as hearts
+    p.fill(255);
+    p.text('LIVES:', 10, 50);
+    for (let i = 0; i < gameState.lives; i++) {
+      p.fill(255, 50, 50);
+      p.noStroke();
+      // Draw heart shape
+      const heartX = 60 + i * 25;
+      const heartY = 57;
+      const heartSize = 8;
+      p.push();
+      p.translate(heartX, heartY);
+      p.beginShape();
+      p.vertex(0, heartSize * 0.3);
+      p.bezierVertex(-heartSize * 0.5, -heartSize * 0.3, -heartSize, heartSize * 0.1, 0, heartSize);
+      p.bezierVertex(heartSize, heartSize * 0.1, heartSize * 0.5, -heartSize * 0.3, 0, heartSize * 0.3);
+      p.endShape(p.CLOSE);
+      p.pop();
+    }
+    
     // Distance
     p.fill(255);
     p.textAlign(p.RIGHT, p.TOP);
@@ -44,7 +64,7 @@ export function renderUI(p, player) {
     p.rect(progressX, progressY, progressWidth * progress, progressHeight);
     
     // Powerup indicators
-    let powerupY = 55;
+    let powerupY = 75;
     
     if (player.jetpackActive) {
       renderPowerupIndicator(p, 'JETPACK', player.jetpackTimer, 180, 50, 200, 50, 10, powerupY);
@@ -114,13 +134,14 @@ export function renderStartScreen(p) {
   p.text('Navigate three parallel tracks and dodge obstacles!', CANVAS_WIDTH / 2, 140);
   p.text('Collect coins and power-ups to boost your score.', CANVAS_WIDTH / 2, 160);
   p.text('Complete all 5 levels to win!', CANVAS_WIDTH / 2, 180);
+  p.text('You have 3 lives - use them wisely!', CANVAS_WIDTH / 2, 200);
   
   // Controls
   p.fill(150, 200, 255);
   p.textSize(12);
   p.textAlign(p.LEFT, p.TOP);
   const controlX = 80;
-  let controlY = 220;
+  let controlY = 230;
   
   p.text('← / A: Move Left', controlX, controlY);
   controlY += 20;
@@ -131,7 +152,7 @@ export function renderStartScreen(p) {
   p.text('↓ / S: Slide', controlX, controlY);
   
   p.textAlign(p.RIGHT, p.TOP);
-  controlY = 220;
+  controlY = 230;
   const controlX2 = CANVAS_WIDTH - 80;
   p.text('ESC: Pause', controlX2, controlY);
   controlY += 20;

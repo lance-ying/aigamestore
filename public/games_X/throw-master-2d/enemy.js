@@ -9,6 +9,7 @@ export class Enemy {
     this.stunned = false;
     this.stunTimer = 0;
     this.flashTimer = 0;
+    this.damageTimer = 0; // Timer for dealing damage to hostages
     
     // Type-specific properties (reduced speeds for better gameplay)
     if (type === 'normal') {
@@ -18,6 +19,8 @@ export class Enemy {
       this.size = 15;
       this.color = [255, 50, 50];
       this.points = 10;
+      this.damage = 2; // Damage dealt to hostages per hit
+      this.attackCooldown = 30; // Frames between attacks (0.5 seconds at 60fps)
     } else if (type === 'fast') {
       this.health = 1;
       this.maxHealth = 1;
@@ -25,6 +28,8 @@ export class Enemy {
       this.size = 15;
       this.color = [255, 150, 50];
       this.points = 20;
+      this.damage = 2;
+      this.attackCooldown = 30;
     } else if (type === 'tank') {
       this.health = 3;
       this.maxHealth = 3;
@@ -32,12 +37,15 @@ export class Enemy {
       this.size = 20;
       this.color = [150, 30, 30];
       this.points = 30;
+      this.damage = 3;
+      this.attackCooldown = 30;
     }
     
     this.targetX = x;
     this.targetY = y;
     this.pathIndex = 0;
     this.path = [];
+    this.seekingTarget = false; // Flag for when actively seeking hostages/player
   }
 
   setPath(path) {
@@ -48,8 +56,47 @@ export class Enemy {
     }
   }
 
-  update() {
+  // Find and move towards nearest hostage (prioritize hostages over player)
+  seekNearestTarget(hostages, player) {
+    let nearestDist = Infinity;
+    let nearestX = this.x;
+    let nearestY = this.y;
+    
+    // First, check all living hostages (always prioritize hostages)
+    let foundHostage = false;
+    for (const hostage of hostages) {
+      if (hostage.alive) {
+        foundHostage = true;
+        const dx = hostage.x - this.x;
+        const dy = hostage.y - this.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        
+        if (dist < nearestDist) {
+          nearestDist = dist;
+          nearestX = hostage.x;
+          nearestY = hostage.y;
+        }
+      }
+    }
+    
+    // Only target player if no living hostages exist
+    if (!foundHostage && player) {
+      nearestX = player.x;
+      nearestY = player.y;
+    }
+    
+    this.targetX = nearestX;
+    this.targetY = nearestY;
+    this.seekingTarget = true;
+  }
+
+  update(hostages, player) {
     if (!this.active) return;
+    
+    // Update damage timer
+    if (this.damageTimer > 0) {
+      this.damageTimer--;
+    }
     
     // Update stun
     if (this.stunned) {
@@ -73,13 +120,24 @@ export class Enemy {
     if (dist > 5) {
       this.x += (dx / dist) * this.speed;
       this.y += (dy / dist) * this.speed;
-    } else if (this.path.length > 0) {
-      // Move to next waypoint
+    } else if (this.path.length > 0 && !this.seekingTarget) {
+      // Move to next waypoint in path
       this.pathIndex++;
       if (this.pathIndex < this.path.length) {
         this.targetX = this.path[this.pathIndex].x;
         this.targetY = this.path[this.pathIndex].y;
+      } else {
+        // Path complete, start seeking hostages/player
+        this.seekNearestTarget(hostages, player);
       }
+    } else if (!this.seekingTarget) {
+      // No path or path complete, seek targets
+      this.seekNearestTarget(hostages, player);
+    }
+    
+    // If already seeking, periodically update target
+    if (this.seekingTarget && Math.random() < 0.05) { // 5% chance per frame to update target
+      this.seekNearestTarget(hostages, player);
     }
   }
 
@@ -142,6 +200,14 @@ export class Enemy {
   stun(duration) {
     this.stunned = true;
     this.stunTimer = duration;
+  }
+
+  canAttack() {
+    return this.damageTimer <= 0;
+  }
+
+  resetAttackTimer() {
+    this.damageTimer = this.attackCooldown;
   }
 
   getBounds() {

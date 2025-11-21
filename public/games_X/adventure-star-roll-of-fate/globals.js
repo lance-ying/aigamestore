@@ -89,7 +89,7 @@ export const gameState = {
   gamePhase: GAME_PHASE.START,
   controlMode: CONTROL_MODE.HUMAN,
   currentLevel: 1,
-  maxLevel: 4,
+  maxLevel: 13,
   hp: 100,
   maxHp: 100,
   currentMap: null,

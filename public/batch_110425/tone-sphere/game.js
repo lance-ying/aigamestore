@@ -13,7 +13,7 @@ import {
   PHASE_GAME_OVER_LOSE
 } from './globals.js';
 import { InputHandler } from './input.js';
-import { initializeGame, updateGame } from './game_logic.js';
+import { initializeGame, updateGame, progressToNextLevel } from './game_logic.js';
 import { renderStartScreen, renderGame, renderGameOverScreen } from './ui.js';
 import { get_automated_testing_action } from './automated_testing_controller.js';
 
@@ -74,9 +74,11 @@ let gameInstance = new p5(p => {
         renderStartScreen(p, gameState);
         break;
       case PHASE_PLAYING:
-      case PHASE_PAUSED:
         updateGame(p, inputHandler);
-        renderGame(p, gameState);
+        renderGame(p, gameState, inputHandler);
+        break;
+      case PHASE_PAUSED:
+        renderGame(p, gameState, inputHandler);
         break;
       case PHASE_GAME_OVER_WIN:
       case PHASE_GAME_OVER_LOSE:
@@ -96,6 +98,9 @@ let gameInstance = new p5(p => {
       if (gameState.gamePhase === PHASE_START) {
         gameState.gamePhase = PHASE_PLAYING;
         initializeGame(p);
+      } else if (gameState.gamePhase === PHASE_GAME_OVER_WIN) {
+        // Progress to next level on win
+        progressToNextLevel(p);
       }
       return;
     }
@@ -122,9 +127,11 @@ let gameInstance = new p5(p => {
     if (keyCode === 82) { // R
       if (gameState.gamePhase === PHASE_GAME_OVER_WIN || 
           gameState.gamePhase === PHASE_GAME_OVER_LOSE) {
+        // Reset to level 1
+        gameState.currentDifficulty = 1;
         gameState.gamePhase = PHASE_START;
         p.logs.game_info.push({
-          data: { gamePhase: PHASE_START },
+          data: { gamePhase: PHASE_START, action: 'restart_from_beginning' },
           framecount: p.frameCount,
           timestamp: Date.now()
         });

@@ -20,7 +20,28 @@ export class Player {
     this.velocityY = 0;
   }
 
-  // Discrete movement actions (tap-based with smooth velocity)
+  // Continuous movement methods (for holding keys)
+  moveForwardContinuous(speed) {
+    const newX = this.x + this.p.cos(this.angle) * speed;
+    const newY = this.y + this.p.sin(this.angle) * speed;
+    
+    if (!this.checkObstacleCollision(newX, newY)) {
+      this.x = newX;
+      this.y = newY;
+    }
+  }
+
+  moveBackwardContinuous(speed) {
+    const newX = this.x - this.p.cos(this.angle) * speed;
+    const newY = this.y - this.p.sin(this.angle) * speed;
+    
+    if (!this.checkObstacleCollision(newX, newY)) {
+      this.x = newX;
+      this.y = newY;
+    }
+  }
+
+  // Discrete movement actions (for AI and tap-based movement)
   moveForward(distance) {
     // Add impulse to velocity for smooth movement
     const impulse = distance * 0.2;
@@ -47,7 +68,7 @@ export class Player {
   passiveUpdate() {
     this.framesSinceFire++;
 
-    // Apply velocity for smooth movement
+    // Apply velocity for smooth movement (for AI)
     const newX = this.x + this.velocityX;
     const newY = this.y + this.velocityY;
     

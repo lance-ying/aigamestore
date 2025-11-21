@@ -78,6 +78,7 @@ export function dropCat(p) {
   
   gameState.player = new SushiCat(p, gameState.dropPositionX, 80);
   gameState.catDropped = true;
+  gameState.dropsRemaining--;
   
   p.logs.player_info.push({
     screen_x: gameState.dropPositionX,

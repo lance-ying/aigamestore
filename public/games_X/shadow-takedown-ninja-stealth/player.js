@@ -12,93 +12,33 @@ export class Player {
     this.direction = 0; // angle in radians
     this.velocityX = 0;
     this.velocityY = 0;
-    
-    // Smooth discrete movement properties
-    this.isMoving = false;
-    this.targetX = x;
-    this.targetY = y;
-    this.moveSpeed = 5; // Speed of smooth interpolation (pixels per frame)
   }
 
   update(walls) {
-    // Handle smooth discrete movement
-    if (this.isMoving) {
-      const dx = this.targetX - this.x;
-      const dy = this.targetY - this.y;
-      const dist = this.p.sqrt(dx * dx + dy * dy);
-      
-      if (dist < this.moveSpeed) {
-        // Snap to target when close enough
-        this.x = this.targetX;
-        this.y = this.targetY;
-        this.isMoving = false;
-        this.velocityX = 0;
-        this.velocityY = 0;
-      } else {
-        // Move toward target smoothly
-        const angle = this.p.atan2(dy, dx);
-        const stepX = this.p.cos(angle) * this.moveSpeed;
-        const stepY = this.p.sin(angle) * this.moveSpeed;
-        
-        // Store old position
-        const oldX = this.x;
-        const oldY = this.y;
-        
-        this.x += stepX;
-        this.y += stepY;
-        
-        // Check wall collisions
-        let collided = false;
-        for (let wall of walls) {
-          if (this.collidesWithWall(wall)) {
-            collided = true;
-            break;
-          }
-        }
-        
-        if (collided) {
-          // If we hit a wall during interpolation, stop at current position
+    // Handle continuous movement
+    if (this.velocityX !== 0 || this.velocityY !== 0) {
+      // Store old position
+      const oldX = this.x;
+      const oldY = this.y;
+
+      // Apply velocity
+      this.x += this.velocityX;
+      this.y += this.velocityY;
+
+      // Check wall collisions
+      for (let wall of walls) {
+        if (this.collidesWithWall(wall)) {
           this.x = oldX;
           this.y = oldY;
-          this.targetX = oldX;
-          this.targetY = oldY;
-          this.isMoving = false;
-          this.velocityX = 0;
-          this.velocityY = 0;
-        } else {
-          // Update velocity for direction indicator
-          this.velocityX = stepX;
-          this.velocityY = stepY;
+          break;
         }
       }
-    } else {
-      // Non-discrete movement (for test modes)
-      if (this.velocityX !== 0 || this.velocityY !== 0) {
-        // Store old position
-        const oldX = this.x;
-        const oldY = this.y;
 
-        // Apply velocity
-        this.x += this.velocityX;
-        this.y += this.velocityY;
-
-        // Check wall collisions
-        for (let wall of walls) {
-          if (this.collidesWithWall(wall)) {
-            this.x = oldX;
-            this.y = oldY;
-            break;
-          }
-        }
-
-        // Keep in bounds
-        this.x = this.p.constrain(this.x, this.size / 2, CANVAS_WIDTH - this.size / 2);
-        this.y = this.p.constrain(this.y, this.size / 2, CANVAS_HEIGHT - this.size / 2);
-      }
-    }
-
-    // Update direction based on velocity
-    if (this.velocityX !== 0 || this.velocityY !== 0) {
+      // Keep in bounds
+      this.x = this.p.constrain(this.x, this.size / 2, CANVAS_WIDTH - this.size / 2);
+      this.y = this.p.constrain(this.y, this.size / 2, CANVAS_HEIGHT - this.size / 2);
+      
+      // Update direction based on velocity
       this.direction = this.p.atan2(this.velocityY, this.velocityX);
     }
   }
@@ -142,22 +82,6 @@ export class Player {
   setVelocity(vx, vy) {
     this.velocityX = vx;
     this.velocityY = vy;
-  }
-  
-  setTargetPosition(targetX, targetY) {
-    // Only set new target if not currently moving
-    if (!this.isMoving) {
-      this.targetX = targetX;
-      this.targetY = targetY;
-      this.isMoving = true;
-      
-      // Set initial direction
-      const dx = targetX - this.x;
-      const dy = targetY - this.y;
-      if (dx !== 0 || dy !== 0) {
-        this.direction = this.p.atan2(dy, dx);
-      }
-    }
   }
 
   attemptTakedown(enemies) {
@@ -215,9 +139,6 @@ export class Player {
         if (vent.linkedVent) {
           this.x = vent.linkedVent.x;
           this.y = vent.linkedVent.y;
-          this.targetX = this.x;
-          this.targetY = this.y;
-          this.isMoving = false;
           return true;
         }
       }

@@ -73,12 +73,12 @@ export function checkCollisions(p) {
   }
 }
 
-function handlePlayerHit(p) {
+export function handlePlayerHit(p) {
   gameState.lives--;
   
   // Log player death
   p.logs.player_info.push({
-    event: 'hit_by_cat',
+    event: 'player_died',
     screen_x: gameState.player.x,
     screen_y: gameState.player.y,
     game_x: gameState.player.x,

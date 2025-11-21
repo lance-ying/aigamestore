@@ -3,9 +3,6 @@ import { gameState, GAME_PHASES } from './globals.js';
 import { initializeLevel } from './levels.js';
 import { Bullet } from './entities.js';
 
-// Movement distance per tap (5x the original continuous speed)
-const MOVEMENT_PER_TAP = 20;
-
 export function handleKeyPressed(p) {
   const key = p.key;
   const keyCode = p.keyCode;
@@ -47,14 +44,9 @@ export function handleKeyPressed(p) {
     }
   }
   
-  // Gameplay controls - TAP-BASED
+  // Gameplay controls
   if (gameState.gamePhase === GAME_PHASES.PLAYING) {
-    // Movement controls - each tap moves tower by fixed distance
-    if (keyCode === 37 || keyCode === 65) { // LEFT or A
-      moveTower(-MOVEMENT_PER_TAP);
-    } else if (keyCode === 39 || keyCode === 68) { // RIGHT or D
-      moveTower(MOVEMENT_PER_TAP);
-    } else if (keyCode === 32) { // SPACE
+    if (keyCode === 32) { // SPACE
       fireWeapons(p);
     } else if (keyCode === 81) { // Q - face left
       gameState.facingRight = false;
@@ -84,17 +76,6 @@ export function handleKeyPressed(p) {
       });
     }
   }
-}
-
-function moveTower(distance) {
-  if (!gameState.player) return;
-  
-  gameState.towerX += distance;
-  
-  // Constrain tower position
-  const halfWidth = gameState.player.width / 2;
-  gameState.towerX = Math.max(halfWidth, Math.min(600 - halfWidth, gameState.towerX));
-  gameState.player.x = gameState.towerX;
 }
 
 function startGame(p) {
@@ -179,13 +160,22 @@ function resetGame(p) {
 }
 
 export function updatePlayerMovement(p) {
-  // No continuous movement - all movement is now tap-based
-  // This function only ensures position synchronization
   if (gameState.gamePhase !== GAME_PHASES.PLAYING || !gameState.player) {
     return;
   }
   
-  // Synchronize player position with towerX
+  if (gameState.controlMode === "HUMAN") {
+    if (p.keyIsDown(37) || p.keyIsDown(65)) { // LEFT or A
+      gameState.towerX -= gameState.towerSpeed;
+    }
+    if (p.keyIsDown(39) || p.keyIsDown(68)) { // RIGHT or D
+      gameState.towerX += gameState.towerSpeed;
+    }
+  }
+  
+  // Constrain tower position
+  const halfWidth = gameState.player.width / 2;
+  gameState.towerX = Math.max(halfWidth, Math.min(600 - halfWidth, gameState.towerX));
   gameState.player.x = gameState.towerX;
 }
 

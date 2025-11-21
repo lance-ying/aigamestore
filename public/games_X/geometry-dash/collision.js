@@ -58,21 +58,23 @@ export function checkCollisions(p, player, obstacles, portals, gameState) {
               continue;
             }
 
-            // Side collision resolution (treat blocks as solid walls)
+            // Side collision - die on horizontal impact
             if (prevRight <= obstacle.x && currRight > obstacle.x) {
-              // Came from left, push to left of block
-              player.x = obstacle.x - player.width;
-              console.log(`Pushed left due to side collision on platform ${i}`);
-              continue;
+              // Came from left - horizontal collision, player dies
+              console.log(`Horizontal collision from left on platform ${i} - player dies`);
+              player.die();
+              return true;
             } else if (prevX >= obstacle.x + obstacle.width && currLeft < obstacle.x + obstacle.width) {
-              // Came from right, push to right of block (rare)
-              player.x = obstacle.x + obstacle.width;
-              console.log(`Pushed right due to side collision on platform ${i}`);
-              continue;
+              // Came from right - horizontal collision, player dies
+              console.log(`Horizontal collision from right on platform ${i} - player dies`);
+              player.die();
+              return true;
             }
           }
         } catch (err) {
-          console.log('Platform collision resolution failed; defaulting to non-death block collision', err);
+          console.log('Platform collision resolution failed; defaulting to death on block collision', err);
+          player.die();
+          return true;
         }
 
         console.log("Block collision - no death");
@@ -110,4 +112,3 @@ export function checkCollisions(p, player, obstacles, portals, gameState) {
   
   return false;
 }
-

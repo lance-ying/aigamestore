@@ -1,0 +1,213 @@
+// game.js - Main game file
+
+import { gameState, GAME_PHASES, CONTROL_MODES, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { Player } from './player.js';
+import { handleHumanInput, handleTestingInput, handleKeyPressed } from './controls.js';
+import { updateSpawning } from './spawner.js';
+import { updatePlayerCombat, updateEnemyShooting, checkCollisions } from './combat.js';
+import { checkLevelCompletion, updateLevelTransition } from './levelManager.js';
+import { renderUI } from './ui.js';
+import { Particle } from './particles.js';
+
+const p5 = window.p5;
+
+let particles = [];
+
+let gameInstance = new p5(p => {
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(60);
+    p.randomSeed(42);
+    
+    // Initialize logs
+    p.logs = {
+      game_info: [],
+      inputs: [],
+      player_info: []
+    };
+    
+    // Log initial state
+    p.logs.game_info.push({
+      data: { phase: gameState.gamePhase },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  };
+  
+  p.draw = function() {
+    p.background(40);
+    
+    const currentTime = Date.now();
+    
+    // Handle different game phases
+    if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+      updatePlayingPhase(p, currentTime);
+      renderPlayingPhase(p);
+    } else if (gameState.gamePhase === GAME_PHASES.LEVEL_TRANSITION) {
+      updateLevelTransition(p, currentTime);
+    } else if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+      renderPlayingPhase(p);
+    } else if (gameState.gamePhase === GAME_PHASES.UPGRADE_SELECTION) {
+      renderPlayingPhase(p);
+    }
+    
+    // Render UI for all phases
+    renderUI(p);
+    
+    // Log player info during gameplay
+    if (gameState.player && p.frameCount % 10 === 0 && gameState.gamePhase === GAME_PHASES.PLAYING) {
+      p.logs.player_info.push({
+        screen_x: gameState.player.x,
+        screen_y: gameState.player.y,
+        game_x: gameState.player.x,
+        game_y: gameState.player.y,
+        framecount: p.frameCount
+      });
+    }
+  };
+  
+  function updatePlayingPhase(p, currentTime) {
+    // Handle input based on control mode
+    if (gameState.controlMode === CONTROL_MODES.HUMAN) {
+      handleHumanInput(p);
+    } else {
+      handleTestingInput(p);
+    }
+    
+    // Update player
+    if (gameState.player) {
+      gameState.player.update(p);
+    }
+    
+    // Update enemies
+    for (const enemy of gameState.enemies) {
+      if (!enemy.isDead) {
+        enemy.update(p, gameState.player);
+      }
+    }
+    
+    // Update projectiles
+    for (const projectile of gameState.projectiles) {
+      if (!projectile.isDead) {
+        projectile.update();
+      }
+    }
+    
+    // Update exp gems
+    for (const gem of gameState.expGems) {
+      if (!gem.isDead && gameState.player) {
+        gem.update(gameState.player);
+      }
+    }
+    
+    // Update particles
+    for (const particle of particles) {
+      particle.update();
+    }
+    
+    // Combat systems
+    updatePlayerCombat(p, currentTime);
+    updateEnemyShooting(p, currentTime);
+    
+    // Check collisions
+    const newParticles = checkCollisions(p);
+    particles.push(...newParticles);
+    
+    // Spawning
+    updateSpawning(p, currentTime);
+    
+    // Level completion check
+    checkLevelCompletion(p, currentTime);
+    
+    // Survival score
+    if (p.frameCount % 60 === 0) {
+      gameState.score += 5;
+    }
+    
+    // Clean up dead entities
+    gameState.projectiles = gameState.projectiles.filter(e => !e.isDead);
+    gameState.expGems = gameState.expGems.filter(e => !e.isDead);
+    gameState.enemies = gameState.enemies.filter(e => !e.isDead);
+    particles = particles.filter(p => !p.isDead);
+    gameState.entities = gameState.entities.filter(e => 
+      e === gameState.player || !e.isDead
+    );
+  }
+  
+  function renderPlayingPhase(p) {
+    // Render arena border
+    p.stroke(80);
+    p.strokeWeight(2);
+    p.noFill();
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    // Render particles
+    for (const particle of particles) {
+      particle.render(p);
+    }
+    
+    // Render exp gems
+    for (const gem of gameState.expGems) {
+      if (!gem.isDead) {
+        gem.render(p);
+      }
+    }
+    
+    // Render enemies
+    for (const enemy of gameState.enemies) {
+      if (!enemy.isDead) {
+        enemy.render(p);
+      }
+    }
+    
+    // Render projectiles
+    for (const projectile of gameState.projectiles) {
+      if (!projectile.isDead) {
+        projectile.render(p);
+      }
+    }
+    
+    // Render player
+    if (gameState.player) {
+      gameState.player.render(p);
+    }
+    
+    // Screen shake effect on damage
+    if (gameState.player && gameState.player.hitFlash > 5) {
+      p.push();
+      p.fill(255, 0, 0, 30);
+      p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+      p.pop();
+    }
+  }
+  
+  p.keyPressed = function() {
+    handleKeyPressed(p);
+  };
+});
+
+// Expose game instance globally
+window.gameInstance = gameInstance;
+
+// Expose getGameState function
+window.getGameState = function() {
+  return gameState;
+};
+
+// Control mode switching
+window.setControlMode = function(mode) {
+  if (CONTROL_MODES[mode]) {
+    gameState.controlMode = CONTROL_MODES[mode];
+    
+    // Update button states
+    document.querySelectorAll('.control-button').forEach(btn => {
+      btn.classList.remove('active');
+    });
+    
+    const btnId = mode.toLowerCase() + 'ModeBtn';
+    const btn = document.getElementById(btnId);
+    if (btn) {
+      btn.classList.add('active');
+    }
+  }
+};

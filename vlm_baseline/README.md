@@ -136,6 +136,64 @@ print(f"Valid actions: {stats['valid_actions']}")
 print(f"Success rate: {stats['valid_actions'] / stats['turns'] * 100:.1f}%")
 ```
 
+## Public Platform Games - Canvas-Only Screenshots
+
+The VLM automatically detects when playing games from the `public_platform` directory and captures **only the game canvas** instead of the entire page. This eliminates the controls/description sections from screenshots, providing cleaner visual input to the VLM.
+
+### How it Works
+
+When you provide a game URL containing `"public_platform"`, the VLM will:
+1. Automatically detect it's a public_platform game
+2. Capture only the canvas element (not the entire page)
+3. Save canvas-only screenshots for cleaner VLM analysis
+
+### Example with Public Platform Games
+
+**Using a local public_platform game:**
+```bash
+# Assuming you're in the vlm_baseline directory
+python vlm.py \
+  --model openai:gpt-4o \
+  --game-url file:///path/to/public_platform/games/snake-io/index.html \
+  --allowed-keys ArrowLeft ArrowRight Space Enter \
+  --max-turns 20
+```
+
+**Using the example script:**
+```bash
+cd vlm_baseline
+python example_public_platform.py
+```
+
+**Python API with public_platform games:**
+```python
+from pathlib import Path
+from vlm import VLMGamePlayer
+
+# Path to a public_platform game
+game_path = Path("../public_platform/games/snake-io/index.html")
+game_url = f"file://{game_path.absolute()}"
+
+# Initialize player (will automatically detect public_platform)
+player = VLMGamePlayer(
+    model_name="openai:gpt-4o",
+    game_url=game_url,
+    allowed_keys=["ArrowLeft", "ArrowRight", "Space", "Enter"],
+    headless=False,
+    max_turns=20,
+)
+
+# Play game - screenshots will be canvas-only
+stats = player.play(screenshot_dir="./screenshots")
+```
+
+### Benefits for Public Platform Games
+
+- **Cleaner Screenshots**: Only game content, no UI clutter
+- **Better VLM Focus**: Model focuses on game state, not descriptions
+- **Consistent Canvas Size**: Screenshots are always 600x400px (standard canvas size)
+- **Automatic Detection**: No configuration needed, just use the game URL
+
 ## Architecture
 
 The `VLMGamePlayer` class provides:
@@ -145,6 +203,7 @@ The `VLMGamePlayer` class provides:
 3. **Screenshot Analysis**: Captures game state and sends to VLM
 4. **Action Execution**: Validates and executes keyboard actions
 5. **Statistics Tracking**: Records performance metrics
+6. **Smart Screenshot Capture**: Automatically detects and captures canvas-only for public_platform games
 
 ### Key Methods
 

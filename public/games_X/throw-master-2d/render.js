@@ -52,7 +52,7 @@ function renderStartScreen(p) {
   p.textSize(13);
   p.fill(220);
   const instructions = [
-    "Arrow Left/Right: TAP to rotate aim",
+    "Arrow Left/Right: Rotate aim (HOLD for smooth rotation)",
     "Space: Throw knife",
     "Esc: Pause game",
     "R: Restart"

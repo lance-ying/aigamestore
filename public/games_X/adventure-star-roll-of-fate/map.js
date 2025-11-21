@@ -18,16 +18,25 @@ export class GameMap {
   }
 
   generateMap(level) {
-    // Map sizes that fit in canvas (600x400 with offset 30,80 = 540x300 usable)
-    // At 40px tiles = 13x7 max
+    // Map sizes that fit in canvas (600x400 with offset 30,105 = 540x295 usable)
+    // At 38px tiles = 14x7 max, using 13x7 for margins
     const sizes = [
-      { w: 10, h: 6 },   // Level 1
-      { w: 11, h: 6 },   // Level 2
-      { w: 12, h: 7 },   // Level 3
-      { w: 13, h: 7 }    // Level 4
+      { w: 9, h: 5 },    // Level 1 - Easy, small and simple
+      { w: 10, h: 5 },   // Level 2 - Easy
+      { w: 10, h: 6 },   // Level 3 - Easy
+      { w: 11, h: 6 },   // Level 4 - Medium
+      { w: 11, h: 6 },   // Level 5 - Medium
+      { w: 12, h: 6 },   // Level 6 - Medium
+      { w: 12, h: 7 },   // Level 7 - Hard
+      { w: 13, h: 7 },   // Level 8 - Hard
+      { w: 13, h: 7 },   // Level 9 - Hard
+      { w: 13, h: 7 },   // Level 10 - Expert
+      { w: 13, h: 7 },   // Level 11 - Expert
+      { w: 13, h: 7 },   // Level 12 - Expert
+      { w: 13, h: 7 }    // Level 13 - Expert/Final Boss
     ];
     
-    const size = sizes[level - 1] || sizes[0];
+    const size = sizes[level - 1] || sizes[sizes.length - 1];
     this.width = size.w;
     this.height = size.h;
     
@@ -68,15 +77,24 @@ export class GameMap {
   }
 
   addLevelFeatures(level) {
-    // Event distribution
+    // Event distribution with difficulty progression
     const eventConfigs = [
-      { walls: 3, events: 5, movingEnemies: 2, weapons: 1, traps: 1 },   // Level 1
-      { walls: 5, events: 7, movingEnemies: 3, weapons: 1, traps: 2 },   // Level 2
-      { walls: 7, events: 9, movingEnemies: 4, weapons: 2, traps: 2 },   // Level 3
-      { walls: 9, events: 11, movingEnemies: 5, weapons: 2, traps: 3 }   // Level 4
+      { walls: 2, events: 4, movingEnemies: 1, weapons: 1, traps: 0 },   // Level 1 - Easy intro
+      { walls: 2, events: 5, movingEnemies: 2, weapons: 1, traps: 1 },   // Level 2 - Easy
+      { walls: 3, events: 6, movingEnemies: 2, weapons: 1, traps: 1 },   // Level 3 - Easy
+      { walls: 4, events: 7, movingEnemies: 3, weapons: 1, traps: 2 },   // Level 4 - Medium
+      { walls: 5, events: 8, movingEnemies: 3, weapons: 2, traps: 2 },   // Level 5 - Medium
+      { walls: 6, events: 9, movingEnemies: 4, weapons: 2, traps: 2 },   // Level 6 - Medium
+      { walls: 7, events: 10, movingEnemies: 5, weapons: 2, traps: 3 },  // Level 7 - Hard
+      { walls: 8, events: 11, movingEnemies: 5, weapons: 2, traps: 3 },  // Level 8 - Hard
+      { walls: 9, events: 12, movingEnemies: 6, weapons: 2, traps: 4 },  // Level 9 - Hard
+      { walls: 10, events: 13, movingEnemies: 6, weapons: 3, traps: 4 }, // Level 10 - Expert
+      { walls: 11, events: 14, movingEnemies: 7, weapons: 3, traps: 5 }, // Level 11 - Expert
+      { walls: 12, events: 15, movingEnemies: 7, weapons: 3, traps: 5 }, // Level 12 - Expert
+      { walls: 13, events: 16, movingEnemies: 8, weapons: 3, traps: 6 }  // Level 13 - Expert/Final
     ];
     
-    const config = eventConfigs[level - 1] || eventConfigs[0];
+    const config = eventConfigs[level - 1] || eventConfigs[eventConfigs.length - 1];
     
     // Create maze-like structure with walls
     this.addMazeWalls(config.walls);

@@ -26,7 +26,9 @@ export const gameState = {
   isGrabbing: false,
   moveCount: 0,
   levelComplete: false,
-  particles: []
+  particles: [],
+  cursorX: 0,
+  cursorY: 0
 };
 
 // Expose getGameState function

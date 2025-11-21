@@ -33,23 +33,23 @@ function getBasicTestAction(p) {
     const player = gameState.player;
     if (!player) return action;
     
-    // Tap-based movement - trigger taps every N frames
-    const tapInterval = 20; // Tap every 20 frames
-    
-    // Simple movement pattern - avoid edges with taps
-    if (p.frameCount % tapInterval === 0) {
-      if (player.x < 100) action.keysJustPressed.d = true;
-      else if (player.x > 500) action.keysJustPressed.a = true;
-      else if (player.y < 100) action.keysJustPressed.s = true;
-      else if (player.y > 300) action.keysJustPressed.w = true;
-      else {
-        // Random movement pattern
-        const phase = Math.floor(p.frameCount / tapInterval) % 4;
-        if (phase === 0) action.keysJustPressed.w = true;
-        else if (phase === 1) action.keysJustPressed.s = true;
-        else if (phase === 2) action.keysJustPressed.a = true;
-        else action.keysJustPressed.d = true;
-      }
+    // Continuous movement - hold keys
+    // Simple movement pattern - avoid edges
+    if (player.x < 100) {
+      action.keys.d = true;
+    } else if (player.x > 500) {
+      action.keys.a = true;
+    } else if (player.y < 100) {
+      action.keys.s = true;
+    } else if (player.y > 300) {
+      action.keys.w = true;
+    } else {
+      // Random movement pattern
+      const phase = Math.floor(p.frameCount / 120) % 4;
+      if (phase === 0) action.keys.w = true;
+      else if (phase === 1) action.keys.s = true;
+      else if (phase === 2) action.keys.a = true;
+      else action.keys.d = true;
     }
     
     // Use dash occasionally
@@ -89,24 +89,20 @@ function getWinTestAction(p) {
       player.movementSpeedStat += 1;
     }
     
-    // Aggressive circular movement with taps
-    const tapInterval = 15; // Faster taps for aggressive play
+    // Aggressive circular movement - hold keys continuously
+    const angle = (p.frameCount * 0.05) % (Math.PI * 2);
+    const centerX = 300;
+    const centerY = 200;
+    const radius = 120;
+    const targetX = centerX + Math.cos(angle) * radius;
+    const targetY = centerY + Math.sin(angle) * radius;
     
-    if (p.frameCount % tapInterval === 0) {
-      const angle = (p.frameCount * 0.05) % (Math.PI * 2);
-      const centerX = 300;
-      const centerY = 200;
-      const radius = 120;
-      const targetX = centerX + Math.cos(angle) * radius;
-      const targetY = centerY + Math.sin(angle) * radius;
-      
-      // Tap towards target position
-      if (player.x < targetX - 20) action.keysJustPressed.d = true;
-      else if (player.x > targetX + 20) action.keysJustPressed.a = true;
-      
-      if (player.y < targetY - 20) action.keysJustPressed.s = true;
-      else if (player.y > targetY + 20) action.keysJustPressed.w = true;
-    }
+    // Hold keys to move towards target position
+    if (player.x < targetX - 20) action.keys.d = true;
+    else if (player.x > targetX + 20) action.keys.a = true;
+    
+    if (player.y < targetY - 20) action.keys.s = true;
+    else if (player.y > targetY + 20) action.keys.w = true;
     
     // Spam dash
     if (p.frameCount % 90 === 0) {
