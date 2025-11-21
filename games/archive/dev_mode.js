@@ -1,0 +1,1104 @@
+/**
+ * Universal Dev Mode for Level Debugging
+ * 
+ * Features:
+ * - Press 'L' key to open level selector
+ * - URL parameter ?level=X to jump directly to a level
+ * - Shows current level info overlay
+ * - Keyboard shortcuts: L (level selector), N (next level), P (previous level)
+ * 
+ * Usage: Add <script src="dev_mode.js"></script> before game.js in index.html
+ */
+
+(function() {
+  'use strict';
+
+  const DEV_MODE_KEY = 'L'; // Press L to open level selector
+  const NEXT_LEVEL_KEY = 'N';
+  const PREV_LEVEL_KEY = 'P';
+  const TOGGLE_INFO_KEY = 'I';
+
+  let devModeActive = false;
+  let showInfoOverlay = false;
+  let levelSelectorVisible = false;
+  let currentLevelInput = '';
+
+  // Try to detect game state and level functions
+  function getGameState() {
+    // Try multiple ways to access game state
+    if (window.getGameState && typeof window.getGameState === 'function') {
+      return window.getGameState();
+    }
+    if (window.gameState) {
+      return window.gameState;
+    }
+    if (window.gameInstance && window.gameInstance.gameState) {
+      return window.gameInstance.gameState;
+    }
+    // Try to access from p5 instance
+    if (window.gameInstance && window.gameInstance._setupDone) {
+      // Access via p5 instance
+      const p = window.gameInstance;
+      if (p.gameState) return p.gameState;
+    }
+    return null;
+  }
+
+  function getCurrentLevel() {
+    const state = getGameState();
+    if (!state) return null;
+    // Try currentLevel first, then level (some games use different property names)
+    if (state.currentLevel !== undefined) return state.currentLevel;
+    if (state.level !== undefined) return state.level;
+    return null;
+  }
+
+  function getTotalLevels() {
+    const state = getGameState();
+    if (!state) return null;
+    
+    // Try different ways to get total levels
+    if (state.totalLevels !== undefined) return state.totalLevels;
+    if (state.maxLevel !== undefined) return state.maxLevel;
+    if (state.LEVELS && Array.isArray(state.LEVELS)) return state.LEVELS.length;
+    if (state.levels && Array.isArray(state.levels)) return state.levels.length;
+    if (state.LEVEL_CONFIGS && Array.isArray(state.LEVEL_CONFIGS)) return state.LEVEL_CONFIGS.length;
+    if (state.levelConfigs && Array.isArray(state.levelConfigs)) return state.levelConfigs.length;
+    
+    // Try global functions
+    if (window.getTotalLevels && typeof window.getTotalLevels === 'function') {
+      return window.getTotalLevels();
+    }
+    if (window.getLevelCount && typeof window.getLevelCount === 'function') {
+      return window.getLevelCount();
+    }
+    
+    return null;
+  }
+
+  function loadLevel(levelNum) {
+    console.log(`[DEV MODE] Attempting to load level ${levelNum}`);
+    
+    const state = getGameState();
+    
+    // Try different ways to load a level
+    if (window.loadLevel && typeof window.loadLevel === 'function') {
+      console.log('[DEV MODE] Using window.loadLevel()');
+      try {
+        // Store state before calling loadLevel to detect if it actually worked
+        const stateBefore = state ? {
+          currentStage: state.currentStage,
+          currentLevel: state.currentLevel,
+          level: state.level,
+          platformBlocks: state.platformBlocks ? state.platformBlocks.length : 0
+        } : null;
+        
+        window.loadLevel(levelNum);
+        
+        // After calling window.loadLevel, ensure level is set and clear player/entities
+        // so games that initialize in draw() will re-initialize
+        if (state) {
+          state.currentLevel = levelNum;
+          if (state.level !== undefined) {
+            state.level = levelNum;
+          }
+          // Some games use currentDifficulty instead of currentLevel (like tone sphere)
+          if (state.currentDifficulty !== undefined) {
+            state.currentDifficulty = levelNum;
+          }
+          if (state.difficulty !== undefined) {
+            state.difficulty = levelNum;
+          }
+          if (state.difficultyLevel !== undefined) {
+            state.difficultyLevel = levelNum;
+          }
+          // Some games use songIndex
+          if (state.songIndex !== undefined) {
+            state.songIndex = levelNum - 1; // Usually 0-indexed
+          }
+          if (state.currentSongIndex !== undefined) {
+            state.currentSongIndex = levelNum - 1; // Usually 0-indexed
+          }
+          // Clear player/entities to force re-initialization (for games like wenjia)
+          if (state.player !== undefined) {
+            state.player = null;
+          }
+          if (state.entities !== undefined) {
+            state.entities = [];
+          }
+          if (state.platforms !== undefined) {
+            state.platforms = [];
+          }
+          if (state.enemies !== undefined) {
+            state.enemies = [];
+          }
+          // Clear notes/particles for rhythm games
+          if (state.notes !== undefined) {
+            state.notes = [];
+          }
+          if (state.particles !== undefined) {
+            state.particles = [];
+          }
+          // Ensure game is in playing phase
+          if (state.gamePhase !== undefined) {
+            state.gamePhase = "PLAYING";
+          }
+          
+          // Check if window.loadLevel actually did anything useful
+          // For games like megaman, window.loadLevel might exist but not actually load the level
+          // Check if currentStage or similar level-specific state was initialized
+          const levelActuallyLoaded = state.currentStage !== stateBefore?.currentStage ||
+                                     (state.currentStage !== null && state.currentStage !== undefined) ||
+                                     (state.platformBlocks && state.platformBlocks.length > (stateBefore?.platformBlocks || 0));
+          
+          // If level wasn't actually loaded, try to manually trigger it
+          // This handles games where window.loadLevel exists but doesn't call the real loadLevel function
+          // (e.g., megaman where loadLevel needs the p5 instance but window.loadLevel doesn't pass it)
+          if (!levelActuallyLoaded && (state.currentStage === null || state.currentStage === undefined)) {
+            console.log('[DEV MODE] window.loadLevel() may not have initialized the level, trying alternative initialization...');
+            
+            const p = window.gameInstance || window.p;
+            
+            // For games like megaman: window.loadLevel exists but doesn't call the module's loadLevel(p, levelNum)
+            // We need to trigger the real loadLevel indirectly
+            if (p && state.totalLevels && state.ROBOT_MASTERS !== undefined) {
+              // This looks like a megaman-style game
+              // Try to manually create stage by replicating loadLevel logic
+              console.log('[DEV MODE] Detected megaman-style game, attempting manual stage initialization...');
+              
+              // Clear existing stage data
+              if (state.platformBlocks) state.platformBlocks = [];
+              if (state.hazards) state.hazards = [];
+              if (state.enemySpawners) state.enemySpawners = [];
+              if (state.projectiles) state.projectiles = [];
+              if (state.particles) state.particles = [];
+              if (state.drops) state.drops = [];
+              
+              // Try to trigger stage creation by manipulating state and forcing a re-initialization
+              // Set level first
+              state.currentLevel = levelNum;
+              
+              // Try to find if Stage class or loadLevel is accessible through any global
+              // If not, try to trigger it via game phase manipulation
+              state.gamePhase = "START";
+              
+              // Use a longer timeout to let everything settle, then try to trigger game start
+              // which should call the real loadLevel
+              setTimeout(() => {
+                if (state && p) {
+                  state.currentLevel = levelNum;
+                  
+                  // Try to access the module's loadLevel if it's been exposed somehow
+                  // Check common patterns where modules might expose functions
+                  let foundLoadLevel = false;
+                  
+                  // Some games expose module functions on window.gameInstance
+                  if (window.gameInstance && window.gameInstance.loadLevel) {
+                    try {
+                      window.gameInstance.loadLevel(p, levelNum);
+                      foundLoadLevel = true;
+                    } catch (e) {
+                      // Not accessible this way
+                    }
+                  }
+                  
+                  // If we couldn't find loadLevel, try triggering via Enter key simulation
+                  if (!foundLoadLevel && p.keyPressed) {
+                    try {
+                      // Temporarily set keyCode to Enter (13)
+                      const originalKeyCode = p.keyCode;
+                      p.keyCode = 13;
+                      
+                      // Call keyPressed which should trigger startGame -> loadLevel
+                      p.keyPressed();
+                      
+                      // Immediately override the level that startGame might have set to 1
+                      setTimeout(() => {
+                        if (state) {
+                          state.currentLevel = levelNum;
+                          // Now try calling loadLevel again if we can find it
+                          // Or hope that the game checks currentLevel and reloads
+                        }
+                      }, 10);
+                      
+                      p.keyCode = originalKeyCode;
+                    } catch (e) {
+                      console.log('[DEV MODE] Could not trigger level load:', e);
+                    }
+                  }
+                }
+              }, 150);
+            } else if (p && state.totalLevels) {
+              // Generic fallback: try to trigger level load via phase change and key simulation
+              state.gamePhase = "START";
+              state.currentLevel = levelNum;
+              
+              setTimeout(() => {
+                if (state && p && p.keyPressed) {
+                  try {
+                    const originalKeyCode = p.keyCode;
+                    p.keyCode = 13; // Enter
+                    p.keyPressed();
+                    p.keyCode = originalKeyCode;
+                    
+                    setTimeout(() => {
+                      if (state) state.currentLevel = levelNum;
+                    }, 50);
+                  } catch (e) {
+                    console.log('[DEV MODE] Fallback level load failed:', e);
+                  }
+                }
+              }, 100);
+            }
+          }
+        }
+        return true;
+      } catch (e) {
+        console.error('[DEV MODE] Error calling window.loadLevel:', e);
+        // Fall through to try other methods
+      }
+    }
+    if (window.initializeLevel && typeof window.initializeLevel === 'function') {
+      console.log('[DEV MODE] Using window.initializeLevel()');
+      try {
+        const p = window.gameInstance || window.p;
+        if (p) {
+          window.initializeLevel(p, levelNum);
+        } else {
+          window.initializeLevel(levelNum);
+        }
+        if (state) {
+          state.currentLevel = levelNum;
+          if (state.level !== undefined) {
+            state.level = levelNum;
+          }
+        }
+        return true;
+      } catch (e) {
+        console.error('[DEV MODE] Error calling window.initializeLevel:', e);
+        // Fall through to try other methods
+      }
+    }
+    if (window.startLevel && typeof window.startLevel === 'function') {
+      console.log('[DEV MODE] Using window.startLevel()');
+      try {
+        const p = window.gameInstance || window.p;
+        if (p) {
+          window.startLevel(p, levelNum);
+        } else {
+          window.startLevel(levelNum);
+        }
+        if (state) {
+          state.currentLevel = levelNum;
+          if (state.level !== undefined) {
+            state.level = levelNum;
+          }
+        }
+        return true;
+      } catch (e) {
+        console.error('[DEV MODE] Error calling window.startLevel:', e);
+        // Fall through to try other methods
+      }
+    }
+    
+    // Try to set level in game state and reset game
+    // (state already declared at top of function)
+    if (state) {
+      console.log('[DEV MODE] Setting currentLevel in gameState');
+      const oldLevel = state.currentLevel;
+      
+      // Set level before reset (some games might preserve it)
+      state.currentLevel = levelNum;
+      // Also try setting 'level' property (some games use different property names)
+      if (state.level !== undefined) {
+        state.level = levelNum;
+      }
+      // Some games use currentDifficulty instead of currentLevel (like tone sphere)
+      if (state.currentDifficulty !== undefined) {
+        state.currentDifficulty = levelNum;
+      }
+      if (state.difficulty !== undefined) {
+        state.difficulty = levelNum;
+      }
+      if (state.difficultyLevel !== undefined) {
+        state.difficultyLevel = levelNum;
+      }
+      // Some games use songIndex
+      if (state.songIndex !== undefined) {
+        state.songIndex = levelNum - 1; // Usually 0-indexed
+      }
+      if (state.currentSongIndex !== undefined) {
+        state.currentSongIndex = levelNum - 1; // Usually 0-indexed
+      }
+      
+      // Try to call generateLevel if it exists (for procedurally generated games)
+      if (window.generateLevel && typeof window.generateLevel === 'function') {
+        console.log('[DEV MODE] Calling window.generateLevel()');
+        const p = window.gameInstance || window.p;
+        if (p) {
+          window.generateLevel(p);
+        }
+      }
+      
+      // Try to call reset/start functions
+      if (window.resetGame && typeof window.resetGame === 'function') {
+        console.log('[DEV MODE] Calling window.resetGame()');
+        try {
+          const p = window.gameInstance || window.p;
+          if (p) {
+            window.resetGame(p);
+          } else {
+            window.resetGame();
+          }
+        } catch (e) {
+          console.error('[DEV MODE] Error calling resetGame:', e);
+        }
+        
+        // CRITICAL: Set level again AFTER reset (resetGame might have reset it to 1)
+        state.currentLevel = levelNum;
+        if (state.level !== undefined) {
+          state.level = levelNum;
+        }
+        if (state.currentDifficulty !== undefined) {
+          state.currentDifficulty = levelNum;
+        }
+        if (state.difficulty !== undefined) {
+          state.difficulty = levelNum;
+        }
+        if (state.difficultyLevel !== undefined) {
+          state.difficultyLevel = levelNum;
+        }
+        if (state.songIndex !== undefined) {
+          state.songIndex = levelNum - 1;
+        }
+        if (state.currentSongIndex !== undefined) {
+          state.currentSongIndex = levelNum - 1;
+        }
+        
+        // Clear player/entities to force re-initialization (for games like wenjia)
+        if (state.player !== undefined) {
+          state.player = null;
+        }
+        if (state.entities !== undefined) {
+          state.entities = [];
+        }
+        
+        // Also try generateLevel after reset if available
+        if (window.generateLevel && typeof window.generateLevel === 'function') {
+          try {
+            const p = window.gameInstance || window.p;
+            if (p) {
+              window.generateLevel(p);
+            } else {
+              window.generateLevel();
+            }
+          } catch (e) {
+            console.error('[DEV MODE] Error calling generateLevel:', e);
+          }
+        }
+        // Try initializeGame if available (for games like tone sphere)
+        if (window.initializeGame && typeof window.initializeGame === 'function') {
+          try {
+            const p = window.gameInstance || window.p;
+            if (p) {
+              window.initializeGame(p);
+            } else {
+              window.initializeGame();
+            }
+          } catch (e) {
+            console.error('[DEV MODE] Error calling initializeGame:', e);
+          }
+        }
+        // Try to start the game
+        if (window.startGame && typeof window.startGame === 'function') {
+          console.log('[DEV MODE] Calling window.startGame()');
+          try {
+            const p = window.gameInstance || window.p;
+            if (p) {
+              window.startGame(p);
+            } else {
+              window.startGame();
+            }
+          } catch (e) {
+            console.error('[DEV MODE] Error calling startGame:', e);
+          }
+          
+          // CRITICAL: Set level again AFTER startGame (startGame might reset it)
+          state.currentLevel = levelNum;
+          if (state.level !== undefined) {
+            state.level = levelNum;
+          }
+          if (state.currentDifficulty !== undefined) {
+            state.currentDifficulty = levelNum;
+          }
+          if (state.difficulty !== undefined) {
+            state.difficulty = levelNum;
+          }
+          if (state.difficultyLevel !== undefined) {
+            state.difficultyLevel = levelNum;
+          }
+          if (state.songIndex !== undefined) {
+            state.songIndex = levelNum - 1;
+          }
+          if (state.currentSongIndex !== undefined) {
+            state.currentSongIndex = levelNum - 1;
+          }
+          
+          // Clear player again in case startGame created one
+          if (state.player !== undefined) {
+            state.player = null;
+          }
+        } else if (state.gamePhase !== undefined) {
+          // Try to set game phase to PLAYING
+          state.gamePhase = "PLAYING";
+          console.log('[DEV MODE] Set gamePhase to PLAYING');
+          
+          // For games like tone sphere, try to call initializeGame after setting phase
+          if (window.initializeGame && typeof window.initializeGame === 'function') {
+            try {
+              const p = window.gameInstance || window.p;
+              if (p) {
+                window.initializeGame(p);
+              } else {
+                window.initializeGame();
+              }
+            } catch (e) {
+              console.error('[DEV MODE] Error calling initializeGame:', e);
+            }
+          }
+        }
+        
+        // Final safety: set level one more time after a short delay
+        // This ensures it's set even if there are async operations
+        setTimeout(() => {
+          const state = getGameState();
+          if (state) {
+            state.currentLevel = levelNum;
+            if (state.level !== undefined) {
+              state.level = levelNum;
+            }
+            if (state.currentDifficulty !== undefined) {
+              state.currentDifficulty = levelNum;
+            }
+            if (state.difficulty !== undefined) {
+              state.difficulty = levelNum;
+            }
+            if (state.difficultyLevel !== undefined) {
+              state.difficultyLevel = levelNum;
+            }
+            if (state.songIndex !== undefined) {
+              state.songIndex = levelNum - 1;
+            }
+            if (state.currentSongIndex !== undefined) {
+              state.currentSongIndex = levelNum - 1;
+            }
+            // Clear player to force re-initialization
+            if (state.player !== undefined) {
+              state.player = null;
+            }
+            // Clear notes/particles for rhythm games
+            if (state.notes !== undefined) {
+              state.notes = [];
+            }
+            if (state.particles !== undefined) {
+              state.particles = [];
+            }
+            // Try to trigger level generation if available
+            if (window.generateLevel && typeof window.generateLevel === 'function') {
+              try {
+                const p = window.gameInstance || window.p;
+                if (p) {
+                  window.generateLevel(p);
+                } else {
+                  window.generateLevel();
+                }
+              } catch (e) {
+                console.error('[DEV MODE] Error in delayed generateLevel:', e);
+              }
+            }
+            // Try initializeGame if available (for games like tone sphere)
+            if (window.initializeGame && typeof window.initializeGame === 'function') {
+              try {
+                const p = window.gameInstance || window.p;
+                if (p) {
+                  window.initializeGame(p);
+                } else {
+                  window.initializeGame();
+                }
+              } catch (e) {
+                console.error('[DEV MODE] Error in delayed initializeGame:', e);
+              }
+            }
+          }
+        }, 50);
+        
+        return true;
+      }
+      if (window.startGame && typeof window.startGame === 'function') {
+        console.log('[DEV MODE] Calling window.startGame()');
+        try {
+          const p = window.gameInstance || window.p;
+          if (p) {
+            window.startGame(p);
+          } else {
+            window.startGame();
+          }
+        } catch (e) {
+          console.error('[DEV MODE] Error calling startGame:', e);
+        }
+        
+        // CRITICAL: Set level again AFTER startGame
+        state.currentLevel = levelNum;
+        if (state.level !== undefined) {
+          state.level = levelNum;
+        }
+        if (state.currentDifficulty !== undefined) {
+          state.currentDifficulty = levelNum;
+        }
+        if (state.difficulty !== undefined) {
+          state.difficulty = levelNum;
+        }
+        if (state.difficultyLevel !== undefined) {
+          state.difficultyLevel = levelNum;
+        }
+        if (state.songIndex !== undefined) {
+          state.songIndex = levelNum - 1;
+        }
+        if (state.currentSongIndex !== undefined) {
+          state.currentSongIndex = levelNum - 1;
+        }
+        
+        // Clear player to force re-initialization
+        if (state.player !== undefined) {
+          state.player = null;
+        }
+        
+        // Final safety: set level after a short delay
+        setTimeout(() => {
+          const state = getGameState();
+          if (state) {
+            state.currentLevel = levelNum;
+            if (state.level !== undefined) {
+              state.level = levelNum;
+            }
+            if (state.currentDifficulty !== undefined) {
+              state.currentDifficulty = levelNum;
+            }
+            if (state.difficulty !== undefined) {
+              state.difficulty = levelNum;
+            }
+            if (state.difficultyLevel !== undefined) {
+              state.difficultyLevel = levelNum;
+            }
+            if (state.songIndex !== undefined) {
+              state.songIndex = levelNum - 1;
+            }
+            if (state.currentSongIndex !== undefined) {
+              state.currentSongIndex = levelNum - 1;
+            }
+            if (state.player !== undefined) {
+              state.player = null;
+            }
+            // Clear notes/particles for rhythm games
+            if (state.notes !== undefined) {
+              state.notes = [];
+            }
+            if (state.particles !== undefined) {
+              state.particles = [];
+            }
+            if (window.generateLevel && typeof window.generateLevel === 'function') {
+              try {
+                const p = window.gameInstance || window.p;
+                if (p) {
+                  window.generateLevel(p);
+                } else {
+                  window.generateLevel();
+                }
+              } catch (e) {
+                console.error('[DEV MODE] Error in delayed generateLevel:', e);
+              }
+            }
+          }
+        }, 50);
+        
+        return true;
+      }
+      
+      // If no reset/start functions, just set level and clear player to force re-init
+      if (state) {
+        state.currentLevel = levelNum;
+        if (state.level !== undefined) {
+          state.level = levelNum;
+        }
+        if (state.currentDifficulty !== undefined) {
+          state.currentDifficulty = levelNum;
+        }
+        if (state.difficulty !== undefined) {
+          state.difficulty = levelNum;
+        }
+        if (state.difficultyLevel !== undefined) {
+          state.difficultyLevel = levelNum;
+        }
+        if (state.songIndex !== undefined) {
+          state.songIndex = levelNum - 1;
+        }
+        if (state.currentSongIndex !== undefined) {
+          state.currentSongIndex = levelNum - 1;
+        }
+        // Clear player/entities to force re-initialization (for games like wenjia)
+        if (state.player !== undefined) {
+          state.player = null;
+        }
+        if (state.entities !== undefined) {
+          state.entities = [];
+        }
+        if (state.platforms !== undefined) {
+          state.platforms = [];
+        }
+        if (state.enemies !== undefined) {
+          state.enemies = [];
+        }
+        // Clear notes/particles for rhythm games
+        if (state.notes !== undefined) {
+          state.notes = [];
+        }
+        if (state.particles !== undefined) {
+          state.particles = [];
+        }
+        if (state.gamePhase !== undefined) {
+          state.gamePhase = "PLAYING";
+        }
+      }
+      
+      // If we set the level but no reset function, at least we tried
+      console.log('[DEV MODE] Level set in gameState, but no reset/start function found');
+      return true;
+    }
+    
+    console.warn('[DEV MODE] Could not load level - no game state or load functions found');
+    return false;
+  }
+
+  function nextLevel() {
+    const current = getCurrentLevel();
+    const total = getTotalLevels();
+    
+    // If we can't get current level, try to get it from the input field
+    let currentLevel = current;
+    if (currentLevel === null) {
+      const input = document.getElementById('dev-level-input');
+      if (input && input.value) {
+        currentLevel = parseInt(input.value) || 1;
+      } else {
+        currentLevel = 1;
+      }
+    }
+    
+    const next = (total && currentLevel < total) ? currentLevel + 1 : (currentLevel + 1);
+    loadLevel(next);
+    // Update selector after a short delay to let level load
+    setTimeout(updateLevelSelector, 200);
+    return true;
+  }
+
+  function prevLevel() {
+    const current = getCurrentLevel();
+    const total = getTotalLevels();
+    
+    // If we can't get current level, try to get it from the input field
+    let currentLevel = current;
+    if (currentLevel === null) {
+      const input = document.getElementById('dev-level-input');
+      if (input && input.value) {
+        currentLevel = parseInt(input.value) || 1;
+      } else {
+        currentLevel = 1;
+      }
+    }
+    
+    const prev = currentLevel > 1 ? currentLevel - 1 : (total || currentLevel);
+    loadLevel(prev);
+    // Update selector after a short delay to let level load
+    setTimeout(updateLevelSelector, 200);
+    return true;
+  }
+
+  // Create level selector UI - always visible on left side
+  function createLevelSelector() {
+    const overlay = document.createElement('div');
+    overlay.id = 'dev-level-selector';
+    overlay.style.cssText = `
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      background: rgba(0, 0, 0, 0.95);
+      border: 2px solid #00ff00;
+      border-radius: 8px;
+      padding: 15px;
+      z-index: 10000;
+      color: #fff;
+      font-family: monospace;
+      min-width: 200px;
+      max-width: 250px;
+      display: block;
+      box-shadow: 0 4px 20px rgba(0, 255, 0, 0.3);
+    `;
+    
+    overlay.innerHTML = `
+      <div style="margin-bottom: 10px;">
+        <h3 style="margin: 0 0 8px 0; color: #00ff00; font-size: 14px;">Level Selector</h3>
+        <div style="margin-bottom: 8px; color: #ccc; font-size: 12px;">
+          Level: <span id="dev-current-level" style="color: #00ff00; font-weight: bold;">-</span>
+          ${getTotalLevels() ? ` / ${getTotalLevels()}` : ''}
+        </div>
+      </div>
+      <div style="margin-bottom: 10px;">
+        <label style="display: block; margin-bottom: 5px; color: #ccc; font-size: 11px;">Jump to:</label>
+        <input type="number" id="dev-level-input" 
+               style="width: 100%; padding: 6px; background: #222; color: #fff; border: 1px solid #555; border-radius: 4px; font-size: 14px; box-sizing: border-box;"
+               min="1" placeholder="Level #">
+      </div>
+      <div style="display: flex; gap: 5px; margin-bottom: 8px;">
+        <button id="dev-load-level" 
+                style="flex: 1; padding: 6px; background: #00ff00; color: #000; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;">
+          Load
+        </button>
+      </div>
+      <div style="display: flex; gap: 5px; margin-bottom: 10px;">
+        <button id="dev-prev-level" 
+                style="flex: 1; padding: 6px; background: #444; color: #fff; border: 1px solid #666; border-radius: 4px; cursor: pointer; font-size: 11px;">
+          ◀ Prev
+        </button>
+        <button id="dev-next-level" 
+                style="flex: 1; padding: 6px; background: #444; color: #fff; border: 1px solid #666; border-radius: 4px; cursor: pointer; font-size: 11px;">
+          Next ▶
+        </button>
+      </div>
+      <div style="padding-top: 8px; border-top: 1px solid #444; font-size: 10px; color: #888; line-height: 1.4;">
+        <div>Shortcuts:</div>
+        <div>N/P - Next/Prev</div>
+        <div>I - Info overlay</div>
+      </div>
+    `;
+    
+    document.body.appendChild(overlay);
+    
+    // Event handlers
+    document.getElementById('dev-load-level').addEventListener('click', () => {
+      const input = document.getElementById('dev-level-input');
+      const level = parseInt(input.value);
+      if (level > 0) {
+        loadLevel(level);
+        updateLevelSelector();
+      }
+    });
+    
+    document.getElementById('dev-prev-level').addEventListener('click', () => {
+      prevLevel();
+    });
+    
+    document.getElementById('dev-next-level').addEventListener('click', () => {
+      nextLevel();
+    });
+    
+    document.getElementById('dev-level-input').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        const level = parseInt(e.target.value);
+        if (level > 0) {
+          loadLevel(level);
+          setTimeout(updateLevelSelector, 200);
+        }
+      }
+    });
+    
+    // Prevent input from being auto-updated while user is typing
+    const input = document.getElementById('dev-level-input');
+    if (input) {
+      let inputTimeout;
+      input.addEventListener('input', () => {
+        // Clear any pending updates while user is typing
+        clearTimeout(inputTimeout);
+      });
+      input.addEventListener('blur', () => {
+        // Update when user leaves the input
+        setTimeout(updateLevelSelector, 100);
+      });
+    }
+    
+    return overlay;
+  }
+
+  // Create info overlay
+  function createInfoOverlay() {
+    const overlay = document.createElement('div');
+    overlay.id = 'dev-info-overlay';
+    overlay.style.cssText = `
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      background: rgba(0, 0, 0, 0.8);
+      border: 1px solid #00ff00;
+      border-radius: 4px;
+      padding: 10px;
+      z-index: 9999;
+      color: #00ff00;
+      font-family: monospace;
+      font-size: 12px;
+      display: none;
+      min-width: 200px;
+    `;
+    document.body.appendChild(overlay);
+    return overlay;
+  }
+
+  function updateLevelSelector() {
+    const selector = document.getElementById('dev-level-selector');
+    if (!selector) return;
+    
+    const current = getCurrentLevel();
+    const total = getTotalLevels();
+    
+    const currentLevelSpan = document.getElementById('dev-current-level');
+    if (currentLevelSpan) {
+      currentLevelSpan.textContent = current !== null ? current : '-';
+    }
+    
+    const input = document.getElementById('dev-level-input');
+    if (input) {
+      // Only update input if user is not currently editing it
+      if (document.activeElement !== input) {
+        if (current !== null) {
+          input.value = current;
+        }
+        if (total) {
+          input.max = total;
+        }
+      }
+    }
+  }
+
+  function showLevelSelector() {
+    let selector = document.getElementById('dev-level-selector');
+    if (!selector) {
+      selector = createLevelSelector();
+    }
+    selector.style.display = 'block';
+    levelSelectorVisible = true;
+    updateLevelSelector();
+    document.getElementById('dev-level-input')?.focus();
+  }
+
+  function hideLevelSelector() {
+    // Don't hide - keep it always visible
+    // Just update it
+    updateLevelSelector();
+  }
+
+  function updateInfoOverlay() {
+    const overlay = document.getElementById('dev-info-overlay');
+    if (!overlay) return;
+    
+    if (!showInfoOverlay) {
+      overlay.style.display = 'none';
+      return;
+    }
+    
+    const current = getCurrentLevel();
+    const total = getTotalLevels();
+    const state = getGameState();
+    
+    let info = '<div style="font-weight: bold; margin-bottom: 5px;">DEV MODE</div>';
+    info += `<div>Level: ${current !== null ? current : '?'}${total ? ` / ${total}` : ''}</div>`;
+    
+    if (state) {
+      if (state.gamePhase !== undefined) {
+        info += `<div>Phase: ${state.gamePhase}</div>`;
+      }
+      if (state.score !== undefined) {
+        info += `<div>Score: ${state.score}</div>`;
+      }
+    }
+    
+    info += '<div style="margin-top: 5px; font-size: 10px; color: #888;">Press I to toggle</div>';
+    
+    overlay.innerHTML = info;
+    overlay.style.display = 'block';
+  }
+
+  // Keyboard event handler
+  function handleKeyPress(e) {
+    // Only handle if not typing in an input
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+      if (e.key === 'Escape' && levelSelectorVisible) {
+        hideLevelSelector();
+        e.preventDefault();
+      }
+      return;
+    }
+    
+    const key = e.key.toUpperCase();
+    
+    if (key === DEV_MODE_KEY) {
+      // Toggle focus on level input instead of showing/hiding
+      const input = document.getElementById('dev-level-input');
+      if (input) {
+        input.focus();
+        input.select();
+      }
+      e.preventDefault();
+    } else if (key === NEXT_LEVEL_KEY) {
+      nextLevel();
+      updateInfoOverlay();
+      updateLevelSelector();
+      e.preventDefault();
+    } else if (key === PREV_LEVEL_KEY) {
+      prevLevel();
+      updateInfoOverlay();
+      updateLevelSelector();
+      e.preventDefault();
+    } else if (key === 'I') {
+      showInfoOverlay = !showInfoOverlay;
+      updateInfoOverlay();
+      e.preventDefault();
+    }
+  }
+
+  // Check URL parameter on load
+  function checkUrlParameter() {
+    const params = new URLSearchParams(window.location.search);
+    const levelParam = params.get('level');
+    if (levelParam) {
+      const level = parseInt(levelParam);
+      if (level > 0) {
+        // Wait a bit for game to initialize
+        setTimeout(() => {
+          loadLevel(level);
+          console.log(`[DEV MODE] Loaded level ${level} from URL parameter`);
+        }, 500);
+      }
+    }
+  }
+
+  // Listen for postMessage from parent window (for Gradio GUI integration)
+  function setupPostMessageListener() {
+    window.addEventListener('message', function(event) {
+      // Listen for messages from parent window
+      if (event.data && event.data.type === 'DEV_MODE_LOAD_LEVEL') {
+        const level = event.data.level;
+        if (level && level > 0) {
+          console.log(`[DEV MODE] Received level load request from parent: ${level}`);
+          loadLevel(level);
+          updateInfoOverlay();
+          if (levelSelectorVisible) {
+            updateLevelSelector();
+          }
+          // Notify parent of level change
+          setTimeout(() => {
+            if (window.parent && window.parent !== window) {
+              const current = getCurrentLevel();
+              window.parent.postMessage({
+                type: 'DEV_MODE_LEVEL_CHANGED',
+                level: current !== null ? current : level
+              }, '*');
+            }
+          }, 200);
+        }
+      } else if (event.data && event.data.type === 'DEV_MODE_GET_LEVEL') {
+        // Respond to level request
+        const current = getCurrentLevel();
+        if (window.parent && window.parent !== window && current !== null) {
+          window.parent.postMessage({
+            type: 'DEV_MODE_LEVEL_CHANGED',
+            level: current
+          }, '*');
+        }
+      }
+    });
+    
+    // Wrap loadLevel to notify parent when level changes
+    const originalLoadLevel = window.loadLevel || loadLevel;
+    if (typeof originalLoadLevel === 'function') {
+      // Create a wrapper that notifies parent
+      const wrappedLoadLevel = function(levelNum) {
+        const result = originalLoadLevel(levelNum);
+        // Notify parent after a short delay to ensure level is loaded
+        setTimeout(() => {
+          const current = getCurrentLevel();
+          if (window.parent && window.parent !== window && current !== null) {
+            window.parent.postMessage({
+              type: 'DEV_MODE_LEVEL_CHANGED',
+              level: current
+            }, '*');
+          }
+        }, 100);
+        return result;
+      };
+      // Replace the global loadLevel if it exists
+      if (window.loadLevel) {
+        window.loadLevel = wrappedLoadLevel;
+      }
+    }
+    
+    // Also hook into our internal loadLevel function
+    const internalLoadLevel = loadLevel;
+    loadLevel = function(levelNum) {
+      const result = internalLoadLevel(levelNum);
+      // Notify parent after a short delay
+      setTimeout(() => {
+        const current = getCurrentLevel();
+        if (window.parent && window.parent !== window && current !== null) {
+          window.parent.postMessage({
+            type: 'DEV_MODE_LEVEL_CHANGED',
+            level: current
+          }, '*');
+        }
+      }, 100);
+      return result;
+    };
+  }
+
+  // Initialize
+  function init() {
+    // Create overlays - level selector is always visible
+    createLevelSelector();
+    createInfoOverlay();
+    
+    // Show level selector immediately
+    showLevelSelector();
+    
+    // Add keyboard listener
+    document.addEventListener('keydown', handleKeyPress);
+    
+    // Setup postMessage listener for parent window communication
+    setupPostMessageListener();
+    
+    // Check URL parameter
+    checkUrlParameter();
+    
+    // Update info overlay periodically
+    setInterval(() => {
+      if (showInfoOverlay) {
+        updateInfoOverlay();
+      }
+    }, 500);
+    
+    // Update level selector periodically to show current level (but less frequently)
+    setInterval(() => {
+      // Only update if input is not focused
+      const input = document.getElementById('dev-level-input');
+      if (!input || document.activeElement !== input) {
+        updateLevelSelector();
+      }
+    }, 2000);
+    
+    console.log('[DEV MODE] Initialized. Level selector always visible on left. Press L to focus input, N/P for next/prev, I for info overlay');
+  }
+
+  // Wait for DOM to be ready
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
+

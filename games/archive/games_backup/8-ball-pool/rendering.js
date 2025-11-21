@@ -1,0 +1,183 @@
+// rendering.js - Rendering functions
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, TABLE_X, TABLE_Y, TABLE_WIDTH, TABLE_HEIGHT } from './globals.js';
+
+export function renderStartScreen(p) {
+  p.background(20, 50, 30);
+  
+  // Title
+  p.fill(255, 215, 0);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text("POOL CHALLENGE", CANVAS_WIDTH / 2, 80);
+  
+  // Description
+  p.fill(255);
+  p.textSize(14);
+  p.text("Pocket all the colored balls using the cue ball!", CANVAS_WIDTH / 2, 140);
+  p.text("Avoid scratching to clear the table!", CANVAS_WIDTH / 2, 160);
+  
+  // Instructions
+  p.textSize(12);
+  p.fill(200, 200, 200);
+  p.textAlign(p.LEFT);
+  p.text("Arrow Keys: Aim & Adjust Power", 100, 210);
+  p.text("Shift + Arrows: Apply Spin", 100, 230);
+  p.text("Space: Execute Shot", 100, 250);
+  p.text("ESC: Pause    R: Restart", 100, 270);
+  
+  // Start prompt
+  p.fill(255, 255, 0);
+  p.textAlign(p.CENTER);
+  p.textSize(20);
+  if (Math.floor(p.frameCount / 30) % 2 === 0) {
+    p.text("PRESS ENTER TO START", CANVAS_WIDTH / 2, 340);
+  }
+}
+
+export function renderGame(p) {
+  p.background(50, 30, 20);
+  
+  // Render table
+  if (gameState.table) {
+    gameState.table.render();
+  }
+  
+  // Render balls
+  gameState.ballsOnTable.forEach(ball => ball.render());
+  
+  // Render cue stick (only during aiming)
+  if (gameState.playingPhase === "AIMING" && gameState.cueStick && gameState.cueBall && !gameState.cueBall.pocketed) {
+    gameState.cueStick.render(gameState.cueBall, gameState.aimAngle, gameState.shotPower);
+    
+    // Render aim guide
+    renderAimGuide(p);
+  }
+  
+  // Render UI
+  renderUI(p);
+  
+  // Render foul message
+  if (gameState.foulStatus || gameState.playingPhase === "FOUL") {
+    p.fill(255, 0, 0);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(32);
+    p.text(gameState.foulMessage || "FOUL!", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+  }
+}
+
+function renderAimGuide(p) {
+  if (!gameState.cueBall || gameState.cueBall.pocketed) return;
+  
+  const cueBallPos = gameState.cueBall.body.position;
+  const guideLength = 100;
+  
+  p.stroke(255, 255, 255, 100);
+  p.strokeWeight(2);
+  p.line(
+    cueBallPos.x,
+    cueBallPos.y,
+    cueBallPos.x + Math.cos(gameState.aimAngle) * guideLength,
+    cueBallPos.y + Math.sin(gameState.aimAngle) * guideLength
+  );
+}
+
+function renderUI(p) {
+  // Score (top-right)
+  p.fill(255);
+  p.textAlign(p.RIGHT, p.TOP);
+  p.textSize(16);
+  p.text(`SCORE: ${String(gameState.score).padStart(5, '0')}`, CANVAS_WIDTH - 10, 10);
+  
+  // Level (top-left)
+  p.textAlign(p.LEFT, p.TOP);
+  p.text(`LEVEL: ${gameState.level}`, 10, 10);
+  
+  // Balls remaining (top-center)
+  const ballsRemaining = gameState.ballsOnTable.filter(b => !b.pocketed && b.number !== 0).length;
+  p.textAlign(p.CENTER, p.TOP);
+  p.fill(255, 215, 0);
+  p.text(`BALLS LEFT: ${ballsRemaining}`, CANVAS_WIDTH / 2, 10);
+  
+  // Power meter (bottom-left)
+  if (gameState.playingPhase === "AIMING") {
+    const meterWidth = 100;
+    const meterHeight = 10;
+    const meterX = 10;
+    const meterY = CANVAS_HEIGHT - 30;
+    
+    p.fill(50);
+    p.noStroke();
+    p.rect(meterX, meterY, meterWidth, meterHeight);
+    
+    const powerRatio = gameState.shotPower / gameState.maxShotPower;
+    const powerColor = p.lerpColor(p.color(0, 255, 0), p.color(255, 0, 0), powerRatio);
+    p.fill(powerColor);
+    p.rect(meterX, meterY, meterWidth * powerRatio, meterHeight);
+    
+    p.fill(255);
+    p.textAlign(p.LEFT, p.BOTTOM);
+    p.textSize(10);
+    p.text("POWER", meterX, meterY - 2);
+  }
+  
+  // Spin indicator (bottom-right)
+  if (gameState.playingPhase === "AIMING" && (gameState.spinEffect.x !== 0 || gameState.spinEffect.y !== 0)) {
+    const spinX = CANVAS_WIDTH - 40;
+    const spinY = CANVAS_HEIGHT - 40;
+    
+    p.fill(100);
+    p.noStroke();
+    p.circle(spinX, spinY, 30);
+    
+    p.fill(255, 255, 0);
+    p.circle(spinX + gameState.spinEffect.x * 10, spinY + gameState.spinEffect.y * 10, 8);
+    
+    p.fill(255);
+    p.textAlign(p.RIGHT, p.BOTTOM);
+    p.textSize(10);
+    p.text("SPIN", spinX + 15, spinY - 20);
+  }
+}
+
+export function renderPausedOverlay(p) {
+  p.fill(0, 0, 0, 150);
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  p.fill(255);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text("PAUSED", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 30);
+  
+  p.textSize(16);
+  p.text("Press ESC to resume", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 30);
+  p.text("Press R to restart", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 55);
+}
+
+export function renderGameOver(p) {
+  p.background(20, 20, 20);
+  
+  const isWin = gameState.gamePhase === "GAME_OVER_WIN";
+  
+  // Message
+  p.fill(isWin ? [0, 255, 0] : [255, 0, 0]);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text(isWin ? "LEVEL COMPLETE!" : "GAME OVER", CANVAS_WIDTH / 2, 120);
+  
+  // Score
+  p.fill(255);
+  p.textSize(24);
+  p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, 180);
+  p.text(`Level: ${gameState.level}`, CANVAS_WIDTH / 2, 210);
+  
+  // Next level or restart
+  p.textSize(16);
+  if (isWin && gameState.level < 4) {
+    p.text("Press ENTER for Next Level", CANVAS_WIDTH / 2, 280);
+  } else if (isWin && gameState.level === 4) {
+    p.text("ALL LEVELS COMPLETE!", CANVAS_WIDTH / 2, 250);
+    p.text("You are the Pool Master!", CANVAS_WIDTH / 2, 275);
+  }
+  
+  p.text("Press R to Restart", CANVAS_WIDTH / 2, 320);
+}
