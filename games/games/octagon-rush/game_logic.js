@@ -2,17 +2,15 @@
 
 import { 
   gameState, 
-  PHASE_PLAYING, 
+  PHASE_PLAYING,
+  PHASE_LEVEL_COMPLETE,
   PHASE_GAME_OVER_WIN, 
   PHASE_GAME_OVER_LOSE,
   NUM_SEGMENTS,
-  GAME_DURATION,
-  SPEED_INCREASE_RATE,
-  MAX_SPEED,
-  MIN_OBSTACLE_SPACING,
-  MAX_OBSTACLE_SPACING,
+  LEVEL_DURATION,
   LANE_SWITCH_COOLDOWN,
-  TUNNEL_RADIUS
+  TUNNEL_RADIUS,
+  LEVELS
 } from './globals.js';
 import { Obstacle } from './obstacle.js';
 import { createParticleBurst, createTrailParticles } from './particle.js';
@@ -53,30 +51,44 @@ export function updateGame(p, deltaTime) {
     }
   }
   
-  // Check win condition
-  if (gameState.gameTime >= GAME_DURATION) {
-    gameState.gamePhase = PHASE_GAME_OVER_WIN;
-    gameState.screenShake = 0; // Reset screen shake on game over
-    p.logs.game_info.push({
-      data: { phase: PHASE_GAME_OVER_WIN, score: gameState.score },
-      framecount: p.frameCount,
-      timestamp: Date.now()
-    });
+  // Check level completion
+  if (gameState.gameTime >= LEVEL_DURATION) {
+    // Level complete!
+    if (gameState.currentLevel >= 9) {
+      // All levels complete - WIN!
+      gameState.gamePhase = PHASE_GAME_OVER_WIN;
+      gameState.screenShake = 0;
+      p.logs.game_info.push({
+        data: { phase: PHASE_GAME_OVER_WIN, score: gameState.score },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    } else {
+      // Move to next level
+      gameState.gamePhase = PHASE_LEVEL_COMPLETE;
+      gameState.screenShake = 0;
+      p.logs.game_info.push({
+        data: { phase: PHASE_LEVEL_COMPLETE, level: gameState.currentLevel },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
     return;
   }
   
-  // Update speed based on time
+  // Update speed based on time and level config
+  const config = gameState.levelConfig;
   gameState.speed = Math.min(
-    gameState.speed + (SPEED_INCREASE_RATE * deltaTime),
-    MAX_SPEED
+    gameState.speed + (config.speedIncreaseRate * deltaTime),
+    config.maxSpeed
   );
   
   // Update scroll offset
   gameState.scrollOffset += gameState.speed;
   
-  // Handle flip animation
+  // Handle flip animation - faster now for quick movement
   if (gameState.isFlipping) {
-    gameState.flipProgress += 0.15;
+    gameState.flipProgress += 0.35; // Increased from 0.15 to make it faster
     if (gameState.flipProgress >= 1) {
       gameState.isFlipping = false;
       gameState.flipProgress = 0;
@@ -86,7 +98,7 @@ export function updateGame(p, deltaTime) {
   
   // Handle lane movement animation
   if (gameState.isMovingLane) {
-    gameState.laneMoveProgress += 0.25; // Faster than flip for responsive feel
+    gameState.laneMoveProgress += 0.25;
     if (gameState.laneMoveProgress >= 1) {
       gameState.isMovingLane = false;
       gameState.laneMoveProgress = 0;
@@ -96,9 +108,9 @@ export function updateGame(p, deltaTime) {
   
   // Use current player segment for collision detection
   const currentPlayerSegment = gameState.isFlipping 
-    ? gameState.flipStartSegment // During flip, use original segment for collision
+    ? gameState.flipStartSegment
     : gameState.isMovingLane
-    ? gameState.laneMoveStartSegment // During lane move, use start segment for collision
+    ? gameState.laneMoveStartSegment
     : gameState.playerSegment;
   
   // Update obstacles
@@ -110,7 +122,7 @@ export function updateGame(p, deltaTime) {
     if (gameState.invulnerableTime <= 0 && obstacle.checkCollision(currentPlayerSegment, 0, 0)) {
       // Hit obstacle - lose a life
       gameState.lives--;
-      gameState.invulnerableTime = 1.0; // 1 second of invulnerability
+      gameState.invulnerableTime = 1.0;
       gameState.screenShake = 1.0;
       gameState.hitFlashAlpha = 200;
       
@@ -124,7 +136,7 @@ export function updateGame(p, deltaTime) {
       // Check if game over
       if (gameState.lives <= 0) {
         gameState.gamePhase = PHASE_GAME_OVER_LOSE;
-        gameState.screenShake = 0; // Reset screen shake on game over
+        gameState.screenShake = 0;
         p.logs.game_info.push({
           data: { phase: PHASE_GAME_OVER_LOSE, score: gameState.score, reason: 'collision' },
           framecount: p.frameCount,
@@ -172,12 +184,14 @@ function spawnObstacles(p) {
   const spawnThreshold = lastObstacle ? lastObstacle.z : 0;
   
   if (spawnThreshold < 500) {
-    // Determine spacing based on speed
-    const spacing = MIN_OBSTACLE_SPACING + (MAX_OBSTACLE_SPACING - MIN_OBSTACLE_SPACING) * (1 - gameState.speed / MAX_SPEED);
+    const config = gameState.levelConfig;
+    
+    // Determine spacing based on level config
+    const spacing = config.minSpacing + (config.maxSpacing - config.minSpacing) * (1 - gameState.speed / config.maxSpeed);
     const newZ = spawnThreshold + spacing + p.random(20, 50);
     
-    // Choose segments to place obstacles
-    const numObstacles = Math.floor(p.random(2, 5)); // 2-4 obstacles per wave
+    // Choose number of obstacles based on level config
+    const numObstacles = Math.floor(p.random(config.minObstaclesPerWave, config.maxObstaclesPerWave + 1));
     const availableSegments = [];
     for (let i = 0; i < NUM_SEGMENTS; i++) {
       availableSegments.push(i);
@@ -189,7 +203,7 @@ function spawnObstacles(p) {
       const idx = Math.floor(p.random(availableSegments.length));
       const segment = availableSegments.splice(idx, 1)[0];
       
-      const obstacle = new Obstacle(segment, newZ, gameState.nextObstacleId++);
+      const obstacle = new Obstacle(segment, newZ, gameState.nextObstacleId++, config.obstacleColor);
       gameState.obstacles.push(obstacle);
       gameState.entities.push(obstacle);
     }
@@ -239,7 +253,7 @@ export function flip() {
   gameState.flipProgress = 0;
   gameState.flipStartSegment = gameState.playerSegment;
   gameState.flipTargetSegment = (gameState.playerSegment + NUM_SEGMENTS / 2) % NUM_SEGMENTS;
-  gameState.laneSwitchCooldown = LANE_SWITCH_COOLDOWN * 2; // Longer cooldown for flip
+  gameState.laneSwitchCooldown = LANE_SWITCH_COOLDOWN * 1.5; // Reduced cooldown since flip is faster
   
   // Create particle burst at start position
   const startAngle = (gameState.flipStartSegment * Math.PI * 2) / NUM_SEGMENTS;

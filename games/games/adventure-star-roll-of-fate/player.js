@@ -1,6 +1,6 @@
 // player.js - Player entity
 
-import { gameState, GRID_CONFIG, WEAPONS } from './globals.js';
+import { gameState, GRID_CONFIG, WEAPONS, PLAYER_TITLE } from './globals.js';
 import { triggerEvent } from './events.js';
 
 export class Player {
@@ -9,6 +9,7 @@ export class Player {
     this.gridY = gridY;
     this.maxHP = maxHP;
     this.hp = maxHP;
+    this.name = PLAYER_TITLE;
     this.damageFlashTimer = 0;
     this.moveDelay = 0;
     this.moveDelayMax = 0; // No delay for turn-based movement

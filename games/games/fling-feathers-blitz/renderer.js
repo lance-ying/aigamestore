@@ -42,35 +42,34 @@ function renderStartScreen(p) {
   p.fill(255);
   p.textAlign(p.CENTER, p.CENTER);
   p.textSize(48);
-  p.text("FLING FEATHERS BLITZ", CANVAS_WIDTH / 2, 80);
+  p.text("FLING FEATHERS BLITZ", CANVAS_WIDTH / 2, 60);
   
   p.textSize(16);
-  p.text("Launch birds from the slingshot to destroy", CANVAS_WIDTH / 2, 150);
-  p.text("structures and eliminate all pigs!", CANVAS_WIDTH / 2, 175);
+  p.text("Launch birds from the slingshot to destroy", CANVAS_WIDTH / 2, 130);
+  p.text("structures and eliminate all pigs!", CANVAS_WIDTH / 2, 155);
   
   p.textSize(14);
   p.fill(255, 255, 150);
-  p.text("CONTROLS:", CANVAS_WIDTH / 2, 220);
+  p.text("CONTROLS:", CANVAS_WIDTH / 2, 190);
   p.fill(255);
   p.textSize(12);
-  p.text("SPACE: Press to aim, press again to launch", CANVAS_WIDTH / 2, 245);
-  p.text("ARROW KEYS: Hold to adjust slingshot aim", CANVAS_WIDTH / 2, 265);
-  p.text("Z: Activate bird's special ability", CANVAS_WIDTH / 2, 285);
-  p.text("ESC: Pause    R: Restart", CANVAS_WIDTH / 2, 305);
+  p.text("ARROW KEYS: Hold to adjust slingshot aim", CANVAS_WIDTH / 2, 210);
+  p.text("SPACE: Launch the bird", CANVAS_WIDTH / 2, 230);
+  p.text("Z: Activate bird's special ability", CANVAS_WIDTH / 2, 250);
+  p.text("ESC: Pause    R: Restart", CANVAS_WIDTH / 2, 270);
   
   p.textSize(14);
   p.fill(255, 200, 100);
-  p.text("BIRD ABILITIES:", CANVAS_WIDTH / 2, 335);
+  p.text("BIRD ABILITIES:", CANVAS_WIDTH / 2, 295);
   p.fill(255);
-  p.textSize(11);
-  p.text("Red: Basic bird", CANVAS_WIDTH / 2, 355);
-  p.text("Blue: Splits into three mini-birds", CANVAS_WIDTH / 2, 372);
-  p.text("Yellow: Speed boost", CANVAS_WIDTH / 2, 389);
+  p.textSize(10);
+  p.text("Red: Basic • Blue: Split x3 • Yellow: Speed boost", CANVAS_WIDTH / 2, 315);
+  p.text("Black: Heavy • Green: Explosion • White: Egg bomb", CANVAS_WIDTH / 2, 330);
   
   if (gameState.highScore > 0) {
     p.fill(255, 215, 0);
     p.textSize(14);
-    p.text(`HIGH SCORE: ${gameState.highScore}`, CANVAS_WIDTH / 2, 420);
+    p.text(`HIGH SCORE: ${gameState.highScore}`, CANVAS_WIDTH / 2, 360);
   }
   
   p.fill(100, 255, 100);
@@ -90,6 +89,8 @@ function renderGameplay(p) {
       renderPig(p, entity);
     } else if (entity.type === 'block') {
       renderStructureBlock(p, entity);
+    } else if (entity.type === 'egg') {
+      renderEgg(p, entity);
     }
   });
   
@@ -161,6 +162,12 @@ function drawBirdIcon(p, x, y, birdType, size) {
     p.fill(20, 100, 220);
   } else if (birdType === BIRD_TYPES.YELLOW) {
     p.fill(255, 220, 0);
+  } else if (birdType === BIRD_TYPES.BLACK) {
+    p.fill(30, 30, 30);
+  } else if (birdType === BIRD_TYPES.GREEN) {
+    p.fill(50, 220, 50);
+  } else if (birdType === BIRD_TYPES.WHITE) {
+    p.fill(255, 255, 255);
   }
   
   p.ellipse(x, y, size, size);
@@ -170,11 +177,34 @@ function drawBirdIcon(p, x, y, birdType, size) {
   p.ellipse(x + size * 0.15, y - size * 0.1, size * 0.2, size * 0.2);
   p.ellipse(x - size * 0.15, y - size * 0.1, size * 0.2, size * 0.2);
   
+  // White part of eyes for white bird visibility
+  if (birdType === BIRD_TYPES.WHITE) {
+    p.fill(255);
+    p.ellipse(x + size * 0.15, y - size * 0.1, size * 0.15, size * 0.15);
+    p.ellipse(x - size * 0.15, y - size * 0.1, size * 0.15, size * 0.15);
+    p.fill(0);
+    p.ellipse(x + size * 0.15, y - size * 0.1, size * 0.08, size * 0.08);
+    p.ellipse(x - size * 0.15, y - size * 0.1, size * 0.08, size * 0.08);
+  }
+  
   // Eyebrows for angry look
   p.stroke(0);
   p.strokeWeight(1.5);
   p.line(x - size * 0.25, y - size * 0.25, x - size * 0.1, y - size * 0.15);
   p.line(x + size * 0.25, y - size * 0.25, x + size * 0.1, y - size * 0.15);
+}
+
+function renderEgg(p, egg) {
+  if (!egg.active || !egg.body) return;
+  
+  p.noStroke();
+  p.fill(255, 255, 220);
+  p.ellipse(egg.body.position.x, egg.body.position.y, egg.size, egg.size * 1.2);
+  
+  // Spots
+  p.fill(220, 200, 150);
+  p.ellipse(egg.body.position.x - 3, egg.body.position.y - 2, 4, 4);
+  p.ellipse(egg.body.position.x + 2, egg.body.position.y + 3, 3, 3);
 }
 
 function renderPig(p, pig) {
@@ -260,6 +290,35 @@ function renderStructureBlock(p, block) {
   }
   
   p.pop();
+  
+  // Health bar (if damaged)
+  if (block.health < block.maxHealth) {
+    renderBlockHealthBar(p, block);
+  }
+}
+
+function renderBlockHealthBar(p, block) {
+  const barWidth = Math.max(block.width, 30);
+  const barHeight = 3;
+  const barX = block.body.position.x - barWidth / 2;
+  const barY = block.body.position.y - Math.max(block.height, block.width) / 2 - 6;
+  
+  const healthPercent = block.health / block.maxHealth;
+  
+  // Background (red)
+  p.fill(200, 50, 50);
+  p.noStroke();
+  p.rect(barX, barY, barWidth, barHeight);
+  
+  // Health (yellow/orange for blocks)
+  p.fill(255, 180, 0);
+  p.rect(barX, barY, barWidth * healthPercent, barHeight);
+  
+  // Border
+  p.noFill();
+  p.stroke(0);
+  p.strokeWeight(1);
+  p.rect(barX, barY, barWidth, barHeight);
 }
 
 function renderParticles(p) {

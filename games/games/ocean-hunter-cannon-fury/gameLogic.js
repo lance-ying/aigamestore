@@ -25,7 +25,8 @@ export function startGame(p) {
   gameState.upgrades = {
     damage: 0,
     fireRate: 0,
-    rotationSpeed: 0
+    rotationSpeed: 0,
+    weaponType: 0
   };
   
   startLevel(p);
@@ -97,7 +98,8 @@ export function restartGame(p) {
   gameState.upgrades = {
     damage: 0,
     fireRate: 0,
-    rotationSpeed: 0
+    rotationSpeed: 0,
+    weaponType: 0
   };
   
   p.logs.game_info.push({
@@ -110,8 +112,18 @@ export function restartGame(p) {
 export function purchaseUpgrade(upgradeType, p) {
   if (gameState.gamePhase !== 'PLAYING') return;
   
+  // Map camelCase state keys to UPPER_SNAKE_CASE UPGRADES keys
+  const upgradeMapping = {
+    'damage': 'DAMAGE',
+    'fireRate': 'FIRE_RATE',
+    'rotationSpeed': 'ROTATION_SPEED',
+    'weaponType': 'WEAPON_TYPE'
+  };
+  
   const currentLevel = gameState.upgrades[upgradeType];
-  const upgradeData = UPGRADES[upgradeType.toUpperCase()];
+  const upgradeData = UPGRADES[upgradeMapping[upgradeType]];
+  
+  if (!upgradeData) return;
   
   if (currentLevel >= upgradeData.levels.length - 1) {
     // Already max level

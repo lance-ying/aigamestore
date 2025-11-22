@@ -1,7 +1,7 @@
 import { FISH_TYPES, PROJECTILE_RADIUS, PROJECTILE_SPEED, PROJECTILE_DAMAGE, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
 
 export class Projectile {
-  constructor(x, y, angle, p) {
+  constructor(x, y, angle, p, weaponType = 'Normal') {
     this.x = x;
     this.y = y;
     this.angle = angle; // in degrees
@@ -9,6 +9,17 @@ export class Projectile {
     this.speed = PROJECTILE_SPEED;
     this.active = true;
     this.p = p;
+    this.weaponType = weaponType;
+    this.piercing = weaponType === 'Piercing';
+    this.hitCount = 0;
+    
+    // Adjust properties based on weapon type
+    if (weaponType === 'Rapid') {
+      this.speed = PROJECTILE_SPEED * 1.5;
+      this.radius = PROJECTILE_RADIUS * 0.8;
+    } else if (weaponType === 'Piercing') {
+      this.radius = PROJECTILE_RADIUS * 0.7;
+    }
     
     // Convert angle to velocity
     const radians = this.p.radians(angle);
@@ -28,9 +39,33 @@ export class Projectile {
   
   draw() {
     this.p.push();
-    this.p.fill(255, 255, 100);
-    this.p.noStroke();
-    this.p.circle(this.x, this.y, this.radius * 2);
+    
+    if (this.weaponType === 'Rapid') {
+      this.p.fill(255, 100, 100);
+      this.p.stroke(255, 50, 50);
+      this.p.strokeWeight(1);
+      this.p.circle(this.x, this.y, this.radius * 2);
+    } else if (this.weaponType === 'Piercing') {
+      this.p.fill(100, 255, 255);
+      this.p.stroke(50, 200, 255);
+      this.p.strokeWeight(2);
+      // Draw as elongated projectile
+      this.p.push();
+      this.p.translate(this.x, this.y);
+      this.p.rotate(this.p.atan2(this.vy, this.vx));
+      this.p.ellipse(0, 0, this.radius * 4, this.radius * 2);
+      this.p.pop();
+    } else if (this.weaponType === 'Spread') {
+      this.p.fill(255, 200, 100);
+      this.p.stroke(255, 150, 50);
+      this.p.strokeWeight(1);
+      this.p.circle(this.x, this.y, this.radius * 2);
+    } else {
+      this.p.fill(255, 255, 100);
+      this.p.noStroke();
+      this.p.circle(this.x, this.y, this.radius * 2);
+    }
+    
     this.p.pop();
   }
 }
@@ -64,6 +99,11 @@ export class Fish {
     
     this.x += this.p.cos(curvedDirection) * this.speed;
     this.y += this.p.sin(curvedDirection) * this.speed;
+    
+    // Special movement for jellyfish (bobbing)
+    if (this.type === 'JELLYFISH') {
+      this.y += this.p.sin(this.frameCount * 0.1) * 0.5;
+    }
     
     // Deactivate if off screen
     const margin = this.radius + 50;
@@ -141,6 +181,73 @@ export class Fish {
       this.p.vertex(-this.radius, 0);
       this.p.vertex(-this.radius * 0.5, this.radius * 1.2);
       this.p.endShape(this.p.CLOSE);
+    } else if (this.type === 'JELLYFISH') {
+      // Bell/dome
+      this.p.arc(0, 0, this.radius * 2, this.radius * 2, this.p.PI, this.p.TWO_PI);
+      
+      // Tentacles
+      this.p.noFill();
+      for (let i = 0; i < 6; i++) {
+        const xOffset = (i - 2.5) * this.radius * 0.4;
+        const wave = this.p.sin(this.frameCount * 0.15 + i) * 3;
+        this.p.bezier(xOffset, 0,
+                     xOffset + wave, this.radius * 0.5,
+                     xOffset - wave, this.radius,
+                     xOffset, this.radius * 1.5);
+      }
+      this.p.fill(...color);
+    } else if (this.type === 'SWORDFISH') {
+      // Body
+      this.p.ellipse(0, 0, this.radius * 2, this.radius * 1.2);
+      
+      // Sword/bill
+      this.p.strokeWeight(3);
+      this.p.line(this.radius, 0, this.radius * 1.8, 0);
+      
+      // Dorsal fin
+      this.p.strokeWeight(2);
+      this.p.triangle(-this.radius * 0.2, -this.radius * 0.6,
+                     -this.radius * 0.2, -this.radius * 1.3,
+                     this.radius * 0.2, -this.radius * 0.6);
+      
+      // Tail
+      this.p.triangle(-this.radius, -this.radius * 0.5,
+                     -this.radius, this.radius * 0.5,
+                     -this.radius * 1.5, 0);
+    } else if (this.type === 'SEAHORSE') {
+      // S-shaped body
+      this.p.noFill();
+      this.p.strokeWeight(this.radius * 0.5);
+      this.p.bezier(0, -this.radius,
+                   this.radius * 0.3, -this.radius * 0.3,
+                   -this.radius * 0.3, this.radius * 0.3,
+                   0, this.radius);
+      
+      // Head
+      this.p.fill(...color);
+      this.p.strokeWeight(2);
+      this.p.circle(0, -this.radius, this.radius * 0.7);
+      
+      // Snout
+      this.p.strokeWeight(3);
+      this.p.line(0, -this.radius, this.radius * 0.5, -this.radius);
+    } else if (this.type === 'CLOWNFISH') {
+      // Body with stripes
+      this.p.ellipse(0, 0, this.radius * 2, this.radius * 1.5);
+      
+      // White stripes
+      this.p.fill(255);
+      this.p.noStroke();
+      this.p.ellipse(-this.radius * 0.5, 0, this.radius * 0.4, this.radius * 1.6);
+      this.p.ellipse(this.radius * 0.3, 0, this.radius * 0.4, this.radius * 1.6);
+      
+      // Tail
+      this.p.fill(...color);
+      this.p.stroke(color[0] * 0.7, color[1] * 0.7, color[2] * 0.7);
+      this.p.strokeWeight(2);
+      this.p.triangle(-this.radius, -this.radius * 0.3,
+                     -this.radius, this.radius * 0.3,
+                     -this.radius * 1.5, 0);
     } else {
       // Basic oval fish
       this.p.ellipse(0, 0, this.radius * 2, this.radius * 1.5);

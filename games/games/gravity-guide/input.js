@@ -85,6 +85,7 @@ export function handleKeyReleased(p, key, keyCode) {
 function startGame(p) {
   gameState.score = 0;
   gameState.currentLevel = 1;
+  gameState.inputState = { left: false, right: false, tiltLeft: false, tiltRight: false };
   initLevel(1);
   gameState.gamePhase = PHASE_PLAYING;
   
@@ -97,6 +98,7 @@ function startGame(p) {
 
 function startNextLevel(p) {
   gameState.currentLevel++;
+  gameState.inputState = { left: false, right: false, tiltLeft: false, tiltRight: false };
   initLevel(gameState.currentLevel);
   gameState.gamePhase = PHASE_PLAYING;
   

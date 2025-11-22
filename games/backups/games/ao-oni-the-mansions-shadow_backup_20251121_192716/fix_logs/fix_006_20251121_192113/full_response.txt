@@ -1,0 +1,916 @@
+<analysis>
+- Issue identified: 
+  1. Level 6: key6b is located at (700, 510) which is behind the door that requires key6b to unlock - circular dependency making it unsolvable
+  2. Level 5: Monster patrols at (650, 100) which is directly adjacent to the exit zone at (650, 40), making it too dangerous
+  3. Canvas size: 800x600 is too large, needs to be reduced to 640x480
+  4. UI overlay: Current UI positioning renders over game content, needs adjustment for better visibility
+
+- Files affected: 
+  - globals.js (canvas dimensions)
+  - levels.js (fix level 5 monster position, fix level 6 key accessibility, scale all levels to new canvas size)
+  - index.html (update canvas CSS)
+  - rendering.js (adjust UI positioning to reduce overlay on game area)
+
+- Changes needed:
+  1. Reduce canvas from 800x600 to 640x480 (0.8 scale factor)
+  2. Scale all level coordinates by 0.8
+  3. Move level 6 key6b to middle section (accessible without the door it unlocks)
+  4. Move level 5 monster patrol to bottom-left area away from exit
+  5. Adjust UI rendering to better separate from game content
+</analysis>
+
+<code filename="globals.js">
+// globals.js - Global constants and state management
+
+export const CANVAS_WIDTH = 640;
+export const CANVAS_HEIGHT = 480;
+
+export const GAME_PHASES = {
+  START: "START",
+  PLAYING: "PLAYING",
+  PAUSED: "PAUSED",
+  GAME_OVER_WIN: "GAME_OVER_WIN",
+  GAME_OVER_LOSE: "GAME_OVER_LOSE"
+};
+
+export const TILE_SIZE = 32;
+export const PLAYER_SIZE = 20;
+export const AOI_ONI_SIZE = 28;
+
+export const PLAYER_SPEED = 2.5;
+export const PLAYER_SPRINT_SPEED = 4.5;
+export const AOI_ONI_BASE_SPEED = 1.8;
+
+export const gameState = {
+  player: null,
+  entities: [],
+  aoOnis: [],
+  doors: [],
+  items: [],
+  hidingSpots: [],
+  walls: [],
+  score: 0,
+  level: 1,
+  gamePhase: GAME_PHASES.START,
+  controlMode: "HUMAN",
+  discoveredRooms: new Set(),
+  isRunning: false,
+  hasFlashlight: false,
+  flashlightOn: false,
+  inChase: false,
+  lastEvadeTime: 0,
+  levelComplete: false,
+  undetectedBonus: true,
+  currentLevelData: null,
+  keysPressed: {},
+  inventory: [],
+  messages: [],
+  requiredItemIds: [], // Items that must be collected to exit level
+  collectedRequiredItems: new Set() // Track which required items have been collected
+};
+
+// Expose getGameState globally
+if (typeof window !== 'undefined') {
+  window.getGameState = function() {
+    return gameState;
+  };
+}
+</code>
+
+<code filename="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 640px !important; height: 480px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">Ao Oni: The Mansion's Shadow</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Basic Movement)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Level Progress)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 640px; margin: 0 auto 20px auto; line-height: 1.4;">Escape the haunted mansion while evading Ao Oni, a terrifying blue monster that stalks the halls. Navigate through 8 progressively challenging levels, each with unique layouts and puzzles. Find keys, unlock doors, and solve environmental puzzles to progress. Stay hidden in closets and behind furniture when Ao Oni is near. Break line of sight to escape chases. Complete all levels to escape the mansion and win!</p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 640px; margin: 0 auto 20px auto; line-height: 1.4;">Arrow Keys: HOLD to move player continuously | Shift (Tap): Toggle sprint mode for faster movement | Space: Interact with doors, items, hiding spots | Z: Toggle flashlight (in dark levels) | Enter: Start game from title screen | Escape: Pause/Unpause game | R: Restart (returns to title screen)</p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script src="../../dev_mode.js"></script>
+    <script type="module" src="/games/ao-oni-the-mansions-shadow/game.js"></script>
+  </body>
+</html>
+</code>
+
+<code filename="rendering.js">
+// rendering.js - Rendering functions
+import { gameState, GAME_PHASES, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export function renderStartScreen(p) {
+  p.background(20, 15, 30);
+  
+  // Title
+  p.fill(150, 100, 200);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(32);
+  p.text("Ao Oni: The Mansion's Shadow", CANVAS_WIDTH / 2, 60);
+  
+  // Subtitle
+  p.fill(200, 180, 220);
+  p.textSize(12);
+  p.text("A Survival Horror Experience", CANVAS_WIDTH / 2, 90);
+  
+  // Instructions
+  p.fill(220, 220, 240);
+  p.textSize(10);
+  p.textAlign(p.LEFT, p.TOP);
+  const instructions = [
+    "OBJECTIVE: Escape the haunted mansion",
+    "- Navigate through 8 challenging levels",
+    "- Collect required objectives (★) to unlock exit",
+    "- Find keys to unlock doors",
+    "- Avoid Ao Oni, the blue monster",
+    "- Hide when spotted to evade capture",
+    "",
+    "CONTROLS:",
+    "Arrow Keys - Move",
+    "Shift - Sprint",
+    "Space - Interact (doors, items, hide)",
+    "Z - Toggle flashlight (in dark levels)",
+    "ESC - Pause game",
+    "R - Restart to title"
+  ];
+  
+  let y = 110;
+  for (const line of instructions) {
+    p.text(line, 70, y);
+    y += 14;
+  }
+  
+  // Press Enter prompt
+  p.fill(255, 255, 100);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(16);
+  const blink = Math.floor(p.frameCount / 30) % 2;
+  if (blink) {
+    p.text("PRESS ENTER TO START", CANVAS_WIDTH / 2, 300);
+  }
+}
+
+export function renderGameOverScreen(p, won) {
+  p.background(20, 15, 30);
+  
+  if (won) {
+    p.fill(100, 255, 100);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(32);
+    p.text("YOU ESCAPED!", CANVAS_WIDTH / 2, 100);
+    
+    p.fill(200, 255, 200);
+    p.textSize(16);
+    p.text("Congratulations on escaping the mansion!", CANVAS_WIDTH / 2, 140);
+  } else {
+    p.fill(255, 100, 100);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(32);
+    p.text("GAME OVER", CANVAS_WIDTH / 2, 100);
+    
+    p.fill(255, 200, 200);
+    p.textSize(16);
+    p.text("Ao Oni caught you...", CANVAS_WIDTH / 2, 140);
+    
+    // Add dramatic effect
+    p.fill(255, 0, 0, 50);
+    p.noStroke();
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  }
+  
+  // Final score
+  p.fill(255, 255, 255);
+  p.textSize(20);
+  p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, 190);
+  
+  // Instructions
+  p.fill(220, 220, 240);
+  p.textSize(14);
+  p.text("Press R to restart", CANVAS_WIDTH / 2, 250);
+  
+  const blink = Math.floor(p.frameCount / 30) % 2;
+  if (blink) {
+    p.text("▼", CANVAS_WIDTH / 2, 280);
+  }
+}
+
+export function renderPausedIndicator(p) {
+  p.push();
+  p.fill(0, 0, 0, 150);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  p.fill(255, 255, 100);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(28);
+  p.text("PAUSED", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+  
+  p.textSize(12);
+  p.fill(220, 220, 240);
+  p.text("Press ESC to resume", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 35);
+  p.pop();
+}
+
+export function renderUI(p) {
+  // Top UI bar - darker background
+  p.push();
+  p.fill(0, 0, 0, 180);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, 28);
+  p.pop();
+  
+  // Score - top right
+  p.push();
+  p.fill(255, 255, 100);
+  p.textAlign(p.RIGHT, p.TOP);
+  p.textSize(14);
+  p.text(`Score: ${gameState.score}`, CANVAS_WIDTH - 8, 7);
+  p.pop();
+  
+  // Level - top left
+  p.push();
+  p.fill(100, 200, 255);
+  p.textAlign(p.LEFT, p.TOP);
+  p.textSize(14);
+  p.text(`Level: ${gameState.level} / 8`, 8, 7);
+  p.pop();
+  
+  // Objectives collected indicator - top center
+  if (gameState.requiredItemIds.length > 0) {
+    p.push();
+    const collected = gameState.collectedRequiredItems.size;
+    const total = gameState.requiredItemIds.length;
+    const isComplete = collected >= total;
+    
+    p.fill(isComplete ? 100 : 255, isComplete ? 255 : 150, isComplete ? 100 : 150);
+    p.textAlign(p.CENTER, p.TOP);
+    p.textSize(12);
+    p.text(`Objectives: ${collected}/${total} ${isComplete ? '✓' : ''}`, CANVAS_WIDTH / 2, 8);
+    p.pop();
+  }
+  
+  // Bottom UI bar
+  p.push();
+  p.fill(0, 0, 0, 180);
+  p.noStroke();
+  p.rect(0, CANVAS_HEIGHT - 45, CANVAS_WIDTH, 45);
+  p.pop();
+  
+  // Inventory header
+  p.push();
+  p.fill(255, 255, 255);
+  p.textAlign(p.LEFT, p.TOP);
+  p.textSize(12);
+  p.text("Inventory:", 8, CANVAS_HEIGHT - 38);
+  p.pop();
+  
+  // Inventory items
+  p.push();
+  let x = 8;
+  const y = CANVAS_HEIGHT - 20;
+  
+  if (gameState.inventory && gameState.inventory.length > 0) {
+    for (const item of gameState.inventory) {
+      // Item box
+      p.fill(50, 50, 60);
+      p.stroke(200, 200, 220);
+      p.strokeWeight(2);
+      p.rect(x, y - 16, 20, 20, 2);
+      
+      // Item icon
+      p.fill(255, 215, 0);
+      p.noStroke();
+      p.textAlign(p.CENTER, p.CENTER);
+      p.textSize(12);
+      if (item.type === "key") {
+        p.text("🔑", x + 10, y - 6);
+      } else if (item.type === "flashlight") {
+        p.text("🔦", x + 10, y - 6);
+      } else {
+        p.text("📦", x + 10, y - 6);
+      }
+      
+      x += 26;
+    }
+  } else {
+    p.fill(150, 150, 150);
+    p.noStroke();
+    p.textAlign(p.LEFT, p.CENTER);
+    p.textSize(10);
+    p.text("(empty)", x, y - 6);
+  }
+  p.pop();
+  
+  // Sprint indicator - bottom right
+  if (gameState.isRunning) {
+    p.push();
+    p.fill(100, 255, 100);
+    p.textAlign(p.RIGHT, p.TOP);
+    p.textSize(11);
+    p.text("SPRINTING", CANVAS_WIDTH - 8, CANVAS_HEIGHT - 38);
+    p.pop();
+  }
+  
+  // Chase indicator - flashing border effect
+  if (gameState.inChase) {
+    p.push();
+    const alpha = 50 + Math.sin(p.frameCount * 0.2) * 30;
+    p.fill(255, 0, 0, alpha);
+    p.noStroke();
+    p.rect(0, 28, CANVAS_WIDTH, 8);
+    p.rect(0, 28, 8, CANVAS_HEIGHT - 73);
+    p.rect(CANVAS_WIDTH - 8, 28, 8, CANVAS_HEIGHT - 73);
+    p.rect(0, CANVAS_HEIGHT - 45 - 8, CANVAS_WIDTH, 8);
+    
+    p.fill(255, 100, 100);
+    p.textAlign(p.CENTER, p.TOP);
+    p.textSize(12);
+    p.text("! CHASE !", CANVAS_WIDTH / 2, 32);
+    p.pop();
+  }
+}
+
+export function renderMessages(p) {
+  if (!gameState.messages || gameState.messages.length === 0) return;
+  
+  p.push();
+  let y = 50;
+  
+  for (const msg of gameState.messages) {
+    const alpha = Math.min(255, msg.time * 2);
+    
+    // Message background
+    p.fill(0, 0, 0, alpha * 0.7);
+    p.noStroke();
+    const textW = p.textWidth(msg.text);
+    p.rect(CANVAS_WIDTH / 2 - textW / 2 - 10, y - 10, textW + 20, 22, 5);
+    
+    // Message text
+    let color;
+    if (msg.type === "success") {
+      color = [100, 255, 100, alpha];
+    } else if (msg.type === "warning") {
+      color = [255, 200, 100, alpha];
+    } else if (msg.type === "error") {
+      color = [255, 100, 100, alpha];
+    } else {
+      color = [255, 255, 255, alpha];
+    }
+    
+    p.fill(...color);
+    p.textAlign(p.CENTER, p.TOP);
+    p.textSize(12);
+    p.text(msg.text, CANVAS_WIDTH / 2, y - 5);
+    
+    y += 26;
+  }
+  
+  p.pop();
+}
+
+export function renderDarkness(p) {
+  if (gameState.level >= 7 && gameState.player) {
+    p.push();
+    
+    // Create darkness overlay
+    p.fill(0, 0, 0, 200);
+    p.noStroke();
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    // Player light
+    const lightRadius = gameState.flashlightOn ? 100 : 65;
+    const gradient = p.drawingContext.createRadialGradient(
+      gameState.player.x, gameState.player.y, 0,
+      gameState.player.x, gameState.player.y, lightRadius
+    );
+    gradient.addColorStop(0, 'rgba(255, 255, 200, 0.8)');
+    gradient.addColorStop(0.5, 'rgba(255, 255, 200, 0.3)');
+    gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    
+    p.drawingContext.globalCompositeOperation = 'destination-out';
+    p.drawingContext.fillStyle = gradient;
+    p.drawingContext.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.drawingContext.globalCompositeOperation = 'source-over';
+    
+    p.pop();
+  }
+}
+</code>
+
+<code filename="levels.js">
+// levels.js - Level data and management
+import { gameState, TILE_SIZE, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { Door, Item, HidingSpot, ExitZone } from './entities.js';
+import { AoOni } from './aooni.js';
+import { Player } from './player.js';
+
+export function createLevel1() {
+  // Level 1: Tutorial - Super Easy (No enemies!)
+  // Scaled to 640x480 canvas
+  
+  gameState.walls = [
+    // Outer walls
+    { x: 0, y: 0, w: CANVAS_WIDTH, h: 16 },
+    { x: 0, y: 0, w: 16, h: CANVAS_HEIGHT },
+    { x: CANVAS_WIDTH - 16, y: 0, w: 16, h: CANVAS_HEIGHT },
+    { x: 0, y: CANVAS_HEIGHT - 16, w: CANVAS_WIDTH, h: 16 },
+    
+    // One simple obstacle in the middle
+    { x: 304, y: 208, w: 32, h: 64 }
+  ];
+
+  gameState.doors = [];
+
+  gameState.items = [
+    new Item(160, 304, "objective", "obj1_1", true)
+  ];
+
+  gameState.requiredItemIds = ["obj1_1"];
+
+  gameState.hidingSpots = [
+    new HidingSpot(80, 80, 32, 24, "closet")
+  ];
+
+  gameState.exitZone = new ExitZone(480, 360, 80, 56);
+
+  gameState.player = new Player(64, 64);
+
+  gameState.aoOnis = [];
+  
+  gameState.entities = [gameState.player];
+}
+
+export function createLevel2() {
+  // Level 2: Introduction to enemies - Easy
+  // Scaled to 640x480 canvas
+  
+  gameState.walls = [
+    // Outer walls
+    { x: 0, y: 0, w: CANVAS_WIDTH, h: 16 },
+    { x: 0, y: 0, w: 16, h: CANVAS_HEIGHT },
+    { x: CANVAS_WIDTH - 16, y: 0, w: 16, h: CANVAS_HEIGHT },
+    { x: 0, y: CANVAS_HEIGHT - 16, w: CANVAS_WIDTH, h: 16 },
+    
+    // Vertical divider
+    { x: 304, y: 16, w: 16, h: 208 },
+    { x: 304, y: 288, w: 16, h: 176 }
+  ];
+
+  gameState.doors = [
+    new Door(304, 224, 16, 64, true, "key2_1")
+  ];
+
+  gameState.items = [
+    new Item(80, 64, "key", "key2_1", false),
+    new Item(480, 64, "objective", "obj2_1", true)
+  ];
+
+  gameState.requiredItemIds = ["obj2_1"];
+
+  gameState.hidingSpots = [
+    new HidingSpot(40, 320, 32, 24, "closet"),
+    new HidingSpot(440, 320, 32, 24, "closet")
+  ];
+
+  gameState.exitZone = new ExitZone(520, 32, 64, 48);
+
+  gameState.player = new Player(48, 48);
+
+  gameState.aoOnis = [
+    new AoOni(480, 360, 0.6, [
+      [480, 360],
+      [544, 360],
+      [544, 304],
+      [480, 304]
+    ])
+  ];
+  
+  gameState.entities = [gameState.player, ...gameState.aoOnis];
+}
+
+export function createLevel3() {
+  // Level 3: Basic challenge - Medium-Easy
+  // Scaled to 640x480 canvas
+  
+  gameState.walls = [
+    // Outer walls
+    { x: 0, y: 0, w: CANVAS_WIDTH, h: 16 },
+    { x: 0, y: 0, w: 16, h: CANVAS_HEIGHT },
+    { x: CANVAS_WIDTH - 16, y: 0, w: 16, h: CANVAS_HEIGHT },
+    { x: 0, y: CANVAS_HEIGHT - 16, w: CANVAS_WIDTH, h: 16 },
+    
+    // Two vertical dividers
+    { x: 216, y: 16, w: 16, h: 192 },
+    { x: 216, y: 288, w: 16, h: 176 },
+    { x: 432, y: 16, w: 16, h: 192 },
+    { x: 432, y: 288, w: 16, h: 176 }
+  ];
+
+  gameState.doors = [
+    new Door(216, 208, 16, 80, false)
+  ];
+
+  gameState.items = [
+    new Item(104, 360, "objective", "obj3_1", true),
+    new Item(544, 360, "objective", "obj3_2", true)
+  ];
+
+  gameState.requiredItemIds = ["obj3_1", "obj3_2"];
+
+  gameState.hidingSpots = [
+    new HidingSpot(40, 64, 32, 24, "closet"),
+    new HidingSpot(304, 64, 48, 16, "table"),
+    new HidingSpot(520, 64, 32, 24, "closet")
+  ];
+
+  gameState.exitZone = new ExitZone(288, 32, 64, 48);
+
+  gameState.player = new Player(48, 360);
+
+  gameState.aoOnis = [
+    new AoOni(544, 96, 0.6, [
+      [520, 96],
+      [576, 96],
+      [576, 144],
+      [520, 144]
+    ], 80)
+  ];
+  
+  gameState.entities = [gameState.player, ...gameState.aoOnis];
+}
+
+export function createLevel4() {
+  // Level 4: Simple layout with safer item placement
+  // Scaled to 640x480 canvas
+  
+  gameState.walls = [
+    // Outer walls
+    { x: 0, y: 0, w: CANVAS_WIDTH, h: 16 },
+    { x: 0, y: 0, w: 16, h: CANVAS_HEIGHT },
+    { x: CANVAS_WIDTH - 16, y: 0, w: 16, h: CANVAS_HEIGHT },
+    { x: 0, y: CANVAS_HEIGHT - 16, w: CANVAS_WIDTH, h: 16 },
+    
+    // Central vertical wall
+    { x: 304, y: 16, w: 16, h: 152 },
+    { x: 304, y: 264, w: 16, h: 200 },
+    
+    // Horizontal walls
+    { x: 16, y: 144, w: 176, h: 16 },
+    { x: 432, y: 144, w: 192, h: 16 },
+    
+    // Small barriers
+    { x: 104, y: 288, w: 16, h: 96 },
+    { x: 488, y: 288, w: 16, h: 96 }
+  ];
+
+  gameState.doors = [
+    new Door(304, 168, 16, 96, true, "key4_1")
+  ];
+
+  gameState.items = [
+    new Item(48, 40, "key", "key4_1", false),
+    new Item(560, 48, "objective", "obj4_1", true)
+  ];
+
+  gameState.requiredItemIds = ["obj4_1"];
+
+  gameState.hidingSpots = [
+    new HidingSpot(40, 336, 32, 24, "closet"),
+    new HidingSpot(384, 40, 32, 24, "closet")
+  ];
+
+  gameState.exitZone = new ExitZone(520, 384, 64, 48);
+
+  gameState.player = new Player(40, 216);
+
+  gameState.aoOnis = [
+    new AoOni(416, 360, 1.0, [
+      [416, 360],
+      [544, 360],
+      [544, 240],
+      [416, 240]
+    ])
+  ];
+  
+  gameState.entities = [gameState.player, ...gameState.aoOnis];
+}
+
+export function createLevel5() {
+  // Level 5: Two-room layout with careful item placement
+  // Monster moved to BOTTOM-LEFT corner, away from exit
+  // Scaled to 640x480 canvas
+  
+  gameState.walls = [
+    // Outer walls
+    { x: 0, y: 0, w: CANVAS_WIDTH, h: 16 },
+    { x: 0, y: 0, w: 16, h: CANVAS_HEIGHT },
+    { x: CANVAS_WIDTH - 16, y: 0, w: 16, h: CANVAS_HEIGHT },
+    { x: 0, y: CANVAS_HEIGHT - 16, w: CANVAS_WIDTH, h: 16 },
+    
+    // Central horizontal wall
+    { x: 16, y: 240, w: 272, h: 16 },
+    { x: 368, y: 240, w: 256, h: 16 },
+    
+    // Vertical walls
+    { x: 216, y: 16, w: 16, h: 120 },
+    { x: 408, y: 336, w: 16, h: 128 },
+    
+    // Small barriers
+    { x: 104, y: 96, w: 16, h: 72 },
+    { x: 520, y: 96, w: 16, h: 72 }
+  ];
+
+  gameState.doors = [
+    new Door(288, 240, 80, 16, false)
+  ];
+
+  gameState.items = [
+    new Item(48, 48, "objective", "obj5_1", true),
+    new Item(560, 408, "objective", "obj5_2", true)
+  ];
+
+  gameState.requiredItemIds = ["obj5_1", "obj5_2"];
+
+  gameState.hidingSpots = [
+    new HidingSpot(152, 40, 32, 24, "closet"),
+    new HidingSpot(328, 384, 48, 16, "table"),
+    new HidingSpot(480, 384, 32, 24, "closet")
+  ];
+
+  gameState.exitZone = new ExitZone(520, 32, 64, 48);
+
+  gameState.player = new Player(40, 408);
+
+  // Monster moved to BOTTOM-LEFT corner, away from exit in top-right
+  gameState.aoOnis = [
+    new AoOni(120, 380, 0.9, [
+      [120, 380],
+      [120, 420],
+      [180, 420],
+      [180, 380]
+    ])
+  ];
+  
+  gameState.entities = [gameState.player, ...gameState.aoOnis];
+}
+
+export function createLevel6() {
+  // Level 6: Three-room maze with 2 keys and 2 objectives
+  // FIXED: key6b moved to accessible middle section
+  // Scaled to 640x480 canvas
+  
+  gameState.walls = [
+    // Outer walls
+    { x: 0, y: 0, w: CANVAS_WIDTH, h: 16 },
+    { x: 0, y: 0, w: 16, h: CANVAS_HEIGHT },
+    { x: CANVAS_WIDTH - 16, y: 0, w: 16, h: CANVAS_HEIGHT },
+    { x: 0, y: CANVAS_HEIGHT - 16, w: CANVAS_WIDTH, h: 16 },
+    
+    // Vertical dividers
+    { x: 216, y: 16, w: 16, h: 168 },
+    { x: 216, y: 264, w: 16, h: 200 },
+    { x: 408, y: 16, w: 16, h: 168 },
+    { x: 408, y: 264, w: 16, h: 200 },
+    
+    // Horizontal barriers
+    { x: 16, y: 168, w: 104, h: 16 },
+    { x: 328, y: 168, w: 64, h: 16 },
+    { x: 496, y: 168, w: 112, h: 16 }
+  ];
+
+  gameState.doors = [
+    new Door(216, 184, 16, 80, true, "key6a"),
+    new Door(408, 184, 16, 80, true, "key6b")
+  ];
+
+  gameState.items = [
+    new Item(48, 48, "key", "key6a", false),
+    // FIXED: key6b moved to middle section (accessible after unlocking first door)
+    new Item(328, 336, "key", "key6b", false),
+    new Item(304, 336, "objective", "obj6_1", true),
+    new Item(496, 48, "objective", "obj6_2", true)
+  ];
+
+  gameState.requiredItemIds = ["obj6_1", "obj6_2"];
+
+  gameState.hidingSpots = [
+    new HidingSpot(40, 336, 32, 24, "closet"),
+    new HidingSpot(272, 40, 48, 16, "table"),
+    new HidingSpot(544, 216, 32, 24, "closet")
+  ];
+
+  gameState.exitZone = new ExitZone(288, 384, 64, 48);
+
+  gameState.player = new Player(40, 408);
+
+  gameState.aoOnis = [
+    new AoOni(104, 304, 1.2, [
+      [104, 304],
+      [104, 120],
+      [176, 120],
+      [176, 304]
+    ]),
+    new AoOni(520, 304, 1.2, [
+      [520, 304],
+      [560, 304],
+      [560, 216],
+      [456, 216]
+    ])
+  ];
+  
+  gameState.entities = [gameState.player, ...gameState.aoOnis];
+}
+
+export function createLevel7() {
+  // Level 7: Dark level with flashlight (3 objectives)
+  // Scaled to 640x480 canvas
+  
+  gameState.walls = [
+    // Outer walls
+    { x: 0, y: 0, w: CANVAS_WIDTH, h: 16 },
+    { x: 0, y: 0, w: 16, h: CANVAS_HEIGHT },
+    { x: CANVAS_WIDTH - 16, y: 0, w: 16, h: CANVAS_HEIGHT },
+    { x: 0, y: CANVAS_HEIGHT - 16, w: CANVAS_WIDTH, h: 16 },
+    
+    // Corridor system
+    { x: 16, y: 120, w: 176, h: 16 },
+    { x: 16, y: 336, w: 176, h: 16 },
+    { x: 448, y: 120, w: 176, h: 16 },
+    { x: 448, y: 336, w: 176, h: 16 },
+    
+    // Vertical barriers
+    { x: 192, y: 16, w: 16, h: 96 },
+    { x: 304, y: 136, w: 16, h: 192 },
+    { x: 432, y: 16, w: 16, h: 96 },
+    { x: 432, y: 360, w: 16, h: 104 }
+  ];
+
+  gameState.doors = [
+    new Door(192, 112, 16, 48, false)
+  ];
+
+  gameState.items = [
+    new Item(80, 48, "flashlight", "flashlight", false),
+    new Item(368, 48, "objective", "obj7_1", true),
+    new Item(128, 408, "objective", "obj7_2", true),
+    new Item(560, 408, "objective", "obj7_3", true)
+  ];
+
+  gameState.requiredItemIds = ["obj7_1", "obj7_2", "obj7_3"];
+
+  gameState.hidingSpots = [
+    new HidingSpot(240, 40, 32, 24, "closet"),
+    new HidingSpot(368, 384, 48, 16, "table"),
+    new HidingSpot(520, 40, 32, 24, "closet")
+  ];
+
+  gameState.exitZone = new ExitZone(368, 192, 64, 96);
+
+  gameState.player = new Player(40, 216);
+
+  gameState.aoOnis = [
+    new AoOni(328, 240, 1.4, [
+      [328, 240],
+      [216, 240],
+      [216, 168],
+      [384, 168],
+      [384, 312],
+      [216, 312]
+    ])
+  ];
+  
+  gameState.entities = [gameState.player, ...gameState.aoOnis];
+}
+
+export function createLevel8() {
+  // Level 8: Final challenge with 2 keys, 3 objectives, 2 fast enemies
+  // Scaled to 640x480 canvas
+  
+  gameState.walls = [
+    // Outer walls
+    { x: 0, y: 0, w: CANVAS_WIDTH, h: 16 },
+    { x: 0, y: 0, w: 16, h: CANVAS_HEIGHT },
+    { x: CANVAS_WIDTH - 16, y: 0, w: 16, h: CANVAS_HEIGHT },
+    { x: 0, y: CANVAS_HEIGHT - 16, w: CANVAS_WIDTH, h: 16 },
+    
+    // Multi-room structure
+    { x: 168, y: 16, w: 16, h: 144 },
+    { x: 168, y: 240, w: 16, h: 224 },
+    { x: 448, y: 16, w: 16, h: 144 },
+    { x: 448, y: 240, w: 16, h: 224 },
+    
+    // Horizontal divisions
+    { x: 16, y: 168, w: 152, h: 16 },
+    { x: 184, y: 120, w: 264, h: 16 },
+    { x: 464, y: 168, w: 160, h: 16 },
+    
+    // Central barriers
+    { x: 280, y: 240, w: 16, h: 120 },
+    { x: 344, y: 288, w: 16, h: 176 }
+  ];
+
+  gameState.doors = [
+    new Door(168, 160, 16, 80, true, "key8a"),
+    new Door(448, 160, 16, 80, true, "key8b")
+  ];
+
+  gameState.items = [
+    new Item(80, 48, "key", "key8a", false),
+    new Item(560, 48, "key", "key8b", false),
+    new Item(328, 48, "objective", "obj8_1", true),
+    new Item(80, 384, "objective", "obj8_2", true),
+    new Item(560, 384, "objective", "obj8_3", true)
+  ];
+
+  gameState.requiredItemIds = ["obj8_1", "obj8_2", "obj8_3"];
+
+  gameState.hidingSpots = [
+    new HidingSpot(40, 288, 32, 24, "closet"),
+    new HidingSpot(240, 312, 48, 16, "table"),
+    new HidingSpot(392, 312, 48, 16, "table"),
+    new HidingSpot(544, 288, 32, 24, "closet")
+  ];
+
+  gameState.exitZone = new ExitZone(272, 24, 96, 72);
+
+  gameState.player = new Player(40, 216);
+
+  gameState.aoOnis = [
+    new AoOni(216, 312, 1.5, [
+      [216, 312],
+      [216, 384],
+      [128, 384],
+      [128, 216],
+      [256, 216]
+    ]),
+    new AoOni(520, 312, 1.5, [
+      [520, 312],
+      [520, 384],
+      [392, 384],
+      [392, 216],
+      [496, 216]
+    ])
+  ];
+  
+  gameState.entities = [gameState.player, ...gameState.aoOnis];
+}
+
+export function loadLevel(levelNum) {
+  // Reset level-specific state
+  gameState.walls = [];
+  gameState.doors = [];
+  gameState.items = [];
+  gameState.hidingSpots = [];
+  gameState.aoOnis = [];
+  gameState.entities = [];
+  gameState.exitZone = null;
+  gameState.inventory = [];
+  gameState.inChase = false;
+  gameState.levelComplete = false;
+  gameState.undetectedBonus = true;
+  gameState.requiredItemIds = [];
+  gameState.collectedRequiredItems = new Set();
+
+  switch (levelNum) {
+    case 1:
+      createLevel1();
+      break;
+    case 2:
+      createLevel2();
+      break;
+    case 3:
+      createLevel3();
+      break;
+    case 4:
+      createLevel4();
+      break;
+    case 5:
+      createLevel5();
+      break;
+    case 6:
+      createLevel6();
+      break;
+    case 7:
+      createLevel7();
+      break;
+    case 8:
+      createLevel8();
+      break;
+  }
+}
+</code>

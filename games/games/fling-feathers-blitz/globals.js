@@ -15,7 +15,7 @@ export const gameState = {
   structureBodies: [],
   particleEffects: [],
   levelScore: 0,
-  totalLevels: 5,
+  totalLevels: 9,
   matterEngine: null,
   matterWorld: null,
   groundBody: null,
@@ -40,7 +40,7 @@ export const BIRD_AIR_FRICTION = 0.01;
 // Collision thresholds
 export const PIG_DEFEAT_THRESHOLD = 3;
 export const WOOD_DESTROY_THRESHOLD = 5;
-export const STONE_DESTROY_THRESHOLD = 10;
+export const STONE_DESTROY_THRESHOLD = 5; // Reduced from 10 to 5
 
 // Scoring
 export const SCORE_SMALL_PIG = 100;
@@ -53,7 +53,10 @@ export const SCORE_UNUSED_BIRD = 500;
 export const BIRD_TYPES = {
   RED: 'RED',
   BLUE: 'BLUE',
-  YELLOW: 'YELLOW'
+  YELLOW: 'YELLOW',
+  BLACK: 'BLACK',
+  GREEN: 'GREEN',
+  WHITE: 'WHITE'
 };
 // Expose gameState to window for debugging and recording scripts
 if (typeof window !== 'undefined') {

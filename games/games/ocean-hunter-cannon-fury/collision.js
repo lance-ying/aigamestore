@@ -7,6 +7,8 @@ export function checkCollisions(p) {
     const projectile = gameState.projectiles[i];
     if (!projectile.active) continue;
     
+    let hitAnyFish = false;
+    
     for (let j = gameState.fish.length - 1; j >= 0; j--) {
       const fish = gameState.fish[j];
       if (!fish.active) continue;
@@ -15,7 +17,17 @@ export function checkCollisions(p) {
       
       if (distance < projectile.radius + fish.radius) {
         // Collision detected
-        projectile.active = false;
+        hitAnyFish = true;
+        
+        // Only deactivate if not piercing or hit max targets
+        if (!projectile.piercing) {
+          projectile.active = false;
+        } else {
+          projectile.hitCount++;
+          if (projectile.hitCount >= 3) {
+            projectile.active = false;
+          }
+        }
         
         const damageMultiplier = UPGRADES.DAMAGE.levels[gameState.upgrades.damage];
         const totalDamage = PROJECTILE_DAMAGE * damageMultiplier;
@@ -48,7 +60,9 @@ export function checkCollisions(p) {
           });
         }
         
-        break;
+        if (!projectile.piercing) {
+          break;
+        }
       }
     }
   }

@@ -288,8 +288,8 @@ function handleFoulPhase(p) {
 export function executeShot(p) {
   if (!gameState.cueBall || gameState.cueBall.pocketed) return;
   
-  // Calculate force based on power and angle
-  const force = gameState.shotPower / 1000;
+  // Calculate force based on power and angle - increased multiplier for stronger shots
+  const force = gameState.shotPower / 850;
   const forceX = Math.cos(gameState.aimAngle) * force;
   const forceY = Math.sin(gameState.aimAngle) * force;
   

@@ -1,7 +1,7 @@
 // globals.js - Global constants and state management
 
-export const CANVAS_WIDTH = 800;
-export const CANVAS_HEIGHT = 600;
+export const CANVAS_WIDTH = 640;
+export const CANVAS_HEIGHT = 400;
 
 export const GAME_PHASES = {
   START: "START",

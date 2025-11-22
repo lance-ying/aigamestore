@@ -9,7 +9,8 @@ import {
   TRACK_X_OFFSET, RIVAL_CAR_WIDTH, RIVAL_CAR_HEIGHT,
   OBSTACLE_DAMAGE, RIVAL_DAMAGE, BOSS_DAMAGE, BOSS_WIDTH,
   BOSS_HEIGHT, BOSS_MAX_HEALTH, CANVAS_WIDTH, CANVAS_HEIGHT,
-  POINTS_OVERTAKE, gameState, UPGRADE_EFFECTS
+  POINTS_OVERTAKE, gameState, UPGRADE_EFFECTS, RAMP_BOOST_DURATION,
+  RAMP_INVINCIBILITY_DURATION
 } from './globals.js';
 
 export class PlayerCar {
@@ -33,6 +34,8 @@ export class PlayerCar {
     this.exhaustParticles = [];
     this.driftTrails = [];
     this.color = [100, 220, 100];
+    this.rampBoostFrames = 0; // Track ramp boost duration
+    this.fireParticles = []; // Fire trail during boost
     
     // Tap detection for lane changes - track previous states
     this.prevLeftPressed = false;
@@ -50,6 +53,40 @@ export class PlayerCar {
     const handlingBoost = gameState.upgrades.handling > 0 ? UPGRADE_EFFECTS.handling[gameState.upgrades.handling - 1] : 1;
 
     this.maxSpeed = MAX_SPEED * engineBoost;
+    
+    // Update ramp boost
+    if (this.rampBoostFrames > 0) {
+      this.rampBoostFrames--;
+      
+      // Add FIRE particles - dramatic effect!
+      if (this.p.frameCount % 2 === 0) {
+        // Multiple fire particles for dramatic effect
+        for (let i = 0; i < 5; i++) {
+          this.fireParticles.push({
+            x: this.x + this.p.random(-15, 15),
+            y: this.y + this.height / 2,
+            vx: this.p.random(-1, 1),
+            vy: this.p.random(2, 4),
+            life: 30,
+            alpha: 255,
+            size: this.p.random(8, 16),
+            hue: this.p.random(0, 30) // Orange to red-orange
+          });
+        }
+      }
+      
+      // Add boost particles
+      if (this.p.frameCount % 2 === 0) {
+        for (let i = 0; i < 3; i++) {
+          this.exhaustParticles.push({
+            x: this.x + this.p.random(-10, 10),
+            y: this.y + this.height / 2,
+            life: 30,
+            alpha: 220
+          });
+        }
+      }
+    }
     
     // CONTINUOUS INPUT: Up Arrow/W - Hold to Accelerate
     if (gameState.inputState.up) {
@@ -175,6 +212,16 @@ export class PlayerCar {
       }
     }
 
+    // Update fire particles
+    this.fireParticles = this.fireParticles.filter(p => {
+      p.life--;
+      p.alpha -= 8.5;
+      p.y += p.vy;
+      p.x += p.vx;
+      p.size *= 0.96; // Shrink over time
+      return p.life > 0;
+    });
+
     // Update particles
     this.exhaustParticles = this.exhaustParticles.filter(p => {
       p.life--;
@@ -197,6 +244,14 @@ export class PlayerCar {
     }
   }
 
+  applyRampBoost(boost) {
+    this.speed = this.p.min(this.speed + boost, this.maxSpeed * 1.5); // Allow temporary overspeed
+    this.rampBoostFrames = RAMP_BOOST_DURATION;
+    // Make invincible during boost!
+    this.invulnerableFrames = RAMP_INVINCIBILITY_DURATION;
+    this.flashTimer = 0;
+  }
+
   takeDamage(amount) {
     if (this.invulnerableFrames > 0) return;
     
@@ -214,6 +269,24 @@ export class PlayerCar {
     p.translate(this.x, this.y);
     p.rotate(this.tiltAngle);
 
+    // Draw fire particles BEHIND the car
+    this.fireParticles.forEach(fire => {
+      // Create gradient effect with multiple circles
+      p.noStroke();
+      
+      // Outer glow (orange)
+      p.fill(255, 140, 0, fire.alpha * 0.3);
+      p.circle(fire.x - this.x, fire.y - this.y, fire.size * 1.3);
+      
+      // Middle (orange-red)
+      p.fill(255, 100, 0, fire.alpha * 0.6);
+      p.circle(fire.x - this.x, fire.y - this.y, fire.size);
+      
+      // Core (yellow-white)
+      p.fill(255, 220, 50, fire.alpha);
+      p.circle(fire.x - this.x, fire.y - this.y, fire.size * 0.5);
+    });
+
     // Draw drift trails
     this.driftTrails.forEach(trail => {
       p.stroke(255, 255, 255, trail.alpha);
@@ -223,14 +296,52 @@ export class PlayerCar {
 
     // Draw exhaust particles
     this.exhaustParticles.forEach(particle => {
-      p.fill(100, 100, 100, particle.alpha);
+      const color = this.rampBoostFrames > 0 ? [255, 200, 50] : [100, 100, 100];
+      p.fill(...color, particle.alpha);
       p.noStroke();
       p.circle(particle.x - this.x, particle.y - this.y, 4);
     });
 
-    // Flash when hit
-    const isFlashing = this.invulnerableFrames > 0 && this.flashTimer % 8 < 4;
+    // Flash when hit (but NOT when in ramp boost mode)
+    const isFlashing = this.invulnerableFrames > 0 && this.rampBoostFrames === 0 && this.flashTimer % 8 < 4;
+    
     if (!isFlashing) {
+      // Draw animated shield outline when invincible from ramp boost
+      if (this.rampBoostFrames > 0) {
+        // Pulsing cyan/blue outline effect to show invincibility
+        const pulseSize = 4 + Math.sin(p.frameCount * 0.3) * 2;
+        const pulseAlpha = 150 + Math.sin(p.frameCount * 0.3) * 50;
+        
+        // Outer shield glow
+        p.noFill();
+        p.stroke(100, 200, 255, pulseAlpha * 0.7);
+        p.strokeWeight(4);
+        p.rect(-this.width / 2 - pulseSize, -this.height / 2 - pulseSize, 
+               this.width + pulseSize * 2, this.height + pulseSize * 2, 8);
+        
+        // Inner shield outline
+        p.stroke(150, 220, 255, pulseAlpha);
+        p.strokeWeight(2);
+        p.rect(-this.width / 2 - pulseSize * 0.5, -this.height / 2 - pulseSize * 0.5, 
+               this.width + pulseSize, this.height + pulseSize, 7);
+        
+        // Corner sparkles for extra effect
+        const sparkleOffset = pulseSize + 2;
+        p.fill(200, 240, 255, pulseAlpha);
+        p.noStroke();
+        p.circle(-this.width / 2 - sparkleOffset, -this.height / 2 - sparkleOffset, 4);
+        p.circle(this.width / 2 + sparkleOffset, -this.height / 2 - sparkleOffset, 4);
+        p.circle(-this.width / 2 - sparkleOffset, this.height / 2 + sparkleOffset, 4);
+        p.circle(this.width / 2 + sparkleOffset, this.height / 2 + sparkleOffset, 4);
+      }
+
+      // Glow effect during ramp boost (existing yellow glow for speed)
+      if (this.rampBoostFrames > 0) {
+        p.fill(255, 200, 50, 80);
+        p.noStroke();
+        p.rect(-this.width / 2 - 3, -this.height / 2 - 3, this.width + 6, this.height + 6, 7);
+      }
+
       // Car body
       p.fill(...this.color);
       p.stroke(0);
@@ -261,6 +372,11 @@ export class PlayerCar {
 
     // Draw health bar
     this.renderHealthBar();
+    
+    // Draw boost indicator
+    if (this.rampBoostFrames > 0) {
+      this.renderBoostIndicator();
+    }
   }
 
   renderHealthBar() {
@@ -279,6 +395,74 @@ export class PlayerCar {
     const healthColor = healthPercent > 0.5 ? [100, 220, 100] : healthPercent > 0.25 ? [220, 180, 50] : [220, 50, 50];
     p.fill(...healthColor);
     p.rect(barX, barY, barWidth * healthPercent, barHeight);
+  }
+
+  renderBoostIndicator() {
+    const p = this.p;
+    p.fill(255, 200, 50);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(12);
+    p.text("BOOST!", this.x, this.y - this.height / 2 - 20);
+    
+    // Small flame icons
+    p.noStroke();
+    p.fill(255, 140, 0);
+    p.triangle(this.x - 25, this.y - this.height / 2 - 15, this.x - 30, this.y - this.height / 2 - 10, this.x - 20, this.y - this.height / 2 - 10);
+    p.triangle(this.x + 25, this.y - this.height / 2 - 15, this.x + 30, this.y - this.height / 2 - 10, this.x + 20, this.y - this.height / 2 - 10);
+  }
+}
+
+export class Coin {
+  constructor(p, lane, y = -50) {
+    this.p = p;
+    this.lane = lane;
+    this.x = TRACK_X_OFFSET + lane * LANE_WIDTH + LANE_WIDTH / 2;
+    this.y = y;
+    this.width = 20;
+    this.height = 20;
+    this.rotationAngle = 0;
+    this.bobOffset = 0;
+  }
+
+  update() {
+    this.y += gameState.scrollSpeed;
+    this.rotationAngle += 0.1;
+    this.bobOffset = Math.sin(this.p.frameCount * 0.1) * 3;
+  }
+
+  render() {
+    const p = this.p;
+    p.push();
+    p.translate(this.x, this.y + this.bobOffset);
+    p.rotate(this.rotationAngle);
+
+    // Outer glow
+    p.fill(255, 215, 0, 100);
+    p.noStroke();
+    p.circle(0, 0, this.width + 6);
+
+    // Coin body
+    p.fill(255, 215, 0);
+    p.stroke(200, 170, 0);
+    p.strokeWeight(2);
+    p.circle(0, 0, this.width);
+
+    // Inner detail
+    p.fill(255, 235, 50);
+    p.noStroke();
+    p.circle(0, 0, this.width * 0.6);
+
+    // Dollar sign
+    p.fill(200, 170, 0);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(14);
+    p.text('$', 0, 0);
+
+    p.pop();
+  }
+
+  isOffScreen() {
+    return this.y > CANVAS_HEIGHT + 50;
   }
 }
 
@@ -424,10 +608,22 @@ export class Obstacle {
         break;
 
       case 'ramp':
-        p.fill(120, 120, 120);
-        p.stroke(80);
+        // Make ramp look like a speed booster with glow
+        p.fill(50, 255, 50, 120);
+        p.noStroke();
+        p.triangle(-this.width / 2 - 5, this.height / 2 + 5, this.width / 2 + 5, this.height / 2 + 5, 0, -this.height / 2 - 5);
+        
+        p.fill(100, 255, 100);
+        p.stroke(50, 200, 50);
         p.strokeWeight(2);
         p.triangle(-this.width / 2, this.height / 2, this.width / 2, this.height / 2, 0, -this.height / 2);
+        
+        // Speed lines inside
+        p.stroke(200, 255, 200);
+        p.strokeWeight(2);
+        p.line(0, -5, 0, 5);
+        p.line(-8, 0, -4, 0);
+        p.line(4, 0, 8, 0);
         break;
     }
 

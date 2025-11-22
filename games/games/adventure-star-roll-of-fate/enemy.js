@@ -1,6 +1,6 @@
 // enemy.js - Enemy entity with autonomous movement AI
 
-import { GRID_CONFIG } from './globals.js';
+import { GRID_CONFIG, PLAYER_TITLE } from './globals.js';
 
 export class Enemy {
   constructor(gridX, gridY, level, type = "NORMAL") {
@@ -63,6 +63,11 @@ export class Enemy {
         this.color = [255, 50, 50];
         this.name = "Normal";
         break;
+    }
+    
+    // Ensure enemy name doesn't match player title
+    if (this.name === PLAYER_TITLE) {
+      this.name = this.name + " Enemy";
     }
   }
 

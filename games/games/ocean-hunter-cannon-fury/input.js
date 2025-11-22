@@ -46,7 +46,7 @@ export function handleKeyPressed(p) {
     fireCannon(p);
   }
   
-  // Upgrades (1, 2, 3 keys)
+  // Upgrades (1, 2, 3, 4 keys)
   if (p.keyCode === 49) { // 1 key
     purchaseUpgrade('damage', p);
   }
@@ -55,6 +55,9 @@ export function handleKeyPressed(p) {
   }
   if (p.keyCode === 51) { // 3 key
     purchaseUpgrade('rotationSpeed', p);
+  }
+  if (p.keyCode === 52) { // 4 key
+    purchaseUpgrade('weaponType', p);
   }
 }
 

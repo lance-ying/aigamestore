@@ -38,28 +38,27 @@ function drawStartScreen(p) {
   
   const instructions = [
     'OBJECTIVE:',
-    '  Complete all 4 levels by reaching the target score',
-    '  before time runs out!',
+    '  Complete all 9 levels (3 easy, 3 medium, 3 hard)',
+    '  by reaching the target score before time runs out!',
     '',
     'FISH TYPES:',
-    '  Sardine (Blue) - 10 pts',
-    '  Tuna (Green) - 25 pts',
-    '  Manta Ray (Orange) - 50 pts',
-    '  Shark (Grey) - 200 pts',
+    '  Sardine (Blue) - 10 pts   Clownfish (Orange) - 15 pts',
+    '  Tuna (Green) - 25 pts     Seahorse (Yellow) - 30 pts',
+    '  Manta Ray (Orange) - 50pts  Jellyfish (Purple) - 60 pts',
+    '  Swordfish (Blue) - 100 pts  Shark (Grey) - 200 pts',
     '  Giant Squid (Purple) - 500 pts',
     '',
     'CONTROLS:',
     '  Arrow Keys - Aim cannon (hold for continuous rotation)',
     '  SPACE - Fire',
-    '  1, 2, 3 - Purchase upgrades during gameplay',
-    '  ESC - Pause',
-    '  R - Restart (from game over)'
+    '  1-4 - Purchase upgrades during gameplay',
+    '  ESC - Pause   R - Restart (from game over)'
   ];
   
   let y = 155;
   for (const line of instructions) {
     p.text(line, 40, y);
-    y += 18;
+    y += 16;
   }
   
   // Start prompt
@@ -129,13 +128,13 @@ function drawUpgradePanel(p) {
   p.text('UPGRADES:', panelX + 10, panelY + 8);
   
   // Draw each upgrade
-  const upgradeTypes = ['DAMAGE', 'FIRE_RATE', 'ROTATION_SPEED'];
-  const upgradeKeys = ['damage', 'fireRate', 'rotationSpeed'];
-  const keyNumbers = ['1', '2', '3'];
+  const upgradeTypes = ['DAMAGE', 'FIRE_RATE', 'ROTATION_SPEED', 'WEAPON_TYPE'];
+  const upgradeKeys = ['damage', 'fireRate', 'rotationSpeed', 'weaponType'];
+  const keyNumbers = ['1', '2', '3', '4'];
   
-  p.textSize(11);
+  p.textSize(10);
   for (let i = 0; i < upgradeTypes.length; i++) {
-    const x = panelX + 15 + i * 190;
+    const x = panelX + 15 + i * 143;
     const y = panelY + 28;
     
     const upgradeType = upgradeTypes[i];
@@ -148,7 +147,7 @@ function drawUpgradePanel(p) {
     p.fill(100, 200, 255);
     p.text(`[${keyNumbers[i]}] ${upgradeData.name}`, x, y);
     p.fill(255);
-    p.text(`Lv ${currentLevel}/${maxLevel}`, x, y + 14);
+    p.text(`Lv ${currentLevel}/${maxLevel}`, x, y + 13);
     
     // Current value
     const currentValue = upgradeData.levels[currentLevel];
@@ -159,19 +158,21 @@ function drawUpgradePanel(p) {
       valueText = `${Math.round(100 / currentValue)}%`;
     } else if (upgradeType === 'ROTATION_SPEED') {
       valueText = `${currentValue}x`;
+    } else if (upgradeType === 'WEAPON_TYPE') {
+      valueText = currentValue;
     }
     p.fill(150, 255, 150);
-    p.text(valueText, x + 90, y + 14);
+    p.text(valueText, x + 65, y + 13);
     
     // Next upgrade cost or MAX
     if (currentLevel < maxLevel) {
       const nextCost = upgradeData.costs[currentLevel + 1];
       const canAfford = gameState.totalGameScore >= nextCost;
       p.fill(canAfford ? [255, 255, 100] : [150, 150, 150]);
-      p.text(`Next: ${nextCost}`, x, y + 28);
+      p.text(`Next: ${nextCost}`, x, y + 26);
     } else {
       p.fill(255, 100, 255);
-      p.text('MAX', x, y + 28);
+      p.text('MAX', x, y + 26);
     }
   }
   

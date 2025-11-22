@@ -43,7 +43,21 @@ export function updatePhysics() {
       entity.active = false;
       if (entity.body && gameState.matterWorld) {
         World.remove(gameState.matterWorld, entity.body);
-        entity.body = null; // Clear reference to prevent stale body issues
+        entity.body = null;
+      }
+    }
+  });
+  
+  // Check egg collisions and trigger explosions
+  gameState.entities.forEach(entity => {
+    if (entity.type === 'egg' && entity.active && !entity.hasExploded) {
+      // Check if egg is moving very slowly or hit something
+      const speed = Math.sqrt(
+        entity.body.velocity.x * entity.body.velocity.x +
+        entity.body.velocity.y * entity.body.velocity.y
+      );
+      if (speed < 1 || entity.body.position.y > GROUND_Y - 10) {
+        entity.explode();
       }
     }
   });
@@ -69,6 +83,14 @@ function handleCollisionStart(event) {
     // Find entities for these bodies
     const entityA = gameState.entities.find(e => e.body === bodyA);
     const entityB = gameState.entities.find(e => e.body === bodyB);
+    
+    // Check for egg hitting anything - trigger explosion
+    if (entityA && entityA.type === 'egg' && !entityA.hasExploded) {
+      entityA.explode();
+    }
+    if (entityB && entityB.type === 'egg' && !entityB.hasExploded) {
+      entityB.explode();
+    }
     
     // Check for pig hitting ground with high velocity
     if (bodyA === gameState.groundBody && entityB && entityB.type === 'pig') {
@@ -99,7 +121,6 @@ function handleGroundImpact(pig, pigBody) {
   const impactSpeed = Math.abs(pigBody.velocity.y);
   
   // If pig is falling fast, take damage
-  // Lowered threshold from 2.5 to 1.5 and increased damage
   if (impactSpeed > 1.5) {
     const damage = Math.ceil(impactSpeed / 1.5);
     pig.takeDamage(damage);
@@ -114,7 +135,7 @@ function handleCollisionDamage(e1, e2, force) {
   const isBlock1 = e1.type === 'block';
   const isBlock2 = e2.type === 'block';
   
-  // Bird hitting pig - lowered threshold from 2 to 1.5 to match outer collision check
+  // Bird hitting pig
   if (isBird1 && isPig2 && force > 1.5) {
     const damage = Math.max(1, Math.floor(force / 2));
     e2.takeDamage(damage);
@@ -131,31 +152,42 @@ function handleCollisionDamage(e1, e2, force) {
     e1.takeDamage(1);
   }
   
-  // Block hitting pig - lowered threshold from 3 to 1.5 so pigs take damage when falling
-  // Also check if pig is falling (negative Y velocity) to apply damage more easily
+  // Block landing on pig - INSTANT KILL if falling from above
   if (isBlock1 && isPig2) {
-    const pigVelocity = e2.body.velocity.y;
-    const isPigFalling = pigVelocity > 0.5; // Pig is falling down
-    const threshold = isPigFalling ? 1.5 : 2.5; // Lower threshold when pig is falling
-    if (force > threshold) {
-      const damage = Math.max(1, Math.ceil(force / (isPigFalling ? 2.5 : 3)));
+    const isAbove = e1.body.position.y < e2.body.position.y;
+    const isFalling = e1.body.velocity.y > 0.5;
+    if (isAbove && isFalling) {
+      e2.takeDamage(100);
+    } else if (force > 2.5) {
+      const damage = Math.max(1, Math.ceil(force / 3));
       e2.takeDamage(damage);
     }
   } else if (isBlock2 && isPig1) {
-    const pigVelocity = e1.body.velocity.y;
-    const isPigFalling = pigVelocity > 0.5; // Pig is falling down
-    const threshold = isPigFalling ? 1.5 : 2.5; // Lower threshold when pig is falling
-    if (force > threshold) {
-      const damage = Math.max(1, Math.ceil(force / (isPigFalling ? 2.5 : 3)));
+    const isAbove = e2.body.position.y < e1.body.position.y;
+    const isFalling = e2.body.velocity.y > 0.5;
+    if (isAbove && isFalling) {
+      e1.takeDamage(100);
+    } else if (force > 2.5) {
+      const damage = Math.max(1, Math.ceil(force / 3));
       e1.takeDamage(damage);
     }
   }
   
-  // Pig hitting pig - add damage for pig-to-pig collisions when falling
-  if (isPig1 && isPig2 && force > 2) {
+  // Pig landing on pig - INSTANT KILL the one below
+  if (isPig1 && isPig2) {
+    const pig1Above = e1.body.position.y < e2.body.position.y;
+    const pig2Above = e2.body.position.y < e1.body.position.y;
     const pig1Falling = e1.body.velocity.y > 0.5;
     const pig2Falling = e2.body.velocity.y > 0.5;
-    if (pig1Falling || pig2Falling) {
+    
+    if (pig1Above && pig1Falling) {
+      e2.takeDamage(100);
+    }
+    if (pig2Above && pig2Falling) {
+      e1.takeDamage(100);
+    }
+    
+    if (force > 2 && (pig1Falling || pig2Falling) && !pig1Above && !pig2Above) {
       const damage = Math.max(1, Math.floor(force / 3));
       if (pig1Falling) e1.takeDamage(damage);
       if (pig2Falling) e2.takeDamage(damage);

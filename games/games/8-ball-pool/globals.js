@@ -73,7 +73,7 @@ export const gameState = {
   cueBall: null,
   aimAngle: 0,
   shotPower: 0,
-  maxShotPower: 60, // Reduced from 100 to prevent phasing
+  maxShotPower: 85, // Increased from 60 for stronger shots
   spinEffect: { x: 0, y: 0 },
   foulStatus: false,
   foulMessage: "",

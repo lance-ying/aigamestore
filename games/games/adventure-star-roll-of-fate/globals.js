@@ -4,6 +4,8 @@ export const CANVAS_WIDTH = 600;
 export const CANVAS_HEIGHT = 400;
 export const TARGET_FPS = 60;
 
+export const PLAYER_TITLE = "Hero";
+
 export const GAME_PHASE = {
   START: "START",
   PLAYING: "PLAYING",
