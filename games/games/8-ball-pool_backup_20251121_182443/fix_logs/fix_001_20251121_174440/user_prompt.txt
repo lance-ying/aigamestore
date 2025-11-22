@@ -1,0 +1,1277 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+I want to have 9 explicit levels, 3 levels that are easy, 3 levels that are medium, and 3 levels that are hard, 
+
+can you explicitly add that to this game, perhaps the difficult can be adjusted by  changing the position of the balls to be closer to the holes, changing the  size of the table, there is also a bug where some of the balls sometimes get knocked out of the table in the corner section, can you add that fix as well? 
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">Pool Challenge</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Basic testing)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Win)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Welcome to Pool Challenge! Your objective is simple: use the white cue ball to pocket all 15 colored balls into the holes. Aim carefully, adjust your power, and clear the table! Avoid scratching (pocketing the cue ball) as it's a foul. Progress through increasingly challenging levels to master your pool skills!</p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Arrow Left/Right: Rotate cue stick to aim (hold for continuous)<br>Arrow Up/Down: Adjust shot power (hold for continuous)<br>Shift + Arrow Keys: Apply spin (Up=top, Down=back, Left/Right=side)<br>Space: Execute shot<br>Z: Confirm cue ball placement (after foul)<br>Enter: Start game<br>Escape: Pause/Unpause<br>R: Restart to main menu</p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="../../dev_mode.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="globals.js">
+// globals.js - Global constants and game state
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+// Table dimensions
+export const TABLE_X = 50;
+export const TABLE_Y = 50;
+export const TABLE_WIDTH = 500;
+export const TABLE_HEIGHT = 300;
+
+// Ball properties
+export const BALL_RADIUS = 8;
+export const CUE_BALL_RADIUS = 8;
+
+// Pocket positions (6 pockets)
+export const POCKETS = [
+  { x: TABLE_X, y: TABLE_Y }, // Top-left
+  { x: TABLE_X + TABLE_WIDTH / 2, y: TABLE_Y }, // Top-middle
+  { x: TABLE_X + TABLE_WIDTH, y: TABLE_Y }, // Top-right
+  { x: TABLE_X, y: TABLE_Y + TABLE_HEIGHT }, // Bottom-left
+  { x: TABLE_X + TABLE_WIDTH / 2, y: TABLE_Y + TABLE_HEIGHT }, // Bottom-middle
+  { x: TABLE_X + TABLE_WIDTH, y: TABLE_Y + TABLE_HEIGHT } // Bottom-right
+];
+
+export const POCKET_RADIUS = 12;
+
+// Game state object
+export const gameState = {
+  player: null,
+  entities: [],
+  score: 0,
+  level: 1,
+  gamePhase: "START", // "START", "PLAYING", "PAUSED", "GAME_OVER_WIN", "GAME_OVER_LOSE"
+  controlMode: "HUMAN",
+  engine: null,
+  world: null,
+  
+  // Pool-specific state
+  playingPhase: "AIMING", // "AIMING", "SHOT", "WAITING", "FOUL"
+  pocketedBalls: [],
+  ballsOnTable: [],
+  cueBall: null,
+  aimAngle: 0,
+  shotPower: 0,
+  maxShotPower: 60, // Reduced from 100 to prevent phasing
+  spinEffect: { x: 0, y: 0 },
+  foulStatus: false,
+  foulMessage: "",
+  ballInHand: false,
+  ballInHandPosition: { x: TABLE_X + 100, y: TABLE_Y + TABLE_HEIGHT / 2 },
+  isBreak: true,
+  waitingForBallsToStop: false,
+  lastPocketedBalls: [],
+  firstContactBall: null,
+  cushionHits: 0,
+  
+  // Visual elements
+  cueStick: null,
+  aimGuide: null,
+  
+  // Level parameters
+  levelParams: {
+    pocketSizeMultiplier: 1.0,
+    tableFriction: 0.1
+  }
+};
+
+// Ball colors and types
+export const BALL_COLORS = {
+  0: { r: 255, g: 255, b: 255, type: "cue" }, // Cue ball
+  1: { r: 255, g: 220, b: 0, type: "solid" }, // Yellow
+  2: { r: 0, g: 100, b: 200, type: "solid" }, // Blue
+  3: { r: 220, g: 0, b: 0, type: "solid" }, // Red
+  4: { r: 100, g: 0, b: 150, type: "solid" }, // Purple
+  5: { r: 255, g: 140, b: 0, type: "solid" }, // Orange
+  6: { r: 0, g: 150, b: 0, type: "solid" }, // Green
+  7: { r: 120, g: 0, b: 0, type: "solid" }, // Maroon
+  8: { r: 0, g: 0, b: 0, type: "eight" }, // 8-ball
+  9: { r: 255, g: 220, b: 0, type: "stripe" }, // Yellow stripe
+  10: { r: 0, g: 100, b: 200, type: "stripe" }, // Blue stripe
+  11: { r: 220, g: 0, b: 0, type: "stripe" }, // Red stripe
+  12: { r: 100, g: 0, b: 150, type: "stripe" }, // Purple stripe
+  13: { r: 255, g: 140, b: 0, type: "stripe" }, // Orange stripe
+  14: { r: 0, g: 150, b: 0, type: "stripe" }, // Green stripe
+  15: { r: 120, g: 0, b: 0, type: "stripe" } // Maroon stripe
+};
+
+export function getGameState() {
+  return gameState;
+}
+
+// Expose globally
+if (typeof window !== 'undefined') {
+  window.getGameState = getGameState;
+}
+</file>
+
+<file name="ai.js">
+// ai.js - AI opponent logic
+import Matter from 'https://cdn.jsdelivr.net/npm/matter-js@0.19.0/+esm';
+const { Body } = Matter;
+
+import { gameState, BALL_COLORS, TABLE_X, TABLE_Y, TABLE_WIDTH, TABLE_HEIGHT } from './globals.js';
+
+export function aiTakeShot(p) {
+  // AI decision making based on level
+  const skill = gameState.levelParams.aiSkill;
+  
+  // Find AI's target balls
+  const aiBalls = getAITargetBalls();
+  
+  if (aiBalls.length === 0) return;
+  
+  // Pick a random target ball (simplified AI)
+  const targetBall = aiBalls[Math.floor(p.random() * aiBalls.length)];
+  
+  // Calculate angle to hit the target ball
+  const cueBallPos = gameState.cueBall.body.position;
+  const targetPos = targetBall.body.position;
+  
+  const dx = targetPos.x - cueBallPos.x;
+  const dy = targetPos.y - cueBallPos.y;
+  let angle = Math.atan2(dy, dx);
+  
+  // Add error based on skill level (lower skill = more error)
+  const errorRange = (1 - skill) * 0.5;
+  angle += (p.random() - 0.5) * errorRange;
+  
+  gameState.aimAngle = angle;
+  
+  // Set power based on skill
+  const basePower = 30 + p.random() * 40;
+  gameState.shotPower = Math.min(basePower * (0.5 + skill), gameState.maxShotPower);
+  
+  // Simple spin (rare for lower skill)
+  if (p.random() < skill * 0.3) {
+    gameState.spinEffect = {
+      x: (p.random() - 0.5) * 0.2,
+      y: (p.random() - 0.5) * 0.2
+    };
+  } else {
+    gameState.spinEffect = { x: 0, y: 0 };
+  }
+}
+
+function getAITargetBalls() {
+  const targetBalls = [];
+  
+  gameState.ballsOnTable.forEach(ball => {
+    if (ball.pocketed || ball.number === 0) return;
+    
+    const ballType = BALL_COLORS[ball.number].type;
+    
+    if (gameState.aiBallsType === "open") {
+      // Can hit any ball except 8-ball
+      if (ball.number !== 8) {
+        targetBalls.push(ball);
+      }
+    } else if (gameState.aiBallsType === "solids" && ballType === "solid") {
+      targetBalls.push(ball);
+    } else if (gameState.aiBallsType === "stripes" && ballType === "stripe") {
+      targetBalls.push(ball);
+    }
+  });
+  
+  // If all assigned balls pocketed, target 8-ball
+  if (targetBalls.length === 0 && gameState.aiBallsType !== "open") {
+    const eightBall = gameState.ballsOnTable.find(b => b.number === 8 && !b.pocketed);
+    if (eightBall) {
+      targetBalls.push(eightBall);
+    }
+  }
+  
+  return targetBalls;
+}
+</file>
+
+<file name="game.js">
+// game.js - Main game file
+const p5 = window.p5;
+import Matter from 'https://cdn.jsdelivr.net/npm/matter-js@0.19.0/+esm';
+const { Engine, World, Body } = Matter;
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { initializeGame, updateGame, executeShot, resetGame } from './gameLogic.js';
+import { setupPhysics } from './physics.js';
+import { renderStartScreen, renderGame, renderPausedOverlay, renderGameOver } from './rendering.js';
+
+let gameInstance = new p5(p => {
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(60);
+    p.randomSeed(42);
+    
+    // Create Matter.js engine and world
+    const engine = Engine.create();
+    const world = engine.world;
+    world.gravity.y = 0; // No gravity for pool table
+    
+    gameState.engine = engine;
+    gameState.world = world;
+    
+    // Setup physics
+    setupPhysics(p);
+    
+    // Initialize p5.logs
+    p.logs = {
+      game_info: [],
+      player_info: [],
+      inputs: []
+    };
+    
+    // Log initial state
+    p.logs.game_info.push({
+      data: { gamePhase: gameState.gamePhase },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+    
+    // Initialize game
+    initializeGame(p);
+  };
+  
+  p.draw = function() {
+    // Update Matter.js physics with multiple substeps to prevent tunneling
+    const substeps = 4;
+    const timestep = (1000 / 60) / substeps;
+    for (let i = 0; i < substeps; i++) {
+      Engine.update(gameState.engine, timestep);
+    }
+    
+    // Handle continuous input for aiming and power
+    handleContinuousInput(p);
+    
+    // Update and render based on game phase
+    switch (gameState.gamePhase) {
+      case "START":
+        renderStartScreen(p);
+        break;
+      case "PLAYING":
+        updateGame(p);
+        renderGame(p);
+        break;
+      case "PAUSED":
+        renderGame(p);
+        renderPausedOverlay(p);
+        break;
+      case "GAME_OVER_WIN":
+      case "GAME_OVER_LOSE":
+        renderGameOver(p);
+        break;
+    }
+  };
+  
+  function handleContinuousInput(p) {
+    // Only handle continuous input during player's aiming phase
+    if (gameState.gamePhase !== "PLAYING" || 
+        gameState.playingPhase !== "AIMING" || 
+        gameState.controlMode !== "HUMAN") {
+      return;
+    }
+    
+    // Continuous aim adjustment
+    if (p.keyIsDown(37)) { // Arrow Left
+      if (!p.keyIsDown(16)) { // Not holding Shift
+        gameState.aimAngle -= 0.02;
+      }
+    }
+    
+    if (p.keyIsDown(39)) { // Arrow Right
+      if (!p.keyIsDown(16)) { // Not holding Shift
+        gameState.aimAngle += 0.02;
+      }
+    }
+    
+    // Continuous power adjustment
+    if (p.keyIsDown(38)) { // Arrow Up
+      if (!p.keyIsDown(16)) { // Not holding Shift
+        gameState.shotPower = Math.min(gameState.maxShotPower, gameState.shotPower + 1);
+      }
+    }
+    
+    if (p.keyIsDown(40)) { // Arrow Down
+      if (!p.keyIsDown(16)) { // Not holding Shift
+        gameState.shotPower = Math.max(0, gameState.shotPower - 1);
+      }
+    }
+  }
+  
+  p.keyPressed = function() {
+    // Log input
+    p.logs.inputs.push({
+      input_type: "keyPressed",
+      data: { key: p.key, keyCode: p.keyCode },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+    
+    // Phase control keys
+    if (p.keyCode === 13 && gameState.gamePhase === "START") { // ENTER
+      gameState.gamePhase = "PLAYING";
+      p.logs.game_info.push({
+        data: { gamePhase: "PLAYING" },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+    
+    if (p.keyCode === 27) { // ESC - Pause/Unpause
+      if (gameState.gamePhase === "PLAYING") {
+        gameState.gamePhase = "PAUSED";
+        p.logs.game_info.push({
+          data: { gamePhase: "PAUSED" },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      } else if (gameState.gamePhase === "PAUSED") {
+        gameState.gamePhase = "PLAYING";
+        p.logs.game_info.push({
+          data: { gamePhase: "PLAYING" },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    }
+    
+    if (p.keyCode === 82) { // R - Restart
+      if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE" || gameState.gamePhase === "PAUSED") {
+        gameState.level = 1;
+        gameState.score = 0;
+        resetGame(p);
+        gameState.gamePhase = "START";
+        p.logs.game_info.push({
+          data: { gamePhase: "START" },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    }
+    
+    // Gameplay controls (only during PLAYING phase)
+    if (gameState.gamePhase === "PLAYING" && gameState.playingPhase === "AIMING" && gameState.controlMode === "HUMAN") {
+      // Spin controls (discrete)
+      if (p.keyCode === 37 && p.keyIsDown(16)) { // Shift + Left = Left spin
+        gameState.spinEffect.x = Math.max(-1, gameState.spinEffect.x - 0.2);
+      }
+      
+      if (p.keyCode === 39 && p.keyIsDown(16)) { // Shift + Right = Right spin
+        gameState.spinEffect.x = Math.min(1, gameState.spinEffect.x + 0.2);
+      }
+      
+      if (p.keyCode === 38 && p.keyIsDown(16)) { // Shift + Up = Top spin
+        gameState.spinEffect.y = Math.max(-1, gameState.spinEffect.y - 0.2);
+      }
+      
+      if (p.keyCode === 40 && p.keyIsDown(16)) { // Shift + Down = Back spin
+        gameState.spinEffect.y = Math.min(1, gameState.spinEffect.y + 0.2);
+      }
+      
+      // Execute shot
+      if (p.keyCode === 32) { // Space
+        if (gameState.shotPower > 0) {
+          executeShot(p);
+        }
+      }
+      
+      // Ball placement confirmation
+      if (p.keyCode === 90 && gameState.ballInHand) { // Z
+        gameState.ballInHand = false;
+      }
+    }
+    
+    // Next level
+    if (p.keyCode === 13 && gameState.gamePhase === "GAME_OVER_WIN") { // ENTER
+      if (gameState.level < 4) {
+        gameState.level++;
+        resetGame(p);
+        gameState.gamePhase = "PLAYING";
+        p.logs.game_info.push({
+          data: { gamePhase: "PLAYING", level: gameState.level },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    }
+    
+    return false; // Prevent default
+  };
+});
+
+// Expose globally
+window.gameInstance = gameInstance;
+// Expose level loading for dev mode
+window.loadLevel = function(levelNum) {
+  const state = window.getGameState ? window.getGameState() : (window.gameState || (window.gameInstance && window.gameInstance.gameState));
+  if (state) {
+    state.currentLevel = levelNum;
+    // Try common reset/start patterns
+    if (typeof resetGame === 'function') {
+      resetGame();
+    }
+    if (typeof startGame === 'function') {
+      startGame();
+    } else if (state.gamePhase !== undefined) {
+      state.gamePhase = "PLAYING";
+    }
+  }
+};
+
+// Control mode switching
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  
+  // Update button states
+  document.querySelectorAll('.control-button').forEach(btn => {
+    btn.classList.remove('active');
+  });
+  
+  if (mode === "HUMAN") {
+    document.getElementById('humanModeBtn').classList.add('active');
+  } else if (mode === "TEST_1") {
+    document.getElementById('test_1_ModeBtn').classList.add('active');
+  } else if (mode === "TEST_2") {
+    document.getElementById('test_2_ModeBtn').classList.add('active');
+  }
+};
+</file>
+
+<file name="rendering.js">
+// rendering.js - Rendering functions
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, TABLE_X, TABLE_Y, TABLE_WIDTH, TABLE_HEIGHT } from './globals.js';
+
+export function renderStartScreen(p) {
+  p.background(20, 50, 30);
+  
+  // Title
+  p.fill(255, 215, 0);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text("POOL CHALLENGE", CANVAS_WIDTH / 2, 80);
+  
+  // Description
+  p.fill(255);
+  p.textSize(14);
+  p.text("Pocket all the colored balls using the cue ball!", CANVAS_WIDTH / 2, 140);
+  p.text("Avoid scratching to clear the table!", CANVAS_WIDTH / 2, 160);
+  
+  // Instructions
+  p.textSize(12);
+  p.fill(200, 200, 200);
+  p.textAlign(p.LEFT);
+  p.text("Arrow Keys: Aim & Adjust Power", 100, 210);
+  p.text("Shift + Arrows: Apply Spin", 100, 230);
+  p.text("Space: Execute Shot", 100, 250);
+  p.text("ESC: Pause    R: Restart", 100, 270);
+  
+  // Start prompt
+  p.fill(255, 255, 0);
+  p.textAlign(p.CENTER);
+  p.textSize(20);
+  if (Math.floor(p.frameCount / 30) % 2 === 0) {
+    p.text("PRESS ENTER TO START", CANVAS_WIDTH / 2, 340);
+  }
+}
+
+export function renderGame(p) {
+  p.background(50, 30, 20);
+  
+  // Render table
+  if (gameState.table) {
+    gameState.table.render();
+  }
+  
+  // Render balls
+  gameState.ballsOnTable.forEach(ball => ball.render());
+  
+  // Render cue stick (only during aiming)
+  if (gameState.playingPhase === "AIMING" && gameState.cueStick && gameState.cueBall && !gameState.cueBall.pocketed) {
+    gameState.cueStick.render(gameState.cueBall, gameState.aimAngle, gameState.shotPower);
+    
+    // Render aim guide
+    renderAimGuide(p);
+  }
+  
+  // Render UI
+  renderUI(p);
+  
+  // Render foul message
+  if (gameState.foulStatus || gameState.playingPhase === "FOUL") {
+    p.fill(255, 0, 0);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(32);
+    p.text(gameState.foulMessage || "FOUL!", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+  }
+}
+
+function renderAimGuide(p) {
+  if (!gameState.cueBall || gameState.cueBall.pocketed) return;
+  
+  const cueBallPos = gameState.cueBall.body.position;
+  const guideLength = 100;
+  
+  p.stroke(255, 255, 255, 100);
+  p.strokeWeight(2);
+  p.line(
+    cueBallPos.x,
+    cueBallPos.y,
+    cueBallPos.x + Math.cos(gameState.aimAngle) * guideLength,
+    cueBallPos.y + Math.sin(gameState.aimAngle) * guideLength
+  );
+}
+
+function renderUI(p) {
+  // Score (top-right)
+  p.fill(255);
+  p.textAlign(p.RIGHT, p.TOP);
+  p.textSize(16);
+  p.text(`SCORE: ${String(gameState.score).padStart(5, '0')}`, CANVAS_WIDTH - 10, 10);
+  
+  // Level (top-left)
+  p.textAlign(p.LEFT, p.TOP);
+  p.text(`LEVEL: ${gameState.level}`, 10, 10);
+  
+  // Balls remaining (top-center)
+  const ballsRemaining = gameState.ballsOnTable.filter(b => !b.pocketed && b.number !== 0).length;
+  p.textAlign(p.CENTER, p.TOP);
+  p.fill(255, 215, 0);
+  p.text(`BALLS LEFT: ${ballsRemaining}`, CANVAS_WIDTH / 2, 10);
+  
+  // Power meter (bottom-left)
+  if (gameState.playingPhase === "AIMING") {
+    const meterWidth = 100;
+    const meterHeight = 10;
+    const meterX = 10;
+    const meterY = CANVAS_HEIGHT - 30;
+    
+    p.fill(50);
+    p.noStroke();
+    p.rect(meterX, meterY, meterWidth, meterHeight);
+    
+    const powerRatio = gameState.shotPower / gameState.maxShotPower;
+    const powerColor = p.lerpColor(p.color(0, 255, 0), p.color(255, 0, 0), powerRatio);
+    p.fill(powerColor);
+    p.rect(meterX, meterY, meterWidth * powerRatio, meterHeight);
+    
+    p.fill(255);
+    p.textAlign(p.LEFT, p.BOTTOM);
+    p.textSize(10);
+    p.text("POWER", meterX, meterY - 2);
+  }
+  
+  // Spin indicator (bottom-right)
+  if (gameState.playingPhase === "AIMING" && (gameState.spinEffect.x !== 0 || gameState.spinEffect.y !== 0)) {
+    const spinX = CANVAS_WIDTH - 40;
+    const spinY = CANVAS_HEIGHT - 40;
+    
+    p.fill(100);
+    p.noStroke();
+    p.circle(spinX, spinY, 30);
+    
+    p.fill(255, 255, 0);
+    p.circle(spinX + gameState.spinEffect.x * 10, spinY + gameState.spinEffect.y * 10, 8);
+    
+    p.fill(255);
+    p.textAlign(p.RIGHT, p.BOTTOM);
+    p.textSize(10);
+    p.text("SPIN", spinX + 15, spinY - 20);
+  }
+}
+
+export function renderPausedOverlay(p) {
+  p.fill(0, 0, 0, 150);
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  p.fill(255);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text("PAUSED", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 30);
+  
+  p.textSize(16);
+  p.text("Press ESC to resume", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 30);
+  p.text("Press R to restart", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 55);
+}
+
+export function renderGameOver(p) {
+  p.background(20, 20, 20);
+  
+  const isWin = gameState.gamePhase === "GAME_OVER_WIN";
+  
+  // Message
+  p.fill(isWin ? [0, 255, 0] : [255, 0, 0]);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text(isWin ? "LEVEL COMPLETE!" : "GAME OVER", CANVAS_WIDTH / 2, 120);
+  
+  // Score
+  p.fill(255);
+  p.textSize(24);
+  p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, 180);
+  p.text(`Level: ${gameState.level}`, CANVAS_WIDTH / 2, 210);
+  
+  // Next level or restart
+  p.textSize(16);
+  if (isWin && gameState.level < 4) {
+    p.text("Press ENTER for Next Level", CANVAS_WIDTH / 2, 280);
+  } else if (isWin && gameState.level === 4) {
+    p.text("ALL LEVELS COMPLETE!", CANVAS_WIDTH / 2, 250);
+    p.text("You are the Pool Master!", CANVAS_WIDTH / 2, 275);
+  }
+  
+  p.text("Press R to Restart", CANVAS_WIDTH / 2, 320);
+}
+</file>
+
+<file name="entities.js">
+// entities.js - Game entities (balls, cue stick, etc.)
+import Matter from 'https://cdn.jsdelivr.net/npm/matter-js@0.19.0/+esm';
+const { Bodies, Body, World } = Matter;
+
+import { gameState, BALL_RADIUS, BALL_COLORS, TABLE_X, TABLE_Y, TABLE_WIDTH, TABLE_HEIGHT } from './globals.js';
+
+export class Ball {
+  constructor(p, x, y, number) {
+    this.p = p;
+    this.number = number;
+    this.color = BALL_COLORS[number];
+    this.pocketed = false;
+    
+    // Create Matter.js body
+    this.body = Bodies.circle(x, y, BALL_RADIUS, {
+      label: `ball_${number}`,
+      friction: 0.05,
+      frictionAir: 0.01,
+      restitution: 0.9,
+      density: 0.001,
+      number: number
+    });
+    
+    World.add(gameState.world, this.body);
+  }
+  
+  update() {
+    // Check if ball is moving slowly enough to be considered stopped
+    const vel = this.body.velocity;
+    const speed = Math.sqrt(vel.x * vel.x + vel.y * vel.y);
+    
+    if (speed < 0.1) {
+      Body.setVelocity(this.body, { x: 0, y: 0 });
+      Body.setAngularVelocity(this.body, 0);
+    }
+  }
+  
+  render() {
+    if (this.pocketed) return;
+    
+    this.p.push();
+    this.p.translate(this.body.position.x, this.body.position.y);
+    this.p.rotate(this.body.angle);
+    
+    // Draw ball
+    this.p.fill(this.color.r, this.color.g, this.color.b);
+    this.p.stroke(0);
+    this.p.strokeWeight(1);
+    this.p.circle(0, 0, BALL_RADIUS * 2);
+    
+    // Draw stripe for striped balls
+    if (this.color.type === "stripe") {
+      this.p.fill(255);
+      this.p.noStroke();
+      this.p.rect(-BALL_RADIUS, -BALL_RADIUS * 0.4, BALL_RADIUS * 2, BALL_RADIUS * 0.8);
+    }
+    
+    // Draw number
+    if (this.number !== 0) {
+      this.p.fill(this.color.type === "eight" ? 255 : 0);
+      this.p.noStroke();
+      this.p.textAlign(this.p.CENTER, this.p.CENTER);
+      this.p.textSize(10);
+      this.p.text(this.number, 0, 0);
+    }
+    
+    this.p.pop();
+  }
+  
+  isStopped() {
+    const vel = this.body.velocity;
+    const speed = Math.sqrt(vel.x * vel.x + vel.y * vel.y);
+    return speed < 0.1;
+  }
+}
+
+export class CueStick {
+  constructor(p) {
+    this.p = p;
+    this.length = 150;
+    this.width = 4;
+  }
+  
+  render(cueBall, angle, power) {
+    if (!cueBall || cueBall.pocketed) return;
+    
+    this.p.push();
+    this.p.translate(cueBall.body.position.x, cueBall.body.position.y);
+    this.p.rotate(angle);
+    
+    // Calculate pullback distance based on power
+    const pullback = (power / gameState.maxShotPower) * 50;
+    
+    // Draw cue stick
+    this.p.fill(139, 90, 43);
+    this.p.stroke(101, 67, 33);
+    this.p.strokeWeight(1);
+    this.p.rect(-BALL_RADIUS - 10 - pullback, -this.width / 2, -this.length, this.width);
+    
+    // Draw tip
+    this.p.fill(200, 200, 200);
+    this.p.rect(-BALL_RADIUS - 10 - pullback, -this.width / 2, -10, this.width);
+    
+    this.p.pop();
+  }
+}
+
+export class Table {
+  constructor(p, world) {
+    this.p = p;
+    this.world = world;
+    this.cushions = [];
+    
+    this.createCushions();
+  }
+  
+  createCushions() {
+    const cushionThickness = 20; // Increased from 15 to prevent phasing
+    const options = {
+      isStatic: true,
+      friction: 0.9, // Increased from 0.8
+      restitution: 0.8, // Increased from 0.7
+      label: 'cushion',
+      slop: 0.05 // Reduce collision slop to improve accuracy
+    };
+    
+    // Top cushions (with gaps for pockets)
+    this.cushions.push(Bodies.rectangle(
+      TABLE_X + TABLE_WIDTH * 0.25, TABLE_Y - cushionThickness / 2,
+      TABLE_WIDTH * 0.4, cushionThickness, options
+    ));
+    this.cushions.push(Bodies.rectangle(
+      TABLE_X + TABLE_WIDTH * 0.75, TABLE_Y - cushionThickness / 2,
+      TABLE_WIDTH * 0.4, cushionThickness, options
+    ));
+    
+    // Bottom cushions
+    this.cushions.push(Bodies.rectangle(
+      TABLE_X + TABLE_WIDTH * 0.25, TABLE_Y + TABLE_HEIGHT + cushionThickness / 2,
+      TABLE_WIDTH * 0.4, cushionThickness, options
+    ));
+    this.cushions.push(Bodies.rectangle(
+      TABLE_X + TABLE_WIDTH * 0.75, TABLE_Y + TABLE_HEIGHT + cushionThickness / 2,
+      TABLE_WIDTH * 0.4, cushionThickness, options
+    ));
+    
+    // Left cushions
+    this.cushions.push(Bodies.rectangle(
+      TABLE_X - cushionThickness / 2, TABLE_Y + TABLE_HEIGHT * 0.5,
+      cushionThickness, TABLE_HEIGHT * 0.9, options
+    ));
+    
+    // Right cushions
+    this.cushions.push(Bodies.rectangle(
+      TABLE_X + TABLE_WIDTH + cushionThickness / 2, TABLE_Y + TABLE_HEIGHT * 0.5,
+      cushionThickness, TABLE_HEIGHT * 0.9, options
+    ));
+    
+    this.cushions.forEach(cushion => World.add(this.world, cushion));
+  }
+  
+  render() {
+    // Draw table felt
+    this.p.fill(34, 139, 34);
+    this.p.stroke(101, 67, 33);
+    this.p.strokeWeight(20);
+    this.p.rect(TABLE_X, TABLE_Y, TABLE_WIDTH, TABLE_HEIGHT);
+    
+    // Draw pockets
+    this.p.fill(0);
+    this.p.noStroke();
+    const pocketRadius = 12 * gameState.levelParams.pocketSizeMultiplier;
+    
+    // Corner pockets
+    this.p.circle(TABLE_X, TABLE_Y, pocketRadius * 2);
+    this.p.circle(TABLE_X + TABLE_WIDTH, TABLE_Y, pocketRadius * 2);
+    this.p.circle(TABLE_X, TABLE_Y + TABLE_HEIGHT, pocketRadius * 2);
+    this.p.circle(TABLE_X + TABLE_WIDTH, TABLE_Y + TABLE_HEIGHT, pocketRadius * 2);
+    
+    // Middle pockets
+    this.p.circle(TABLE_X + TABLE_WIDTH / 2, TABLE_Y, pocketRadius * 2);
+    this.p.circle(TABLE_X + TABLE_WIDTH / 2, TABLE_Y + TABLE_HEIGHT, pocketRadius * 2);
+    
+    // Draw baulk line
+    this.p.stroke(255, 255, 255, 100);
+    this.p.strokeWeight(1);
+    this.p.line(TABLE_X + 100, TABLE_Y, TABLE_X + 100, TABLE_Y + TABLE_HEIGHT);
+  }
+}
+</file>
+
+<file name="gameLogic.js">
+// gameLogic.js - Core game logic
+import Matter from 'https://cdn.jsdelivr.net/npm/matter-js@0.19.0/+esm';
+const { Body } = Matter;
+
+import { gameState, BALL_COLORS, TABLE_X, TABLE_Y, TABLE_WIDTH, TABLE_HEIGHT } from './globals.js';
+import { Ball, CueStick, Table } from './entities.js';
+import { checkPockets, checkAllBallsStopped } from './physics.js';
+
+export function initializeGame(p) {
+  // Clear existing entities
+  gameState.entities = [];
+  gameState.ballsOnTable = [];
+  gameState.pocketedBalls = [];
+  
+  // Create table
+  gameState.table = new Table(p, gameState.world);
+  
+  // Set level parameters
+  setLevelParameters();
+  
+  // Create balls in rack formation
+  createBallRack(p);
+  
+  // Create cue stick
+  gameState.cueStick = new CueStick(p);
+  
+  // Reset game state
+  gameState.playingPhase = "AIMING";
+  gameState.aimAngle = 0;
+  gameState.shotPower = 0;
+  gameState.spinEffect = { x: 0, y: 0 };
+  gameState.foulStatus = false;
+  gameState.ballInHand = false;
+  gameState.isBreak = true;
+  gameState.waitingForBallsToStop = false;
+  gameState.lastPocketedBalls = [];
+  gameState.firstContactBall = null;
+  gameState.cushionHits = 0;
+}
+
+function setLevelParameters() {
+  switch (gameState.level) {
+    case 1:
+      gameState.levelParams = {
+        pocketSizeMultiplier: 1.0,
+        tableFriction: 0.01
+      };
+      break;
+    case 2:
+      gameState.levelParams = {
+        pocketSizeMultiplier: 0.85,
+        tableFriction: 0.015
+      };
+      break;
+    case 3:
+      gameState.levelParams = {
+        pocketSizeMultiplier: 0.75,
+        tableFriction: 0.02
+      };
+      break;
+    case 4:
+      gameState.levelParams = {
+        pocketSizeMultiplier: 0.7,
+        tableFriction: 0.008
+      };
+      break;
+  }
+}
+
+function createBallRack(p) {
+  // Create cue ball
+  const cueBall = new Ball(p, TABLE_X + 100, TABLE_Y + TABLE_HEIGHT / 2, 0);
+  gameState.cueBall = cueBall;
+  gameState.ballsOnTable.push(cueBall);
+  gameState.entities.push(cueBall);
+  
+  // Rack position (right side of table)
+  const rackX = TABLE_X + TABLE_WIDTH - 120;
+  const rackY = TABLE_Y + TABLE_HEIGHT / 2;
+  const spacing = 17;
+  
+  // 15-ball rack formation
+  const rackOrder = [1, 9, 2, 10, 8, 3, 11, 4, 12, 5, 13, 6, 14, 7, 15];
+  let ballIndex = 0;
+  
+  // 5 rows
+  for (let row = 0; row < 5; row++) {
+    for (let col = 0; col <= row; col++) {
+      if (ballIndex >= rackOrder.length) break;
+      
+      const x = rackX + row * spacing * 0.866;
+      const y = rackY + (col - row / 2) * spacing;
+      
+      const ball = new Ball(p, x, y, rackOrder[ballIndex]);
+      gameState.ballsOnTable.push(ball);
+      gameState.entities.push(ball);
+      ballIndex++;
+    }
+  }
+}
+
+export function updateGame(p) {
+  // Update physics
+  gameState.ballsOnTable.forEach(ball => ball.update());
+  
+  // Handle different playing phases
+  switch (gameState.playingPhase) {
+    case "AIMING":
+      handleAimingPhase(p);
+      break;
+    case "SHOT":
+      handleShotPhase(p);
+      break;
+    case "WAITING":
+      handleWaitingPhase(p);
+      break;
+    case "FOUL":
+      handleFoulPhase(p);
+      break;
+  }
+  
+  // Check pockets
+  checkPockets(p);
+  
+  // Log player position periodically
+  if (p.frameCount % 60 === 0 && gameState.cueBall && !gameState.cueBall.pocketed) {
+    p.logs.player_info.push({
+      screen_x: gameState.cueBall.body.position.x,
+      screen_y: gameState.cueBall.body.position.y,
+      game_x: gameState.cueBall.body.position.x,
+      game_y: gameState.cueBall.body.position.y,
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+}
+
+function handleAimingPhase(p) {
+  // Test modes
+  if (gameState.controlMode === "TEST_1" || gameState.controlMode === "TEST_2") {
+    handleTestMode(p);
+  }
+}
+
+function handleShotPhase(p) {
+  // Transition to waiting immediately
+  gameState.playingPhase = "WAITING";
+  gameState.waitingForBallsToStop = true;
+  gameState.lastPocketedBalls = [];
+  gameState.firstContactBall = null;
+  gameState.cushionHits = 0;
+}
+
+function handleWaitingPhase(p) {
+  if (checkAllBallsStopped()) {
+    // All balls have stopped
+    evaluateShot(p);
+  }
+}
+
+function handleFoulPhase(p) {
+  // Display foul message, wait for ball placement
+  if (gameState.ballInHand) {
+    // Player can place cue ball
+    // Wait for Z key to confirm placement
+  }
+}
+
+export function executeShot(p) {
+  if (!gameState.cueBall || gameState.cueBall.pocketed) return;
+  
+  // Calculate force based on power and angle
+  const force = gameState.shotPower / 1000;
+  const forceX = Math.cos(gameState.aimAngle) * force;
+  const forceY = Math.sin(gameState.aimAngle) * force;
+  
+  // Apply force to cue ball
+  Body.applyForce(gameState.cueBall.body, gameState.cueBall.body.position, {
+    x: forceX,
+    y: forceY
+  });
+  
+  // Apply spin (simplified)
+  if (gameState.spinEffect.x !== 0 || gameState.spinEffect.y !== 0) {
+    Body.setAngularVelocity(gameState.cueBall.body, gameState.spinEffect.x * 0.1);
+  }
+  
+  gameState.playingPhase = "SHOT";
+  gameState.isBreak = false;
+  
+  p.logs.game_info.push({
+    data: { event: "shot_executed", power: gameState.shotPower, angle: gameState.aimAngle },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function evaluateShot(p) {
+  // Check for fouls and game-ending conditions
+  let isFoul = false;
+  let foulMessage = "";
+  
+  // Check if cue ball was pocketed (scratch)
+  const cueBallPocketed = gameState.cueBall.pocketed;
+  
+  if (cueBallPocketed) {
+    isFoul = true;
+    foulMessage = "SCRATCH!";
+  }
+  
+  // Award points for pocketed balls
+  gameState.lastPocketedBalls.forEach(ballNum => {
+    if (ballNum !== 0) { // Don't award points for cue ball
+      gameState.score += 50;
+    }
+  });
+  
+  // Check win condition: all non-cue balls pocketed
+  const ballsRemaining = gameState.ballsOnTable.filter(b => !b.pocketed && b.number !== 0).length;
+  
+  if (ballsRemaining === 0 && !cueBallPocketed) {
+    handleGameWin(p);
+    return;
+  }
+  
+  // Handle foul
+  if (isFoul) {
+    gameState.foulStatus = true;
+    gameState.foulMessage = foulMessage;
+    gameState.playingPhase = "FOUL";
+    gameState.ballInHand = true;
+    
+    // Respawn cue ball if pocketed
+    if (cueBallPocketed) {
+      respawnCueBall(p);
+    }
+    
+    setTimeout(() => {
+      gameState.playingPhase = "AIMING";
+      gameState.foulStatus = false;
+      gameState.ballInHand = false;
+    }, 2000);
+    
+    return;
+  }
+  
+  // Continue playing
+  gameState.playingPhase = "AIMING";
+  gameState.shotPower = 0;
+}
+
+function respawnCueBall(p) {
+  // Remove old cue ball body
+  if (gameState.cueBall.body) {
+    Matter.World.remove(gameState.world, gameState.cueBall.body);
+  }
+  
+  // Create new cue ball
+  const newCueBall = new Ball(p, TABLE_X + 100, TABLE_Y + TABLE_HEIGHT / 2, 0);
+  gameState.cueBall = newCueBall;
+  
+  // Replace in array
+  const index = gameState.ballsOnTable.findIndex(b => b.number === 0);
+  if (index !== -1) {
+    gameState.ballsOnTable[index] = newCueBall;
+  }
+}
+
+function handleGameWin(p) {
+  gameState.gamePhase = "GAME_OVER_WIN";
+  gameState.score += 500; // Level completion bonus
+  
+  p.logs.game_info.push({
+    data: { gamePhase: "GAME_OVER_WIN", score: gameState.score, level: gameState.level },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function handleGameLose(p) {
+  gameState.gamePhase = "GAME_OVER_LOSE";
+  
+  p.logs.game_info.push({
+    data: { gamePhase: "GAME_OVER_LOSE", score: gameState.score, level: gameState.level },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function handleTestMode(p) {
+  if (gameState.controlMode === "TEST_1") {
+    // Basic test: quick shots
+    gameState.aimAngle = p.random() * Math.PI * 2;
+    gameState.shotPower = 50;
+    executeShot(p);
+  } else if (gameState.controlMode === "TEST_2") {
+    // Win test: pocket all balls quickly
+    const targetBalls = gameState.ballsOnTable.filter(b => !b.pocketed && b.number !== 0);
+    if (targetBalls.length > 0) {
+      const target = targetBalls[0];
+      const dx = target.body.position.x - gameState.cueBall.body.position.x;
+      const dy = target.body.position.y - gameState.cueBall.body.position.y;
+      gameState.aimAngle = Math.atan2(dy, dx);
+      gameState.shotPower = 80;
+      executeShot(p);
+    }
+  }
+}
+
+export function resetGame(p) {
+  // Clear world
+  if (gameState.world) {
+    Matter.World.clear(gameState.world, false);
+  }
+  
+  // Reset score only if going back to level 1
+  if (gameState.level === 1) {
+    gameState.score = 0;
+  }
+  
+  initializeGame(p);
+}
+</file>
+
+<file name="physics.js">
+// physics.js - Physics handling and collision detection
+import Matter from 'https://cdn.jsdelivr.net/npm/matter-js@0.19.0/+esm';
+const { Events } = Matter;
+
+import { gameState, POCKETS, POCKET_RADIUS } from './globals.js';
+
+export function setupPhysics(p) {
+  // Collision detection for ball contacts
+  Events.on(gameState.engine, 'collisionStart', (event) => {
+    const pairs = event.pairs;
+    
+    pairs.forEach(pair => {
+      const bodyA = pair.bodyA;
+      const bodyB = pair.bodyB;
+      
+      // Track first ball contact
+      if (gameState.playingPhase === "WAITING" && !gameState.firstContactBall) {
+        if (bodyA.label === "ball_0" && bodyB.label && bodyB.label.startsWith("ball_")) {
+          gameState.firstContactBall = bodyB.number;
+        } else if (bodyB.label === "ball_0" && bodyA.label && bodyA.label.startsWith("ball_")) {
+          gameState.firstContactBall = bodyA.number;
+        }
+      }
+      
+      // Track cushion hits
+      if (gameState.playingPhase === "WAITING") {
+        if ((bodyA.label === "cushion" && bodyB.label && bodyB.label.startsWith("ball_")) ||
+            (bodyB.label === "cushion" && bodyA.label && bodyA.label.startsWith("ball_"))) {
+          gameState.cushionHits++;
+        }
+      }
+    });
+  });
+}
+
+export function checkPockets(p) {
+  const pocketRadius = POCKET_RADIUS * gameState.levelParams.pocketSizeMultiplier;
+  const ballsToPocket = [];
+  
+  gameState.ballsOnTable.forEach(ball => {
+    if (ball.pocketed) return;
+    
+    const ballPos = ball.body.position;
+    
+    POCKETS.forEach(pocket => {
+      const dx = ballPos.x - pocket.x;
+      const dy = ballPos.y - pocket.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      
+      if (dist < pocketRadius) {
+        ballsToPocket.push(ball);
+      }
+    });
+  });
+  
+  // Pocket the balls
+  ballsToPocket.forEach(ball => {
+    ball.pocketed = true;
+    Matter.World.remove(gameState.world, ball.body);
+    
+    gameState.lastPocketedBalls.push(ball.number);
+    gameState.pocketedBalls.push(ball.number);
+    
+    // Log pocketing
+    p.logs.game_info.push({
+      data: { event: "ball_pocketed", ball: ball.number },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  });
+}
+
+export function checkAllBallsStopped() {
+  return gameState.ballsOnTable.every(ball => ball.pocketed || ball.isStopped());
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

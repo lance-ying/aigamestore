@@ -23,6 +23,8 @@ import os
 import shutil
 import sys
 import threading
+import subprocess
+import platform
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
@@ -56,6 +58,65 @@ def load_env_file() -> None:
                     os.environ[key.strip()] = value
 
 load_env_file()
+
+
+# Notification system
+def send_notification(title: str, message: str, timeout: int = 5) -> None:
+    """
+    Send a desktop notification. Tries multiple methods:
+    1. plyer (cross-platform, if installed)
+    2. osascript (macOS)
+    3. notify-send (Linux)
+    4. Windows toast (Windows)
+    
+    Falls back silently if none are available.
+    """
+    try:
+        # Try plyer first (cross-platform, clean API)
+        try:
+            from plyer import notification
+            notification.notify(
+                title=title,
+                message=message,
+                timeout=timeout,
+                app_name="Game Fix Tool"
+            )
+            return
+        except ImportError:
+            pass
+        
+        # Platform-specific fallbacks
+        system = platform.system()
+        
+        if system == "Darwin":  # macOS
+            # Use osascript for native macOS notifications
+            # Escape quotes and newlines in the message
+            escaped_message = message.replace('"', '\\"').replace('\n', '\\n')
+            escaped_title = title.replace('"', '\\"')
+            script = f'display notification "{escaped_message}" with title "{escaped_title}"'
+            subprocess.run(
+                ["osascript", "-e", script],
+                check=False,
+                capture_output=True
+            )
+        elif system == "Linux":
+            # Try notify-send (requires libnotify)
+            subprocess.run(
+                ["notify-send", title, message, "-t", str(timeout * 1000)],
+                check=False,
+                capture_output=True
+            )
+        elif system == "Windows":
+            # Windows toast notification
+            try:
+                from win10toast import ToastNotifier
+                toaster = ToastNotifier()
+                toaster.show_toast(title, message, duration=timeout)
+            except ImportError:
+                pass
+    except Exception:
+        # Silently fail - notifications are optional
+        pass
 
 
 # Global HTTP server for serving games
@@ -729,6 +790,13 @@ def fix_game_action(game_path: str, feedback: str) -> Tuple[str, gr.Dropdown, st
     status_lines.append("   (this may take 30-60 seconds...)")
     status_lines.append("")
     
+    # Send notification that fix has started
+    game_name = game_dir.name
+    send_notification(
+        "Fix Started",
+        f"Analyzing {game_name}...\nThis may take 30-60 seconds."
+    )
+    
     try:
         result = iterator.iterate(
             game_dir=str(game_dir),
@@ -807,12 +875,12 @@ def fix_game_action(game_path: str, feedback: str) -> Tuple[str, gr.Dropdown, st
                 "system_prompt": result.get("system_prompt", ""),
                 "user_prompt": result.get("user_prompt", ""),
                 "full_response": result.get("full_response") or result.get("response", ""),
-                "thinking": result.get("thinking", ""),
+                "thinking_text": result.get("thinking", ""),  # Text output from thinking mode
                 "updated_files": result.get("updated_files", []),
                 "backup_path": str(backup_path),
                 "model": iterator.model,
                 "temperature": iterator.temperature,
-                "thinking": iterator.thinking,
+                "thinking": iterator.thinking,  # Boolean flag for thinking mode enabled
                 "thinking_budget": iterator.thinking_budget,
                 "use_planning": True,  # Always True in GUI
                 "token_usage": token_usage_dict,
@@ -848,6 +916,13 @@ def fix_game_action(game_path: str, feedback: str) -> Tuple[str, gr.Dropdown, st
             except ValueError:
                 status_lines.append(f"  - View fix log: {log_path}")
         
+        # Send success notification
+        files_updated = num_files if num_files > 0 else 0
+        send_notification(
+            "Fix Complete ✓",
+            f"{game_name} fixed successfully!\n{files_updated} file(s) updated."
+        )
+        
     except Exception as e:
         status_lines.append(f"\nError during fix generation: {e}")
         status_lines.append(f"\nBackup preserved at: {backup_path}")
@@ -879,6 +954,12 @@ def fix_game_action(game_path: str, feedback: str) -> Tuple[str, gr.Dropdown, st
             save_fix_log(game_dir, error_log_data)
         except Exception:
             pass  # Ignore logging errors for error cases
+        
+        # Send error notification
+        send_notification(
+            "Fix Failed ✗",
+            f"Error fixing {game_name}:\n{str(e)[:100]}"
+        )
     
     # Update backup list
     backups = list_backups(game_path)

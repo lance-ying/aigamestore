@@ -1,0 +1,351 @@
+<analysis>
+- Issue identified: The `getPockets()` function in globals.js uses the global `TABLE_X`, `TABLE_Y`, `TABLE_WIDTH`, `TABLE_HEIGHT` constants, but these are never updated when level parameters change. Each level has different table dimensions stored in `gameState.levelParams.tableX/tableY/tableWidth/tableHeight`, but the pocket positions are calculated using the outdated global constants, causing pocket detection to fail because pockets are in the wrong positions.
+
+- Files affected: 
+  - globals.js (update getPockets to use level parameters)
+  - physics.js (ensure it passes correct dimensions to pocket detection)
+
+- Changes needed: Modify `getPockets()` to accept table dimension parameters and use the actual level table dimensions, or make it read from `gameState.levelParams` directly. Update all calls to `getPockets()` to provide the correct dimensions.
+</analysis>
+
+<code filename="globals.js">
+// globals.js - Global constants and game state
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+// Base table dimensions (will be adjusted per level)
+export const BASE_TABLE_X = 50;
+export const BASE_TABLE_Y = 50;
+export const BASE_TABLE_WIDTH = 500;
+export const BASE_TABLE_HEIGHT = 300;
+
+// Dynamic table dimensions (updated per level)
+export let TABLE_X = BASE_TABLE_X;
+export let TABLE_Y = BASE_TABLE_Y;
+export let TABLE_WIDTH = BASE_TABLE_WIDTH;
+export let TABLE_HEIGHT = BASE_TABLE_HEIGHT;
+
+export function updateTableDimensions(x, y, width, height) {
+  TABLE_X = x;
+  TABLE_Y = y;
+  TABLE_WIDTH = width;
+  TABLE_HEIGHT = height;
+}
+
+// Ball properties
+export const BALL_RADIUS = 8;
+export const CUE_BALL_RADIUS = 8;
+
+// Pocket positions (6 pockets) - dynamically calculated based on provided dimensions
+export function getPockets(tableX, tableY, tableWidth, tableHeight) {
+  // If no parameters provided, try to use levelParams, otherwise use base dimensions
+  if (tableX === undefined) {
+    if (typeof gameState !== 'undefined' && gameState.levelParams) {
+      tableX = gameState.levelParams.tableX;
+      tableY = gameState.levelParams.tableY;
+      tableWidth = gameState.levelParams.tableWidth;
+      tableHeight = gameState.levelParams.tableHeight;
+    } else {
+      tableX = TABLE_X;
+      tableY = TABLE_Y;
+      tableWidth = TABLE_WIDTH;
+      tableHeight = TABLE_HEIGHT;
+    }
+  }
+  
+  return [
+    { x: tableX, y: tableY }, // Top-left
+    { x: tableX + tableWidth / 2, y: tableY }, // Top-middle
+    { x: tableX + tableWidth, y: tableY }, // Top-right
+    { x: tableX, y: tableY + tableHeight }, // Bottom-left
+    { x: tableX + tableWidth / 2, y: tableY + tableHeight }, // Bottom-middle
+    { x: tableX + tableWidth, y: tableY + tableHeight } // Bottom-right
+  ];
+}
+
+export const POCKET_RADIUS = 12;
+
+// Game state object
+export const gameState = {
+  player: null,
+  entities: [],
+  score: 0,
+  level: 1,
+  maxLevel: 9, // Updated to 9 levels
+  gamePhase: "START", // "START", "PLAYING", "PAUSED", "GAME_OVER_WIN", "GAME_OVER_LOSE"
+  controlMode: "HUMAN",
+  engine: null,
+  world: null,
+  
+  // Pool-specific state
+  playingPhase: "AIMING", // "AIMING", "SHOT", "WAITING", "FOUL"
+  pocketedBalls: [],
+  ballsOnTable: [],
+  cueBall: null,
+  aimAngle: 0,
+  shotPower: 0,
+  maxShotPower: 60, // Reduced from 100 to prevent phasing
+  spinEffect: { x: 0, y: 0 },
+  foulStatus: false,
+  foulMessage: "",
+  ballInHand: false,
+  ballInHandPosition: { x: TABLE_X + 100, y: TABLE_Y + TABLE_HEIGHT / 2 },
+  isBreak: true,
+  waitingForBallsToStop: false,
+  lastPocketedBalls: [],
+  firstContactBall: null,
+  cushionHits: 0,
+  
+  // Visual elements
+  cueStick: null,
+  aimGuide: null,
+  
+  // Level parameters
+  levelParams: {
+    pocketSizeMultiplier: 1.0,
+    tableFriction: 0.1,
+    tableScale: 1.0,
+    rackPosition: "far", // "close", "medium", "far"
+    difficulty: "easy", // "easy", "medium", "hard"
+    numberOfBalls: 15 // Number of balls to pocket in this level
+  }
+};
+
+// Ball colors and types
+export const BALL_COLORS = {
+  0: { r: 255, g: 255, b: 255, type: "cue" }, // Cue ball
+  1: { r: 255, g: 220, b: 0, type: "solid" }, // Yellow
+  2: { r: 0, g: 100, b: 200, type: "solid" }, // Blue
+  3: { r: 220, g: 0, b: 0, type: "solid" }, // Red
+  4: { r: 100, g: 0, b: 150, type: "solid" }, // Purple
+  5: { r: 255, g: 140, b: 0, type: "solid" }, // Orange
+  6: { r: 0, g: 150, b: 0, type: "solid" }, // Green
+  7: { r: 120, g: 0, b: 0, type: "solid" }, // Maroon
+  8: { r: 0, g: 0, b: 0, type: "eight" }, // 8-ball
+  9: { r: 255, g: 220, b: 0, type: "stripe" }, // Yellow stripe
+  10: { r: 0, g: 100, b: 200, type: "stripe" }, // Blue stripe
+  11: { r: 220, g: 0, b: 0, type: "stripe" }, // Red stripe
+  12: { r: 100, g: 0, b: 150, type: "stripe" }, // Purple stripe
+  13: { r: 255, g: 140, b: 0, type: "stripe" }, // Orange stripe
+  14: { r: 0, g: 150, b: 0, type: "stripe" }, // Green stripe
+  15: { r: 120, g: 0, b: 0, type: "stripe" } // Maroon stripe
+};
+
+export function getGameState() {
+  return gameState;
+}
+
+// Expose globally
+if (typeof window !== 'undefined') {
+  window.getGameState = getGameState;
+}
+</code>
+
+<code filename="physics.js">
+// physics.js - Physics handling and collision detection
+import Matter from 'https://cdn.jsdelivr.net/npm/matter-js@0.19.0/+esm';
+const { Events, Body } = Matter;
+
+import { gameState, POCKET_RADIUS, BALL_RADIUS, getPockets } from './globals.js';
+
+export function setupPhysics(p) {
+  // Collision detection for ball contacts
+  Events.on(gameState.engine, 'collisionStart', (event) => {
+    const pairs = event.pairs;
+    
+    pairs.forEach(pair => {
+      const bodyA = pair.bodyA;
+      const bodyB = pair.bodyB;
+      
+      // Track first ball contact
+      if (gameState.playingPhase === "WAITING" && !gameState.firstContactBall) {
+        if (bodyA.label === "ball_0" && bodyB.label && bodyB.label.startsWith("ball_")) {
+          gameState.firstContactBall = bodyB.number;
+        } else if (bodyB.label === "ball_0" && bodyA.label && bodyA.label.startsWith("ball_")) {
+          gameState.firstContactBall = bodyA.number;
+        }
+      }
+      
+      // Track cushion hits
+      if (gameState.playingPhase === "WAITING") {
+        if ((bodyA.label === "cushion" && bodyB.label && bodyB.label.startsWith("ball_")) ||
+            (bodyB.label === "cushion" && bodyA.label && bodyA.label.startsWith("ball_"))) {
+          gameState.cushionHits++;
+        }
+      }
+    });
+  });
+}
+
+function isNearPocket(pos, tableX, tableY, tableWidth, tableHeight) {
+  // Check if a position is near any pocket to exclude it from boundary enforcement
+  const pockets = getPockets(tableX, tableY, tableWidth, tableHeight);
+  const pocketRadius = POCKET_RADIUS * gameState.levelParams.pocketSizeMultiplier;
+  const safeZone = pocketRadius + BALL_RADIUS * 3; // Larger zone to prevent conflicts
+  
+  for (let pocket of pockets) {
+    const dx = pos.x - pocket.x;
+    const dy = pos.y - pocket.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    
+    if (dist < safeZone) {
+      return true;
+    }
+  }
+  
+  return false;
+}
+
+export function enforceBoundaries() {
+  // Keep balls strictly within the playable table area
+  // BUT: don't enforce near pockets - let pocket detection handle those areas
+  const { tableX, tableY, tableWidth, tableHeight } = gameState.levelParams;
+  
+  const margin = BALL_RADIUS;
+  const minX = tableX + margin;
+  const maxX = tableX + tableWidth - margin;
+  const minY = tableY + margin;
+  const maxY = tableY + tableHeight - margin;
+  
+  gameState.ballsOnTable.forEach(ball => {
+    if (ball.pocketed) return;
+    
+    const pos = ball.body.position;
+    
+    // Skip boundary enforcement if ball is near a pocket - let pocket detection handle it
+    if (isNearPocket(pos, tableX, tableY, tableWidth, tableHeight)) {
+      return;
+    }
+    
+    const vel = ball.body.velocity;
+    let corrected = false;
+    let newX = pos.x;
+    let newY = pos.y;
+    let newVelX = vel.x;
+    let newVelY = vel.y;
+    
+    // Hard clamp positions - keep balls on the felt away from pockets
+    if (pos.x < minX) {
+      newX = minX;
+      newVelX = Math.abs(vel.x) * 0.7;
+      corrected = true;
+    }
+    
+    if (pos.x > maxX) {
+      newX = maxX;
+      newVelX = -Math.abs(vel.x) * 0.7;
+      corrected = true;
+    }
+    
+    if (pos.y < minY) {
+      newY = minY;
+      newVelY = Math.abs(vel.y) * 0.7;
+      corrected = true;
+    }
+    
+    if (pos.y > maxY) {
+      newY = maxY;
+      newVelY = -Math.abs(vel.y) * 0.7;
+      corrected = true;
+    }
+    
+    if (corrected) {
+      Body.setPosition(ball.body, { x: newX, y: newY });
+      Body.setVelocity(ball.body, { x: newVelX, y: newVelY });
+    }
+  });
+}
+
+export function checkPockets(p) {
+  const { tableX, tableY, tableWidth, tableHeight } = gameState.levelParams;
+  const pockets = getPockets(tableX, tableY, tableWidth, tableHeight);
+  const pocketRadius = POCKET_RADIUS * gameState.levelParams.pocketSizeMultiplier;
+  const ballsToPocket = [];
+  
+  gameState.ballsOnTable.forEach(ball => {
+    if (ball.pocketed) return;
+    
+    const ballPos = ball.body.position;
+    const ballVel = ball.body.velocity;
+    const speed = Math.sqrt(ballVel.x * ballVel.x + ballVel.y * ballVel.y);
+    
+    // Check each pocket
+    for (let pocket of pockets) {
+      const dx = ballPos.x - pocket.x;
+      const dy = ballPos.y - pocket.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      
+      // Primary capture threshold - generous to ensure reliable pocketing
+      const primaryThreshold = pocketRadius + BALL_RADIUS * 1.2;
+      
+      // Extended threshold for slow-moving balls or balls in gap zones
+      const extendedThreshold = pocketRadius + BALL_RADIUS * 2.0;
+      
+      // Check if ball is in the pocket gap zone (beyond table edge but near pocket)
+      const isInGapZone = 
+        (pocket.x === tableX && ballPos.x < tableX + BALL_RADIUS * 2) ||
+        (pocket.x === tableX + tableWidth && ballPos.x > tableX + tableWidth - BALL_RADIUS * 2) ||
+        (pocket.y === tableY && ballPos.y < tableY + BALL_RADIUS * 2) ||
+        (pocket.y === tableY + tableHeight && ballPos.y > tableY + tableHeight - BALL_RADIUS * 2);
+      
+      // Primary capture: ball center is close to pocket center
+      if (dist < primaryThreshold) {
+        ballsToPocket.push(ball);
+        break;
+      }
+      
+      // Extended capture for slow balls near pockets
+      if (speed < 2.0 && dist < extendedThreshold) {
+        ballsToPocket.push(ball);
+        break;
+      }
+      
+      // Gap zone capture: if ball is in a gap near a pocket, capture it aggressively
+      if (isInGapZone && dist < extendedThreshold * 1.5) {
+        ballsToPocket.push(ball);
+        break;
+      }
+      
+      // Edge case: ball is beyond table boundaries near a pocket
+      const beyondEdge = 
+        (ballPos.x < tableX - BALL_RADIUS || ballPos.x > tableX + tableWidth + BALL_RADIUS ||
+         ballPos.y < tableY - BALL_RADIUS || ballPos.y > tableY + tableHeight + BALL_RADIUS);
+      
+      if (beyondEdge && dist < extendedThreshold * 2.0) {
+        ballsToPocket.push(ball);
+        break;
+      }
+    }
+    
+    // Emergency capture: ball far outside table boundaries
+    const emergencyMargin = BALL_RADIUS * 8;
+    if (ballPos.x < tableX - emergencyMargin || 
+        ballPos.x > tableX + tableWidth + emergencyMargin ||
+        ballPos.y < tableY - emergencyMargin || 
+        ballPos.y > tableY + tableHeight + emergencyMargin) {
+      ballsToPocket.push(ball);
+    }
+  });
+  
+  // Pocket the balls (remove duplicates)
+  const uniqueBallsToPocket = [...new Set(ballsToPocket)];
+  uniqueBallsToPocket.forEach(ball => {
+    ball.pocketed = true;
+    Matter.World.remove(gameState.world, ball.body);
+    
+    gameState.lastPocketedBalls.push(ball.number);
+    gameState.pocketedBalls.push(ball.number);
+    
+    // Log pocketing
+    p.logs.game_info.push({
+      data: { event: "ball_pocketed", ball: ball.number },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  });
+}
+
+export function checkAllBallsStopped() {
+  return gameState.ballsOnTable.every(ball => ball.pocketed || ball.isStopped());
+}
+</code>

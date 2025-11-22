@@ -1,4 +1,4 @@
-// enemy.js - Enemy entity with turn-based movement AI
+// enemy.js - Enemy entity with autonomous movement AI
 
 import { GRID_CONFIG } from './globals.js';
 
@@ -13,45 +13,62 @@ export class Enemy {
     
     // Set stats based on type
     this.setStats();
+    
+    // Movement timing
+    this.moveTimer = 0;
+    this.moveDelay = this.calculateMoveDelay();
+    
+    // Attack cooldown to prevent constant damage
+    this.attackCooldown = 0;
+    this.attackDelay = 60; // 60 frames = 1 second at 60fps
   }
 
   setStats() {
     switch (this.type) {
       case "FAST":
-        this.damage = 10 + this.level * 2;
+        this.damage = 4 + this.level * 1; // Reduced from 6 + level * 1
         this.hp = 1;
         this.maxHp = 1;
-        this.moveChance = 0.8; // Moves 80% of turns
+        this.moveChance = 0.7; // Reduced from 0.8 - moves 70% of turns
+        this.baseSpeed = 25; // Increased from 15 - slower movement
         this.color = [255, 150, 50];
         this.name = "Fast";
         break;
       case "TANK":
-        this.damage = 20 + this.level * 4;
+        this.damage = 12 + this.level * 2; // Reduced from 20 + level * 4
         this.hp = 4;
         this.maxHp = 4;
         this.moveChance = 0.3; // Moves 30% of turns
+        this.baseSpeed = 50; // Frames between moves (slower)
         this.color = [100, 255, 100];
         this.name = "Tank";
         break;
       case "RANGED":
-        this.damage = 12 + this.level * 3;
+        this.damage = 7 + this.level * 2; // Reduced from 12 + level * 3
         this.hp = 2;
         this.maxHp = 2;
         this.moveChance = 0.4; // Moves 40% of turns
+        this.baseSpeed = 35; // Frames between moves
         this.color = [150, 100, 255];
         this.name = "Ranged";
         this.shootCooldown = 0;
-        this.shootDelay = 5; // Shoots every 5 turns
+        this.shootDelay = 180; // Shoots every 180 frames (3 seconds at 60fps)
         break;
       default: // NORMAL
-        this.damage = 15 + this.level * 3;
+        this.damage = 9 + this.level * 2; // Reduced from 15 + level * 3
         this.hp = 2;
         this.maxHp = 2;
         this.moveChance = 0.5; // Moves 50% of turns
+        this.baseSpeed = 30; // Frames between moves
         this.color = [255, 50, 50];
         this.name = "Normal";
         break;
     }
+  }
+
+  calculateMoveDelay() {
+    // Add randomness to movement timing
+    return this.baseSpeed + Math.floor(Math.random() * 20) - 10;
   }
 
   getScreenX() {
@@ -70,9 +87,14 @@ export class Enemy {
     return tile.type !== 'WALL';
   }
 
-  // Turn-based movement - only called when player moves
-  takeTurn(map, player, projectiles) {
+  // Continuous update - called every frame
+  update(map, player, projectiles) {
     if (!this.active) return;
+
+    // Update attack cooldown
+    if (this.attackCooldown > 0) {
+      this.attackCooldown--;
+    }
 
     // Ranged enemies can shoot
     if (this.type === "RANGED") {
@@ -83,11 +105,30 @@ export class Enemy {
       }
     }
 
-    // Move based on moveChance
-    if (Math.random() > this.moveChance) {
-      return; // Skip this turn
+    // Movement timing
+    this.moveTimer++;
+    if (this.moveTimer >= this.moveDelay) {
+      this.moveTimer = 0;
+      this.moveDelay = this.calculateMoveDelay();
+      
+      // Move based on moveChance
+      if (Math.random() <= this.moveChance) {
+        this.performMove(map, player);
+      }
     }
 
+    // Check if adjacent to player (not on same tile)
+    const dx = Math.abs(player.gridX - this.gridX);
+    const dy = Math.abs(player.gridY - this.gridY);
+    const isAdjacent = (dx === 1 && dy === 0) || (dx === 0 && dy === 1);
+    
+    if (isAdjacent && this.attackCooldown === 0) {
+      this.attackPlayer(player);
+      this.attackCooldown = this.attackDelay; // Reset cooldown after attack
+    }
+  }
+
+  performMove(map, player) {
     // Simple AI: move toward player with some randomness
     const dx = player.gridX - this.gridX;
     const dy = player.gridY - this.gridY;
@@ -107,15 +148,6 @@ export class Enemy {
     }
 
     this.tryMove(map);
-
-    // Check if adjacent to player (not on same tile)
-    const newDx = Math.abs(player.gridX - this.gridX);
-    const newDy = Math.abs(player.gridY - this.gridY);
-    const isAdjacent = (newDx === 1 && newDy === 0) || (newDx === 0 && newDy === 1);
-    
-    if (isAdjacent) {
-      this.attackPlayer(player);
-    }
   }
 
   shootAtPlayer(player, projectiles, map) {
@@ -130,8 +162,8 @@ export class Enemy {
       direction = dy > 0 ? 3 : 2; // down or up
     }
 
-    // Create enemy projectile
-    const projectile = new EnemyProjectile(this.gridX, this.gridY, direction, this.damage / 2);
+    // Create enemy projectile with reduced damage
+    const projectile = new EnemyProjectile(this.gridX, this.gridY, direction, this.damage * 0.4); // Reduced from 0.5
     projectiles.push(projectile);
   }
 
@@ -182,17 +214,20 @@ export class Enemy {
     p.stroke(this.color[0] * 0.6, this.color[1] * 0.6, this.color[2] * 0.6);
     p.strokeWeight(2);
     
-    // Different shapes for different types
+    // Different shapes for different types - all centered
     if (this.type === "FAST") {
+      // Triangle centered at x, y
       p.triangle(x, y - size * 0.5, x - size * 0.4, y + size * 0.4, x + size * 0.4, y + size * 0.4);
     } else if (this.type === "TANK") {
+      // Rectangle centered
       p.rectMode(p.CENTER);
       p.rect(x, y, size, size);
     } else {
+      // Ellipse is already centered
       p.ellipse(x, y, size, size);
     }
     
-    // Eyes
+    // Eyes - centered on the shape
     p.fill(255, 255, 0);
     p.noStroke();
     p.ellipse(x - size * 0.15, y - size * 0.1, size * 0.2, size * 0.2);
@@ -203,7 +238,7 @@ export class Enemy {
     p.ellipse(x - size * 0.15, y - size * 0.1, size * 0.1, size * 0.1);
     p.ellipse(x + size * 0.15, y - size * 0.1, size * 0.1, size * 0.1);
     
-    // Health bar
+    // Health bar - centered above enemy
     const barWidth = size * 1.2;
     const barHeight = 5;
     const barX = x - barWidth / 2;

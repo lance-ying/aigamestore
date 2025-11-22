@@ -181,10 +181,13 @@ def save_fix_log(
                 fix_data["full_response"], encoding="utf-8"
             )
         
-        # Save thinking output
-        if "thinking" in fix_data and fix_data["thinking"]:
+        # Save thinking output (can be "thinking_text" or "thinking" if it's a string)
+        thinking_text = fix_data.get("thinking_text") or (
+            fix_data.get("thinking") if isinstance(fix_data.get("thinking"), str) else None
+        )
+        if thinking_text:
             (fix_log_dir / "thinking.txt").write_text(
-                fix_data["thinking"], encoding="utf-8"
+                thinking_text, encoding="utf-8"
             )
         
         # Save updated files as JSON

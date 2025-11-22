@@ -1,6 +1,6 @@
 // input.js - Input handling
 
-import { gameState, GAME_PHASES } from './globals.js';
+import { gameState, GAME_PHASES, LEVELS } from './globals.js';
 import { saveState, undoLastMove } from './gameLogic.js';
 import { loadLevel, advanceToNextLevel } from './levelManager.js';
 
@@ -69,7 +69,7 @@ export function handleKeyPressed(p) {
   
   // SPACE - Advance to next level (from LEVEL_COMPLETE phase)
   if (keyCode === 32 && gameState.gamePhase === GAME_PHASES.LEVEL_COMPLETE) {
-    if (gameState.currentLevel < 5) {
+    if (gameState.currentLevel < LEVELS.length) {
       advanceToNextLevel(p);
     } else {
       gameState.gamePhase = GAME_PHASES.GAME_OVER_WIN;

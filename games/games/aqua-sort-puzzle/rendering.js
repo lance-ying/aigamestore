@@ -1,6 +1,6 @@
 // rendering.js - All rendering functions
 
-import { gameState, GAME_PHASES, CANVAS_WIDTH, CANVAS_HEIGHT, COLOR_MAP } from './globals.js';
+import { gameState, GAME_PHASES, CANVAS_WIDTH, CANVAS_HEIGHT, COLOR_MAP, LEVELS } from './globals.js';
 
 export function renderStartScreen(p) {
   p.background(20, 30, 50);
@@ -75,9 +75,11 @@ function renderUI(p) {
   p.textAlign(p.LEFT, p.TOP);
   p.text(`SCORE: ${gameState.totalScore}`, 10, 10);
   
-  // Level - top center
+  // Level and Difficulty - top center
+  const levelConfig = LEVELS[gameState.currentLevel - 1];
+  const difficulty = levelConfig ? levelConfig.difficulty : '';
   p.textAlign(p.CENTER, p.TOP);
-  p.text(`LEVEL: ${gameState.currentLevel}`, CANVAS_WIDTH / 2, 10);
+  p.text(`LEVEL ${gameState.currentLevel} - ${difficulty.toUpperCase()}`, CANVAS_WIDTH / 2, 10);
   
   // Moves - top right
   p.textAlign(p.RIGHT, p.TOP);
@@ -170,11 +172,17 @@ export function renderLevelComplete(p) {
   }
   
   // Level complete text
+  const levelConfig = LEVELS[gameState.currentLevel - 1];
+  const difficulty = levelConfig ? levelConfig.difficulty : '';
+  
   p.push();
   p.fill(255, 220, 100);
   p.textAlign(p.CENTER, p.CENTER);
   p.textSize(40);
-  p.text(`LEVEL ${gameState.currentLevel} COMPLETE!`, CANVAS_WIDTH / 2, 120);
+  p.text(`LEVEL ${gameState.currentLevel} COMPLETE!`, CANVAS_WIDTH / 2, 100);
+  p.textSize(24);
+  p.fill(200, 220, 255);
+  p.text(`(${difficulty})`, CANVAS_WIDTH / 2, 135);
   p.pop();
   
   // Score breakdown
@@ -195,7 +203,7 @@ export function renderLevelComplete(p) {
   const pulse = p.sin(p.frameCount * 0.1) * 20 + 235;
   p.fill(pulse, 200, 100);
   
-  if (gameState.currentLevel < 5) {
+  if (gameState.currentLevel < LEVELS.length) {
     p.text('PRESS SPACE FOR NEXT LEVEL', CANVAS_WIDTH / 2, 320);
   } else {
     p.text('PRESS SPACE TO FINISH', CANVAS_WIDTH / 2, 320);
@@ -233,7 +241,7 @@ export function renderGameOverWin(p) {
   p.fill(200, 220, 255);
   p.textAlign(p.CENTER, p.CENTER);
   p.textSize(24);
-  p.text('You completed all levels!', CANVAS_WIDTH / 2, 160);
+  p.text('You completed all 9 levels!', CANVAS_WIDTH / 2, 160);
   p.text(`Final Score: ${gameState.totalScore}`, CANVAS_WIDTH / 2, 210);
   p.pop();
   
@@ -257,11 +265,14 @@ export function renderGameOverLose(p) {
   p.text('GAME OVER', CANVAS_WIDTH / 2, 120);
   p.pop();
   
+  const levelConfig = LEVELS[gameState.currentLevel - 1];
+  const difficulty = levelConfig ? levelConfig.difficulty : '';
+  
   p.push();
   p.fill(200, 150, 150);
   p.textAlign(p.CENTER, p.CENTER);
   p.textSize(20);
-  p.text(`Level ${gameState.currentLevel} - Out of moves!`, CANVAS_WIDTH / 2, 180);
+  p.text(`Level ${gameState.currentLevel} (${difficulty}) - Out of moves!`, CANVAS_WIDTH / 2, 180);
   p.text(`Score: ${gameState.totalScore}`, CANVAS_WIDTH / 2, 220);
   p.pop();
   

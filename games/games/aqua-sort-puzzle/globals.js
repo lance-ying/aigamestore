@@ -1,6 +1,6 @@
 // globals.js - Global state and constants
 
-export const CANVAS_WIDTH = 600;
+export const CANVAS_WIDTH = 700;
 export const CANVAS_HEIGHT = 400;
 
 export const GAME_PHASES = {
@@ -51,6 +51,17 @@ export const gameState = {
 export const LEVELS = [
   {
     level: 1,
+    difficulty: 'Easy',
+    maxMoves: 8,
+    tubes: [
+      { capacity: 4, colors: ['red', 'blue', 'red', 'blue'] },
+      { capacity: 4, colors: ['blue', 'red', 'blue', 'red'] },
+      { capacity: 4, colors: [] }
+    ]
+  },
+  {
+    level: 2,
+    difficulty: 'Easy',
     maxMoves: 10,
     tubes: [
       { capacity: 4, colors: ['red', 'blue', 'green', 'red'] },
@@ -60,7 +71,8 @@ export const LEVELS = [
     ]
   },
   {
-    level: 2,
+    level: 3,
+    difficulty: 'Easy',
     maxMoves: 15,
     tubes: [
       { capacity: 4, colors: ['red', 'blue', 'yellow', 'red'] },
@@ -71,7 +83,21 @@ export const LEVELS = [
     ]
   },
   {
-    level: 3,
+    level: 4,
+    difficulty: 'Medium',
+    maxMoves: 20,
+    tubes: [
+      { capacity: 4, colors: ['red', 'blue', 'yellow', 'green'] },
+      { capacity: 4, colors: ['blue', 'green', 'red', 'yellow'] },
+      { capacity: 4, colors: ['green', 'yellow', 'blue', 'red'] },
+      { capacity: 4, colors: ['yellow', 'red', 'green', 'blue'] },
+      { capacity: 4, colors: [] },
+      { capacity: 4, colors: [] }
+    ]
+  },
+  {
+    level: 5,
+    difficulty: 'Medium',
     maxMoves: 25,
     tubes: [
       { capacity: 4, colors: ['red', 'blue', 'yellow', 'purple'] },
@@ -84,7 +110,8 @@ export const LEVELS = [
     ]
   },
   {
-    level: 4,
+    level: 6,
+    difficulty: 'Medium',
     maxMoves: 35,
     tubes: [
       { capacity: 4, colors: ['red', 'blue', 'yellow', 'purple'] },
@@ -98,7 +125,24 @@ export const LEVELS = [
     ]
   },
   {
-    level: 5,
+    level: 7,
+    difficulty: 'Hard',
+    maxMoves: 40,
+    tubes: [
+      { capacity: 4, colors: ['red', 'blue', 'yellow', 'purple'] },
+      { capacity: 4, colors: ['blue', 'green', 'orange', 'red'] },
+      { capacity: 4, colors: ['green', 'yellow', 'purple', 'orange'] },
+      { capacity: 4, colors: ['yellow', 'red', 'green', 'orange'] },
+      { capacity: 4, colors: ['purple', 'orange', 'green', 'yellow'] },
+      { capacity: 4, colors: ['blue', 'red', 'purple', 'blue'] },
+      { capacity: 4, colors: ['orange', 'purple', 'blue', 'green'] },
+      { capacity: 4, colors: [] },
+      { capacity: 4, colors: [] }
+    ]
+  },
+  {
+    level: 8,
+    difficulty: 'Hard',
     maxMoves: 50,
     tubes: [
       { capacity: 4, colors: ['red', 'blue', 'yellow', 'purple'] },
@@ -108,6 +152,23 @@ export const LEVELS = [
       { capacity: 4, colors: ['purple', 'orange', 'pink', 'yellow'] },
       { capacity: 4, colors: ['blue', 'red', 'purple', 'pink'] },
       { capacity: 4, colors: ['orange', 'purple', 'green', 'blue'] },
+      { capacity: 4, colors: [] },
+      { capacity: 4, colors: [] }
+    ]
+  },
+  {
+    level: 9,
+    difficulty: 'Hard',
+    maxMoves: 60,
+    tubes: [
+      { capacity: 4, colors: ['red', 'blue', 'yellow', 'purple'] },
+      { capacity: 4, colors: ['blue', 'green', 'orange', 'red'] },
+      { capacity: 4, colors: ['green', 'yellow', 'pink', 'orange'] },
+      { capacity: 4, colors: ['yellow', 'red', 'green', 'pink'] },
+      { capacity: 4, colors: ['purple', 'orange', 'pink', 'yellow'] },
+      { capacity: 4, colors: ['blue', 'red', 'purple', 'pink'] },
+      { capacity: 4, colors: ['orange', 'purple', 'green', 'blue'] },
+      { capacity: 4, colors: ['pink', 'orange', 'blue', 'green'] },
       { capacity: 4, colors: [] },
       { capacity: 4, colors: [] }
     ]
