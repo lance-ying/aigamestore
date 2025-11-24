@@ -11,6 +11,7 @@ using Vision-Language Models (VLMs). Supports multiple model providers:
 
 import os
 import sys
+import re
 import time
 import base64
 import argparse
@@ -66,7 +67,7 @@ class VLMGamePlayer:
     def __init__(
         self,
         model_name: str = "openai:gpt-4o",
-        game_url: str = "https://aigamestore.org/play/6",
+        game_url: str = "https://aigamestore.org/games/aqua-sort-puzzle",
         allowed_keys: list[str] = None,
         headless: bool = True,
         max_turns: int = 100,
@@ -170,6 +171,35 @@ class VLMGamePlayer:
         with open(image_path, "rb") as image_file:
             return base64.b64encode(image_file.read()).decode("utf-8")
     
+    def _parse_action_from_response(self, response_text: str) -> Optional[str]:
+        """
+        Parse the action from the model response by extracting it from <action> tags.
+        
+        Args:
+            response_text: The raw response text from the model
+            
+        Returns:
+            The extracted action, or None if not found or invalid
+        """
+        # Try to find action in <action> tags
+        action_match = re.search(r'<action>(.*?)</action>', response_text, re.IGNORECASE | re.DOTALL)
+        if action_match:
+            action = action_match.group(1).strip()
+            logger.info(f"📋 Extracted action from tag: {action}")
+            return action
+        
+        # Fallback: if no tag found, try to find one of the allowed keys in the response
+        # This handles cases where the model might not follow the format exactly
+        logger.warning(f"⚠️ No <action> tag found in response. Attempting fallback parsing...")
+        response_upper = response_text.upper()
+        for key in self.allowed_keys:
+            if key.upper() in response_upper:
+                logger.info(f"📋 Found key '{key}' in response (fallback)")
+                return key
+        
+        logger.warning(f"⚠️ Could not parse action from response: {response_text[:200]}...")
+        return None
+    
     def _build_prompt_with_history(self) -> str:
         """Build a prompt that includes the action history."""
         if not self.action_history:
@@ -188,9 +218,11 @@ class VLMGamePlayer:
         
         prompt += (
             f"What is the single best keyboard press to make right now?\n"
-            f"Your only possible answers are: {', '.join(self.allowed_keys)}.\n"
-            f"Respond with ONLY the key name and absolutely nothing else.\n"
-            f"For example: ArrowUp"
+            f"Your only possible answers are: {', '.join(self.allowed_keys)}.\n\n"
+            f"You may include your thoughts and reasoning in your response, but you MUST end your response with an action tag containing the key name.\n"
+            f"Format: <action>KEY_NAME</action>\n"
+            f"For example: <action>ArrowUp</action>\n"
+            f"The action tag is required and must contain one of the allowed keys: {', '.join(self.allowed_keys)}"
         )
         return prompt
     
@@ -245,7 +277,8 @@ class VLMGamePlayer:
                     messages=[{"role": "user", "content": content}],
                     # max_tokens=10,
                 )
-                action = response.choices[0].message.content.strip()
+                response_text = response.choices[0].message.content.strip()
+                action = self._parse_action_from_response(response_text)
             
             elif self.provider == "anthropic":
                 # Build content with all images
@@ -284,7 +317,14 @@ class VLMGamePlayer:
                     # max_tokens=10,
                     messages=[{"role": "user", "content": content}],
                 )
-                action = response.content[0].text.strip()
+                
+                # Check for empty response
+                if not response.content or not hasattr(response.content[0], "text") or not response.content[0].text:
+                    logger.error(f"❌ Anthropic returned empty response. Response: {response}")
+                    return None
+                
+                response_text = response.content[0].text.strip()
+                action = self._parse_action_from_response(response_text)
             
             elif self.provider == "google":
                 # Build parts with all images
@@ -309,17 +349,26 @@ class VLMGamePlayer:
                 ))
                 parts.append(types.Part.from_text(text=f"[Current Turn {len(self.action_history)}]\n{prompt}"))
                 
-                contents = [types.Content(role="user", parts=parts)]
+                # contents = parts
                 config = types.GenerateContentConfig(
                     response_mime_type="text/plain",
-                    max_output_tokens=10,
                 )
                 response = self.client.models.generate_content(
                     model=self.model,
-                    contents=contents,
+                    contents=parts,
                     config=config,
                 )
-                action = response.text.strip()
+                # Try multiple ways to extract text from response
+                response_text = None
+                
+                if hasattr(response, "text") and response.text:
+                    response_text = response.text
+
+                
+                if response_text:
+                    action = self._parse_action_from_response(response_text.strip())
+                else:
+                    action = None
             
             logger.info(f"🤖 AI chose action: {action}")
             
