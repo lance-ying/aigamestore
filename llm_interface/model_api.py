@@ -314,7 +314,7 @@ class ModelAPI:
                         prompt,
                         generation_config={"max_output_tokens": max_tokens, "temperature": temperature, **kwargs},
                     )
-                    result_text = response.text  # type: ignore[attr-defined]
+                    result_text = getattr(response, "text", None) or ""  # Handle None case
                     # Capture usage metadata for non-streaming response
                     try:
                         usage_md = getattr(response, "usage_metadata", None)
@@ -330,6 +330,9 @@ class ModelAPI:
                                 total_tokens = tt
                     except Exception:
                         pass
+                # Ensure result_text is always a string
+                if result_text is None:
+                    result_text = ""
                 self._record_call(system_prompt, user_prompt, result_text, prompt_tokens, completion_tokens, total_tokens)
                 return {"thinking": "", "response": result_text, "model": f"{self.model_provider}:{self.model}"} if thinking else result_text
 
@@ -356,8 +359,8 @@ class ModelAPI:
         self.call_history.append(
             {
                 "system_prompt": system_prompt.strip() if system_prompt else None,
-                "user_prompt": user_prompt.strip(),
-                "response": response.strip(),
+                "user_prompt": user_prompt.strip() if user_prompt else "",
+                "response": response.strip() if response else "",  # Handle None case
                 "model": f"{self.model_provider}:{self.model}",
                 "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "token_usage": {

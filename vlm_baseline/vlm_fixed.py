@@ -283,6 +283,12 @@ class VLMGamePlayer:
                     max_tokens=10,
                     messages=[{"role": "user", "content": content}],
                 )
+                
+                # Check for empty response
+                if not response.content or not hasattr(response.content[0], "text") or not response.content[0].text:
+                    logger.error(f"❌ Anthropic returned empty response. Response: {response}")
+                    return None
+                
                 action = response.content[0].text.strip()
             
             elif self.provider == "google":
@@ -311,14 +317,63 @@ class VLMGamePlayer:
                 contents = [types.Content(role="user", parts=parts)]
                 config = types.GenerateContentConfig(
                     response_mime_type="text/plain",
-                    max_output_tokens=10,
+                    max_output_tokens=200,  # Increased significantly to account for thoughts tokens (49+) + actual output
                 )
                 response = self.client.models.generate_content(
                     model=self.model,
                     contents=contents,
                     config=config,
                 )
-                action = response.text.strip()
+                
+                # Try multiple ways to extract text from response
+                response_text = None
+                
+                # Method 1: Direct text attribute
+                if hasattr(response, "text") and response.text:
+                    response_text = response.text
+                
+                # Method 2: Extract from candidates[0].content.parts[0].text
+                if not response_text:
+                    candidates = getattr(response, "candidates", [])
+                    if candidates and len(candidates) > 0:
+                        candidate = candidates[0]
+                        content = getattr(candidate, "content", None)
+                        if content:
+                            parts = getattr(content, "parts", [])
+                            if parts and len(parts) > 0:
+                                part = parts[0]
+                                if hasattr(part, "text") and part.text:
+                                    response_text = part.text
+                
+                # Check for safety blocks or errors
+                if response_text is None or not response_text.strip():
+                    # Check for safety filter blocks
+                    prompt_feedback = getattr(response, "prompt_feedback", None)
+                    if prompt_feedback:
+                        block_reason = getattr(prompt_feedback, "block_reason", None)
+                        if block_reason:
+                            logger.warning(f"⚠️ Gemini blocked response due to: {block_reason}")
+                    
+                    # Check candidates for safety ratings and finish reasons
+                    candidates = getattr(response, "candidates", [])
+                    if candidates:
+                        for i, candidate in enumerate(candidates):
+                            finish_reason = getattr(candidate, "finish_reason", None)
+                            safety_ratings = getattr(candidate, "safety_ratings", None)
+                            if finish_reason:
+                                logger.warning(f"⚠️ Candidate {i} finish_reason: {finish_reason}")
+                            if safety_ratings:
+                                logger.warning(f"⚠️ Candidate {i} safety_ratings: {safety_ratings}")
+                    
+                    # Log full response structure for debugging
+                    logger.error(f"❌ Gemini returned empty/None response.")
+                    logger.error(f"Response type: {type(response)}")
+                    logger.error(f"Response attributes: {[attr for attr in dir(response) if not attr.startswith('_')]}")
+                    if hasattr(response, "candidates") and response.candidates:
+                        logger.error(f"Candidates: {response.candidates}")
+                    return None
+                
+                action = response_text.strip()
             
             logger.info(f"🤖 AI chose action: {action}")
             
