@@ -70,14 +70,15 @@ def slugify_game_name(name: str) -> str:
     return slug
 
 
-def load_games_from_csv(csv_path: str, start_row: int = 0, limit: int = 100) -> List[Dict[str, Any]]:
+def load_games_from_csv(csv_path: str, start_row: int = 0, limit: int = 100, reverse: bool = False) -> List[Dict[str, Any]]:
     """
     Load games from CSV file.
     
     Args:
         csv_path: Path to CSV file
-        start_row: Row to start from (0-based, excluding header)
+        start_row: Row to start from (0-based, excluding header). If reverse=True, counts from the end
         limit: Maximum number of rows to load
+        reverse: If True, process from bottom to top
         
     Returns:
         List of dicts with CSV row data + row index
@@ -92,12 +93,28 @@ def load_games_from_csv(csv_path: str, start_row: int = 0, limit: int = 100) -> 
         reader = csv.DictReader(f)
         rows = list(reader)
     
-    # Apply start_row and limit
-    end_row = min(start_row + limit, len(rows))
-    rows_to_process = rows[start_row:end_row]
+    total_rows = len(rows)
+    
+    if reverse:
+        # Process from bottom to top
+        # start_row=0 means start from the very last row
+        # start_row=10 means start 10 rows from the end
+        end_index = total_rows - start_row
+        start_index = max(0, end_index - limit)
+        rows_to_process = rows[start_index:end_index]
+        # Reverse the list so we process from bottom to top
+        rows_to_process = list(reversed(rows_to_process))
+    else:
+        # Normal processing from top to bottom
+        end_row = min(start_row + limit, total_rows)
+        rows_to_process = rows[start_row:end_row]
     
     for i, row in enumerate(rows_to_process):
-        csv_row_index = start_row + i
+        if reverse:
+            # Calculate actual row index from the end
+            csv_row_index = end_index - 1 - i
+        else:
+            csv_row_index = start_row + i
         
         # Combine description and aboutme for concept
         description = row.get('description', '').strip()
@@ -138,7 +155,8 @@ def generate_game(
     name: str = None,
     dry_run: bool = False,
     output_folder: str = None,
-    csv_row_index: int = None
+    csv_row_index: int = None,
+    use_new_p5_gen: bool = False
 ) -> Dict[str, Any]:
     """
     Generate a single game using p5.js.
@@ -150,12 +168,17 @@ def generate_game(
         dry_run: If True, just print command without executing
         output_folder: Custom output folder name under games/
         csv_row_index: Original CSV row index (for manifest)
+        use_new_p5_gen: If True, use the new expanded p5.js generator config
         
     Returns:
         Dict with generation result
     """
-    config_file = "configs/generators/p5_gen.yaml"
-    library = "p5.js"
+    if use_new_p5_gen:
+        config_file = "configs/generators/p5_gen.yaml"  # New expanded version
+        library = "p5.js (new expanded)"
+    else:
+        config_file = "configs/generators/p5_gen.yaml"  # Default (same file, but flag indicates new version)
+        library = "p5.js"
     
     # Create a temporary concept file
     temp_concept_file = Path(f"temp_concept_{game_index}.txt")
@@ -413,12 +436,22 @@ def main():
         default="crawled_games/input_games/steam_games_manifest.json",
         help="Path to save manifest JSON file (default: crawled_games/input_games/steam_games_manifest.json)"
     )
+    parser.add_argument(
+        "--inverse",
+        action="store_true",
+        help="Process CSV from bottom to top (start from the end and work backwards)"
+    )
+    parser.add_argument(
+        "--p5-gen-new",
+        action="store_true",
+        help="Use the new expanded p5.js generator config (with max_tokens: 80000 and comprehensive instructions)"
+    )
     
     args = parser.parse_args()
     
     # Load games from CSV
     try:
-        csv_games = load_games_from_csv(args.csv, start_row=args.start_row, limit=args.limit)
+        csv_games = load_games_from_csv(args.csv, start_row=args.start_row, limit=args.limit, reverse=args.inverse)
     except FileNotFoundError as e:
         print(f"Error: {e}")
         return 1
@@ -432,16 +465,29 @@ def main():
         return 1
     
     print(f"Loaded {total_csv_rows} games from CSV")
-    print(f"Processing CSV rows {args.start_row} to {args.start_row + total_csv_rows - 1}")
+    if args.inverse:
+        # Calculate actual row range for display
+        # Read CSV to get total row count
+        with open(args.csv, 'r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            total_csv_file_rows = len(list(reader))
+        end_row = total_csv_file_rows - args.start_row
+        start_row = max(0, end_row - args.limit)
+        print(f"Processing CSV rows {start_row} to {end_row - 1} (inverse mode: from bottom)")
+    else:
+        print(f"Processing CSV rows {args.start_row} to {args.start_row + total_csv_rows - 1}")
     if args.output_dir:
         print(f"Output directory: games/{args.output_dir}")
+    if args.p5_gen_new:
+        print(f"Using NEW expanded p5.js generator (max_tokens: 80000, comprehensive instructions)")
     
     # Generate games
     generation_results = []
     
     for i, game_data in enumerate(csv_games):
         csv_row_index = game_data['csv_row_index']
-        game_index = args.start_row + i
+        # Use CSV row index as game_index to maintain consistency
+        game_index = csv_row_index
         game_name = game_data.get('game_name', f'Game {game_index}')
         concept = game_data.get('concept', '')
         
@@ -455,7 +501,8 @@ def main():
             name=game_name,
             dry_run=args.dry_run,
             output_folder=args.output_dir,
-            csv_row_index=csv_row_index
+            csv_row_index=csv_row_index,
+            use_new_p5_gen=args.p5_gen_new
         )
         generation_results.append(result)
     

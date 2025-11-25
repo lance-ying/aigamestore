@@ -88,6 +88,9 @@ Implement a complete, fun, and error-free p5.js game for the following concept:
                         pass
         user_prompt = self.generate_user_prompt(game_concept)
         system_prompt = self.get_system_prompt()
+        # Get max_tokens from prompt_config if specified
+        max_tokens = self.prompt_config.get("max_tokens")
+        
         response = self.model_api.call(
             user_prompt=user_prompt,
             system_prompt=system_prompt,
@@ -96,6 +99,7 @@ Implement a complete, fun, and error-free p5.js game for the following concept:
             top_p=self.top_p,
             thinking=self.thinking,
             thinking_budget=self.thinking_budget,
+            max_tokens=max_tokens,
         )
 
         if isinstance(response, dict) and "response" in response:

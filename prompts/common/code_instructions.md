@@ -14,5 +14,17 @@
   - Render physics bodies using p5.js drawing functions by reading body.position and body.angle
   - Use Matter.Events.on() for collision detection callbacks
   - Common pattern: create physics in setup(), update in fixedUpdate(), render in draw()
+- If `three.js` enabled: you may use three.js v0.160.0 for 3D graphics and rendering.
+  - Use THREE.Scene to create a 3D scene
+  - Use THREE.PerspectiveCamera or THREE.OrthographicCamera for viewing
+  - Use THREE.WebGLRenderer to render the scene
+  - Create geometries: BoxGeometry, SphereGeometry, CylinderGeometry, ConeGeometry, TorusGeometry, PlaneGeometry
+  - Use materials: MeshBasicMaterial, MeshLambertMaterial, MeshPhongMaterial, MeshStandardMaterial, MeshPhysicalMaterial
+  - Add lighting: AmbientLight, DirectionalLight, PointLight, SpotLight, HemisphereLight
+  - Implement 3D physics manually: gravity, velocity, acceleration, collision detection (AABB, bounding sphere, raycasting)
+  - Use THREE.Vector3 for 3D positions and movements
+  - Update camera position and rotation each frame for smooth following
+  - Use requestAnimationFrame for game loop
+  - Common pattern: create scene/camera/renderer in init(), update entities in gameLoop(), render in gameLoop()
 </code_instructions>
 

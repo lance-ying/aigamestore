@@ -344,7 +344,8 @@ def analyze_physics_requirement(concept: str) -> Dict[str, Any]:
 def generate_game(
     concept: str,
     game_index: int,
-    use_matter: bool,
+    use_matter: bool = False,
+    use_three: bool = False,
     name: str = None,
     dry_run: bool = False,
     output_folder: str = None
@@ -356,6 +357,7 @@ def generate_game(
         concept: Game concept description
         game_index: Index for the game
         use_matter: Whether to use matter.js physics
+        use_three: Whether to use three.js
         name: Game name (optional, for display)
         dry_run: If True, just print command without executing
         output_folder: Custom output folder name under games/
@@ -363,8 +365,15 @@ def generate_game(
     Returns:
         Dict with generation result
     """
-    config_file = "configs/generators/matter_gen.yaml" if use_matter else "configs/generators/p5_gen.yaml"
-    library = "matter.js" if use_matter else "p5.js"
+    if use_three:
+        config_file = "configs/generators/threejs_gen.yaml"
+        library = "three.js"
+    elif use_matter:
+        config_file = "configs/generators/matter_gen.yaml"
+        library = "matter.js"
+    else:
+        config_file = "configs/generators/p5_gen.yaml"
+        library = "p5.js"
     
     # Create a temporary concept file
     temp_concept_file = Path(f"temp_concept_{game_index}.txt")
@@ -499,6 +508,11 @@ def main():
         help="Force all games to use p5.js only"
     )
     parser.add_argument(
+        "--force-three",
+        action="store_true",
+        help="Force all games to use three.js"
+    )
+    parser.add_argument(
         "--output-analysis",
         type=str,
         help="Save physics analysis to JSON file"
@@ -605,22 +619,34 @@ def main():
         if llm_analysis:
             analysis["llm_analysis"] = llm_analysis
         
-        # Determine library choice (priority order)
-        if args.force_matter:
+        # Determine library choice (priority order: force-three > force-matter > force-p5 > analysis)
+        use_three = False
+        use_matter = False
+        
+        if args.force_three:
+            use_three = True
+            analysis["override"] = "forced three.js"
+            analysis["source"] = "force-three flag"
+        elif args.force_matter:
             use_matter = True
             analysis["override"] = "forced matter.js"
             analysis["source"] = "force-matter flag"
         elif args.force_p5:
             use_matter = False
+            use_three = False
             analysis["override"] = "forced p5.js"
             analysis["source"] = "force-p5 flag"
         else:
             # Priority 1: Check price field for explicit override
-            if price_field in ["matter", "matterjs", "matter.js"]:
+            if price_field in ["three", "threejs", "three.js"]:
+                use_three = True
+                analysis["source"] = "price field (three.js)"
+            elif price_field in ["matter", "matterjs", "matter.js"]:
                 use_matter = True
                 analysis["source"] = "price field (matter)"
             elif price_field in ["p5js", "p5", "p5.js"]:
                 use_matter = False
+                use_three = False
                 analysis["source"] = "price field (p5js)"
             # Priority 2: Use LLM analysis if available
             elif args.use_llm and llm_analysis:
@@ -640,7 +666,12 @@ def main():
                 use_matter = keyword_analysis["needs_physics"]
                 analysis["source"] = "keyword-based (fallback)"
         
-        analysis["selected_library"] = "matter.js" if use_matter else "p5.js"
+        if use_three:
+            analysis["selected_library"] = "three.js"
+        elif use_matter:
+            analysis["selected_library"] = "matter.js"
+        else:
+            analysis["selected_library"] = "p5.js"
         analysis_results.append(analysis)
         
         # Print analysis
@@ -651,7 +682,12 @@ def main():
             print(f"  LLM Reasoning: {analysis['llm_reason'][:100]}...")
         if 'llm_analysis' in analysis and 'error' in analysis['llm_analysis']:
             print(f"  ⚠️  LLM Error: {analysis['llm_analysis']['error']}")
-        print(f"  Decision: {'🔬 matter.js' if use_matter else '🎨 p5.js'}")
+        if use_three:
+            print(f"  Decision: 🎮 three.js")
+        elif use_matter:
+            print(f"  Decision: 🔬 matter.js")
+        else:
+            print(f"  Decision: 🎨 p5.js")
         if 'override' in analysis:
             print(f"  Override: {analysis['override']}")
         
@@ -661,6 +697,7 @@ def main():
                 concept=concept,
                 game_index=game_index,
                 use_matter=use_matter,
+                use_three=use_three,
                 name=name,
                 dry_run=args.dry_run,
                 output_folder=args.output_dir

@@ -1,0 +1,50 @@
+// renderer.js - Renderer setup and configuration
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+// Setup renderer
+export function setupRenderer() {
+  // Create container div
+  gameState.gameContainer = document.createElement('div');
+  gameState.gameContainer.id = 'game-container';
+  gameState.gameContainer.style.width = CANVAS_WIDTH + 'px';
+  gameState.gameContainer.style.height = CANVAS_HEIGHT + 'px';
+  gameState.gameContainer.style.position = 'relative';
+  gameState.gameContainer.style.overflow = 'hidden';
+  gameState.gameContainer.style.margin = '0';
+  gameState.gameContainer.style.padding = '0';
+  gameState.gameContainer.style.border = 'none';
+  document.body.appendChild(gameState.gameContainer);
+  
+  // Set body styles
+  document.body.style.margin = '0';
+  document.body.style.padding = '0';
+  document.body.style.overflow = 'hidden';
+  document.body.style.width = CANVAS_WIDTH + 'px';
+  document.body.style.height = CANVAS_HEIGHT + 'px';
+  
+  // Create WebGL renderer
+  gameState.renderer = new THREE.WebGLRenderer({ 
+    antialias: true,
+    alpha: false,
+    powerPreference: "high-performance"
+  });
+  
+  gameState.renderer.setSize(CANVAS_WIDTH, CANVAS_HEIGHT);
+  gameState.renderer.shadowMap.enabled = true;
+  gameState.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  gameState.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  
+  // Tone mapping for better colors
+  gameState.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  gameState.renderer.toneMappingExposure = 1.0;
+  
+  gameState.gameContainer.appendChild(gameState.renderer.domElement);
+}
+
+// Render the scene
+export function render() {
+  if (gameState.renderer && gameState.scene && gameState.camera) {
+    gameState.renderer.render(gameState.scene, gameState.camera);
+  }
+}

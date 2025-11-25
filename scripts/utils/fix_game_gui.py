@@ -128,6 +128,8 @@ game_server_thread = None
 # Configuration for multiple game directories
 GAME_DIRECTORIES = {
     "Games": "games/games",
+    "Single Prompt (nested)": "games/single_prompt_with_testing",
+    "Single Prompt 1 (nested)": "games/single_prompt_with_testing_1",
     "Game Platform": "games/archive/public_platform/games",
     "Batch 103125": "games/archive/games_gen_halloween",
     "Batch 110325": "games/archive/new_batch_110325",
@@ -206,6 +208,7 @@ def count_backups(game_path: str) -> int:
 def list_games(games_dir: str = "games/games") -> List[Dict[str, str]]:
     """
     Scan games directory and return list of games with metadata.
+    Handles both flat structure (games/games/game_name/) and nested structure (games/single_prompt_with_testing/game_XXXX/sample_Y/).
     
     Returns:
         List of dicts with 'title', 'dir_name', 'path', and 'backup_count' keys
@@ -218,48 +221,70 @@ def list_games(games_dir: str = "games/games") -> List[Dict[str, str]]:
     
     games = []
     
-    for item in games_path.iterdir():
-        if not item.is_dir():
-            continue
+    def find_games_recursive(directory: Path, base_path: Path, max_depth: int = 3, current_depth: int = 0):
+        """Recursively find games with index.html"""
+        if current_depth >= max_depth:
+            return
         
-        # Skip backup directories
-        if '_backup_' in item.name:
-            continue
-        
-        # Skip hidden directories
-        if item.name.startswith('.'):
-            continue
-        
-        # Check if index.html exists
-        if not (item / "index.html").exists():
-            continue
-        
-        # Try to get title from metadata
-        title = item.name  # Default to directory name
-        metadata_path = item / "metadata.json"
-        
-        if metadata_path.exists():
-            try:
-                with open(metadata_path, 'r', encoding='utf-8') as f:
-                    metadata = json.load(f)
+        for item in directory.iterdir():
+            if not item.is_dir():
+                continue
+            
+            # Skip backup directories
+            if '_backup_' in item.name:
+                continue
+            
+            # Skip hidden directories
+            if item.name.startswith('.'):
+                continue
+            
+            # Check if this directory has index.html (it's a game)
+            if (item / "index.html").exists():
+                # This is a game directory
+                # Try to get title from metadata
+                title = item.name  # Default to directory name
+                metadata_path = item / "metadata.json"
                 
-                # Try to get title from game_info
-                if metadata.get('game_info', {}).get('title'):
-                    title = metadata['game_info']['title']
-                    if title == 'Untitled Game':
-                        title = item.name
-            except Exception:
-                pass
-        
-        # Count backups for this game
-        backup_count = count_backups(str(item))
-        
-        games.append({
-            'title': title,
-            'dir_name': item.name,
-            'path': str(item),
-            'backup_count': backup_count
-        })
+                if metadata_path.exists():
+                    try:
+                        with open(metadata_path, 'r', encoding='utf-8') as f:
+                            metadata = json.load(f)
+                        
+                        # Try to get title from game_info
+                        if metadata.get('game_info', {}).get('title'):
+                            title = metadata['game_info']['title']
+                            if title == 'Untitled Game':
+                                title = item.name
+                    except Exception:
+                        pass
+                
+                # For nested structures, include parent path in display name
+                try:
+                    relative_path = item.relative_to(base_path)
+                    if len(relative_path.parts) > 1:
+                        # Nested structure: include parent directories in title
+                        parent_path = '/'.join(relative_path.parts[:-1])
+                        display_title = f"{title} ({parent_path})"
+                    else:
+                        display_title = title
+                except Exception:
+                    display_title = title
+                
+                # Count backups for this game
+                backup_count = count_backups(str(item))
+                
+                games.append({
+                    'title': display_title,
+                    'dir_name': item.name,
+                    'path': str(item),
+                    'backup_count': backup_count
+                })
+            else:
+                # No index.html here, recurse into subdirectories
+                find_games_recursive(item, base_path, max_depth, current_depth + 1)
+    
+    # Start recursive search (max 3 levels deep: game_XXXX/sample_Y/ is 2 levels)
+    find_games_recursive(games_path, games_path, max_depth=3)
     
     # Sort by title
     games.sort(key=lambda x: x['title'].lower())

@@ -3,6 +3,8 @@
 </example_html>
 
 <output_instructions>
+**CRITICAL: Generate COMPREHENSIVE, EXTENSIVE code. Do not skimp on implementation details. Write complete, production-quality code with full functionality.**
+
 Output the code plan and game files in this format with NO OTHER TEXT:
 
 <game_description>
@@ -23,9 +25,17 @@ Write the automated testing plan:
 // Add more tests (up to 7)
 </automated_testing>
 
-For the javascript files:
+**For the javascript files - IMPORTANT:**
+- Generate MULTIPLE well-organized files (game.js, globals.js, entities.js, physics.js, etc.)
+- Include COMPLETE implementations with full functionality
+- Add detailed comments for complex logic
+- Implement error handling and edge cases
+- Include all helper functions and utilities
+- Do NOT leave placeholder comments like "// TODO" or "// implement later"
+- Write COMPREHENSIVE code - be thorough and detailed
+
 <code filename="{name}.{extension}">
-... (javascript code)
+... (javascript code - be COMPREHENSIVE and COMPLETE)
 </code>
 
 HTML following the <example_html> template (output last):

@@ -42,9 +42,17 @@ def fetch_aboutme_for_url(url, retries=3):
     for attempt in range(retries):
         try:
             app_details = get_app_details(app_id)
+        except Exception as e:
+            print(f"    Error fetching details for app_id {app_id}: {e}")
+            if attempt < retries - 1:
+                wait_time = (2 ** attempt) * 5
+                print(f"    Waiting {wait_time}s before retry...")
+                time.sleep(wait_time)
+                continue
+            return ""
             
             # If we got None (rate limited), wait longer before retry
-            if app_details is None:
+        if app_details is None:
                 if attempt < retries - 1:
                     wait_time = (2 ** attempt) * 5  # Exponential backoff: 5s, 10s, 20s
                     print(f"    ⚠ Rate limited, waiting {wait_time}s before retry {attempt + 2}/{retries}...")
@@ -53,22 +61,13 @@ def fetch_aboutme_for_url(url, retries=3):
                 return ""
             
             # Check if we got valid details with description
-            if app_details and app_details.get('description'):
-                return app_details['description']
+        if app_details and app_details.get('description'):
+            return app_details['description']
             
             # If we got empty details (not rate limited, just no data), return empty
             if app_details and not app_details.get('description'):
                 return ""
                 
-        except Exception as e:
-            print(f"    Error fetching details for app_id {app_id}: {e}")
-            if attempt < retries - 1:
-                wait_time = (2 ** attempt) * 5
-                print(f"    Waiting {wait_time}s before retry...")
-                time.sleep(wait_time)
-    
-    return ""
-
 
 def add_aboutme_column(input_csv_path, output_csv_path=None, start_row=0, max_rows=None):
     """

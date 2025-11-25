@@ -1,0 +1,562 @@
+<analysis>
+- Issue identified: 
+  1. Arrow keys and WASD both currently control movement - need to separate them so WASD controls movement and arrow keys control camera rotation
+  2. No visible HTML content in index.html showing game controls/description - all UI is rendered on canvas overlay, but human wants visible HTML text
+  
+- Files affected: 
+  1. input.js - needs to separate arrow key handling for camera from WASD movement
+  2. index.html - needs visible HTML content with game description and controls
+  3. camera.js - may need to expose camera rotation control (already has functions)
+  
+- Changes needed:
+  1. Modify input.js to use arrow keys for camera rotation (yaw/pitch) instead of movement
+  2. Add visible HTML div with controls and description to index.html
+  3. Keep WASD for movement only
+</analysis>
+
+<code filename="index.html">
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Neon White - Speedrun FPS</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      margin: 0;
+      padding: 0;
+      background: #0a0a15;
+      font-family: Arial, sans-serif;
+      color: #ffffff;
+    }
+    
+    #main-container {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      flex-direction: column;
+      width: 100%;
+      height: 100%;
+      gap: 20px;
+    }
+    
+    #game-info {
+      width: 600px;
+      padding: 20px;
+      background: rgba(10, 10, 21, 0.9);
+      border: 2px solid #00ffff;
+      box-shadow: 0 0 20px rgba(0, 255, 255, 0.3);
+      border-radius: 5px;
+    }
+    
+    #game-info h1 {
+      color: #00ffff;
+      text-shadow: 0 0 10px #00ffff;
+      margin-bottom: 10px;
+      font-size: 24px;
+    }
+    
+    #game-info h2 {
+      color: #ff0066;
+      margin-top: 15px;
+      margin-bottom: 8px;
+      font-size: 18px;
+    }
+    
+    #game-info p {
+      color: #aaaaaa;
+      line-height: 1.6;
+      margin-bottom: 5px;
+      font-size: 14px;
+    }
+    
+    #game-info .control-item {
+      color: #ffffff;
+      margin-left: 15px;
+      font-size: 14px;
+    }
+    
+    #game-info .highlight {
+      color: #ffff00;
+      font-weight: bold;
+    }
+    
+    #game-container {
+      width: 600px;
+      height: 400px;
+      position: relative;
+      overflow: hidden;
+      margin: 0;
+      padding: 0;
+      border: 2px solid #00ffff;
+      box-shadow: 0 0 20px rgba(0, 255, 255, 0.5);
+    }
+    
+    canvas {
+      display: block;
+      margin: 0;
+      padding: 0;
+    }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/seedrandom@3.0.5/seedrandom.min.js"></script>
+</head>
+<body>
+  <div id="main-container">
+    <div id="game-info">
+      <h1>🎮 NEON WHITE - Speedrun FPS</h1>
+      <p><span class="highlight">OBJECTIVE:</span> Eliminate all demons as fast as possible!</p>
+      
+      <h2>🎯 CONTROLS</h2>
+      <p class="control-item"><span class="highlight">WASD Keys:</span> Move (Forward/Left/Backward/Right)</p>
+      <p class="control-item"><span class="highlight">Arrow Keys:</span> Rotate Camera (Look around)</p>
+      <p class="control-item"><span class="highlight">SPACE:</span> Jump (double-tap with card for super jump)</p>
+      <p class="control-item"><span class="highlight">SHIFT:</span> Dash (consumes card)</p>
+      <p class="control-item"><span class="highlight">Z:</span> Shoot (consumes card)</p>
+      <p class="control-item"><span class="highlight">ENTER:</span> Start Game</p>
+      <p class="control-item"><span class="highlight">ESC:</span> Pause</p>
+      <p class="control-item"><span class="highlight">R:</span> Restart</p>
+      
+      <h2>💡 STRATEGY</h2>
+      <p>• Collect <span class="highlight">Soul Cards</span> for weapons and abilities</p>
+      <p>• Cards can be used as weapons OR parkour abilities</p>
+      <p>• Find the fastest route using parkour shortcuts</p>
+      <p>• Chain abilities for maximum speed</p>
+    </div>
+  </div>
+  <script type="module" src="game.js"></script>
+</body>
+</html>
+</code>
+
+<code filename="input.js">
+import { gameState, logInput } from './globals.js';
+import { resetGame } from './game.js';
+import { rotateCameraSmooth } from './camera.js';
+
+export function setupInputHandlers() {
+  document.addEventListener('keydown', handleKeyDown);
+  document.addEventListener('keyup', handleKeyUp);
+}
+
+function handleKeyDown(event) {
+  const keyCode = event.keyCode;
+  const key = event.key;
+  
+  // Prevent default for game keys
+  if ([13, 27, 32, 37, 38, 39, 40, 65, 68, 82, 83, 87, 90, 16].includes(keyCode)) {
+    event.preventDefault();
+  }
+  
+  // Log input
+  logInput('keydown', key, keyCode);
+  
+  // Store key state
+  gameState.keys[keyCode] = true;
+  
+  // Phase-specific controls
+  if (keyCode === 13 && gameState.gamePhase === "START") { // ENTER
+    startGame();
+  }
+  
+  if (keyCode === 27) { // ESC
+    togglePause();
+  }
+  
+  if (keyCode === 82) { // R
+    if (gameState.gamePhase === "GAME_OVER_WIN" || 
+        gameState.gamePhase === "GAME_OVER_LOSE" ||
+        gameState.gamePhase === "PAUSED") {
+      resetGame();
+    }
+  }
+  
+  // Gameplay controls (only during PLAYING phase)
+  if (gameState.gamePhase === "PLAYING" && gameState.player) {
+    // Jump (Space)
+    if (keyCode === 32) {
+      if (gameState.player.onGround) {
+        gameState.player.jump();
+      } else {
+        // Try super jump if in air
+        gameState.player.superJump();
+      }
+    }
+    
+    // Dash (Shift)
+    if (keyCode === 16) {
+      gameState.player.dash();
+    }
+    
+    // Shoot (Z)
+    if (keyCode === 90) {
+      gameState.player.shoot();
+    }
+  }
+}
+
+function handleKeyUp(event) {
+  const keyCode = event.keyCode;
+  const key = event.key;
+  
+  // Log input
+  logInput('keyup', key, keyCode);
+  
+  // Clear key state
+  gameState.keys[keyCode] = false;
+}
+
+export function processInput() {
+  if (gameState.gamePhase !== "PLAYING" || !gameState.player) return;
+  
+  // Movement input (WASD only)
+  gameState.player.moveForwardPressed = false;
+  gameState.player.moveBackwardPressed = false;
+  gameState.player.strafeLeftPressed = false;
+  gameState.player.strafeRightPressed = false;
+  
+  // Forward (W)
+  if (gameState.keys[87]) {
+    gameState.player.moveForward();
+    gameState.player.moveForwardPressed = true;
+  }
+  
+  // Backward (S)
+  if (gameState.keys[83]) {
+    gameState.player.moveBackward();
+    gameState.player.moveBackwardPressed = true;
+  }
+  
+  // Strafe left (A)
+  if (gameState.keys[65]) {
+    gameState.player.strafeLeft();
+    gameState.player.strafeLeftPressed = true;
+  }
+  
+  // Strafe right (D)
+  if (gameState.keys[68]) {
+    gameState.player.strafeRight();
+    gameState.player.strafeRightPressed = true;
+  }
+  
+  // Camera rotation (Arrow keys)
+  const cameraRotationSpeed = 0.05;
+  
+  // Rotate left (Left Arrow)
+  if (gameState.keys[37]) {
+    gameState.cameraRotation.yaw += cameraRotationSpeed;
+  }
+  
+  // Rotate right (Right Arrow)
+  if (gameState.keys[39]) {
+    gameState.cameraRotation.yaw -= cameraRotationSpeed;
+  }
+  
+  // Look up (Up Arrow)
+  if (gameState.keys[38]) {
+    gameState.cameraRotation.pitch += cameraRotationSpeed;
+    gameState.cameraRotation.pitch = Math.min(gameState.cameraRotation.pitch, Math.PI / 2.5);
+  }
+  
+  // Look down (Down Arrow)
+  if (gameState.keys[40]) {
+    gameState.cameraRotation.pitch -= cameraRotationSpeed;
+    gameState.cameraRotation.pitch = Math.max(gameState.cameraRotation.pitch, -Math.PI / 2.5);
+  }
+}
+
+function startGame() {
+  gameState.gamePhase = "PLAYING";
+  gameState.gameStartTime = Date.now();
+  
+  // Log game start
+  if (window.logs) {
+    window.logs.game_info.push({
+      game_status: "PLAYING",
+      data: {},
+      framecount: gameState.frameCount,
+      timestamp: Date.now()
+    });
+  }
+}
+
+function togglePause() {
+  if (gameState.gamePhase === "PLAYING") {
+    gameState.gamePhase = "PAUSED";
+  } else if (gameState.gamePhase === "PAUSED") {
+    gameState.gamePhase = "PLAYING";
+  }
+  
+  // Log phase change
+  if (window.logs) {
+    window.logs.game_info.push({
+      game_status: gameState.gamePhase,
+      data: {},
+      framecount: gameState.frameCount,
+      timestamp: Date.now()
+    });
+  }
+}
+</code>
+
+<code filename="ui.js">
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, COLORS } from './globals.js';
+
+let uiCanvas = null;
+let uiContext = null;
+
+export function setupUI() {
+  // Create 2D canvas overlay for UI
+  uiCanvas = document.createElement('canvas');
+  uiCanvas.width = CANVAS_WIDTH;
+  uiCanvas.height = CANVAS_HEIGHT;
+  uiCanvas.style.position = 'absolute';
+  uiCanvas.style.top = '0';
+  uiCanvas.style.left = '0';
+  uiCanvas.style.pointerEvents = 'none';
+  uiCanvas.style.zIndex = '1000';
+  uiCanvas.style.margin = '0';
+  uiCanvas.style.padding = '0';
+  
+  // Append to game container
+  if (gameState.gameContainer) {
+    gameState.gameContainer.appendChild(uiCanvas);
+  } else {
+    document.body.appendChild(uiCanvas);
+  }
+  
+  uiContext = uiCanvas.getContext('2d');
+}
+
+export function renderUI() {
+  if (!uiContext) return;
+  
+  // Clear canvas
+  uiContext.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  switch (gameState.gamePhase) {
+    case "START":
+      renderStartScreen();
+      break;
+    case "PLAYING":
+      renderHUD();
+      break;
+    case "PAUSED":
+      renderPauseScreen();
+      break;
+    case "GAME_OVER_WIN":
+    case "GAME_OVER_LOSE":
+      renderGameOverScreen();
+      break;
+  }
+}
+
+function renderStartScreen() {
+  // Start prompt with pulse effect
+  const pulseAlpha = 0.5 + Math.sin(gameState.frameCount * 0.1) * 0.5;
+  uiContext.fillStyle = `rgba(0, 255, 255, ${pulseAlpha})`;
+  uiContext.font = 'bold 24px Arial';
+  uiContext.textAlign = 'center';
+  uiContext.fillText('PRESS ENTER TO START', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+}
+
+function renderHUD() {
+  // HUD background
+  uiContext.fillStyle = 'rgba(0, 0, 0, 0.6)';
+  uiContext.fillRect(10, 10, 220, 100);
+  
+  // Border
+  uiContext.strokeStyle = '#00ffff';
+  uiContext.lineWidth = 2;
+  uiContext.strokeRect(10, 10, 220, 100);
+  
+  // Time
+  const currentTime = (Date.now() - gameState.gameStartTime) / 1000;
+  gameState.elapsedTime = currentTime;
+  uiContext.fillStyle = '#00ffff';
+  uiContext.font = 'bold 18px Arial';
+  uiContext.textAlign = 'left';
+  uiContext.fillText(`TIME: ${currentTime.toFixed(2)}s`, 20, 35);
+  
+  // Score
+  uiContext.fillStyle = '#ffff00';
+  uiContext.fillText(`SCORE: ${gameState.score}`, 20, 58);
+  
+  // Cards
+  uiContext.fillStyle = '#ff0066';
+  const cardCount = gameState.player ? gameState.player.cards : 0;
+  uiContext.fillText(`CARDS: ${cardCount}`, 20, 81);
+  
+  // Demons remaining
+  const demonsLeft = gameState.totalDemons - gameState.demonsEliminated;
+  uiContext.fillStyle = '#ffffff';
+  uiContext.fillText(`DEMONS: ${demonsLeft}/${gameState.totalDemons}`, 20, 104);
+  
+  // Crosshair
+  drawCrosshair();
+  
+  // Ability indicators
+  drawAbilityIndicators();
+}
+
+function drawCrosshair() {
+  const centerX = CANVAS_WIDTH / 2;
+  const centerY = CANVAS_HEIGHT / 2;
+  const size = 10;
+  const gap = 5;
+  
+  uiContext.strokeStyle = '#00ffff';
+  uiContext.lineWidth = 2;
+  
+  // Horizontal line
+  uiContext.beginPath();
+  uiContext.moveTo(centerX - size - gap, centerY);
+  uiContext.lineTo(centerX - gap, centerY);
+  uiContext.stroke();
+  
+  uiContext.beginPath();
+  uiContext.moveTo(centerX + gap, centerY);
+  uiContext.lineTo(centerX + size + gap, centerY);
+  uiContext.stroke();
+  
+  // Vertical line
+  uiContext.beginPath();
+  uiContext.moveTo(centerX, centerY - size - gap);
+  uiContext.lineTo(centerX, centerY - gap);
+  uiContext.stroke();
+  
+  uiContext.beginPath();
+  uiContext.moveTo(centerX, centerY + gap);
+  uiContext.lineTo(centerX, centerY + size + gap);
+  uiContext.stroke();
+  
+  // Center dot
+  uiContext.fillStyle = '#00ffff';
+  uiContext.beginPath();
+  uiContext.arc(centerX, centerY, 2, 0, Math.PI * 2);
+  uiContext.fill();
+}
+
+function drawAbilityIndicators() {
+  const x = CANVAS_WIDTH - 130;
+  const y = CANVAS_HEIGHT - 80;
+  
+  // Background
+  uiContext.fillStyle = 'rgba(0, 0, 0, 0.6)';
+  uiContext.fillRect(x, y, 120, 70);
+  
+  // Border
+  uiContext.strokeStyle = '#00ffff';
+  uiContext.lineWidth = 2;
+  uiContext.strokeRect(x, y, 120, 70);
+  
+  // Abilities title
+  uiContext.fillStyle = '#ffffff';
+  uiContext.font = 'bold 14px Arial';
+  uiContext.textAlign = 'left';
+  uiContext.fillText('ABILITIES:', x + 10, y + 20);
+  
+  uiContext.font = '12px Arial';
+  
+  // Dash indicator
+  const canDash = gameState.player && gameState.player.canDash && gameState.player.cards > 0;
+  uiContext.fillStyle = canDash ? '#00ff00' : '#666666';
+  uiContext.fillText('SHIFT: Dash', x + 10, y + 40);
+  
+  // Super jump indicator
+  const canSuperJump = gameState.player && gameState.player.cards > 0 && gameState.hasJumped;
+  uiContext.fillStyle = canSuperJump ? '#00ff00' : '#666666';
+  uiContext.fillText('SPACE: Super Jump', x + 10, y + 55);
+}
+
+function renderPauseScreen() {
+  // Semi-transparent overlay
+  uiContext.fillStyle = 'rgba(0, 0, 0, 0.7)';
+  uiContext.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  // Pause text with glow
+  uiContext.shadowBlur = 15;
+  uiContext.shadowColor = '#00ffff';
+  uiContext.fillStyle = '#00ffff';
+  uiContext.font = 'bold 48px Arial';
+  uiContext.textAlign = 'center';
+  uiContext.fillText('PAUSED', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 20);
+  uiContext.shadowBlur = 0;
+  
+  // Instructions
+  uiContext.fillStyle = '#ffffff';
+  uiContext.font = '20px Arial';
+  uiContext.fillText('Press ESC to Resume', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 20);
+  uiContext.fillText('Press R to Restart', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 50);
+}
+
+function renderGameOverScreen() {
+  // Dark overlay
+  uiContext.fillStyle = 'rgba(10, 10, 21, 0.9)';
+  uiContext.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  const isWin = gameState.gamePhase === "GAME_OVER_WIN";
+  
+  // Title with glow
+  uiContext.shadowBlur = 20;
+  uiContext.shadowColor = isWin ? '#00ff00' : '#ff0000';
+  uiContext.fillStyle = isWin ? '#00ff00' : '#ff0000';
+  uiContext.font = 'bold 48px Arial';
+  uiContext.textAlign = 'center';
+  uiContext.fillText(isWin ? 'TRIAL COMPLETE' : 'TRIAL FAILED', CANVAS_WIDTH / 2, 120);
+  uiContext.shadowBlur = 0;
+  
+  // Stats
+  uiContext.fillStyle = '#ffffff';
+  uiContext.font = 'bold 24px Arial';
+  
+  if (isWin) {
+    const finalTime = ((gameState.gameEndTime - gameState.gameStartTime) / 1000).toFixed(2);
+    uiContext.fillText(`TIME: ${finalTime}s`, CANVAS_WIDTH / 2, 180);
+    
+    // Time rank
+    let rank = 'D';
+    let rankColor = '#888888';
+    if (finalTime < 20) {
+      rank = 'S';
+      rankColor = '#ffff00';
+    } else if (finalTime < 30) {
+      rank = 'A';
+      rankColor = '#00ffff';
+    } else if (finalTime < 40) {
+      rank = 'B';
+      rankColor = '#00ff00';
+    } else if (finalTime < 50) {
+      rank = 'C';
+      rankColor = '#ff9900';
+    }
+    
+    uiContext.fillStyle = rankColor;
+    uiContext.font = 'bold 72px Arial';
+    uiContext.fillText(`RANK: ${rank}`, CANVAS_WIDTH / 2, 260);
+  }
+  
+  uiContext.fillStyle = '#ffff00';
+  uiContext.font = 'bold 20px Arial';
+  uiContext.fillText(`FINAL SCORE: ${gameState.score}`, CANVAS_WIDTH / 2, 300);
+  
+  // Stats breakdown
+  uiContext.fillStyle = '#aaaaaa';
+  uiContext.font = '16px Arial';
+  uiContext.fillText(`Demons Eliminated: ${gameState.demonsEliminated}/${gameState.totalDemons}`, CANVAS_WIDTH / 2, 330);
+  uiContext.fillText(`Cards Collected: ${gameState.cardsCollected}`, CANVAS_WIDTH / 2, 350);
+  
+  // Restart prompt
+  const pulseAlpha = 0.5 + Math.sin(gameState.frameCount * 0.1) * 0.5;
+  uiContext.fillStyle = `rgba(0, 255, 255, ${pulseAlpha})`;
+  uiContext.font = 'bold 20px Arial';
+  uiContext.fillText('Press R to Restart', CANVAS_WIDTH / 2, CANVAS_HEIGHT - 30);
+}
+</code>

@@ -1,9 +1,16 @@
 import argparse
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any, Dict
 import yaml
+
+# Add project root to path
+project_root = Path(__file__).parent.parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
 from generators import BaselineConceptAndGameGenerator, SinglePromptWithTestingGenerator
 
 # Load environment variables from .env file if it exists
@@ -59,6 +66,7 @@ def main() -> int:
         "game_controls": cfg.get("game_controls"),
         "game_phase_control": cfg.get("game_phase_control"),
         "include_testing": not args.no_testing,
+        "max_tokens": cfg.get("max_tokens"),  # Allow max_tokens from config
     }
 
     # Concept argument (used for single_prompt_with_testing)
