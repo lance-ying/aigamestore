@@ -1,0 +1,1 @@
+"""Steam games scraper package."""
