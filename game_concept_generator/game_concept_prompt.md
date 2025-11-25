@@ -70,3 +70,4 @@ Respond with EXACTLY `{len(games_batch)}` concepts numbered 1-`{len(games_batch)
 Each concept must be 4-6 sentences with specific mechanical details.
 
 
+
