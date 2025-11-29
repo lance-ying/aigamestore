@@ -14,7 +14,7 @@ Usage:
     uv run python fix_game_gui.py --share  # Create public URL
 """
 # /// script
-# dependencies = ["gradio", "anthropic", "openai", "pyyaml"]
+# dependencies = ["gradio", "anthropic", "openai", "pyyaml", "google-generativeai"]
 # ///
 
 import argparse
