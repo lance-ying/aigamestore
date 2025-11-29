@@ -1,0 +1,1066 @@
+<analysis>
+- Issue identified: 
+  1. Monster needs to spawn only when player collects a track (not at game start)
+  2. Sword animation needs to be horizontal (Y-axis rotation) instead of vertical
+  3. Player movement speed needs to be increased
+  4. Dodge should move in the direction of player's current velocity, not facing direction
+  
+- Files affected: 
+  1. globals.js - Player speed configuration
+  2. entities.js - Player dodge logic, sword animation, Track collection spawning
+  3. game.js - Monster initialization logic
+  
+- Changes needed:
+  1. Increase player speed/acceleration values in GAME_CONFIG
+  2. Change sword swing from Z-axis to Y-axis rotation for horizontal swipe
+  3. Modify dodge to use velocity direction instead of rotation
+  4. Remove monster creation from setupHunt() and spawn it when first track is collected
+</analysis>
+
+<code filename="globals.js">
+/**
+ * Global constants and game state management
+ */
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+// Canvas dimensions
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+// Game phases
+export const GAME_PHASE = {
+  START: "START",
+  PLAYING: "PLAYING",
+  PAUSED: "PAUSED",
+  GAME_OVER_WIN: "GAME_OVER_WIN",
+  GAME_OVER_LOSE: "GAME_OVER_LOSE"
+};
+
+// Control modes
+export const CONTROL_MODE = {
+  HUMAN: "HUMAN",
+  TEST_1: "TEST_1",
+  TEST_2: "TEST_2"
+};
+
+// Game constants
+export const GAME_CONFIG = {
+  PLAYER_SPEED: 0.08,
+  PLAYER_ACCELERATION: 0.5,
+  PLAYER_MAX_SPEED: 0.35,
+  PLAYER_MAX_HEALTH: 100,
+  PLAYER_ATTACK_DAMAGE: 15,
+  PLAYER_ATTACK_COOLDOWN: 0.5,
+  PLAYER_DODGE_COOLDOWN: 1.0,
+  PLAYER_DODGE_DURATION: 0.4,
+  PLAYER_HEAL_AMOUNT: 30,
+  PLAYER_HEAL_COOLDOWN: 5.0,
+  
+  MONSTER_MAX_HEALTH: 150,
+  MONSTER_SPEED: 0.08,
+  MONSTER_ATTACK_DAMAGE: 20,
+  MONSTER_ATTACK_RANGE: 2.5,
+  MONSTER_ATTACK_COOLDOWN: 2.0,
+  MONSTER_DETECTION_RANGE: 15,
+  
+  TRACK_COUNT: 15,
+  TRACKS_TO_REVEAL: 8,
+  TRACK_COLLECTION_RANGE: 1.5,
+  
+  GRAVITY: -0.5,
+  WORLD_SIZE: 50
+};
+
+// Global game state
+export const gameState = {
+  // Game phase
+  gamePhase: GAME_PHASE.START,
+  controlMode: CONTROL_MODE.HUMAN,
+  
+  // Three.js objects
+  scene: null,
+  camera: null,
+  renderer: null,
+  
+  // Lighting
+  lights: [],
+  ambientLight: null,
+  directionalLight: null,
+  
+  // Entities
+  player: null,
+  monster: null,
+  tracks: [],
+  scoutflies: [],
+  
+  // Game state
+  score: 0,
+  tracksCollected: 0,
+  monsterRevealed: false,
+  monsterSpawned: false,
+  huntStartTime: 0,
+  huntDuration: 0,
+  
+  // Physics
+  gravity: new THREE.Vector3(0, GAME_CONFIG.GRAVITY, 0),
+  
+  // Camera
+  cameraOffset: new THREE.Vector3(0, 8, 12),
+  cameraTarget: null,
+  cameraRotationOffset: 0, // Independent camera rotation controlled by arrow keys
+  
+  // Performance
+  frameCount: 0,
+  lastFrameTime: 0,
+  deltaTime: 0,
+  
+  // Terrain
+  terrain: null,
+  trees: [],
+  rocks: []
+};
+
+// Initialize logs (write-only)
+if (!window.logs) {
+  window.logs = {
+    game_info: [],
+    player_info: [],
+    inputs: []
+  };
+}
+
+// Expose getGameState globally
+export function getGameState() {
+  return gameState;
+}
+
+window.getGameState = getGameState;
+
+// Utility function to log game events
+export function logGameEvent(eventType, data = {}) {
+  window.logs.game_info.push({
+    game_status: gameState.gamePhase,
+    event_type: eventType,
+    data: data,
+    framecount: gameState.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+// Utility function to log player info
+export function logPlayerInfo(player) {
+  if (!player || !player.mesh) return;
+  
+  const screenPos = player.mesh.position.clone().project(gameState.camera);
+  
+  window.logs.player_info.push({
+    screen_x: (screenPos.x + 1) * CANVAS_WIDTH / 2,
+    screen_y: (1 - screenPos.y) * CANVAS_HEIGHT / 2,
+    game_x: player.mesh.position.x,
+    game_y: player.mesh.position.y,
+    game_z: player.mesh.position.z,
+    health: player.health,
+    framecount: gameState.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+// Utility function to log input
+export function logInput(inputType, key, keyCode) {
+  window.logs.inputs.push({
+    input_type: inputType,
+    data: { key, keyCode },
+    framecount: gameState.frameCount,
+    timestamp: Date.now()
+  });
+}
+</code>
+
+<code filename="game.js">
+/**
+ * Main game file - entry point and game loop
+ */
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, GAME_PHASE, CONTROL_MODE, GAME_CONFIG, logGameEvent } from './globals.js';
+import { setupCamera, updateCamera, updateCameraShake } from './camera.js';
+import { setupLighting } from './lighting.js';
+import { setupRenderer } from './renderer.js';
+import { setupWorld } from './world.js';
+import { Player, Monster, Track, Scoutfly } from './entities.js';
+import { updatePhysics, handleCollisions, isPositionValid } from './physics.js';
+import { initInput, updateInput } from './input.js';
+import { initUI, renderUI } from './ui.js';
+
+/**
+ * Initialize the game
+ */
+function init() {
+  // Seed random for reproducibility
+  Math.seedrandom(42);
+  
+  // Create scene
+  gameState.scene = new THREE.Scene();
+  gameState.scene.background = new THREE.Color(0x87CEEB);
+  gameState.scene.fog = new THREE.Fog(0x87CEEB, 30, 100);
+  
+  // Setup systems
+  setupRenderer();
+  setupCamera();
+  setupLighting();
+  setupWorld();
+  initInput();
+  initUI();
+  
+  // Set initial game phase
+  gameState.gamePhase = GAME_PHASE.START;
+  
+  // Log initial state
+  logGameEvent('game_init', { 
+    control_mode: gameState.controlMode 
+  });
+  
+  console.log('Monster Hunter game initialized');
+}
+
+/**
+ * Setup a new hunt
+ */
+function setupHunt() {
+  // Clear existing entities
+  if (gameState.player) {
+    gameState.scene.remove(gameState.player.mesh);
+  }
+  if (gameState.monster) {
+    gameState.scene.remove(gameState.monster.mesh);
+  }
+  gameState.tracks.forEach(track => {
+    gameState.scene.remove(track.mesh);
+    gameState.scene.remove(track.glow);
+  });
+  gameState.scoutflies.forEach(fly => {
+    gameState.scene.remove(fly.mesh);
+  });
+  
+  // Reset state
+  gameState.tracks = [];
+  gameState.scoutflies = [];
+  gameState.tracksCollected = 0;
+  gameState.monsterRevealed = false;
+  gameState.monsterSpawned = false;
+  gameState.monster = null;
+  gameState.score = 0;
+  
+  // Create player
+  gameState.player = new Player(0, 1, 0);
+  
+  // DON'T create monster yet - it will spawn when player collects first track
+  
+  // Create tracks scattered around the map
+  for (let i = 0; i < GAME_CONFIG.TRACK_COUNT; i++) {
+    let trackX, trackZ;
+    let attempts = 0;
+    
+    do {
+      // Place tracks randomly across the map
+      trackX = (Math.random() - 0.5) * GAME_CONFIG.WORLD_SIZE * 0.6;
+      trackZ = (Math.random() - 0.5) * GAME_CONFIG.WORLD_SIZE * 0.6;
+      attempts++;
+    } while (!isPositionValid(trackX, trackZ) && attempts < 10);
+    
+    if (attempts < 10) {
+      const track = new Track(trackX, trackZ);
+      gameState.tracks.push(track);
+    }
+  }
+  
+  // Create scoutflies
+  for (let i = 0; i < 5; i++) {
+    const fly = new Scoutfly(gameState.player.mesh.position.clone());
+    gameState.scoutflies.push(fly);
+  }
+  
+  logGameEvent('hunt_setup', {
+    track_count: gameState.tracks.length
+  });
+}
+
+/**
+ * Update game state
+ */
+function updateGame(deltaTime) {
+  gameState.deltaTime = deltaTime;
+  gameState.frameCount++;
+  
+  // Update input
+  updateInput(deltaTime);
+  
+  // Update based on game phase
+  switch (gameState.gamePhase) {
+    case GAME_PHASE.START:
+      // Waiting for player to start
+      break;
+      
+    case GAME_PHASE.PLAYING:
+      // Update all entities
+      if (gameState.player) {
+        gameState.player.update(deltaTime);
+      }
+      
+      if (gameState.monster) {
+        gameState.monster.update(deltaTime);
+      }
+      
+      gameState.tracks.forEach(track => track.update(deltaTime));
+      gameState.scoutflies.forEach(fly => fly.update(deltaTime));
+      
+      // Update physics
+      updatePhysics(deltaTime);
+      handleCollisions();
+      
+      // Update camera
+      updateCamera();
+      updateCameraShake(deltaTime);
+      break;
+      
+    case GAME_PHASE.PAUSED:
+      // Game is paused, don't update
+      break;
+      
+    case GAME_PHASE.GAME_OVER_WIN:
+    case GAME_PHASE.GAME_OVER_LOSE:
+      // Game over, don't update
+      break;
+  }
+  
+  // Render UI
+  renderUI();
+}
+
+/**
+ * Render the scene
+ */
+function render() {
+  if (gameState.renderer && gameState.scene && gameState.camera) {
+    gameState.renderer.render(gameState.scene, gameState.camera);
+  }
+}
+
+/**
+ * Main game loop
+ */
+let lastTime = performance.now();
+let gameInitialized = false;
+
+function gameLoop(currentTime) {
+  requestAnimationFrame(gameLoop);
+  
+  const deltaTime = (currentTime - lastTime) / 1000;
+  lastTime = currentTime;
+  
+  // Clamp delta time to prevent large jumps
+  const clampedDelta = Math.min(deltaTime, 0.1);
+  
+  // Initialize game on first frame
+  if (!gameInitialized) {
+    init();
+    gameInitialized = true;
+  }
+  
+  // Setup hunt when starting to play
+  if (gameState.gamePhase === GAME_PHASE.PLAYING && !gameState.player) {
+    setupHunt();
+  }
+  
+  // Update and render
+  updateGame(clampedDelta);
+  render();
+}
+
+// Expose game instance globally
+window.gameInstance = {
+  start: () => {
+    gameLoop(performance.now());
+  }
+};
+
+// Set control mode function
+window.setControlMode = (mode) => {
+  gameState.controlMode = mode;
+  logGameEvent('control_mode_change', { mode });
+  
+  // Update button states
+  const buttons = ['humanModeBtn', 'test_1_ModeBtn', 'test_2_ModeBtn'];
+  buttons.forEach(btnId => {
+    const btn = document.getElementById(btnId);
+    if (btn) {
+      btn.classList.remove('active');
+    }
+  });
+  
+  const activeBtn = document.getElementById(`${mode === CONTROL_MODE.HUMAN ? 'human' : mode.toLowerCase()}ModeBtn`);
+  if (activeBtn) {
+    activeBtn.classList.add('active');
+  }
+  
+  console.log('Control mode set to:', mode);
+};
+
+// Start the game
+window.gameInstance.start();
+
+console.log('Monster Hunter game started');
+</code>
+
+<code filename="entities.js">
+/**
+ * Entity classes for player, monster, and other game objects
+ */
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, GAME_CONFIG, GAME_PHASE, logPlayerInfo, logGameEvent } from './globals.js';
+import { isPositionValid } from './physics.js';
+
+/**
+ * Player class - the hunter
+ */
+export class Player {
+  constructor(x, y, z) {
+    // Create player mesh - humanoid hunter
+    const bodyGeometry = new THREE.CapsuleGeometry(0.4, 1.2, 8, 16);
+    const bodyMaterial = new THREE.MeshStandardMaterial({ 
+      color: 0x2d5f3f,
+      roughness: 0.6,
+      metalness: 0.2
+    });
+    this.mesh = new THREE.Mesh(bodyGeometry, bodyMaterial);
+    this.mesh.position.set(x, y, z);
+    this.mesh.castShadow = true;
+    this.mesh.receiveShadow = true;
+    
+    // Create weapon (sword) - LARGER SIZE
+    const weaponGeometry = new THREE.BoxGeometry(0.2, 2.5, 0.3);
+    const weaponMaterial = new THREE.MeshStandardMaterial({ 
+      color: 0x888888,
+      metalness: 0.8,
+      roughness: 0.3
+    });
+    this.weapon = new THREE.Mesh(weaponGeometry, weaponMaterial);
+    this.weapon.position.set(0.6, 0.5, 0);
+    this.weapon.castShadow = true;
+    this.mesh.add(this.weapon);
+    
+    // Physics properties
+    this.velocity = new THREE.Vector3(0, 0, 0);
+    this.acceleration = new THREE.Vector3(0, 0, 0);
+    this.speed = GAME_CONFIG.PLAYER_SPEED;
+    this.maxSpeed = GAME_CONFIG.PLAYER_MAX_SPEED;
+    this.accelerationRate = GAME_CONFIG.PLAYER_ACCELERATION;
+    this.isMoving = false;
+    this.onGround = true;
+    
+    // Combat properties
+    this.health = GAME_CONFIG.PLAYER_MAX_HEALTH;
+    this.maxHealth = GAME_CONFIG.PLAYER_MAX_HEALTH;
+    this.isAttacking = false;
+    this.attackCooldown = 0;
+    this.isDodging = false;
+    this.dodgeCooldown = 0;
+    this.dodgeTime = 0;
+    this.healCooldown = 0;
+    
+    // State
+    this.rotation = 0;
+    this.lastLogTime = 0;
+    
+    gameState.scene.add(this.mesh);
+  }
+  
+  update(deltaTime) {
+    // Update cooldowns
+    if (this.attackCooldown > 0) {
+      this.attackCooldown -= deltaTime;
+    }
+    if (this.dodgeCooldown > 0) {
+      this.dodgeCooldown -= deltaTime;
+    }
+    if (this.healCooldown > 0) {
+      this.healCooldown -= deltaTime;
+    }
+    if (this.dodgeTime > 0) {
+      this.dodgeTime -= deltaTime;
+      if (this.dodgeTime <= 0) {
+        this.isDodging = false;
+      }
+    }
+    
+    // Apply acceleration to velocity
+    this.velocity.add(this.acceleration.clone().multiplyScalar(deltaTime));
+    
+    // Cap velocity to max speed
+    const currentSpeed = this.velocity.length();
+    if (currentSpeed > this.maxSpeed) {
+      this.velocity.normalize().multiplyScalar(this.maxSpeed);
+    }
+    
+    // Apply velocity to position
+    this.mesh.position.add(this.velocity.clone().multiplyScalar(deltaTime * 60));
+    
+    // Apply friction/deceleration
+    this.velocity.multiplyScalar(0.88);
+    
+    // Reset acceleration for next frame
+    this.acceleration.set(0, 0, 0);
+    
+    // Keep player on ground
+    if (this.mesh.position.y < 1) {
+      this.mesh.position.y = 1;
+      this.velocity.y = 0;
+      this.onGround = true;
+    }
+    
+    // Constrain to world bounds
+    const halfWorld = GAME_CONFIG.WORLD_SIZE / 2;
+    this.mesh.position.x = Math.max(-halfWorld, Math.min(halfWorld, this.mesh.position.x));
+    this.mesh.position.z = Math.max(-halfWorld, Math.min(halfWorld, this.mesh.position.z));
+    
+    // Update rotation to face movement direction
+    if (this.velocity.length() > 0.01) {
+      this.rotation = Math.atan2(this.velocity.x, this.velocity.z);
+      this.mesh.rotation.y = this.rotation;
+    }
+    
+    // Animate weapon during attack - HORIZONTAL SWING (Y-axis rotation)
+    if (this.isAttacking) {
+      const swingAngle = Math.sin(this.attackCooldown * 10) * Math.PI * 0.5;
+      this.weapon.rotation.y = swingAngle;
+    } else {
+      this.weapon.rotation.y = 0;
+    }
+    
+    // Log player info periodically
+    if (gameState.frameCount % 30 === 0) {
+      logPlayerInfo(this);
+    }
+  }
+  
+  moveForward() {
+    // Move forward relative to camera direction only
+    const direction = new THREE.Vector3(
+      Math.sin(gameState.cameraRotationOffset),
+      0,
+      Math.cos(gameState.cameraRotationOffset)
+    );
+    this.acceleration.add(direction.multiplyScalar(this.accelerationRate));
+    this.isMoving = true;
+  }
+  
+  moveBackward() {
+    // Move backward relative to camera direction only
+    const direction = new THREE.Vector3(
+      -Math.sin(gameState.cameraRotationOffset),
+      0,
+      -Math.cos(gameState.cameraRotationOffset)
+    );
+    this.acceleration.add(direction.multiplyScalar(this.accelerationRate));
+    this.isMoving = true;
+  }
+  
+  strafeLeft() {
+    // Strafe left relative to camera direction only
+    const direction = new THREE.Vector3(
+      -Math.cos(gameState.cameraRotationOffset),
+      0,
+      Math.sin(gameState.cameraRotationOffset)
+    );
+    this.acceleration.add(direction.multiplyScalar(this.accelerationRate));
+    this.isMoving = true;
+  }
+  
+  strafeRight() {
+    // Strafe right relative to camera direction only
+    const direction = new THREE.Vector3(
+      Math.cos(gameState.cameraRotationOffset),
+      0,
+      -Math.sin(gameState.cameraRotationOffset)
+    );
+    this.acceleration.add(direction.multiplyScalar(this.accelerationRate));
+    this.isMoving = true;
+  }
+  
+  attack() {
+    if (this.attackCooldown <= 0 && !this.isDodging) {
+      this.isAttacking = true;
+      this.attackCooldown = GAME_CONFIG.PLAYER_ATTACK_COOLDOWN;
+      
+      // Check if monster is in range - LARGER ATTACK HITBOX
+      if (gameState.monster && gameState.monsterRevealed) {
+        const distance = this.mesh.position.distanceTo(gameState.monster.mesh.position);
+        if (distance < 5.0) {
+          gameState.monster.takeDamage(GAME_CONFIG.PLAYER_ATTACK_DAMAGE);
+        }
+      }
+      
+      setTimeout(() => {
+        this.isAttacking = false;
+      }, 200);
+    }
+  }
+  
+  dodge() {
+    if (this.dodgeCooldown <= 0) {
+      this.isDodging = true;
+      this.dodgeTime = GAME_CONFIG.PLAYER_DODGE_DURATION;
+      this.dodgeCooldown = GAME_CONFIG.PLAYER_DODGE_COOLDOWN;
+      
+      // Dodge in the direction of current movement
+      if (this.velocity.length() > 0.01) {
+        // Use velocity direction
+        const direction = this.velocity.clone().normalize();
+        this.velocity.add(direction.multiplyScalar(this.speed * 5));
+      } else {
+        // If not moving, dodge forward relative to facing
+        const direction = new THREE.Vector3(0, 0, -1);
+        direction.applyAxisAngle(new THREE.Vector3(0, 1, 0), this.rotation);
+        this.velocity.add(direction.multiplyScalar(this.speed * 5));
+      }
+    }
+  }
+  
+  heal() {
+    if (this.healCooldown <= 0 && this.health < this.maxHealth) {
+      this.health = Math.min(this.maxHealth, this.health + GAME_CONFIG.PLAYER_HEAL_AMOUNT);
+      this.healCooldown = GAME_CONFIG.PLAYER_HEAL_COOLDOWN;
+      
+      // Visual feedback - make player glow briefly
+      this.mesh.material.emissive = new THREE.Color(0x00ff00);
+      this.mesh.material.emissiveIntensity = 0.5;
+      setTimeout(() => {
+        this.mesh.material.emissive = new THREE.Color(0x000000);
+        this.mesh.material.emissiveIntensity = 0;
+      }, 500);
+    }
+  }
+  
+  takeDamage(amount) {
+    if (this.isDodging) return; // Invincible during dodge
+    
+    this.health = Math.max(0, this.health - amount);
+    
+    // Visual feedback - flash red
+    this.mesh.material.emissive = new THREE.Color(0xff0000);
+    this.mesh.material.emissiveIntensity = 0.7;
+    setTimeout(() => {
+      this.mesh.material.emissive = new THREE.Color(0x000000);
+      this.mesh.material.emissiveIntensity = 0;
+    }, 200);
+    
+    if (this.health <= 0) {
+      this.die();
+    }
+  }
+  
+  die() {
+    gameState.gamePhase = GAME_PHASE.GAME_OVER_LOSE;
+  }
+}
+
+/**
+ * Monster class - the target to hunt
+ */
+export class Monster {
+  constructor(x, y, z) {
+    // Create monster body - large threatening creature
+    const bodyGeometry = new THREE.SphereGeometry(1.2, 16, 16);
+    const bodyMaterial = new THREE.MeshStandardMaterial({ 
+      color: 0x8b0000,
+      roughness: 0.7,
+      metalness: 0.1
+    });
+    this.mesh = new THREE.Mesh(bodyGeometry, bodyMaterial);
+    this.mesh.position.set(x, y, z);
+    this.mesh.castShadow = true;
+    this.mesh.receiveShadow = true;
+    
+    // Create spikes
+    this.spikes = [];
+    for (let i = 0; i < 8; i++) {
+      const spikeGeometry = new THREE.ConeGeometry(0.2, 0.8, 6);
+      const spikeMaterial = new THREE.MeshStandardMaterial({ 
+        color: 0x4a0000,
+        roughness: 0.8
+      });
+      const spike = new THREE.Mesh(spikeGeometry, spikeMaterial);
+      const angle = (i / 8) * Math.PI * 2;
+      spike.position.set(Math.cos(angle) * 1.2, Math.sin(angle) * 0.5, 0);
+      spike.rotation.z = angle + Math.PI / 2;
+      spike.castShadow = true;
+      this.mesh.add(spike);
+      this.spikes.push(spike);
+    }
+    
+    // Create eyes
+    const eyeGeometry = new THREE.SphereGeometry(0.15, 8, 8);
+    const eyeMaterial = new THREE.MeshStandardMaterial({ 
+      color: 0xffff00,
+      emissive: 0xffff00,
+      emissiveIntensity: 0.8
+    });
+    this.leftEye = new THREE.Mesh(eyeGeometry, eyeMaterial);
+    this.leftEye.position.set(0.4, 0.3, 1.0);
+    this.mesh.add(this.leftEye);
+    
+    this.rightEye = new THREE.Mesh(eyeGeometry, eyeMaterial);
+    this.rightEye.position.set(-0.4, 0.3, 1.0);
+    this.mesh.add(this.rightEye);
+    
+    // Combat properties
+    this.health = GAME_CONFIG.MONSTER_MAX_HEALTH;
+    this.maxHealth = GAME_CONFIG.MONSTER_MAX_HEALTH;
+    this.speed = GAME_CONFIG.MONSTER_SPEED;
+    this.attackCooldown = 0;
+    this.isAttacking = false;
+    
+    // AI state
+    this.state = "IDLE"; // IDLE, PATROL, CHASE, ATTACK
+    this.patrolTarget = null;
+    this.patrolWaitTime = 0;
+    this.detectionRange = GAME_CONFIG.MONSTER_DETECTION_RANGE;
+    this.attackRange = GAME_CONFIG.MONSTER_ATTACK_RANGE;
+    
+    // Animation
+    this.animationTime = 0;
+    
+    gameState.scene.add(this.mesh);
+  }
+  
+  update(deltaTime) {
+    this.animationTime += deltaTime;
+    
+    // Update cooldowns
+    if (this.attackCooldown > 0) {
+      this.attackCooldown -= deltaTime;
+    }
+    
+    // Animate spikes
+    this.spikes.forEach((spike, index) => {
+      const offset = (index / this.spikes.length) * Math.PI * 2;
+      spike.position.y = Math.sin(this.animationTime * 3 + offset) * 0.3;
+    });
+    
+    // Idle breathing animation
+    const breathScale = 1 + Math.sin(this.animationTime * 2) * 0.05;
+    this.mesh.scale.set(breathScale, breathScale, breathScale);
+    
+    // AI behavior - ALWAYS AGGRESSIVE WHEN REVEALED
+    if (gameState.player && gameState.monsterRevealed) {
+      const distanceToPlayer = this.mesh.position.distanceTo(gameState.player.mesh.position);
+      
+      // State transitions - no detection range check when revealed
+      if (distanceToPlayer < this.attackRange) {
+        this.state = "ATTACK";
+      } else {
+        // Always chase when revealed, regardless of distance
+        this.state = "CHASE";
+      }
+      
+      // Execute state behavior
+      switch (this.state) {
+        case "CHASE":
+          this.chasePlayer(deltaTime);
+          break;
+        case "ATTACK":
+          this.attackPlayer(deltaTime);
+          break;
+      }
+    } else {
+      // Patrol when monster not revealed
+      this.patrol(deltaTime);
+    }
+    
+    // Constrain to world bounds
+    const halfWorld = GAME_CONFIG.WORLD_SIZE / 2;
+    this.mesh.position.x = Math.max(-halfWorld, Math.min(halfWorld, this.mesh.position.x));
+    this.mesh.position.z = Math.max(-halfWorld, Math.min(halfWorld, this.mesh.position.z));
+  }
+  
+  chasePlayer(deltaTime) {
+    if (!gameState.player) return;
+    
+    const direction = new THREE.Vector3()
+      .subVectors(gameState.player.mesh.position, this.mesh.position)
+      .normalize();
+    
+    this.mesh.position.add(direction.multiplyScalar(this.speed * deltaTime * 60));
+    
+    // Face player
+    this.mesh.lookAt(gameState.player.mesh.position);
+  }
+  
+  attackPlayer(deltaTime) {
+    if (!gameState.player) return;
+    
+    // Face player
+    this.mesh.lookAt(gameState.player.mesh.position);
+    
+    // Attack if cooldown ready
+    if (this.attackCooldown <= 0) {
+      this.isAttacking = true;
+      this.attackCooldown = GAME_CONFIG.MONSTER_ATTACK_COOLDOWN;
+      
+      // Deal damage
+      gameState.player.takeDamage(GAME_CONFIG.MONSTER_ATTACK_DAMAGE);
+      
+      // Attack animation - lunge forward
+      const direction = new THREE.Vector3()
+        .subVectors(gameState.player.mesh.position, this.mesh.position)
+        .normalize();
+      this.mesh.position.add(direction.multiplyScalar(1.5));
+      
+      setTimeout(() => {
+        this.isAttacking = false;
+      }, 300);
+    }
+  }
+  
+  patrol(deltaTime) {
+    // Simple patrol behavior
+    if (!this.patrolTarget || this.patrolWaitTime > 0) {
+      this.patrolWaitTime -= deltaTime;
+      if (this.patrolWaitTime <= 0) {
+        // Pick new patrol point
+        this.patrolTarget = new THREE.Vector3(
+          (Math.random() - 0.5) * GAME_CONFIG.WORLD_SIZE * 0.6,
+          1.5,
+          (Math.random() - 0.5) * GAME_CONFIG.WORLD_SIZE * 0.6
+        );
+      }
+      return;
+    }
+    
+    const direction = new THREE.Vector3()
+      .subVectors(this.patrolTarget, this.mesh.position)
+      .normalize();
+    
+    this.mesh.position.add(direction.multiplyScalar(this.speed * 0.5 * deltaTime * 60));
+    
+    // Check if reached patrol point
+    if (this.mesh.position.distanceTo(this.patrolTarget) < 2) {
+      this.patrolTarget = null;
+      this.patrolWaitTime = 2 + Math.random() * 3;
+    }
+  }
+  
+  takeDamage(amount) {
+    this.health = Math.max(0, this.health - amount);
+    
+    // Visual feedback - flash bright red
+    this.mesh.material.emissive = new THREE.Color(0xff0000);
+    this.mesh.material.emissiveIntensity = 1.0;
+    setTimeout(() => {
+      this.mesh.material.emissive = new THREE.Color(0x000000);
+      this.mesh.material.emissiveIntensity = 0;
+    }, 150);
+    
+    if (this.health <= 0) {
+      this.die();
+    }
+  }
+  
+  die() {
+    gameState.gamePhase = GAME_PHASE.GAME_OVER_WIN;
+    gameState.huntDuration = (Date.now() - gameState.huntStartTime) / 1000;
+    
+    // Death animation - fade out
+    let opacity = 1.0;
+    const fadeInterval = setInterval(() => {
+      opacity -= 0.05;
+      this.mesh.material.opacity = opacity;
+      this.mesh.material.transparent = true;
+      if (opacity <= 0) {
+        clearInterval(fadeInterval);
+      }
+    }, 50);
+  }
+}
+
+/**
+ * Track class - evidence for tracking monster
+ */
+export class Track {
+  constructor(x, z) {
+    const geometry = new THREE.CylinderGeometry(0.3, 0.3, 0.1, 16);
+    const material = new THREE.MeshStandardMaterial({ 
+      color: 0x8b4513,
+      emissive: 0xffaa00,
+      emissiveIntensity: 0.3
+    });
+    this.mesh = new THREE.Mesh(geometry, material);
+    this.mesh.position.set(x, 0.05, z);
+    this.mesh.rotation.x = Math.PI / 2;
+    this.mesh.receiveShadow = true;
+    
+    // Add glow ring
+    const glowGeometry = new THREE.RingGeometry(0.4, 0.6, 16);
+    const glowMaterial = new THREE.MeshBasicMaterial({ 
+      color: 0xffaa00,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.5
+    });
+    this.glow = new THREE.Mesh(glowGeometry, glowMaterial);
+    this.glow.position.copy(this.mesh.position);
+    this.glow.rotation.x = -Math.PI / 2;
+    
+    this.collected = false;
+    this.animationTime = 0;
+    
+    gameState.scene.add(this.mesh);
+    gameState.scene.add(this.glow);
+  }
+  
+  update(deltaTime) {
+    if (this.collected) return;
+    
+    this.animationTime += deltaTime;
+    
+    // Pulse animation
+    const pulse = 1 + Math.sin(this.animationTime * 3) * 0.2;
+    this.glow.scale.set(pulse, pulse, 1);
+    
+    // Check collection
+    if (gameState.player) {
+      const distance = new THREE.Vector2(
+        this.mesh.position.x - gameState.player.mesh.position.x,
+        this.mesh.position.z - gameState.player.mesh.position.z
+      ).length();
+      
+      if (distance < GAME_CONFIG.TRACK_COLLECTION_RANGE) {
+        this.collect();
+      }
+    }
+  }
+  
+  collect() {
+    this.collected = true;
+    gameState.tracksCollected++;
+    
+    // SPAWN MONSTER on first track collection
+    if (!gameState.monsterSpawned) {
+      gameState.monsterSpawned = true;
+      
+      // Spawn monster at this track location
+      gameState.monster = new Monster(this.mesh.position.x, 1.5, this.mesh.position.z);
+      
+      logGameEvent('monster_spawned', {
+        position: { x: this.mesh.position.x, z: this.mesh.position.z }
+      });
+    }
+    
+    // Remove visual
+    gameState.scene.remove(this.mesh);
+    gameState.scene.remove(this.glow);
+    
+    // Check if monster should be revealed
+    if (gameState.tracksCollected >= GAME_CONFIG.TRACKS_TO_REVEAL && !gameState.monsterRevealed) {
+      gameState.monsterRevealed = true;
+    }
+  }
+}
+
+/**
+ * Scoutfly class - guides player to tracks/monster
+ */
+export class Scoutfly {
+  constructor(startPos) {
+    const geometry = new THREE.SphereGeometry(0.08, 8, 8);
+    const material = new THREE.MeshBasicMaterial({ 
+      color: 0x00ffff,
+      transparent: true,
+      opacity: 0.8
+    });
+    this.mesh = new THREE.Mesh(geometry, material);
+    this.mesh.position.copy(startPos);
+    
+    // Create glow
+    const glowGeometry = new THREE.SphereGeometry(0.15, 8, 8);
+    const glowMaterial = new THREE.MeshBasicMaterial({ 
+      color: 0x00ffff,
+      transparent: true,
+      opacity: 0.3
+    });
+    this.glow = new THREE.Mesh(glowGeometry, glowMaterial);
+    this.mesh.add(this.glow);
+    
+    this.velocity = new THREE.Vector3(
+      (Math.random() - 0.5) * 0.1,
+      (Math.random() - 0.5) * 0.1,
+      (Math.random() - 0.5) * 0.1
+    );
+    this.target = null;
+    this.orbitOffset = new THREE.Vector3(
+      Math.random() - 0.5,
+      Math.random() * 0.5,
+      Math.random() - 0.5
+    ).normalize().multiplyScalar(1.5);
+    
+    gameState.scene.add(this.mesh);
+  }
+  
+  update(deltaTime) {
+    if (!gameState.player) return;
+    
+    // Find nearest uncollected track or monster
+    if (gameState.monsterRevealed && gameState.monster) {
+      this.target = gameState.monster.mesh.position.clone();
+    } else {
+      let nearestTrack = null;
+      let nearestDist = Infinity;
+      
+      for (const track of gameState.tracks) {
+        if (!track.collected) {
+          const dist = track.mesh.position.distanceTo(gameState.player.mesh.position);
+          if (dist < nearestDist) {
+            nearestDist = dist;
+            nearestTrack = track;
+          }
+        }
+      }
+      
+      if (nearestTrack) {
+        this.target = nearestTrack.mesh.position.clone();
+      }
+    }
+    
+    // Move toward target with orbital motion
+    if (this.target) {
+      const orbitPos = this.target.clone().add(this.orbitOffset);
+      const direction = orbitPos.clone().sub(this.mesh.position).normalize();
+      this.velocity.lerp(direction.multiplyScalar(0.15), 0.1);
+      
+      // Rotate orbit
+      const rotationSpeed = 0.02;
+      const axis = new THREE.Vector3(0, 1, 0);
+      this.orbitOffset.applyAxisAngle(axis, rotationSpeed);
+    }
+    
+    // Apply velocity
+    this.mesh.position.add(this.velocity.clone().multiplyScalar(deltaTime * 60));
+    
+    // Keep near player
+    const distToPlayer = this.mesh.position.distanceTo(gameState.player.mesh.position);
+    if (distToPlayer > 15) {
+      const pullBack = gameState.player.mesh.position.clone()
+        .sub(this.mesh.position)
+        .normalize()
+        .multiplyScalar(0.2);
+      this.velocity.add(pullBack);
+    }
+    
+    // Pulse glow
+    this.glow.scale.set(
+      1 + Math.sin(Date.now() * 0.01) * 0.3,
+      1 + Math.sin(Date.now() * 0.01) * 0.3,
+      1 + Math.sin(Date.now() * 0.01) * 0.3
+    );
+  }
+}
+</code>

@@ -84,6 +84,17 @@ function drawEnemySprite(p, enemyName) {
       p.line(x + 3, y - 15, x + 8, y - 25);
       break;
       
+    case "Moldsmal":
+      // Green blob
+      p.fill(150, 255, 150);
+      p.ellipse(x, y, 45, 35);
+      p.fill(100, 200, 100);
+      p.ellipse(x, y - 5, 30, 20);
+      p.fill(50, 150, 50);
+      p.circle(x - 8, y - 3, 8);
+      p.circle(x + 8, y - 3, 8);
+      break;
+      
     case "Tsunderplane":
       // Blue airplane
       p.fill(150, 150, 255);
@@ -92,6 +103,79 @@ function drawEnemySprite(p, enemyName) {
       p.fill(100, 100, 200);
       p.triangle(x - 25, y + 5, x - 5, y + 5, x - 15, y + 15);
       p.triangle(x + 25, y + 5, x + 5, y + 5, x + 15, y + 15);
+      break;
+      
+    case "Loox":
+      // Large eye
+      p.fill(255);
+      p.ellipse(x, y, 50, 50);
+      p.fill(100, 150, 255);
+      p.circle(x, y, 30);
+      p.fill(0);
+      p.circle(x, y, 15);
+      p.fill(255);
+      p.circle(x - 3, y - 3, 5);
+      break;
+      
+    case "Migosp":
+      // Yellow bug swarm
+      for (let i = 0; i < 5; i++) {
+        const angle = (i / 5) * p.TWO_PI;
+        const bx = x + p.cos(angle) * 20;
+        const by = y + p.sin(angle) * 15;
+        p.fill(255, 200, 100);
+        p.ellipse(bx, by, 10, 15);
+        p.fill(200, 150, 50);
+        p.ellipse(bx, by, 6, 10);
+      }
+      break;
+      
+    case "Knight Knight":
+      // Armored knight
+      p.fill(180, 180, 200);
+      p.rect(x - 20, y - 10, 40, 35);
+      p.fill(150, 150, 180);
+      p.ellipse(x, y - 20, 35, 30);
+      p.fill(100, 100, 120);
+      p.rect(x - 25, y, 10, 20); // Arm
+      p.rect(x + 15, y, 10, 20); // Arm
+      p.fill(200, 200, 220);
+      p.triangle(x + 20, y - 5, x + 30, y + 10, x + 20, y + 10); // Sword
+      break;
+      
+    case "Madjick":
+      // Magical orb creature
+      p.fill(255, 100, 255);
+      p.ellipse(x, y, 40, 40);
+      p.fill(200, 50, 200);
+      p.triangle(x, y - 25, x - 15, y + 20, x + 15, y + 20);
+      // Orbiting particles
+      const time = p.frameCount * 0.1;
+      for (let i = 0; i < 3; i++) {
+        const angle = time + (i * p.TWO_PI / 3);
+        const px = x + p.cos(angle) * 30;
+        const py = y + p.sin(angle) * 30;
+        p.fill(255, 150, 255);
+        p.circle(px, py, 8);
+      }
+      break;
+      
+    case "Final Froggit":
+      // Larger, more imposing frog
+      p.fill(50, 180, 50);
+      p.ellipse(x, y, 60, 50);
+      p.fill(30, 130, 30);
+      p.ellipse(x - 15, y - 10, 16, 16); // Eye
+      p.ellipse(x + 15, y - 10, 16, 16); // Eye
+      p.fill(0);
+      p.circle(x - 15, y - 10, 8);
+      p.circle(x + 15, y - 10, 8);
+      p.fill(255, 200, 0);
+      p.stroke(255, 200, 0);
+      p.strokeWeight(2);
+      p.line(x - 20, y + 10, x - 30, y + 20); // Crown
+      p.line(x, y + 5, x, y - 5);
+      p.line(x + 20, y + 10, x + 30, y + 20);
       break;
   }
   p.pop();

@@ -1,0 +1,86 @@
+Let me analyze the human feedback:
+1. "when enemies hit me, it seems to mess with my WASD controls" - This suggests that when the player takes damage, something is interfering with movement controls
+2. "when I jump I seem to jump way too high" - Jump height is excessive
+3. "can you make sure the WASD controls are consistent?" - Controls should remain stable
+
+Let me examine the code:
+
+1. Looking at the Player class in `entities.js`:
+   - `takeDamage()` method: It doesn't seem to directly mess with controls, but it could be that the enemy attack is pushing the player or affecting velocity
+   
+2. Looking at the Enemy class in `entities.js`:
+   - In the `attack()` method, it only calls `gameState.player.takeDamage(this.damage)` - doesn't push the player
+   
+3. But wait, let me check the Enemy's `update()` method more carefully:
+   - The enemy chases the player and when attacking, it continues to apply velocity
+   - The enemy's velocity could be pushing into the player, but there's no collision detection actually pushing the player back
+
+4. Actually, I think I see the issue - when an enemy hits the player, the enemy is still moving towards the player and its mesh might be overlapping. But looking at the code, there's no physical collision response that would push the player.
+
+Wait, let me re-read the issue. "when enemies hit me, it seems to mess with my WASD controls" - could this be related to the camera? Or the velocity?
+
+Actually, I think the issue might be in how movement is applied. Let me check the `move()` method in the Player class:
+```javascript
+move(direction) {
+    if (this.isDashing) return;
+    
+    // Convert direction to world space based on camera rotation
+    const forward = new THREE.Vector3(0, 0, -1);
+    const right = new THREE.Vector3(1, 0, 0);
+    
+    forward.applyAxisAngle(new THREE.Vector3(0, 1, 0), gameState.cameraAngleX);
+    right.applyAxisAngle(new THREE.Vector3(0, 1, 0), gameState.cameraAngleX);
+    
+    const movement = new THREE.Vector3();
+    if (direction.z !== 0) movement.add(forward.multiplyScalar(direction.z));
+    if (direction.x !== 0) movement.add(right.multiplyScalar(direction.x));
+    
+    movement.normalize().multiplyScalar(this.spee
+
+I see the movement calculation involves camera rotation and directional vectors. The method seems to be converting input directions into world space movement, potentially affected by camera angle. However, the method is cut off mid-word, suggesting there might be an issue with speed calculation or movement application that could impact control responsiveness.
+
+The critical observation is the vector mutation problem. By using `multiplyScalar()` directly on `forward` and `right`, each subsequent calculation uses an already modified vector. This means diagonal movements will produce unexpected results, as the vector lengths get distorted during calculation.
+
+To resolve this, I would clone the vectors before scaling to preserve their original orientation and magnitude. This ensures consistent movement behavior regardless of input combination.
+
+The gravity and jump mechanics reveal another subtle issue. The acceleration is frame-rate dependent, with gravity at -0.008 and jump power at 0.4. The position update attempts to normalize to 60 fps by multiplying velocity by `deltaTime * 60`, but acceleration lacks this same normalization.
+
+This inconsistent scaling could lead to unpredictable player movement and jumping mechanics across different frame rates.
+
+The calculation sequence shows a critical scaling problem: gravity and acceleration are applied with a simple `deltaTime` multiplier, while position update uses `deltaTime * 60`, creating a potential 60x discrepancy in physics calculations.
+
+Breaking down the problematic steps reveals the core issue: when running at 60fps, the position update incorrectly scales velocity by multiplying with both `deltaTime` and 60, which fundamentally distorts movement mechanics.
+
+Necessary corrections involve three key areas: preventing vector mutation during movement, calibrating jump mechanics and gravity interactions, and resolving frame-rate independence calculation errors in velocity and position updates.
+
+The enemy system appears unrelated, as current attack mechanics only handle damage without applying directional forces, suggesting the movement inconsistencies stem from internal vector manipulation problems.
+
+The primary focus should be refactoring the `move()` method to use `.clone()` for preserving vector integrity and ensuring precise, predictable player control across different frame rates.
+
+I'll modify the movement calculation to create independent vector transformations, preventing unintended mutations. By cloning forward and right vectors before applying rotational transformations, I can maintain clean directional calculations that respect camera orientation while avoiding unexpected vector modifications.
+
+The jump mechanics require careful recalibration, addressing gravity and jump power scaling to create more natural player movement. Frame-rate independence is crucial for consistent gameplay physics.
+
+The current friction calculation reveals an interesting normalization strategy: using deltaTime * 60 as a scaling factor to simulate consistent behavior across different frame rates. This approach attempts to normalize physics calculations by treating 60fps as a baseline reference point.
+
+I'll need to systematically review acceleration, velocity, and position updates to ensure they follow a consistent frame-rate independent approach, potentially refactoring the entire physics simulation to use a more robust time-scaling mechanism.
+
+The key considerations involve maintaining the existing constant tunings while creating a mathematically sound method for interpolating physics updates across variable frame rates. This might require carefully adjusting how deltaTime is applied to prevent unexpected simulation behaviors.
+
+The current implementation reveals subtle frame-rate dependency issues in velocity and position calculations. By examining the acceleration and velocity updates, I can see that the multipliers need systematic normalization to ensure consistent physical behavior regardless of frame rate.
+
+The semi-implicit Euler integration approach suggests we need to carefully scale acceleration and velocity values. Specifically, gravity and other force calculations require precise unit conversions to prevent unexpected simulation drift or unrealistic motion.
+
+The proposed solution involves consistently applying deltaTime multipliers across velocity and position updates, with careful attention to how acceleration values are transformed. This approach minimizes invasive changes while addressing the underlying frame-rate independence problem. I'll carefully track the physics calculation, noting how acceleration resets each frame while gravity is consistently applied. The key insight is that acceleration starts at zero, then gravity (-0.008) is added each frame before calculating velocity and position changes. At 60fps, this means a tiny incremental velocity change of -0.000133 per frame, which accumulates systematically over time. The code explicitly resets acceleration to zero after each update, ensuring a clean slate for the next frame's calculations.
+
+The jump mechanism introduces a critical observation: setting velocity.y directly to 0.4 means an immediate upward movement of 0.4 units in the first frame, independent of frame rate normalization. This creates an abrupt vertical displacement before gravity begins its gradual deceleration effect. The frame-rate independent approach works for continuous acceleration, but the direct velocity assignment bypasses the standard incremental update pattern.
+
+Calculating frame-by-frame reveals a persistent upward trajectory. Each subsequent frame sees a minimal velocity reduction due to the tiny gravitational acceleration, resulting in a prolonged and high jump arc. The incremental velocity changes are so slight that the player's vertical movement remains substantially consistent across multiple frames.
+
+To address this physics anomaly, I'll explore two primary strategies: adjusting gravitational parameters and resolving potential vector manipulation issues in the movement function. By targeting a specific jump height of approximately 2 units, I can derive a more appropriate gravitational constant that provides realistic vertical motion.
+
+The mathematical approach involves calculating an optimal gravity value that constrains jump height while maintaining natural-feeling player movement. Initial calculations suggest modifying the gravity acceleration to create a more controlled vertical trajectory.
+
+Key modifications include reducing jump power from 0.4 to 0.25 and increasing gravity magnitude from -0.008 to -0.015. Additionally, implementing vector cloning in the move() method will prevent unintended side effects during player movement calculations.
+
+These adjustments aim to create more controlled vertical movement, addressing the player's feedback about excessive jump height while ensuring precise directional inputs.

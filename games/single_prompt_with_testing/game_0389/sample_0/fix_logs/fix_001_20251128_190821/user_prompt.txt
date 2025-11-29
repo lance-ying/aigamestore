@@ -1,0 +1,2315 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+this game does not load can you fix that
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">BEEP - Gravity Gun Platformer</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Basic Movement)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Win Strategy)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Navigate BEEP, a small robot, through a treacherous facility filled with deadly hazards. Use your powerful gravity gun to manipulate objects and enemies, solve physics-based puzzles, and platform across dangerous gaps. Reach the exit portal while avoiding lava pits, crushing blocks, and hostile robots. Master the gravity gun to grab, throw, and swing from objects to survive this hardcore platforming challenge.</p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Arrow Keys (LEFT/RIGHT): Move BEEP left and right | Arrow Key (UP): Jump | Space: Fire gravity gun (hold to grab objects, release to throw) | Z: Pull grabbed objects closer / Push them away (toggle) | ESC: Pause/Unpause game | ENTER: Start game (from start screen) | R: Restart game (return to start screen)</p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script type="module" src="globals.js"></script>
+    <script type="module" src="player.js"></script>
+    <script type="module" src="entities.js"></script>
+    <script type="module" src="gravityGun.js"></script>
+    <script type="module" src="levelManager.js"></script>
+    <script type="module" src="ui.js"></script>
+    <script type="module" src="inputHandler.js"></script>
+    <script type="module" src="automated_testing_controller.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="automated_testing_controller.js">
+// automated_testing_controller.js - Automated testing
+import { gameState } from './globals.js';
+
+let testState = {
+  positionHistory: [],
+  stuckCounter: 0,
+  lastAction: null,
+  targetReached: false,
+  phase: 'start'
+};
+
+function getTestWinAction(state) {
+  const player = state.player;
+  if (!player) return { left: false, right: false, up: false, space: false, z: false };
+
+  // Track position to detect if stuck
+  testState.positionHistory.push({ x: player.x, y: player.y });
+  if (testState.positionHistory.length > 60) {
+    testState.positionHistory.shift();
+  }
+
+  // Check if stuck
+  if (testState.positionHistory.length === 60) {
+    const recent = testState.positionHistory.slice(-30);
+    const avgX = recent.reduce((sum, pos) => sum + pos.x, 0) / recent.length;
+    const variance = recent.reduce((sum, pos) => sum + Math.abs(pos.x - avgX), 0) / recent.length;
+    
+    if (variance < 5) {
+      testState.stuckCounter++;
+    } else {
+      testState.stuckCounter = 0;
+    }
+  }
+
+  const action = { left: false, right: false, up: false, space: false, z: false };
+
+  // Get nearest grabbable object
+  let nearestObj = null;
+  let nearestDist = 200;
+  
+  for (let obj of state.movableObjects) {
+    const dist = Math.abs(obj.x - player.x) + Math.abs(obj.y - player.y);
+    if (dist < nearestDist) {
+      nearestObj = obj;
+      nearestDist = dist;
+    }
+  }
+
+  // Strategy: Move right, jump over obstacles, use gravity gun to move blocks
+  
+  // If we have a grabbed object, position it for stepping
+  if (state.grabbedObject) {
+    action.z = true; // Pull mode
+    
+    // Release if in good position
+    if (Math.abs(state.grabbedObject.x - player.x) > 40 && player.grounded) {
+      // Release by not holding space
+      action.space = false;
+    } else {
+      action.space = true;
+      action.right = true; // Keep moving while holding
+    }
+  } else {
+    // Try to grab nearest object if it's useful
+    if (nearestObj && nearestDist < 150) {
+      // Check if there's a gap ahead
+      let gapAhead = true;
+      for (let platform of state.platforms) {
+        if (platform.x > player.x && platform.x < player.x + 200 &&
+            Math.abs(platform.y - player.y) < 100) {
+          gapAhead = false;
+          break;
+        }
+      }
+      
+      if (gapAhead || testState.stuckCounter > 60) {
+        action.space = true; // Grab object
+        
+        // Move towards object
+        if (nearestObj.x > player.x) {
+          action.right = true;
+        } else {
+          action.left = true;
+        }
+      }
+    }
+    
+    // Normal movement
+    if (!action.space) {
+      action.right = true; // Always move right towards goal
+      
+      // Jump if there's a platform ahead or obstacle
+      let shouldJump = false;
+      
+      // Check for platforms above
+      for (let platform of state.platforms) {
+        if (platform.x > player.x - 50 && platform.x < player.x + 100 &&
+            platform.y < player.y - 20 && platform.y > player.y - 100) {
+          shouldJump = true;
+          break;
+        }
+      }
+      
+      // Jump over enemies
+      for (let enemy of state.enemies) {
+        if (enemy.active && Math.abs(enemy.x - player.x) < 80 && 
+            enemy.y > player.y - 50) {
+          shouldJump = true;
+          break;
+        }
+      }
+      
+      // Jump over hazards
+      for (let hazard of state.hazards) {
+        if (hazard.x > player.x - 50 && hazard.x < player.x + 100 &&
+            Math.abs(hazard.y - player.y) < 50) {
+          shouldJump = true;
+          break;
+        }
+      }
+      
+      // Jump if stuck
+      if (testState.stuckCounter > 30) {
+        shouldJump = true;
+        testState.stuckCounter = 0;
+      }
+      
+      if (shouldJump && player.grounded) {
+        action.up = true;
+      }
+    }
+  }
+
+  return action;
+}
+
+function getBasicTestAction(state) {
+  const player = state.player;
+  if (!player) return { left: false, right: false, up: false, space: false, z: false };
+
+  const action = { left: false, right: false, up: false, space: false, z: false };
+
+  // Simple test: move right and jump occasionally
+  action.right = true;
+  
+  if (player.grounded && Math.random() < 0.05) {
+    action.up = true;
+  }
+  
+  // Try gravity gun occasionally
+  if (Math.random() < 0.02) {
+    action.space = true;
+  }
+
+  return action;
+}
+
+function getRandomAction(state) {
+  return {
+    left: Math.random() < 0.2,
+    right: Math.random() < 0.3,
+    up: Math.random() < 0.1,
+    space: Math.random() < 0.1,
+    z: Math.random() < 0.05
+  };
+}
+
+export function get_automated_testing_action(state) {
+  switch (state.controlMode) {
+    case "TEST_1":
+      return getBasicTestAction(state);
+    case "TEST_2":
+      return getTestWinAction(state);
+    default:
+      return getRandomAction(state);
+  }
+}
+
+// Expose globally
+if (typeof window !== 'undefined') {
+  window.get_automated_testing_action = get_automated_testing_action;
+}
+
+export default get_automated_testing_action;
+</file>
+
+<file name="globals.js">
+// globals.js - Global constants and game state
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+export const GAME_PHASES = {
+  START: "START",
+  PLAYING: "PLAYING",
+  PAUSED: "PAUSED",
+  GAME_OVER_WIN: "GAME_OVER_WIN",
+  GAME_OVER_LOSE: "GAME_OVER_LOSE"
+};
+
+export const CONTROL_MODES = {
+  HUMAN: "HUMAN",
+  TEST_1: "TEST_1",
+  TEST_2: "TEST_2",
+  TEST_3: "TEST_3"
+};
+
+// Physics constants
+export const GRAVITY = 0.6;
+export const PLAYER_SPEED = 4;
+export const PLAYER_JUMP_FORCE = -12;
+export const MAX_FALL_SPEED = 15;
+export const FRICTION = 0.8;
+
+// Gravity gun constants
+export const GRAVITY_GUN_RANGE = 150;
+export const GRAVITY_GUN_FORCE = 0.8;
+export const MAX_ENERGY = 100;
+export const ENERGY_DRAIN_RATE = 0.5;
+export const ENERGY_RECHARGE_RATE = 0.3;
+
+// Game state object
+export const gameState = {
+  player: null,
+  entities: [],
+  blocks: [],
+  enemies: [],
+  platforms: [],
+  hazards: [],
+  goal: null,
+  score: 0,
+  gamePhase: GAME_PHASES.START,
+  controlMode: CONTROL_MODES.HUMAN,
+  energy: MAX_ENERGY,
+  gravityGunMode: "ATTRACT", // "ATTRACT" or "REPEL"
+  gravityGunActive: false,
+  level: 1,
+  targetedObject: null,
+  keys: {
+    left: false,
+    right: false,
+    up: false,
+    down: false,
+    space: false,
+    shift: false
+  }
+};
+
+// Expose globally
+if (typeof window !== 'undefined') {
+  window.getGameState = () => gameState;
+}
+</file>
+
+<file name="game.js">
+// game.js - Main game file
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { Player } from './player.js';
+import { GravityGun } from './gravityGun.js';
+import { InputHandler } from './inputHandler.js';
+import { createLevel, updateCamera } from './levelManager.js';
+import { drawStartScreen, drawPauseOverlay, drawGameOverScreen, drawHUD, drawBackground } from './ui.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+  let inputHandler;
+  let gravityGun;
+  let spacePressed = false;
+  let zPressed = false;
+  let upPressed = false;
+
+  // Initialize logs
+  p.logs = {
+    game_info: [],
+    inputs: [],
+    player_info: []
+  };
+
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(60);
+    p.randomSeed(42);
+    
+    inputHandler = new InputHandler(p);
+    gravityGun = new GravityGun(p);
+    
+    // Log initial game state
+    p.logs.game_info.push({
+      data: { gamePhase: gameState.gamePhase },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  };
+
+  p.draw = function() {
+    p.background(20, 25, 40);
+    
+    if (gameState.gamePhase === "START") {
+      drawStartScreen(p);
+    } else if (gameState.gamePhase === "PLAYING") {
+      // Update
+      const keys = inputHandler.update();
+      
+      if (gameState.player) {
+        gameState.player.update(keys);
+        
+        // Log player info periodically
+        if (p.frameCount % 10 === 0) {
+          p.logs.player_info.push({
+            screen_x: gameState.player.getScreenX(gameState.cameraX),
+            screen_y: gameState.player.y,
+            game_x: gameState.player.x,
+            game_y: gameState.player.y,
+            framecount: p.frameCount
+          });
+        }
+      }
+      
+      // Update all entities
+      for (let platform of gameState.platforms) {
+        platform.update();
+      }
+      
+      for (let obj of gameState.movableObjects) {
+        obj.update();
+      }
+      
+      for (let enemy of gameState.enemies) {
+        enemy.update();
+      }
+      
+      for (let hazard of gameState.hazards) {
+        hazard.update();
+      }
+      
+      if (gameState.exitPortal) {
+        gameState.exitPortal.update();
+      }
+      
+      // Gravity gun logic
+      if (keys.space && !spacePressed) {
+        spacePressed = true;
+        
+        if (!gameState.grabbedObject) {
+          const target = gravityGun.findTarget();
+          if (target) {
+            gravityGun.grab(target);
+          }
+        }
+      } else if (!keys.space && spacePressed) {
+        spacePressed = false;
+        
+        if (gameState.grabbedObject && gameState.player) {
+          // Release and throw
+          const throwDir = {
+            x: gameState.player.x + (gameState.player.facingRight ? 100 : -100),
+            y: gameState.player.y - 50
+          };
+          gravityGun.release(throwDir);
+        }
+      }
+      
+      // Pull/Push toggle
+      if (keys.z && !zPressed) {
+        zPressed = true;
+        gameState.pullMode = !gameState.pullMode;
+      } else if (!keys.z) {
+        zPressed = false;
+      }
+      
+      // Update grabbed object position
+      if (gameState.grabbedObject) {
+        gravityGun.updateGrabbedObject();
+      }
+      
+      // Update camera
+      updateCamera();
+      
+      // Check health
+      if (gameState.health <= 0) {
+        gameState.gamePhase = "GAME_OVER_LOSE";
+        p.logs.game_info.push({
+          data: { gamePhase: gameState.gamePhase, reason: "health depleted" },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      }
+      
+      // Increase score over time
+      gameState.score += 0.1;
+      
+      // Render
+      drawBackground(p);
+      
+      // Draw entities (world space)
+      for (let hazard of gameState.hazards) {
+        hazard.draw(p, gameState.cameraX);
+      }
+      
+      for (let platform of gameState.platforms) {
+        platform.draw(p, gameState.cameraX);
+      }
+      
+      for (let obj of gameState.movableObjects) {
+        obj.draw(gameState.cameraX);
+      }
+      
+      for (let enemy of gameState.enemies) {
+        enemy.draw(gameState.cameraX);
+      }
+      
+      if (gameState.exitPortal) {
+        gameState.exitPortal.draw(gameState.cameraX);
+      }
+      
+      if (gameState.player) {
+        gameState.player.draw(gameState.cameraX);
+      }
+      
+      gravityGun.draw(gameState.cameraX);
+      
+      // Draw HUD (screen space)
+      drawHUD(p);
+      
+    } else if (gameState.gamePhase === "PAUSED") {
+      // Draw last game frame
+      drawBackground(p);
+      
+      for (let hazard of gameState.hazards) {
+        hazard.draw(p, gameState.cameraX);
+      }
+      
+      for (let platform of gameState.platforms) {
+        platform.draw(p, gameState.cameraX);
+      }
+      
+      for (let obj of gameState.movableObjects) {
+        obj.draw(gameState.cameraX);
+      }
+      
+      for (let enemy of gameState.enemies) {
+        enemy.draw(gameState.cameraX);
+      }
+      
+      if (gameState.exitPortal) {
+        gameState.exitPortal.draw(gameState.cameraX);
+      }
+      
+      if (gameState.player) {
+        gameState.player.draw(gameState.cameraX);
+      }
+      
+      gravityGun.draw(gameState.cameraX);
+      drawHUD(p);
+      
+      drawPauseOverlay(p);
+      
+    } else if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") {
+      drawGameOverScreen(p);
+    }
+  };
+
+  p.keyPressed = function() {
+    inputHandler.keyPressed(p.key, p.keyCode);
+    
+    // Game phase transitions (only in HUMAN mode)
+    if (gameState.controlMode === "HUMAN") {
+      if (p.keyCode === 13) { // ENTER
+        if (gameState.gamePhase === "START") {
+          startGame();
+        }
+      } else if (p.keyCode === 27) { // ESC
+        if (gameState.gamePhase === "PLAYING") {
+          gameState.gamePhase = "PAUSED";
+          p.logs.game_info.push({
+            data: { gamePhase: gameState.gamePhase },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+          });
+        } else if (gameState.gamePhase === "PAUSED") {
+          gameState.gamePhase = "PLAYING";
+          p.logs.game_info.push({
+            data: { gamePhase: gameState.gamePhase },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+          });
+        }
+      } else if (p.keyCode === 82) { // R
+        if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") {
+          resetGame();
+        }
+      }
+    }
+    
+    // Track up key for jump
+    if (p.keyCode === 38) {
+      upPressed = true;
+    }
+  };
+
+  p.keyReleased = function() {
+    inputHandler.keyReleased(p.key, p.keyCode);
+    
+    if (p.keyCode === 38) {
+      upPressed = false;
+    }
+  };
+
+  function startGame() {
+    gameState.gamePhase = "PLAYING";
+    gameState.score = 0;
+    gameState.health = 100;
+    gameState.cameraX = 0;
+    gameState.grabbedObject = null;
+    gameState.gravityGunActive = false;
+    gameState.pullMode = true;
+    
+    // Create level
+    createLevel(p, gameState.level);
+    
+    // Create player
+    gameState.player = new Player(p, 50, 200);
+    gameState.entities = [gameState.player];
+    
+    p.logs.game_info.push({
+      data: { gamePhase: gameState.gamePhase, action: "game_started" },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+
+  function resetGame() {
+    gameState.gamePhase = "START";
+    gameState.player = null;
+    gameState.entities = [];
+    gameState.platforms = [];
+    gameState.movableObjects = [];
+    gameState.enemies = [];
+    gameState.hazards = [];
+    gameState.exitPortal = null;
+    gameState.grabbedObject = null;
+    gameState.gravityGunActive = false;
+    
+    p.logs.game_info.push({
+      data: { gamePhase: gameState.gamePhase, action: "game_reset" },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+});
+
+// Expose game instance globally
+window.gameInstance = gameInstance;
+
+// Control mode setter
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  
+  // Update button states
+  const buttons = ['humanModeBtn', 'test_1_ModeBtn', 'test_2_ModeBtn'];
+  buttons.forEach(btnId => {
+    const btn = document.getElementById(btnId);
+    if (btn) {
+      btn.classList.remove('active');
+    }
+  });
+  
+  const activeBtn = mode === 'HUMAN' ? 'humanModeBtn' : 
+                   mode === 'TEST_1' ? 'test_1_ModeBtn' :
+                   mode === 'TEST_2' ? 'test_2_ModeBtn' : null;
+  
+  if (activeBtn) {
+    const btn = document.getElementById(activeBtn);
+    if (btn) {
+      btn.classList.add('active');
+    }
+  }
+  
+  // Auto-start if in test mode and on start screen
+  if (mode !== 'HUMAN' && gameState.gamePhase === 'START') {
+    setTimeout(() => {
+      if (gameState.gamePhase === 'START') {
+        gameState.gamePhase = "PLAYING";
+        gameState.score = 0;
+        gameState.health = 100;
+        gameState.cameraX = 0;
+        gameState.grabbedObject = null;
+        gameState.gravityGunActive = false;
+        gameState.pullMode = true;
+        
+        createLevel(gameInstance, gameState.level);
+        gameState.player = new Player(gameInstance, 50, 200);
+        gameState.entities = [gameState.player];
+      }
+    }, 100);
+  }
+};
+</file>
+
+<file name="ui.js">
+// ui.js - User interface rendering
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export function drawStartScreen(p) {
+  p.background(20, 25, 40);
+  
+  // Title with glow effect
+  p.push();
+  p.textAlign(p.CENTER, p.CENTER);
+  
+  // Glow
+  p.fill(100, 200, 255, 50);
+  p.noStroke();
+  p.textSize(72);
+  p.text("BEEP", CANVAS_WIDTH / 2, 80);
+  
+  // Title
+  p.fill(100, 200, 255);
+  p.textSize(64);
+  p.text("BEEP", CANVAS_WIDTH / 2, 80);
+  
+  // Subtitle
+  p.fill(150, 180, 200);
+  p.textSize(16);
+  p.text("GRAVITY GUN PLATFORMER", CANVAS_WIDTH / 2, 130);
+  
+  // Instructions box
+  p.fill(30, 35, 50, 200);
+  p.stroke(100, 200, 255, 100);
+  p.strokeWeight(2);
+  p.rect(50, 160, CANVAS_WIDTH - 100, 160, 5);
+  
+  // Instructions
+  p.fill(200, 220, 240);
+  p.textSize(14);
+  p.textAlign(p.LEFT, p.TOP);
+  const instructions = [
+    "Navigate BEEP through deadly hazards using your gravity gun!",
+    "",
+    "ARROW KEYS - Move left/right",
+    "UP ARROW - Jump",
+    "SPACE - Fire gravity gun (hold to grab)",
+    "Z - Pull closer / Push away (toggle)",
+    "",
+    "Grab blocks to create platforms. Throw enemies into lava!",
+    "Reach the blue portal to win!"
+  ];
+  
+  let yPos = 175;
+  for (let line of instructions) {
+    p.text(line, 70, yPos);
+    yPos += 18;
+  }
+  
+  // Start prompt
+  p.fill(100, 200, 255);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(20);
+  const alpha = (Math.sin(p.frameCount * 0.1) + 1) * 127;
+  p.fill(100, 200, 255, alpha);
+  p.text("PRESS ENTER TO START", CANVAS_WIDTH / 2, 360);
+  
+  p.pop();
+}
+
+export function drawPauseOverlay(p) {
+  p.push();
+  p.fill(0, 0, 0, 150);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  p.fill(255, 255, 255);
+  p.textAlign(p.RIGHT, p.TOP);
+  p.textSize(16);
+  p.text("PAUSED", CANVAS_WIDTH - 10, 10);
+  p.pop();
+}
+
+export function drawGameOverScreen(p) {
+  p.background(20, 25, 40);
+  
+  p.push();
+  p.textAlign(p.CENTER, p.CENTER);
+  
+  if (gameState.gamePhase === "GAME_OVER_WIN") {
+    // Victory
+    p.fill(100, 255, 150);
+    p.textSize(48);
+    p.text("MISSION COMPLETE!", CANVAS_WIDTH / 2, 120);
+    
+    p.fill(150, 200, 180);
+    p.textSize(24);
+    p.text("You escaped the facility!", CANVAS_WIDTH / 2, 180);
+  } else {
+    // Defeat
+    p.fill(255, 100, 100);
+    p.textSize(48);
+    p.text("GAME OVER", CANVAS_WIDTH / 2, 120);
+    
+    p.fill(200, 150, 150);
+    p.textSize(24);
+    p.text("BEEP was destroyed...", CANVAS_WIDTH / 2, 180);
+  }
+  
+  // Score
+  p.fill(200, 220, 240);
+  p.textSize(20);
+  p.text(`Final Score: ${Math.floor(gameState.score)}`, CANVAS_WIDTH / 2, 240);
+  
+  // Restart prompt
+  const alpha = (Math.sin(p.frameCount * 0.1) + 1) * 127;
+  p.fill(100, 200, 255, alpha);
+  p.textSize(18);
+  p.text("PRESS R TO RESTART", CANVAS_WIDTH / 2, 320);
+  
+  p.pop();
+}
+
+export function drawHUD(p) {
+  p.push();
+  
+  // Health bar
+  p.fill(40, 40, 50);
+  p.noStroke();
+  p.rect(10, 10, 204, 24, 3);
+  
+  const healthColor = gameState.health > 50 ? [100, 255, 150] : [255, 100, 100];
+  p.fill(...healthColor);
+  const healthWidth = (gameState.health / 100) * 200;
+  p.rect(12, 12, healthWidth, 20, 2);
+  
+  p.fill(255);
+  p.textAlign(p.LEFT, p.TOP);
+  p.textSize(12);
+  p.text("HEALTH", 16, 14);
+  
+  // Score
+  p.fill(40, 40, 50);
+  p.rect(10, 44, 120, 24, 3);
+  p.fill(100, 200, 255);
+  p.text(`SCORE: ${Math.floor(gameState.score)}`, 16, 48);
+  
+  // Gravity gun status
+  if (gameState.gravityGunActive) {
+    p.fill(40, 40, 50);
+    p.rect(10, 78, 180, 24, 3);
+    p.fill(100, 255, 150);
+    const mode = gameState.pullMode ? "PULL" : "PUSH";
+    p.text(`GRAVITY GUN: ${mode}`, 16, 82);
+  }
+  
+  p.pop();
+}
+
+export function drawBackground(p) {
+  // Gradient background
+  for (let y = 0; y < CANVAS_HEIGHT; y++) {
+    const inter = y / CANVAS_HEIGHT;
+    const c = p.lerpColor(p.color(30, 35, 50), p.color(50, 45, 70), inter);
+    p.stroke(c);
+    p.line(0, y, CANVAS_WIDTH, y);
+  }
+  
+  // Stars (parallax effect based on camera)
+  p.push();
+  p.noStroke();
+  p.randomSeed(42);
+  for (let i = 0; i < 50; i++) {
+    const x = p.random(CANVAS_WIDTH);
+    const y = p.random(CANVAS_HEIGHT);
+    const size = p.random(1, 3);
+    const parallax = gameState.cameraX * 0.1;
+    const starX = (x - parallax) % CANVAS_WIDTH;
+    p.fill(200, 200, 255, p.random(100, 200));
+    p.circle(starX, y, size);
+  }
+  p.pop();
+}
+</file>
+
+<file name="levelManager.js">
+// levelManager.js - Level setup and management
+import { gameState, CANVAS_HEIGHT } from './globals.js';
+import { Platform, MovableObject, Enemy, Hazard, ExitPortal } from './entities.js';
+
+export function createLevel(p, levelNum) {
+  gameState.platforms = [];
+  gameState.movableObjects = [];
+  gameState.enemies = [];
+  gameState.hazards = [];
+  gameState.exitPortal = null;
+
+  if (levelNum === 1) {
+    createLevel1(p);
+  }
+}
+
+function createLevel1(p) {
+  // Starting platform
+  gameState.platforms.push(new Platform(0, 350, 300, 50, 'normal'));
+  
+  // Gap with movable block
+  gameState.movableObjects.push(new MovableObject(p, 350, 250, 20, 'block'));
+  
+  // Platform after gap
+  gameState.platforms.push(new Platform(450, 350, 200, 50, 'normal'));
+  
+  // Enemy on platform
+  gameState.enemies.push(new Enemy(p, 550, 320, 50));
+  
+  // Lava pit
+  gameState.hazards.push(new Hazard(700, 370, 150, 30, 'lava'));
+  
+  // High platform with blocks
+  gameState.platforms.push(new Platform(900, 280, 180, 30, 'normal'));
+  gameState.movableObjects.push(new MovableObject(p, 950, 200, 18, 'metal'));
+  gameState.movableObjects.push(new MovableObject(p, 1000, 200, 18, 'metal'));
+  
+  // Moving platform section
+  gameState.platforms.push(new Platform(1150, 300, 100, 20, 'moving'));
+  
+  // More enemies
+  gameState.enemies.push(new Enemy(p, 1300, 320, 80));
+  gameState.platforms.push(new Platform(1200, 350, 300, 50, 'normal'));
+  
+  // Lava pit with blocks to cross
+  gameState.hazards.push(new Hazard(1550, 370, 200, 30, 'lava'));
+  gameState.movableObjects.push(new MovableObject(p, 1600, 250, 22, 'block'));
+  gameState.movableObjects.push(new MovableObject(p, 1680, 250, 22, 'block'));
+  
+  // Upper section
+  gameState.platforms.push(new Platform(1800, 250, 150, 30, 'normal'));
+  gameState.enemies.push(new Enemy(p, 1860, 220, 40));
+  
+  // Final platforming section
+  gameState.platforms.push(new Platform(2000, 300, 100, 30, 'normal'));
+  gameState.platforms.push(new Platform(2150, 250, 100, 30, 'normal'));
+  
+  // Exit portal
+  gameState.platforms.push(new Platform(2250, 200, 150, 50, 'normal'));
+  gameState.exitPortal = new ExitPortal(p, 2280, 120);
+}
+
+export function updateCamera() {
+  const player = gameState.player;
+  if (!player) return;
+
+  const targetX = player.x - 300; // Center player
+  gameState.cameraX = Math.max(0, Math.min(targetX, gameState.levelWidth - 600));
+}
+</file>
+
+<file name="render.js">
+// render.js - Rendering functions
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, MAX_ENERGY, GAME_PHASES, GRAVITY_GUN_RANGE } from './globals.js';
+
+export function renderGame(p) {
+  // Background
+  p.background(20, 15, 30);
+
+  // Stars
+  p.fill(255, 255, 200, 150);
+  p.noStroke();
+  for (let i = 0; i < 50; i++) {
+    let x = (i * 73) % CANVAS_WIDTH;
+    let y = (i * 97) % CANVAS_HEIGHT;
+    p.circle(x, y, 2);
+  }
+
+  // Render platforms
+  for (let platform of gameState.platforms) {
+    platform.render(p);
+  }
+
+  // Render hazards
+  for (let hazard of gameState.hazards) {
+    hazard.render(p, p.frameCount);
+  }
+
+  // Render goal
+  if (gameState.goal) {
+    gameState.goal.render(p, p.frameCount);
+  }
+
+  // Render blocks
+  for (let block of gameState.blocks) {
+    block.render(p);
+  }
+
+  // Render enemies
+  for (let enemy of gameState.enemies) {
+    enemy.render(p);
+  }
+
+  // Render gravity gun beam
+  if (gameState.gravityGunActive && gameState.targetedObject && gameState.player) {
+    p.push();
+    let playerCenterX = gameState.player.x + gameState.player.width / 2;
+    let playerCenterY = gameState.player.y + gameState.player.height / 2;
+    let targetX = gameState.targetedObject.x + gameState.targetedObject.width / 2;
+    let targetY = gameState.targetedObject.y + gameState.targetedObject.height / 2;
+
+    // Beam color based on mode
+    if (gameState.gravityGunMode === "ATTRACT") {
+      p.stroke(100, 150, 255, 150);
+    } else {
+      p.stroke(255, 100, 100, 150);
+    }
+    p.strokeWeight(3);
+    p.line(playerCenterX, playerCenterY, targetX, targetY);
+
+    // Particles along beam
+    p.noStroke();
+    for (let i = 0; i < 5; i++) {
+      let t = i / 5 + (p.frameCount * 0.05) % 1;
+      let px = p.lerp(playerCenterX, targetX, t);
+      let py = p.lerp(playerCenterY, targetY, t);
+      p.fill(200, 200, 255, 200);
+      p.circle(px, py, 4);
+    }
+    p.pop();
+  }
+
+  // Render player
+  if (gameState.player) {
+    gameState.player.render(p);
+
+    // Gravity gun indicator on player
+    if (gameState.gravityGunActive) {
+      p.push();
+      p.noFill();
+      if (gameState.gravityGunMode === "ATTRACT") {
+        p.stroke(100, 150, 255);
+      } else {
+        p.stroke(255, 100, 100);
+      }
+      p.strokeWeight(2);
+      let pulseSize = 5 + Math.sin(p.frameCount * 0.2) * 2;
+      p.circle(gameState.player.x + gameState.player.width / 2, 
+               gameState.player.y + gameState.player.height / 2, 
+               gameState.player.width + pulseSize);
+      p.pop();
+    }
+  }
+
+  // UI
+  renderUI(p);
+}
+
+export function renderUI(p) {
+  p.push();
+
+  // Health
+  p.fill(255);
+  p.textSize(14);
+  p.textAlign(p.LEFT, p.TOP);
+  p.text('Health:', 10, 10);
+  for (let i = 0; i < gameState.player.health; i++) {
+    p.fill(255, 50, 50);
+    p.noStroke();
+    p.circle(70 + i * 20, 18, 12);
+  }
+
+  // Score
+  p.fill(255);
+  p.text(`Score: ${gameState.score}`, 10, 30);
+
+  // Energy bar
+  p.fill(255);
+  p.text('Energy:', 10, 50);
+  p.noFill();
+  p.stroke(255);
+  p.strokeWeight(2);
+  p.rect(70, 45, 100, 15);
+  
+  let energyWidth = (gameState.energy / MAX_ENERGY) * 96;
+  p.noStroke();
+  p.fill(100, 200, 255);
+  p.rect(72, 47, energyWidth, 11);
+
+  // Gravity gun mode
+  p.fill(255);
+  p.textSize(12);
+  p.text(`Gun Mode: ${gameState.gravityGunMode}`, 10, 70);
+  p.textSize(10);
+  p.fill(200);
+  p.text('(Press Z to toggle)', 10, 85);
+
+  // Paused indicator
+  if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+    p.fill(255, 255, 100);
+    p.textSize(16);
+    p.textAlign(p.RIGHT, p.TOP);
+    p.text('PAUSED', CANVAS_WIDTH - 10, 10);
+  }
+
+  p.pop();
+}
+
+export function renderStartScreen(p) {
+  p.background(20, 15, 30);
+
+  // Stars
+  p.fill(255, 255, 200, 150);
+  p.noStroke();
+  for (let i = 0; i < 100; i++) {
+    let x = (i * 73) % CANVAS_WIDTH;
+    let y = (i * 97) % CANVAS_HEIGHT;
+    let twinkle = Math.sin(p.frameCount * 0.1 + i) * 0.5 + 0.5;
+    p.circle(x, y, 2 * twinkle);
+  }
+
+  p.push();
+  
+  // Title
+  p.fill(100, 200, 255);
+  p.textSize(48);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.text('BEEP', CANVAS_WIDTH / 2, 80);
+
+  // Subtitle
+  p.fill(150, 220, 255);
+  p.textSize(16);
+  p.text('Gravity Gun Platformer', CANVAS_WIDTH / 2, 120);
+
+  // Instructions
+  p.fill(255);
+  p.textSize(14);
+  p.textAlign(p.CENTER, p.TOP);
+  p.text('Navigate through dangerous levels using your gravity gun!', CANVAS_WIDTH / 2, 160);
+  p.text('Manipulate blocks to solve puzzles and defeat enemies.', CANVAS_WIDTH / 2, 180);
+  p.text('Reach the green goal platform to win!', CANVAS_WIDTH / 2, 200);
+
+  // Controls
+  p.textSize(12);
+  p.fill(200, 200, 255);
+  p.textAlign(p.LEFT, p.TOP);
+  p.text('Arrow Keys: Move', 200, 240);
+  p.text('Space: Jump (hold for higher)', 200, 260);
+  p.text('Shift: Fire Gravity Gun', 200, 280);
+  p.text('Z: Toggle Gun Mode', 200, 300);
+
+  // Mode explanation
+  p.fill(255, 200, 100);
+  p.textSize(11);
+  p.text('ATTRACT mode: Pull blocks toward you', 180, 325);
+  p.text('REPEL mode: Push blocks away from you', 180, 342);
+
+  // Start prompt
+  p.fill(100, 255, 100);
+  p.textSize(18);
+  p.textAlign(p.CENTER, p.CENTER);
+  let blink = Math.sin(p.frameCount * 0.1) * 0.5 + 0.5;
+  p.fill(100, 255, 100, 255 * blink);
+  p.text('PRESS ENTER TO START', CANVAS_WIDTH / 2, 370);
+
+  p.pop();
+}
+
+export function renderGameOver(p, won) {
+  p.background(20, 15, 30);
+
+  p.push();
+  
+  if (won) {
+    p.fill(100, 255, 100);
+    p.textSize(48);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.text('LEVEL COMPLETE!', CANVAS_WIDTH / 2, 120);
+
+    p.fill(255, 255, 100);
+    p.textSize(24);
+    p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, 180);
+
+    p.fill(200, 200, 255);
+    p.textSize(16);
+    p.text('You mastered the gravity gun!', CANVAS_WIDTH / 2, 220);
+  } else {
+    p.fill(255, 100, 100);
+    p.textSize(48);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.text('GAME OVER', CANVAS_WIDTH / 2, 120);
+
+    p.fill(255, 200, 100);
+    p.textSize(24);
+    p.text(`Score: ${gameState.score}`, CANVAS_WIDTH / 2, 180);
+
+    p.fill(200, 200, 255);
+    p.textSize(16);
+    p.text('Better luck next time!', CANVAS_WIDTH / 2, 220);
+  }
+
+  // Restart prompt
+  p.fill(255);
+  p.textSize(18);
+  p.textAlign(p.CENTER, p.CENTER);
+  let blink = Math.sin(p.frameCount * 0.1) * 0.5 + 0.5;
+  p.fill(255, 255, 255, 255 * blink);
+  p.text('PRESS R TO RESTART', CANVAS_WIDTH / 2, 320);
+
+  p.pop();
+}
+</file>
+
+<file name="inputHandler.js">
+// inputHandler.js - Input handling
+import { gameState } from './globals.js';
+
+export class InputHandler {
+  constructor(p) {
+    this.p = p;
+    this.keys = {
+      left: false,
+      right: false,
+      up: false,
+      space: false,
+      z: false
+    };
+  }
+
+  update() {
+    const p = this.p;
+    
+    if (gameState.controlMode === "HUMAN") {
+      this.keys.left = p.keyIsDown(37);
+      this.keys.right = p.keyIsDown(39);
+      this.keys.up = p.keyIsDown(38);
+      this.keys.space = p.keyIsDown(32);
+      this.keys.z = p.keyIsDown(90);
+    } else {
+      // Automated testing mode
+      const action = window.get_automated_testing_action?.(gameState);
+      if (action) {
+        this.keys.left = action.left || false;
+        this.keys.right = action.right || false;
+        this.keys.up = action.up || false;
+        this.keys.space = action.space || false;
+        this.keys.z = action.z || false;
+      }
+    }
+    
+    return this.keys;
+  }
+
+  keyPressed(key, keyCode) {
+    const p = this.p;
+    
+    // Log input
+    p.logs.inputs.push({
+      input_type: "keyPressed",
+      data: { key, keyCode },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+
+  keyReleased(key, keyCode) {
+    const p = this.p;
+    
+    // Log input
+    p.logs.inputs.push({
+      input_type: "keyReleased",
+      data: { key, keyCode },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+}
+</file>
+
+<file name="entities.js">
+// entities.js - Game entities
+import { gameState, CANVAS_HEIGHT, GRAVITY } from './globals.js';
+
+export class Platform {
+  constructor(x, y, width, height, type = 'normal') {
+    this.x = x;
+    this.y = y;
+    this.width = width;
+    this.height = height;
+    this.type = type; // normal, fragile, moving
+    this.vy = 0;
+    this.moveRange = 100;
+    this.moveSpeed = 1;
+    this.startY = y;
+  }
+
+  update() {
+    if (this.type === 'moving') {
+      this.y += this.moveSpeed;
+      if (this.y > this.startY + this.moveRange || this.y < this.startY - this.moveRange) {
+        this.moveSpeed *= -1;
+      }
+    }
+  }
+
+  draw(p, cameraX) {
+    const screenX = this.x - cameraX;
+    p.push();
+    
+    if (this.type === 'normal') {
+      p.fill(80, 80, 90);
+      p.stroke(60, 60, 70);
+    } else if (this.type === 'moving') {
+      p.fill(120, 80, 150);
+      p.stroke(90, 60, 120);
+    }
+    
+    p.strokeWeight(2);
+    p.rect(screenX, this.y, this.width, this.height, 2);
+    
+    // Add texture
+    p.stroke(100, 100, 110);
+    p.strokeWeight(1);
+    for (let i = 0; i < this.width; i += 20) {
+      p.line(screenX + i, this.y, screenX + i, this.y + this.height);
+    }
+    
+    p.pop();
+  }
+}
+
+export class MovableObject {
+  constructor(p, x, y, radius, type = 'block') {
+    this.p = p;
+    this.x = x;
+    this.y = y;
+    this.vx = 0;
+    this.vy = 0;
+    this.radius = radius;
+    this.type = type;
+    this.grounded = false;
+    this.rotation = 0;
+    this.rotationSpeed = 0;
+  }
+
+  update() {
+    const p = this.p;
+    
+    // Apply gravity if not grabbed
+    if (gameState.grabbedObject !== this) {
+      this.vy += GRAVITY * 0.8;
+      if (this.vy > 12) this.vy = 12;
+    }
+
+    // Update position
+    this.x += this.vx;
+    this.y += this.vy;
+
+    // Friction
+    this.vx *= 0.95;
+
+    // Check platform collisions
+    this.grounded = false;
+    for (let platform of gameState.platforms) {
+      if (this.checkPlatformCollision(platform)) {
+        this.grounded = true;
+      }
+    }
+
+    // Check other object collisions
+    for (let obj of gameState.movableObjects) {
+      if (obj !== this) {
+        const dist = p.dist(this.x, this.y, obj.x, obj.y);
+        if (dist < this.radius + obj.radius) {
+          const angle = p.atan2(this.y - obj.y, this.x - obj.x);
+          const overlap = (this.radius + obj.radius) - dist;
+          this.x += p.cos(angle) * overlap * 0.5;
+          this.y += p.sin(angle) * overlap * 0.5;
+          obj.x -= p.cos(angle) * overlap * 0.5;
+          obj.y -= p.sin(angle) * overlap * 0.5;
+        }
+      }
+    }
+
+    // Boundary checks
+    if (this.x < this.radius) {
+      this.x = this.radius;
+      this.vx *= -0.5;
+    }
+    if (this.x > gameState.levelWidth - this.radius) {
+      this.x = gameState.levelWidth - this.radius;
+      this.vx *= -0.5;
+    }
+
+    // Death by falling
+    if (this.y > CANVAS_HEIGHT + 100) {
+      this.y = -50; // Respawn at top
+      this.vy = 0;
+    }
+
+    // Rotation
+    this.rotation += this.rotationSpeed;
+    this.rotationSpeed *= 0.95;
+  }
+
+  checkPlatformCollision(platform) {
+    const p = this.p;
+    
+    // Simple circle-rect collision
+    const closestX = p.constrain(this.x, platform.x, platform.x + platform.width);
+    const closestY = p.constrain(this.y, platform.y, platform.y + platform.height);
+    
+    const dist = p.dist(this.x, this.y, closestX, closestY);
+    
+    if (dist < this.radius) {
+      // Collision response
+      const angle = p.atan2(this.y - closestY, this.x - closestX);
+      const overlap = this.radius - dist;
+      this.x += p.cos(angle) * overlap;
+      this.y += p.sin(angle) * overlap;
+      
+      // If on top, stop falling
+      if (this.vy > 0 && this.y < platform.y) {
+        this.vy = 0;
+        this.y = platform.y - this.radius;
+        this.vx *= 0.8; // Rolling friction
+        this.rotationSpeed = this.vx * 0.1;
+        return true;
+      } else {
+        this.vx *= 0.5;
+        this.vy *= 0.5;
+      }
+    }
+    
+    return false;
+  }
+
+  draw(cameraX) {
+    const p = this.p;
+    const screenX = this.x - cameraX;
+    
+    p.push();
+    p.translate(screenX, this.y);
+    p.rotate(this.rotation);
+    
+    if (this.type === 'block') {
+      p.fill(150, 100, 60);
+      p.stroke(100, 70, 40);
+      p.strokeWeight(2);
+      p.rect(-this.radius, -this.radius, this.radius * 2, this.radius * 2, 3);
+      
+      // Texture
+      p.stroke(120, 85, 50);
+      p.strokeWeight(1);
+      p.line(-this.radius, 0, this.radius, 0);
+      p.line(0, -this.radius, 0, this.radius);
+    } else if (this.type === 'metal') {
+      p.fill(180, 180, 190);
+      p.stroke(140, 140, 150);
+      p.strokeWeight(2);
+      p.circle(0, 0, this.radius * 2);
+      
+      // Details
+      p.stroke(160, 160, 170);
+      p.strokeWeight(1);
+      p.line(-this.radius * 0.7, 0, this.radius * 0.7, 0);
+      p.line(0, -this.radius * 0.7, 0, this.radius * 0.7);
+    }
+    
+    p.pop();
+  }
+}
+
+export class Enemy {
+  constructor(p, x, y, patrolRange) {
+    this.p = p;
+    this.x = x;
+    this.y = y;
+    this.startX = x;
+    this.vx = 2;
+    this.vy = 0;
+    this.width = 25;
+    this.height = 25;
+    this.patrolRange = patrolRange;
+    this.grounded = false;
+    this.active = true;
+    this.animationFrame = 0;
+  }
+
+  update() {
+    if (!this.active) return;
+    
+    const p = this.p;
+    
+    // Patrol movement
+    this.x += this.vx;
+    if (this.x > this.startX + this.patrolRange) {
+      this.x = this.startX + this.patrolRange;
+      this.vx *= -1;
+    }
+    if (this.x < this.startX - this.patrolRange) {
+      this.x = this.startX - this.patrolRange;
+      this.vx *= -1;
+    }
+
+    // Gravity
+    this.vy += GRAVITY;
+    if (this.vy > 15) this.vy = 15;
+    this.y += this.vy;
+
+    // Platform collision
+    this.grounded = false;
+    for (let platform of gameState.platforms) {
+      if (this.checkPlatformCollision(platform)) {
+        this.grounded = true;
+      }
+    }
+
+    // Check collision with player
+    if (gameState.player) {
+      const dist = p.dist(this.x, this.y, gameState.player.x, gameState.player.y);
+      if (dist < (this.width + gameState.player.width) / 2) {
+        gameState.health -= 0.5;
+      }
+    }
+
+    // Animation
+    this.animationFrame += 0.15;
+
+    // Death by falling
+    if (this.y > CANVAS_HEIGHT + 100) {
+      this.active = false;
+    }
+  }
+
+  checkPlatformCollision(platform) {
+    const p = this.p;
+    
+    if (this.vy >= 0 &&
+        this.x + this.width / 2 > platform.x &&
+        this.x - this.width / 2 < platform.x + platform.width &&
+        this.y + this.height / 2 >= platform.y &&
+        this.y + this.height / 2 <= platform.y + 15) {
+      this.y = platform.y - this.height / 2;
+      this.vy = 0;
+      return true;
+    }
+    return false;
+  }
+
+  draw(cameraX) {
+    if (!this.active) return;
+    
+    const p = this.p;
+    const screenX = this.x - cameraX;
+    
+    p.push();
+    p.translate(screenX, this.y);
+    
+    // Enemy body (hostile robot)
+    p.fill(255, 80, 80);
+    p.stroke(200, 40, 40);
+    p.strokeWeight(2);
+    p.rect(-this.width / 2, -this.height / 2, this.width, this.height, 3);
+    
+    // Eyes (angry)
+    const eyeBounce = Math.sin(this.animationFrame) * 2;
+    p.fill(255, 200, 0);
+    p.noStroke();
+    p.circle(-6, -5 + eyeBounce, 5);
+    p.circle(6, -5 + eyeBounce, 5);
+    
+    // Spikes
+    p.fill(200, 40, 40);
+    p.triangle(-8, -this.height / 2, -5, -this.height / 2 - 6, -2, -this.height / 2);
+    p.triangle(2, -this.height / 2, 5, -this.height / 2 - 6, 8, -this.height / 2);
+    
+    p.pop();
+  }
+}
+
+export class Hazard {
+  constructor(x, y, width, height, type = 'lava') {
+    this.x = x;
+    this.y = y;
+    this.width = width;
+    this.height = height;
+    this.type = type;
+    this.animationFrame = 0;
+  }
+
+  update() {
+    this.animationFrame += 0.1;
+    
+    // Check collision with player
+    if (gameState.player) {
+      const p = gameState.player;
+      if (p.x + p.width / 2 > this.x &&
+          p.x - p.width / 2 < this.x + this.width &&
+          p.y + p.height / 2 > this.y &&
+          p.y - p.height / 2 < this.y + this.height) {
+        gameState.health -= 2;
+      }
+    }
+  }
+
+  draw(p, cameraX) {
+    const screenX = this.x - cameraX;
+    
+    p.push();
+    
+    if (this.type === 'lava') {
+      // Lava effect
+      p.noStroke();
+      p.fill(255, 100, 0, 200);
+      p.rect(screenX, this.y, this.width, this.height);
+      
+      // Bubbles
+      p.fill(255, 150, 0);
+      for (let i = 0; i < this.width; i += 40) {
+        const bubbleY = this.y + 10 + Math.sin(this.animationFrame + i * 0.1) * 5;
+        p.circle(screenX + i + 20, bubbleY, 8);
+      }
+    }
+    
+    p.pop();
+  }
+}
+
+export class ExitPortal {
+  constructor(p, x, y) {
+    this.p = p;
+    this.x = x;
+    this.y = y;
+    this.width = 50;
+    this.height = 80;
+    this.animationFrame = 0;
+    this.active = true;
+  }
+
+  update() {
+    this.animationFrame += 0.1;
+    
+    // Check if player reached portal
+    if (gameState.player && this.active) {
+      const dist = this.p.dist(this.x + this.width / 2, this.y + this.height / 2,
+                               gameState.player.x, gameState.player.y);
+      if (dist < 40) {
+        gameState.gamePhase = "GAME_OVER_WIN";
+        this.active = false;
+      }
+    }
+  }
+
+  draw(cameraX) {
+    const p = this.p;
+    const screenX = this.x - cameraX;
+    
+    p.push();
+    p.translate(screenX + this.width / 2, this.y + this.height / 2);
+    
+    // Portal swirl effect
+    for (let i = 0; i < 5; i++) {
+      const angle = this.animationFrame + i * 1.2;
+      const radius = 30 - i * 3;
+      const alpha = 255 - i * 40;
+      p.noStroke();
+      p.fill(100, 200, 255, alpha);
+      p.circle(Math.cos(angle) * 5, Math.sin(angle) * 5, radius);
+    }
+    
+    // Portal frame
+    p.noFill();
+    p.stroke(150, 220, 255);
+    p.strokeWeight(4);
+    p.ellipse(0, 0, this.width, this.height);
+    
+    p.pop();
+  }
+}
+</file>
+
+<file name="gravityGun.js">
+// gravityGun.js - Gravity gun mechanics
+import { gameState, GRAVITY_GUN_RANGE, THROW_FORCE } from './globals.js';
+
+export class GravityGun {
+  constructor(p) {
+    this.p = p;
+    this.range = GRAVITY_GUN_RANGE;
+    this.grabDistance = 60;
+    this.pullSpeed = 0.3;
+    this.pushSpeed = 0.5;
+  }
+
+  findTarget() {
+    const p = this.p;
+    const player = gameState.player;
+    if (!player) return null;
+
+    let closest = null;
+    let closestDist = this.range;
+
+    // Check movable objects
+    for (let obj of gameState.movableObjects) {
+      const dist = p.dist(player.x, player.y, obj.x, obj.y);
+      if (dist < closestDist) {
+        closest = obj;
+        closestDist = dist;
+      }
+    }
+
+    // Check enemies
+    for (let enemy of gameState.enemies) {
+      if (!enemy.active) continue;
+      const dist = p.dist(player.x, player.y, enemy.x, enemy.y);
+      if (dist < closestDist) {
+        closest = enemy;
+        closestDist = dist;
+      }
+    }
+
+    return closest;
+  }
+
+  grab(target) {
+    gameState.grabbedObject = target;
+    gameState.gravityGunActive = true;
+  }
+
+  release(throwDirection = null) {
+    const p = this.p;
+    const player = gameState.player;
+    
+    if (gameState.grabbedObject && throwDirection) {
+      const obj = gameState.grabbedObject;
+      
+      // Calculate throw direction
+      const angle = p.atan2(throwDirection.y - player.y, throwDirection.x - player.x);
+      
+      if (obj.constructor.name === 'MovableObject') {
+        obj.vx = p.cos(angle) * THROW_FORCE;
+        obj.vy = p.sin(angle) * THROW_FORCE;
+        obj.rotationSpeed = obj.vx * 0.2;
+      } else if (obj.constructor.name === 'Enemy' && obj.active) {
+        // Throwing an enemy
+        obj.vx = p.cos(angle) * THROW_FORCE;
+        obj.vy = p.sin(angle) * THROW_FORCE;
+        obj.active = false;
+        gameState.score += 50;
+      }
+    }
+    
+    gameState.grabbedObject = null;
+    gameState.gravityGunActive = false;
+  }
+
+  updateGrabbedObject() {
+    const p = this.p;
+    const player = gameState.player;
+    
+    if (!gameState.grabbedObject || !player) return;
+
+    const obj = gameState.grabbedObject;
+    const targetDist = gameState.pullMode ? this.grabDistance : this.grabDistance * 1.5;
+    
+    // Calculate direction from player to object
+    const angle = player.facingRight ? 0 : p.PI;
+    const targetX = player.x + p.cos(angle) * targetDist;
+    const targetY = player.y;
+
+    // Move object towards target position
+    const dx = targetX - obj.x;
+    const dy = targetY - obj.y;
+    
+    if (obj.constructor.name === 'MovableObject') {
+      obj.x += dx * 0.2;
+      obj.y += dy * 0.2;
+      obj.vx = dx * 0.15;
+      obj.vy = dy * 0.15;
+    } else if (obj.constructor.name === 'Enemy') {
+      obj.x += dx * 0.2;
+      obj.y += dy * 0.2;
+      obj.vx = 0;
+      obj.vy = 0;
+    }
+  }
+
+  draw(cameraX) {
+    const p = this.p;
+    const player = gameState.player;
+    if (!player) return;
+
+    const screenX = player.x - cameraX;
+
+    if (gameState.gravityGunActive && gameState.grabbedObject) {
+      // Draw beam to grabbed object
+      const obj = gameState.grabbedObject;
+      const objScreenX = obj.x - cameraX;
+      
+      p.push();
+      p.stroke(100, 200, 255, 150);
+      p.strokeWeight(3);
+      p.line(screenX, player.y, objScreenX, obj.y);
+      
+      // Draw particles along beam
+      for (let i = 0; i < 1; i += 0.1) {
+        const px = p.lerp(screenX, objScreenX, i);
+        const py = p.lerp(player.y, obj.y, i);
+        p.noStroke();
+        p.fill(100, 200, 255, 100);
+        p.circle(px, py, 3);
+      }
+      
+      p.pop();
+    } else {
+      // Draw targeting reticle
+      const target = this.findTarget();
+      if (target) {
+        const targetScreenX = target.x - cameraX;
+        p.push();
+        p.noFill();
+        p.stroke(100, 200, 255, 150);
+        p.strokeWeight(2);
+        
+        if (target.constructor.name === 'MovableObject') {
+          p.circle(targetScreenX, target.y, target.radius * 2 + 10);
+        } else if (target.constructor.name === 'Enemy') {
+          p.rect(targetScreenX - target.width / 2 - 5, target.y - target.height / 2 - 5,
+                 target.width + 10, target.height + 10);
+        }
+        
+        p.pop();
+      }
+    }
+
+    // Draw gun on player
+    p.push();
+    p.translate(screenX, player.y);
+    const gunAngle = player.facingRight ? 0 : p.PI;
+    p.rotate(gunAngle);
+    
+    p.stroke(80, 160, 220);
+    p.strokeWeight(3);
+    p.line(0, 0, 15, 0);
+    
+    // Gun tip
+    p.fill(100, 200, 255);
+    p.noStroke();
+    p.circle(15, 0, 6);
+    
+    p.pop();
+  }
+}
+</file>
+
+<file name="player.js">
+// player.js - Player entity
+import { gameState, PLAYER_SIZE, MOVE_SPEED, JUMP_FORCE, GRAVITY, CANVAS_HEIGHT } from './globals.js';
+
+export class Player {
+  constructor(p, x, y) {
+    this.p = p;
+    this.x = x;
+    this.y = y;
+    this.vx = 0;
+    this.vy = 0;
+    this.width = PLAYER_SIZE;
+    this.height = PLAYER_SIZE;
+    this.grounded = false;
+    this.facingRight = true;
+    this.jumpCount = 0;
+    this.maxJumps = 1;
+    this.animationFrame = 0;
+  }
+
+  update(keys) {
+    const p = this.p;
+    
+    // Horizontal movement
+    if (keys.left) {
+      this.vx = -MOVE_SPEED;
+      this.facingRight = false;
+    } else if (keys.right) {
+      this.vx = MOVE_SPEED;
+      this.facingRight = true;
+    } else {
+      this.vx *= 0.8; // Friction
+    }
+
+    // Jumping
+    if (keys.up && this.jumpCount < this.maxJumps) {
+      this.vy = JUMP_FORCE;
+      this.jumpCount++;
+      this.grounded = false;
+    }
+
+    // Gravity
+    this.vy += GRAVITY;
+    if (this.vy > 15) this.vy = 15; // Terminal velocity
+
+    // Update position
+    this.x += this.vx;
+    this.y += this.vy;
+
+    // Check ground collision
+    this.grounded = false;
+    for (let platform of gameState.platforms) {
+      if (this.checkPlatformCollision(platform)) {
+        this.grounded = true;
+        this.jumpCount = 0;
+        break;
+      }
+    }
+
+    // Check movable object collisions
+    for (let obj of gameState.movableObjects) {
+      if (obj !== gameState.grabbedObject) {
+        this.checkMovableCollision(obj);
+      }
+    }
+
+    // Boundary checks
+    if (this.x < this.width / 2) this.x = this.width / 2;
+    if (this.x > gameState.levelWidth - this.width / 2) {
+      this.x = gameState.levelWidth - this.width / 2;
+    }
+
+    // Death by falling
+    if (this.y > CANVAS_HEIGHT + 50) {
+      gameState.health = 0;
+    }
+
+    // Animation
+    this.animationFrame += 0.1;
+  }
+
+  checkPlatformCollision(platform) {
+    const p = this.p;
+    // Check if falling onto platform
+    if (this.vy >= 0 &&
+        this.x + this.width / 2 > platform.x &&
+        this.x - this.width / 2 < platform.x + platform.width &&
+        this.y + this.height / 2 >= platform.y &&
+        this.y + this.height / 2 <= platform.y + 15) {
+      this.y = platform.y - this.height / 2;
+      this.vy = 0;
+      return true;
+    }
+
+    // Check horizontal collisions
+    if (this.x + this.width / 2 > platform.x &&
+        this.x - this.width / 2 < platform.x + platform.width &&
+        this.y + this.height / 2 > platform.y &&
+        this.y - this.height / 2 < platform.y + platform.height) {
+      
+      // Left side collision
+      if (this.vx > 0 && this.x < platform.x + platform.width / 2) {
+        this.x = platform.x - this.width / 2;
+        this.vx = 0;
+      }
+      // Right side collision
+      else if (this.vx < 0 && this.x > platform.x + platform.width / 2) {
+        this.x = platform.x + platform.width + this.width / 2;
+        this.vx = 0;
+      }
+    }
+
+    // Check ceiling collision
+    if (this.vy < 0 &&
+        this.x + this.width / 2 > platform.x &&
+        this.x - this.width / 2 < platform.x + platform.width &&
+        this.y - this.height / 2 <= platform.y + platform.height &&
+        this.y - this.height / 2 >= platform.y) {
+      this.y = platform.y + platform.height + this.height / 2;
+      this.vy = 0;
+    }
+
+    return false;
+  }
+
+  checkMovableCollision(obj) {
+    const p = this.p;
+    const dist = p.dist(this.x, this.y + this.height / 2, obj.x, obj.y);
+    
+    if (dist < this.width / 2 + obj.radius) {
+      // Stand on top of object
+      if (this.vy >= 0 && this.y < obj.y) {
+        const angle = p.atan2(this.y - obj.y, this.x - obj.x);
+        this.y = obj.y - obj.radius - this.height / 2;
+        this.vy = 0;
+        this.grounded = true;
+        this.jumpCount = 0;
+      } else {
+        // Push away
+        const angle = p.atan2(this.y - obj.y, this.x - obj.x);
+        const overlap = (this.width / 2 + obj.radius) - dist;
+        this.x += p.cos(angle) * overlap;
+        this.y += p.sin(angle) * overlap;
+      }
+    }
+  }
+
+  draw(cameraX) {
+    const p = this.p;
+    const screenX = this.x - cameraX;
+    
+    p.push();
+    p.translate(screenX, this.y);
+    
+    // Body (robot body)
+    p.fill(100, 200, 255);
+    p.stroke(50, 100, 200);
+    p.strokeWeight(2);
+    p.rect(-this.width / 2, -this.height / 2, this.width, this.height, 3);
+    
+    // Eye
+    const eyeX = this.facingRight ? 3 : -3;
+    p.fill(255, 255, 100);
+    p.noStroke();
+    p.circle(eyeX, -3, 6);
+    
+    // Antenna
+    p.stroke(50, 100, 200);
+    p.strokeWeight(2);
+    p.line(0, -this.height / 2, 0, -this.height / 2 - 5);
+    p.fill(255, 100, 100);
+    p.noStroke();
+    p.circle(0, -this.height / 2 - 5, 4);
+    
+    // Legs (animated)
+    const legOffset = Math.sin(this.animationFrame) * 3;
+    p.stroke(50, 100, 200);
+    p.strokeWeight(2);
+    p.line(-5, this.height / 2, -5, this.height / 2 + 4 + legOffset);
+    p.line(5, this.height / 2, 5, this.height / 2 + 4 - legOffset);
+    
+    p.pop();
+  }
+
+  getScreenX(cameraX) {
+    return this.x - cameraX;
+  }
+}
+</file>
+
+<file name="physics.js">
+// physics.js - Gravity gun and physics mechanics
+
+import { gameState, GRAVITY_GUN_RANGE, GRAVITY_GUN_FORCE, ENERGY_DRAIN_RATE, ENERGY_RECHARGE_RATE, MAX_ENERGY } from './globals.js';
+
+export function updateGravityGun(p) {
+  if (!gameState.player || !gameState.gravityGunActive) {
+    gameState.targetedObject = null;
+    return;
+  }
+
+  // Find closest block within range
+  let closest = null;
+  let closestDist = GRAVITY_GUN_RANGE;
+
+  for (let block of gameState.blocks) {
+    let dx = (block.x + block.width / 2) - (gameState.player.x + gameState.player.width / 2);
+    let dy = (block.y + block.height / 2) - (gameState.player.y + gameState.player.height / 2);
+    let dist = Math.sqrt(dx * dx + dy * dy);
+
+    if (dist < closestDist) {
+      closest = block;
+      closestDist = dist;
+    }
+  }
+
+  gameState.targetedObject = closest;
+
+  if (closest && gameState.energy > 0) {
+    let dx = (closest.x + closest.width / 2) - (gameState.player.x + gameState.player.width / 2);
+    let dy = (closest.y + closest.height / 2) - (gameState.player.y + gameState.player.height / 2);
+    let dist = Math.sqrt(dx * dx + dy * dy);
+
+    if (dist > 0) {
+      let nx = dx / dist;
+      let ny = dy / dist;
+
+      let forceMagnitude = GRAVITY_GUN_FORCE * (1 - dist / GRAVITY_GUN_RANGE);
+
+      if (gameState.gravityGunMode === "ATTRACT") {
+        closest.applyForce(-nx * forceMagnitude, -ny * forceMagnitude);
+      } else { // REPEL
+        closest.applyForce(nx * forceMagnitude, ny * forceMagnitude);
+      }
+
+      // Drain energy
+      gameState.energy -= ENERGY_DRAIN_RATE;
+      if (gameState.energy < 0) gameState.energy = 0;
+    }
+  }
+}
+
+export function rechargeEnergy() {
+  if (!gameState.gravityGunActive && gameState.energy < MAX_ENERGY) {
+    gameState.energy += ENERGY_RECHARGE_RATE;
+    if (gameState.energy > MAX_ENERGY) gameState.energy = MAX_ENERGY;
+  }
+}
+
+export function checkCollisions() {
+  if (!gameState.player) return;
+
+  // Player vs Enemies
+  for (let enemy of gameState.enemies) {
+    if (!enemy.alive) continue;
+    
+    if (gameState.player.x + gameState.player.width > enemy.x &&
+        gameState.player.x < enemy.x + enemy.width &&
+        gameState.player.y + gameState.player.height > enemy.y &&
+        gameState.player.y < enemy.y + enemy.height) {
+      gameState.player.takeDamage();
+      // Push player back
+      gameState.player.vx = (gameState.player.x < enemy.x) ? -8 : 8;
+      gameState.player.vy = -6;
+    }
+  }
+
+  // Player vs Hazards
+  for (let hazard of gameState.hazards) {
+    if (gameState.player.x + gameState.player.width > hazard.x &&
+        gameState.player.x < hazard.x + hazard.width &&
+        gameState.player.y + gameState.player.height > hazard.y &&
+        gameState.player.y < hazard.y + hazard.height) {
+      gameState.player.takeDamage();
+      gameState.player.vy = -10; // Bounce out
+    }
+  }
+
+  // Blocks vs Enemies
+  for (let block of gameState.blocks) {
+    for (let enemy of gameState.enemies) {
+      if (enemy.checkHit(block)) {
+        gameState.score += 100;
+      }
+    }
+  }
+
+  // Blocks vs Blocks collision
+  for (let i = 0; i < gameState.blocks.length; i++) {
+    for (let j = i + 1; j < gameState.blocks.length; j++) {
+      let b1 = gameState.blocks[i];
+      let b2 = gameState.blocks[j];
+
+      if (b1.x + b1.width > b2.x &&
+          b1.x < b2.x + b2.width &&
+          b1.y + b1.height > b2.y &&
+          b1.y < b2.y + b2.height) {
+        
+        // Simple separation
+        let dx = (b1.x + b1.width / 2) - (b2.x + b2.width / 2);
+        let dy = (b1.y + b1.height / 2) - (b2.y + b2.height / 2);
+        let dist = Math.sqrt(dx * dx + dy * dy);
+        
+        if (dist > 0) {
+          let overlap = (b1.width + b2.width) / 2 - Math.abs(dx);
+          let nx = dx / dist;
+          let ny = dy / dist;
+          
+          b1.x += nx * overlap * 0.5;
+          b2.x -= nx * overlap * 0.5;
+          
+          // Exchange some velocity
+          let tempVx = b1.vx;
+          b1.vx = b2.vx * 0.5;
+          b2.vx = tempVx * 0.5;
+        }
+      }
+    }
+  }
+}
+</file>
+
+<file name="input.js">
+// input.js - Input handling
+
+import { gameState, GAME_PHASES, CONTROL_MODES } from './globals.js';
+import get_automated_testing_action from './automated_testing_controller.js';
+
+export function handleInput(p) {
+  if (gameState.gamePhase !== GAME_PHASES.PLAYING) {
+    return;
+  }
+
+  if (gameState.controlMode === CONTROL_MODES.HUMAN) {
+    // Human control
+    gameState.keys.left = p.keyIsDown(37);
+    gameState.keys.right = p.keyIsDown(39);
+    gameState.keys.up = p.keyIsDown(38);
+    gameState.keys.down = p.keyIsDown(40);
+    gameState.keys.space = p.keyIsDown(32);
+    gameState.keys.shift = p.keyIsDown(16);
+  } else {
+    // Automated testing control
+    const action = get_automated_testing_action(gameState);
+    
+    gameState.keys.left = action.left || false;
+    gameState.keys.right = action.right || false;
+    gameState.keys.up = action.up || false;
+    gameState.keys.down = action.down || false;
+    gameState.keys.space = action.space || false;
+    gameState.keys.shift = action.shift || false;
+    gameState.keys.z = action.z || false;
+  }
+
+  // Gravity gun active when shift is held
+  gameState.gravityGunActive = gameState.keys.shift;
+}
+
+export function setupKeyHandlers(p) {
+  p.keyPressed = function() {
+    // Log input
+    p.logs.inputs.push({
+      input_type: "keyPressed",
+      data: { key: p.key, keyCode: p.keyCode },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+
+    // Game phase transitions
+    if (p.keyCode === 13) { // ENTER
+      if (gameState.gamePhase === GAME_PHASES.START) {
+        startGame(p);
+      }
+    } else if (p.keyCode === 27) { // ESC
+      if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+        pauseGame(p);
+      } else if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+        unpauseGame(p);
+      }
+    } else if (p.keyCode === 82) { // R
+      if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN || 
+          gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE) {
+        restartGame(p);
+      }
+    }
+
+    // Gameplay keys (only in PLAYING phase)
+    if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+      if (p.keyCode === 90) { // Z - Toggle gravity gun mode
+        gameState.gravityGunMode = gameState.gravityGunMode === "ATTRACT" ? "REPEL" : "ATTRACT";
+      }
+    }
+  };
+
+  p.keyReleased = function() {
+    // Log input
+    p.logs.inputs.push({
+      input_type: "keyReleased",
+      data: { key: p.key, keyCode: p.keyCode },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  };
+}
+
+function startGame(p) {
+  gameState.gamePhase = GAME_PHASES.PLAYING;
+  p.logs.game_info.push({
+    data: { gamePhase: gameState.gamePhase, action: "start" },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+  p.loop();
+}
+
+function pauseGame(p) {
+  gameState.gamePhase = GAME_PHASES.PAUSED;
+  p.logs.game_info.push({
+    data: { gamePhase: gameState.gamePhase, action: "pause" },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+  p.noLoop();
+}
+
+function unpauseGame(p) {
+  gameState.gamePhase = GAME_PHASES.PLAYING;
+  p.logs.game_info.push({
+    data: { gamePhase: gameState.gamePhase, action: "unpause" },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+  p.loop();
+}
+
+function restartGame(p) {
+  gameState.gamePhase = GAME_PHASES.START;
+  p.logs.game_info.push({
+    data: { gamePhase: gameState.gamePhase, action: "restart" },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+  p.loop();
+}
+</file>
+
+<file name="level.js">
+// level.js - Level initialization
+
+import { Platform, Block, Enemy, Hazard, Goal } from './entities.js';
+import { gameState } from './globals.js';
+
+export function initializeLevel(levelNum) {
+  gameState.platforms = [];
+  gameState.blocks = [];
+  gameState.enemies = [];
+  gameState.hazards = [];
+  
+  if (levelNum === 1) {
+    // Ground
+    gameState.platforms.push(new Platform(0, 380, 200, 20));
+    gameState.platforms.push(new Platform(250, 380, 350, 20));
+    
+    // Platforms
+    gameState.platforms.push(new Platform(50, 320, 80, 15));
+    gameState.platforms.push(new Platform(180, 260, 80, 15));
+    gameState.platforms.push(new Platform(320, 200, 100, 15));
+    gameState.platforms.push(new Platform(480, 140, 100, 15));
+    
+    // Blocks
+    gameState.blocks.push(new Block(60, 280, 30, 30));
+    gameState.blocks.push(new Block(190, 220, 30, 30));
+    gameState.blocks.push(new Block(330, 160, 30, 30));
+    gameState.blocks.push(new Block(370, 160, 30, 30));
+    
+    // Enemies
+    gameState.enemies.push(new Enemy(200, 365, 30));
+    gameState.enemies.push(new Enemy(340, 185, 40));
+    gameState.enemies.push(new Enemy(500, 125, 35));
+    
+    // Hazards (lava)
+    gameState.hazards.push(new Hazard(200, 380, 50, 20));
+    gameState.hazards.push(new Hazard(260, 380, 40, 20));
+    gameState.hazards.push(new Hazard(130, 320, 40, 15));
+    gameState.hazards.push(new Hazard(420, 200, 50, 15));
+    
+    // Goal
+    gameState.goal = new Goal(520, 80);
+  }
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

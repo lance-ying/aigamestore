@@ -1,0 +1,412 @@
+<analysis>
+- Issue identified: The mouse cursor is currently visible and moves around the screen. The player wants the cursor to stay centered (hidden) during gameplay, only becoming visible when paused. This requires implementing the Pointer Lock API to capture mouse movement without moving the visible cursor.
+
+- Files affected: 
+  - input.js (main changes - pointer lock implementation and mouse movement handling)
+  - index.html (add cursor styling)
+
+- Changes needed:
+  - Implement Pointer Lock API to capture mouse without cursor movement
+  - Request pointer lock when entering PLAYING phase
+  - Release pointer lock when entering PAUSED phase
+  - Update mouse movement handler to use movementX/movementY deltas instead of absolute position
+  - Add cursor hiding CSS for locked state
+  - Add sensitivity control for mouse movement
+</analysis>
+
+<code filename="input.js">
+/**
+ * Input handling and control modes
+ */
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, logInput, logGameInfo, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { Player } from './entities.js';
+
+const keys = {};
+let pointerLocked = false;
+const mouseSensitivity = 0.002; // Adjust this value to change mouse speed
+
+/**
+ * Setup input listeners
+ */
+export function setupInput() {
+  document.addEventListener('keydown', handleKeyDown);
+  document.addEventListener('keyup', handleKeyUp);
+  document.addEventListener('mousemove', handleMouseMove);
+  
+  // Pointer lock event listeners
+  document.addEventListener('pointerlockchange', handlePointerLockChange);
+  document.addEventListener('pointerlockerror', handlePointerLockError);
+}
+
+/**
+ * Request pointer lock
+ */
+function requestPointerLock() {
+  const canvas = gameState.renderer.domElement;
+  canvas.requestPointerLock = canvas.requestPointerLock || canvas.mozRequestPointerLock;
+  canvas.requestPointerLock();
+}
+
+/**
+ * Exit pointer lock
+ */
+function exitPointerLock() {
+  document.exitPointerLock = document.exitPointerLock || document.mozExitPointerLock;
+  document.exitPointerLock();
+}
+
+/**
+ * Handle pointer lock change
+ */
+function handlePointerLockChange() {
+  const canvas = gameState.renderer.domElement;
+  pointerLocked = (document.pointerLockElement === canvas || document.mozPointerLockElement === canvas);
+}
+
+/**
+ * Handle pointer lock error
+ */
+function handlePointerLockError() {
+  console.error('Pointer lock error');
+  pointerLocked = false;
+}
+
+/**
+ * Handle mouse movement for camera control
+ */
+function handleMouseMove(event) {
+  if (pointerLocked && gameState.gamePhase === 'PLAYING') {
+    // Use movement deltas when pointer is locked
+    const deltaX = event.movementX || event.mozMovementX || 0;
+    const deltaY = event.movementY || event.mozMovementY || 0;
+    
+    // Accumulate mouse movement with sensitivity
+    gameState.mouseX += deltaX * mouseSensitivity;
+    gameState.mouseY += deltaY * mouseSensitivity;
+    
+    // Clamp mouseX to reasonable range (allow full 360 rotation)
+    // No clamping needed for full rotation
+    
+    // Clamp mouseY to prevent camera from flipping
+    gameState.mouseY = Math.max(-1, Math.min(1, gameState.mouseY));
+  } else if (!pointerLocked) {
+    // Use absolute position when pointer is not locked (for menus, etc.)
+    const canvas = gameState.renderer.domElement;
+    const rect = canvas.getBoundingClientRect();
+    
+    // Calculate normalized mouse position (-1 to 1)
+    const mouseX = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    const mouseY = ((event.clientY - rect.top) / rect.height) * 2 - 1;
+    
+    // Update game state with mouse position
+    gameState.mouseX = mouseX;
+    gameState.mouseY = mouseY;
+  }
+}
+
+/**
+ * Handle key down events
+ */
+function handleKeyDown(event) {
+  logInput('keydown', event.key, event.keyCode);
+  keys[event.keyCode] = true;
+  
+  // Phase control keys
+  if (event.keyCode === 13 && gameState.gamePhase === 'START') { // ENTER
+    startGame();
+  }
+  
+  if (event.keyCode === 27) { // ESC
+    if (gameState.gamePhase === 'PLAYING') {
+      gameState.gamePhase = 'PAUSED';
+      exitPointerLock();
+      logGameInfo('PAUSED');
+    } else if (gameState.gamePhase === 'PAUSED') {
+      gameState.gamePhase = 'PLAYING';
+      requestPointerLock();
+      logGameInfo('PLAYING');
+    }
+  }
+  
+  if (event.keyCode === 82) { // R
+    if (gameState.gamePhase === 'GAME_OVER_WIN' || gameState.gamePhase === 'GAME_OVER_LOSE' || gameState.gamePhase === 'PAUSED') {
+      exitPointerLock();
+      resetGame();
+    }
+  }
+  
+  // Gameplay keys (only in PLAYING phase)
+  if (gameState.gamePhase === 'PLAYING' && gameState.player) {
+    if (event.keyCode === 32) { // Space
+      gameState.player.jump();
+    }
+    if (event.keyCode === 90) { // Z
+      gameState.player.attack();
+    }
+    if (event.keyCode === 16) { // Shift
+      gameState.player.useSpecial();
+    }
+  }
+}
+
+/**
+ * Handle key up events
+ */
+function handleKeyUp(event) {
+  logInput('keyup', event.key, event.keyCode);
+  keys[event.keyCode] = false;
+}
+
+/**
+ * Process continuous input (called every frame)
+ */
+export function processInput() {
+  if (gameState.gamePhase !== 'PLAYING' || !gameState.player) return;
+  
+  // Use TEST mode AI or human input
+  if (gameState.controlMode === 'HUMAN') {
+    processHumanInput();
+  } else if (gameState.controlMode === 'TEST_1') {
+    processTest1Input();
+  } else if (gameState.controlMode === 'TEST_2') {
+    processTest2Input();
+  }
+}
+
+/**
+ * Process human player input with camera-relative movement
+ */
+function processHumanInput() {
+  const player = gameState.player;
+  
+  // Get camera forward and right vectors (horizontal only)
+  const cameraForward = gameState.cameraForward.clone();
+  const cameraRight = new THREE.Vector3().crossVectors(cameraForward, new THREE.Vector3(0, 1, 0)).normalize();
+  
+  // Build movement direction relative to camera
+  const moveDirection = new THREE.Vector3(0, 0, 0);
+  
+  if (keys[38] || keys[87]) { // Up Arrow or W - move forward relative to camera
+    moveDirection.add(cameraForward);
+  }
+  if (keys[40] || keys[83]) { // Down Arrow or S - move backward relative to camera
+    moveDirection.sub(cameraForward);
+  }
+  if (keys[37] || keys[65]) { // Left Arrow or A - move left relative to camera
+    moveDirection.sub(cameraRight);
+  }
+  if (keys[39] || keys[68]) { // Right Arrow or D - move right relative to camera
+    moveDirection.add(cameraRight);
+  }
+  
+  if (moveDirection.lengthSq() > 0) {
+    player.move(moveDirection);
+  }
+}
+
+/**
+ * Process TEST_1 input (basic movement and combat testing)
+ */
+function processTest1Input() {
+  const player = gameState.player;
+  gameState.testModeTimer += gameState.deltaTime;
+  
+  // Move in a pattern and attack enemies
+  const movePattern = Math.sin(gameState.testModeTimer * 0.5);
+  const moveDirection = new THREE.Vector3(movePattern, 0, Math.cos(gameState.testModeTimer * 0.5));
+  player.move(moveDirection);
+  
+  // Attack frequently
+  if (gameState.testModeTimer % 0.5 < gameState.deltaTime) {
+    player.attack();
+  }
+  
+  // Jump occasionally
+  if (gameState.testModeTimer % 3 < gameState.deltaTime && player.onGround) {
+    player.jump();
+  }
+  
+  // Use special when available
+  if (player.specialCooldown <= 0 && gameState.enemies.length > 2) {
+    player.useSpecial();
+  }
+}
+
+/**
+ * Process TEST_2 input (win condition testing)
+ */
+function processTest2Input() {
+  const player = gameState.player;
+  gameState.testModeTimer += gameState.deltaTime;
+  
+  // Find nearest enemy or teleporter
+  let target = null;
+  let minDistance = Infinity;
+  
+  // Check for teleporter first
+  if (gameState.teleporter) {
+    target = gameState.teleporter.mesh.position;
+    minDistance = player.mesh.position.distanceTo(target);
+  } else {
+    // Find nearest enemy
+    for (const enemy of gameState.enemies) {
+      const distance = player.mesh.position.distanceTo(enemy.mesh.position);
+      if (distance < minDistance) {
+        minDistance = distance;
+        target = enemy.mesh.position;
+      }
+    }
+  }
+  
+  // Move towards target
+  if (target) {
+    const direction = new THREE.Vector3()
+      .subVectors(target, player.mesh.position)
+      .normalize();
+    direction.y = 0;
+    player.move(direction);
+    
+    // Attack if enemy is close
+    if (!gameState.teleporter && minDistance < 8) {
+      player.attack();
+    }
+    
+    // Use special ability aggressively
+    if (player.specialCooldown <= 0 && gameState.enemies.length > 0) {
+      player.useSpecial();
+    }
+  }
+  
+  // Jump occasionally to avoid getting stuck
+  if (gameState.testModeTimer % 2 < gameState.deltaTime && player.onGround) {
+    player.jump();
+  }
+}
+
+/**
+ * Start the game
+ */
+function startGame() {
+  gameState.gamePhase = 'PLAYING';
+  requestPointerLock();
+  logGameInfo('PLAYING', { controlMode: gameState.controlMode });
+}
+
+/**
+ * Reset game to start screen
+ */
+function resetGame() {
+  // Clear all entities
+  if (gameState.player) {
+    gameState.player.destroy();
+    gameState.player = null;
+  }
+  
+  gameState.enemies.forEach(enemy => enemy.destroy());
+  gameState.enemies = [];
+  
+  gameState.projectiles.forEach(proj => proj.destroy());
+  gameState.projectiles = [];
+  
+  gameState.items.forEach(item => item.destroy());
+  gameState.items = [];
+  
+  gameState.particles.forEach(particle => particle.destroy());
+  gameState.particles = [];
+  
+  if (gameState.teleporter) {
+    gameState.teleporter.destroy();
+    gameState.teleporter = null;
+  }
+  
+  // Reset game state
+  gameState.score = 0;
+  gameState.killCount = 0;
+  gameState.difficultyMultiplier = 1.0;
+  gameState.enemySpawnTimer = 0;
+  gameState.gameTime = 0;
+  gameState.testModeTimer = 0;
+  gameState.gamePhase = 'START';
+  gameState.mouseX = 0;
+  gameState.mouseY = 0;
+  
+  logGameInfo('START');
+}
+
+// Expose setControlMode globally
+if (typeof window !== 'undefined') {
+  window.setControlMode = function(mode) {
+    gameState.controlMode = mode;
+    logGameInfo('control_mode_changed', { mode });
+    
+    // Update button states
+    const buttons = ['humanModeBtn', 'test_1_ModeBtn', 'test_2_ModeBtn'];
+    buttons.forEach(btnId => {
+      const btn = document.getElementById(btnId);
+      if (btn) {
+        btn.classList.remove('active');
+      }
+    });
+    
+    const activeBtn = document.getElementById(`${mode === 'HUMAN' ? 'human' : mode.toLowerCase()}ModeBtn`);
+    if (activeBtn) {
+      activeBtn.classList.add('active');
+    }
+  };
+}
+</code>
+
+<code filename="index.html">
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Alien Escape - Survive the Chaos</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      margin: 0;
+      padding: 0;
+      background: #000;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+    
+    #game-container {
+      width: 600px;
+      height: 400px;
+      position: relative;
+      overflow: hidden;
+      margin: 0;
+      padding: 0;
+    }
+    
+    canvas {
+      display: block;
+      margin: 0;
+      padding: 0;
+      cursor: default;
+    }
+    
+    /* Hide cursor when pointer is locked */
+    #game-container canvas:hover {
+      cursor: none;
+    }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/seedrandom@3.0.5/seedrandom.min.js"></script>
+</head>
+<body>
+  <script type="module" src="game.js"></script>
+</body>
+</html>
+</code>

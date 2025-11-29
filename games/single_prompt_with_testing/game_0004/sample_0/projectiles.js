@@ -87,6 +87,7 @@ export class AttackPatternManager {
     const centerY = 305;
     
     switch (this.currentPattern) {
+      // EASY PATTERNS
       case "SIMPLE_FLIES":
         if (this.frameCount % 30 === 0) {
           const angle = p.random(0, p.TWO_PI);
@@ -117,6 +118,22 @@ export class AttackPatternManager {
         }
         break;
         
+      case "SIMPLE_BOUNCES":
+        if (this.frameCount % 35 === 0) {
+          const startY = 240 + p.random(0, 130);
+          const proj = new Projectile(
+            160,
+            startY,
+            1.0,
+            p.random(-0.5, 0.5),
+            12,
+            [150, 255, 150]
+          );
+          this.projectiles.push(proj);
+        }
+        break;
+      
+      // MEDIUM PATTERNS
       case "PLANES":
         if (this.frameCount % 40 === 0) {
           const lane = p.floor(p.random(0, 3));
@@ -142,6 +159,154 @@ export class AttackPatternManager {
             1.5,
             12,
             [200, 100, 200]
+          ));
+        }
+        break;
+        
+      case "EYES":
+        if (this.frameCount % 30 === 0) {
+          const side = p.floor(p.random(0, 4)); // 4 sides
+          let x, y, vx, vy;
+          
+          if (side === 0) { // Top
+            x = 160 + p.random(0, 280);
+            y = 220;
+            vx = p.random(-0.5, 0.5);
+            vy = 1.8;
+          } else if (side === 1) { // Bottom
+            x = 160 + p.random(0, 280);
+            y = 390;
+            vx = p.random(-0.5, 0.5);
+            vy = -1.8;
+          } else if (side === 2) { // Left
+            x = 140;
+            y = 240 + p.random(0, 130);
+            vx = 1.8;
+            vy = p.random(-0.5, 0.5);
+          } else { // Right
+            x = 460;
+            y = 240 + p.random(0, 130);
+            vx = -1.8;
+            vy = p.random(-0.5, 0.5);
+          }
+          
+          this.projectiles.push(new Projectile(x, y, vx, vy, 11, [255, 100, 100]));
+        }
+        break;
+        
+      case "SWARM":
+        if (this.frameCount % 20 === 0) {
+          // Create a cluster of small fast projectiles
+          const clusterX = p.random(0, 1) > 0.5 ? 160 : 440;
+          const clusterY = 240 + p.random(20, 110);
+          
+          for (let i = 0; i < 3; i++) {
+            const angle = p.random(0, p.TWO_PI);
+            const speed = 1.8;
+            this.projectiles.push(new Projectile(
+              clusterX,
+              clusterY,
+              p.cos(angle) * speed * (clusterX < 300 ? 1 : -1),
+              p.sin(angle) * speed,
+              7,
+              [255, 200, 100]
+            ));
+          }
+        }
+        break;
+      
+      // HARD PATTERNS
+      case "SWORD_SWIPES":
+        if (this.frameCount % 25 === 0) {
+          const horizontal = p.random(0, 1) > 0.5;
+          
+          if (horizontal) {
+            const y = 250 + p.floor(p.random(0, 3)) * 40;
+            for (let x = 440; x >= 160; x -= 20) {
+              this.projectiles.push(new Projectile(
+                x,
+                y,
+                -3.0,
+                0,
+                14,
+                [200, 200, 255]
+              ));
+            }
+          } else {
+            const x = 180 + p.floor(p.random(0, 5)) * 50;
+            for (let y = 370; y >= 240; y -= 20) {
+              this.projectiles.push(new Projectile(
+                x,
+                y,
+                0,
+                -3.0,
+                14,
+                [200, 200, 255]
+              ));
+            }
+          }
+        }
+        break;
+        
+      case "MAGIC_ORBS":
+        if (this.frameCount % 20 === 0) {
+          const angle = (this.frameCount * 0.05);
+          const radius = 140;
+          
+          for (let i = 0; i < 3; i++) {
+            const orbAngle = angle + (i * p.TWO_PI / 3);
+            const startX = centerX + p.cos(orbAngle) * radius;
+            const startY = centerY + p.sin(orbAngle) * (radius * 0.5);
+            
+            const proj = new Projectile(
+              startX,
+              startY,
+              -p.cos(orbAngle) * 1.5,
+              -p.sin(orbAngle) * 1.5,
+              13,
+              [255, 100, 255]
+            );
+            proj.rotationSpeed = 0.15;
+            this.projectiles.push(proj);
+          }
+        }
+        break;
+        
+      case "ADVANCED_FLIES":
+        // Faster, more complex version of SIMPLE_FLIES
+        if (this.frameCount % 18 === 0) {
+          const angle = p.random(0, p.TWO_PI);
+          const speed = 2.2;
+          this.projectiles.push(new Projectile(
+            centerX + p.cos(angle) * 150,
+            centerY + p.sin(angle) * 75,
+            -p.cos(angle) * speed,
+            -p.sin(angle) * speed,
+            9,
+            [100, 255, 100]
+          ));
+        }
+        
+        // Add homing-like behavior
+        if (this.frameCount % 45 === 0) {
+          const corners = [
+            {x: 160, y: 240},
+            {x: 440, y: 240},
+            {x: 160, y: 370},
+            {x: 440, y: 370}
+          ];
+          const corner = corners[p.floor(p.random(0, 4))];
+          const dx = centerX - corner.x;
+          const dy = centerY - corner.y;
+          const dist = p.sqrt(dx * dx + dy * dy);
+          
+          this.projectiles.push(new Projectile(
+            corner.x,
+            corner.y,
+            (dx / dist) * 2.0,
+            (dy / dist) * 2.0,
+            10,
+            [50, 255, 50]
           ));
         }
         break;

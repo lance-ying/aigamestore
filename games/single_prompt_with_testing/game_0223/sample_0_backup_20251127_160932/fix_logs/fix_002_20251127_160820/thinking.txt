@@ -1,0 +1,71 @@
+Let me analyze the feedback:
+
+1. "the flashlight doesn't work the lighting doesn't change" - The flashlight toggle seems to be implemented, but the lighting might not be updating properly
+2. "I can't seem to move when the up and down arrow" - Movement with arrow keys isn't working
+
+Let me check the code:
+
+In `input.js`, I see:
+- `updatePlayerInput()` checks for `KEY_UP` and `KEY_DOWN` keys
+- It calls `gameState.player.moveForward()` and `moveBackward()`
+
+In `entities.js`, the `Player` class has:
+- `moveForward()` which adds to velocity based on camera direction
+- `moveBackward()` which subtracts from velocity
+
+The issue might be:
+1. The keys are being checked but not applied continuously
+2. The velocity is being applied but decay might be too fast
+3. The `updatePlayerInput()` might not be getting called properly
+
+Looking at `game.js`, in `updateGame()`:
+```javascript
+// Process automated testing input
+if (gameState.controlMode !== "HUMAN") {
+  const action = get_automated_testing_action(gameState);
+  if (action) {
+    processAutomatedAction(action);
+  }
+}
+
+// Update player input
+updatePlayerInput();
+```
+
+So `updatePlayerInput()` is being called. Let me check the movement logic more carefully.
+
+In `entities.js`, the `Player.update()`:
+```javascript
+// Apply velocity
+const newX = this.mesh.position.x + this.velocity.x * gameState.deltaTime;
+const newZ = this.mesh.position.z + this.velocity.z * gameState.deltaTime;
+```
+
+Wait, this looks wrong. The velocity is being applied with deltaTime, but in `moveForward()`:
+```javascript
+this.velocity.add(direction.multiplyScalar(PLAYER_SPEED * gameState.deltaTime));
+
+
+```
+
+The velocity calculation reveals a critical performance issue. By applying deltaTime twice - once in `moveForward()` and again during position update - the movement becomes extremely sluggish. The double time scaling effectively reduces player speed dramatically. 
+
+The velocity decay mechanism compounds this problem. With a constant 0.85 scalar applied every frame, high frame rates cause rapid deceleration, making movement feel unresponsive. This explains why players report difficulty moving with arrow keys.
+
+For the flashlight, the implementation in `updateGame()` seems structurally correct, suggesting the issue might lie in how the intensity or toggle mechanism is implemented.
+
+The key tracking system appears robust. Event handlers in `input.js` properly manage key states, with `handleKeyDown` and `handleKeyUp` updating `gameState.keys` as expected. The `toggleFlashlight()` function looks standard, incrementing noise level when activated.
+
+I'll need to investigate the battery intensity scaling and potential edge cases in the flashlight toggle mechanism.
+
+``` The velocity calculation has a critical flaw with double deltaTime multiplication, causing extremely sluggish movement. The solution involves adjusting velocity calculation: either omit deltaTime when adding to velocity or when applying it. Proper physics suggests maintaining velocity in units per second, which means directly adding movement direction scaled by player speed, then applying velocity with deltaTime scaling.
+
+The ambient lighting appears extremely dim at 0.15 intensity, potentially rendering scene visibility challenging, especially when the flashlight is inactive. This low light level might explain why visual differences seem imperceptible.
+
+I'm tracing the key input handling sequence carefully, noting how pressed keys propagate through the game loop from initial key detection to player movement execution. I'll adjust the velocity calculation to be frame-rate independent and ensure consistent movement. The key is removing redundant deltaTime multiplications and creating a more stable velocity decay mechanism. For the flashlight, I'll investigate why the lighting state change isn't visually apparent, focusing on spotlight intensity and ambient light interactions.
+
+The movement code needs a precise adjustment to prevent over-scaling velocity. By removing deltaTime from the initial velocity addition and implementing a frame-rate independent decay, the player's movement will feel more consistent across different performance scenarios.
+
+Regarding the lighting, the problem likely stems from insufficient contrast between the flashlight's effect and the ambient scene lighting. I'll need to examine the spotlight's configuration and potentially increase its intensity or adjust the ambient light levels to create a more noticeable visual difference when toggling the flashlight.
+
+The spotlight targeting mechanism seems potentially problematic, with the target position update potentially not propagating correctly through the scene. This could contribute to the perceived lighting inconsistency, requiring a careful review of how the light's direction and target are being managed.

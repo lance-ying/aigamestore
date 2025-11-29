@@ -87,6 +87,7 @@ class ModelAPI:
                 "gemini-2.5-flash-preview-04-17": 65536,
                 "gemini-2.5-pro-exp-03-25": 65536,
                 "gemini-2.5-pro-preview-05-06": 65536,
+                "gemini-3-pro-preview": 131072,  # Gemini 3 Pro - official model ID
             },
         }
 

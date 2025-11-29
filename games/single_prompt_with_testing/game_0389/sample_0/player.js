@@ -1,5 +1,5 @@
 // player.js - Player entity
-import { gameState, PLAYER_SIZE, MOVE_SPEED, JUMP_FORCE, GRAVITY, CANVAS_HEIGHT } from './globals.js';
+import { gameState, PLAYER_SIZE, PLAYER_SPEED, PLAYER_JUMP_FORCE, GRAVITY, CANVAS_HEIGHT } from './globals.js';
 
 export class Player {
   constructor(p, x, y) {
@@ -22,10 +22,10 @@ export class Player {
     
     // Horizontal movement
     if (keys.left) {
-      this.vx = -MOVE_SPEED;
+      this.vx = -PLAYER_SPEED;
       this.facingRight = false;
     } else if (keys.right) {
-      this.vx = MOVE_SPEED;
+      this.vx = PLAYER_SPEED;
       this.facingRight = true;
     } else {
       this.vx *= 0.8; // Friction
@@ -33,7 +33,7 @@ export class Player {
 
     // Jumping
     if (keys.up && this.jumpCount < this.maxJumps) {
-      this.vy = JUMP_FORCE;
+      this.vy = PLAYER_JUMP_FORCE;
       this.jumpCount++;
       this.grounded = false;
     }

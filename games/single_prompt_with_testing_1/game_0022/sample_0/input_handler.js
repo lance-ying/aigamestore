@@ -1,68 +1,73 @@
 // input_handler.js
-import { gameState } from './globals.js';
-
 export class InputHandler {
-  constructor(p) {
-    this.p = p;
-    this.keys = {
-      up: false,
-      down: false,
-      left: false,
-      right: false,
-      space: false,
-      shift: false,
-      z: false
-    };
-    
-    this.zPressed = false;
-  }
-  
-  updateFromKeyboard() {
-    const p = this.p;
-    
-    this.keys.up = p.keyIsDown(38);
-    this.keys.down = p.keyIsDown(40);
-    this.keys.left = p.keyIsDown(37);
-    this.keys.right = p.keyIsDown(39);
-    this.keys.space = p.keyIsDown(32);
-    this.keys.shift = p.keyIsDown(16);
-    
-    // Handle Z key with toggle logic
-    const zDown = p.keyIsDown(90);
-    if (zDown && !this.zPressed) {
-      this.keys.z = true;
-      this.zPressed = true;
-    } else if (!zDown) {
-      this.keys.z = false;
-      this.zPressed = false;
-    } else {
-      this.keys.z = false;
+    constructor() {
+        this.keys = {
+            up: false,
+            down: false,
+            left: false,
+            right: false,
+            space: false,
+            shift: false,
+            z: false
+        };
+        
+        this.zPressed = false;
+        this.setupEventListeners();
     }
-  }
-  
-  updateFromAutomatedTesting(action) {
-    // Reset all keys
-    this.keys.up = false;
-    this.keys.down = false;
-    this.keys.left = false;
-    this.keys.right = false;
-    this.keys.space = false;
-    this.keys.shift = false;
-    this.keys.z = false;
     
-    if (!action) return;
+    setupEventListeners() {
+        document.addEventListener('keydown', (e) => {
+            this.handleKeyDown(e.keyCode);
+        });
+        
+        document.addEventListener('keyup', (e) => {
+            this.handleKeyUp(e.keyCode);
+        });
+    }
     
-    // Set keys based on action
-    if (action.up) this.keys.up = true;
-    if (action.down) this.keys.down = true;
-    if (action.left) this.keys.left = true;
-    if (action.right) this.keys.right = true;
-    if (action.space) this.keys.space = true;
-    if (action.shift) this.keys.shift = true;
-    if (action.z) this.keys.z = true;
-  }
-  
-  getInputs() {
-    return { ...this.keys };
-  }
+    handleKeyDown(keyCode) {
+        switch(keyCode) {
+            case 38: this.keys.up = true; break;
+            case 40: this.keys.down = true; break;
+            case 37: this.keys.left = true; break;
+            case 39: this.keys.right = true; break;
+            case 32: this.keys.space = true; break;
+            case 16: this.keys.shift = true; break;
+            case 90: // Z key
+                if (!this.zPressed) {
+                    this.keys.z = true;
+                    this.zPressed = true;
+                }
+                break;
+        }
+    }
+    
+    handleKeyUp(keyCode) {
+        switch(keyCode) {
+            case 38: this.keys.up = false; break;
+            case 40: this.keys.down = false; break;
+            case 37: this.keys.left = false; break;
+            case 39: this.keys.right = false; break;
+            case 32: this.keys.space = false; break;
+            case 16: this.keys.shift = false; break;
+            case 90:
+                this.keys.z = false;
+                this.zPressed = false;
+                break;
+        }
+    }
+    
+    updateFromAutomatedTesting(action) {
+        this.keys.up = action.up || false;
+        this.keys.down = action.down || false;
+        this.keys.left = action.left || false;
+        this.keys.right = action.right || false;
+        this.keys.space = action.space || false;
+        this.keys.shift = action.shift || false;
+        this.keys.z = action.z || false;
+    }
+    
+    getInputs() {
+        return { ...this.keys };
+    }
 }

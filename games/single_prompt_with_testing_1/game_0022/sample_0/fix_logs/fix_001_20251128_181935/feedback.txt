@@ -1,0 +1,2335 @@
+{hard_constraints}
+
+<instructions>
+Write COMPREHENSIVE, DETAILED code for a fun, aesthetically pleasing, and responsive 3D gameplay experience using three.js for rendering and 3D graphics.
+
+**IMPORTANT: Generate EXTENSIVE, COMPLETE code. Include:**
+- Multiple well-organized files with complete implementations
+- Detailed entity classes with full functionality
+- Comprehensive physics and collision systems
+- Complete camera controls and smooth following
+- Full UI rendering with all game screens
+- Extensive game logic with proper state management
+- Detailed comments explaining complex logic
+- Error handling and edge cases
+- Performance optimizations where appropriate
+
+**Do not skimp on code - be thorough and comprehensive. Write as much code as needed to create a fully-featured, polished game.**
+
+# Code Architecture
+- Organize the code into multiple files with organized code as needed (game.js, globals.js, entities.js, physics.js, renderer.js, camera.js, lighting.js, etc.)
+- Use proper ES6 Imports and Exports:
+    - No Node.js style require() imports. No dynamic imports within functions.
+    - Every file MUST import ALL constants, variables, functions, classes, and external symbols at the top of files where they are used. Example:
+    ```javascript
+    // Essential pattern (ALWAYS follow this)
+    import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+    import { Player, Enemy, Collectible } from './entities.js';
+    import { handleCollisions, checkGroundCollision } from './physics.js';
+    import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+    import { setupCamera, updateCamera } from './camera.js';
+    import { setupLighting } from './lighting.js';
+
+    // Example function with proper dependencies
+    function createPlayer(x, y, z) {
+        const player = new Player(x, y, z);
+        gameState.player = player;
+        gameState.entities.push(player);
+        gameState.scene.add(player.mesh);
+        return player;
+    }
+    ```
+
+- File organization pattern:
+  - `globals.js` - Constants, gameState, logs initialization
+  - `entities.js` - Entity classes (Player, Enemy, Collectible, Projectile, Platform, etc.)
+  - `physics.js` - Collision detection, physics calculations, spatial partitioning
+  - `camera.js` - Camera setup, control, and update logic
+  - `lighting.js` - Light setup and management
+  - `renderer.js` - Renderer setup and optimization
+  - `game.js` - Main game loop, input handling, game phase management
+  - `index.html` - HTML file that loads game.js as module
+
+# State Management
+  - Use a `gameState` object to track the game's current data and status.
+  - Initialize the `gameState` object at the initialization function and update it at every frame with the latest information. Example implementation:
+    ```javascript
+    export const gameState = {
+      player: null,           // player entity to be initialized before the game starts
+      entities: [],           // all game entities including player, npcs, objects, etc.
+      score: 0,
+      gamePhase: "START",     // "START", "PLAYING", "PAUSED", "GAME_OVER_WIN", "GAME_OVER_LOSE"
+      controlMode: "HUMAN",   // "HUMAN", "TEST_1", "TEST_2", etc.
+      
+      // Three.js core objects
+      scene: null,            // THREE.Scene
+      camera: null,           // THREE.PerspectiveCamera or THREE.OrthographicCamera
+      renderer: null,         // THREE.WebGLRenderer
+      
+      // Lighting
+      lights: [],             // Array of THREE.Light objects
+      ambientLight: null,    // THREE.AmbientLight
+      directionalLight: null, // THREE.DirectionalLight
+      
+      // Physics state
+      gravity: new THREE.Vector3(0, -0.02, 0), // Gravity vector
+      collisionPairs: [],    // Active collision pairs for processing
+      
+      // Camera state
+      cameraMode: "third_person", // "first_person", "third_person", "orbit"
+      cameraTarget: null,    // Object to follow (usually player)
+      cameraOffset: new THREE.Vector3(0, 5, 10), // Camera offset from target
+      
+      // Performance tracking
+      frameCount: 0,          // Current frame number
+      lastFrameTime: 0,      // Last frame timestamp for delta time
+      deltaTime: 0,          // Time since last frame
+      
+      // Game-specific state
+      collectibles: [],       // Collectible items
+      enemies: [],            // Enemy entities
+      platforms: [],          // Platform/obstacle entities
+      projectiles: [],       // Projectile entities
+      
+      ... // other game state variables
+    };
+    ```
+  - Implement `function getGameState()` and attach it to `window`. It must return the `gameState` object. Example implementation:
+    ```javascript
+    export function getGameState() {
+      return gameState;
+    }
+    // Expose the getGameState function globally
+    window.getGameState = getGameState;
+    ```
+
+# Three.js Setup and Configuration
+
+## Scene Setup
+```javascript
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+// Create scene
+const scene = new THREE.Scene();
+
+// Set background color
+scene.background = new THREE.Color(0x87CEEB); // Sky blue
+
+// Optional: Add fog for atmosphere
+scene.fog = new THREE.Fog(0x87CEEB, 10, 100); // color, near, far
+// Or use FogExp2 for exponential fog
+// scene.fog = new THREE.FogExp2(0x87CEEB, 0.1);
+
+// Optional: Environment map (for reflections)
+// scene.environment = environmentMap; // If using environment maps
+```
+
+## Camera Setup
+
+### Perspective Camera (Most Common)
+```javascript
+const camera = new THREE.PerspectiveCamera(
+    75,                    // Field of view (degrees)
+    600 / 400,            // Aspect ratio (width / height)
+    0.1,                   // Near clipping plane
+    1000                   // Far clipping plane
+);
+
+// Position camera
+camera.position.set(0, 5, 10);
+camera.lookAt(0, 0, 0);
+
+// Store in gameState
+gameState.camera = camera;
+```
+
+### Orthographic Camera (For Isometric Views)
+```javascript
+const aspect = 600 / 400;
+const size = 10;
+const camera = new THREE.OrthographicCamera(
+    -size * aspect,  // left
+    size * aspect,   // right
+    size,            // top
+    -size,           // bottom
+    0.1,             // near
+    1000             // far
+);
+
+camera.position.set(10, 10, 10);
+camera.lookAt(0, 0, 0);
+```
+
+### Camera Projection Types
+- **PerspectiveCamera**: Realistic 3D view with perspective distortion (most games)
+- **OrthographicCamera**: No perspective distortion, parallel projection (isometric games, strategy games)
+
+## Renderer Configuration
+```javascript
+// CRITICAL: Create a container div to properly contain the game canvas
+// This prevents any overflow outside the iframe boundaries
+const gameContainer = document.createElement('div');
+gameContainer.id = 'game-container';
+gameContainer.style.width = '600px';
+gameContainer.style.height = '400px';
+gameContainer.style.position = 'relative';
+gameContainer.style.overflow = 'hidden';
+gameContainer.style.margin = '0';
+gameContainer.style.padding = '0';
+gameContainer.style.border = 'none';
+document.body.appendChild(gameContainer);
+
+// Set body styles to prevent overflow
+document.body.style.margin = '0';
+document.body.style.padding = '0';
+document.body.style.overflow = 'hidden';
+document.body.style.width = '600px';
+document.body.style.height = '400px';
+
+// Create WebGL renderer with options
+const renderer = new THREE.WebGLRenderer({ 
+    antialias: true,        // Smooth edges
+    alpha: false,           // Transparent background (false = opaque)
+    powerPreference: "high-performance" // Use dedicated GPU if available
+});
+
+// Set renderer size
+renderer.setSize(600, 400);
+
+// Enable shadows (if using)
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap; // Soft shadows
+
+// Optional: Set pixel ratio for high-DPI displays
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+// Optional: Tone mapping for HDR-like effects
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+
+// CRITICAL: Append canvas to container, NOT directly to body
+gameContainer.appendChild(renderer.domElement);
+
+// Store in gameState
+gameState.renderer = renderer;
+gameState.gameContainer = gameContainer; // Store container for UI canvas
+```
+
+## Lighting Setup
+
+### Ambient Light (Base Illumination)
+```javascript
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.5); // color, intensity
+scene.add(ambientLight);
+gameState.ambientLight = ambientLight;
+```
+
+### Directional Light (Sun/Moon)
+```javascript
+const directionalLight = new THREE.DirectionalLight(0xffffff, 1.0);
+directionalLight.position.set(5, 10, 5);
+directionalLight.castShadow = true; // Enable shadow casting
+
+// Configure shadow map
+directionalLight.shadow.mapSize.width = 2048;
+directionalLight.shadow.mapSize.height = 2048;
+directionalLight.shadow.camera.near = 0.5;
+directionalLight.shadow.camera.far = 50;
+directionalLight.shadow.camera.left = -10;
+directionalLight.shadow.camera.right = 10;
+directionalLight.shadow.camera.top = 10;
+directionalLight.shadow.camera.bottom = -10;
+
+scene.add(directionalLight);
+gameState.directionalLight = directionalLight;
+```
+
+### Point Light (Lamp/Light Bulb)
+```javascript
+const pointLight = new THREE.PointLight(0xffffff, 1.0, 100); // color, intensity, distance
+pointLight.position.set(0, 5, 0);
+pointLight.castShadow = true;
+pointLight.shadow.mapSize.width = 1024;
+pointLight.shadow.mapSize.height = 1024;
+scene.add(pointLight);
+gameState.lights.push(pointLight);
+```
+
+### Spot Light (Flashlight/Spotlight)
+```javascript
+const spotLight = new THREE.SpotLight(0xffffff, 1.0); // color, intensity
+spotLight.position.set(0, 10, 0);
+spotLight.angle = Math.PI / 6; // 30 degrees
+spotLight.penumbra = 0.3; // Soft edge
+spotLight.decay = 2; // Distance decay
+spotLight.castShadow = true;
+spotLight.target.position.set(0, 0, 0);
+scene.add(spotLight);
+scene.add(spotLight.target);
+gameState.lights.push(spotLight);
+```
+
+### Hemisphere Light (Sky/Ground)
+```javascript
+const hemisphereLight = new THREE.HemisphereLight(
+    0x87CEEB,  // Sky color
+    0x8B4513,  // Ground color
+    0.6         // Intensity
+);
+hemisphereLight.position.set(0, 10, 0);
+scene.add(hemisphereLight);
+gameState.lights.push(hemisphereLight);
+```
+
+### Shadow Configuration
+```javascript
+// Enable shadows on renderer (see renderer setup above)
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+// Enable shadow casting on objects
+mesh.castShadow = true;  // Object casts shadows
+mesh.receiveShadow = true; // Object receives shadows
+```
+
+# 3D Geometry Creation
+
+## Basic Geometries
+
+### Box Geometry
+```javascript
+const geometry = new THREE.BoxGeometry(width, height, depth);
+// Or with segments for more detail
+const geometry = new THREE.BoxGeometry(width, height, depth, widthSegments, heightSegments, depthSegments);
+const material = new THREE.MeshStandardMaterial({ color: 0x00ff00 });
+const mesh = new THREE.Mesh(geometry, material);
+mesh.position.set(x, y, z);
+scene.add(mesh);
+```
+
+### Sphere Geometry
+```javascript
+const geometry = new THREE.SphereGeometry(
+    radius,           // radius
+    widthSegments,   // horizontal segments (default: 32)
+    heightSegments,  // vertical segments (default: 16)
+    phiStart,        // horizontal start angle (default: 0)
+    phiLength,       // horizontal sweep angle (default: Math.PI * 2)
+    thetaStart,      // vertical start angle (default: 0)
+    thetaLength      // vertical sweep angle (default: Math.PI)
+);
+const material = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+const mesh = new THREE.Mesh(geometry, material);
+```
+
+### Cylinder Geometry
+```javascript
+const geometry = new THREE.CylinderGeometry(
+    radiusTop,      // Top radius
+    radiusBottom,   // Bottom radius
+    height,         // Height
+    radialSegments, // Number of radial segments (default: 32)
+    heightSegments, // Number of height segments (default: 1)
+    openEnded,      // Open ends (default: false)
+    thetaStart,     // Start angle (default: 0)
+    thetaLength     // Sweep angle (default: Math.PI * 2)
+);
+```
+
+### Cone Geometry
+```javascript
+const geometry = new THREE.ConeGeometry(
+    radius,         // Bottom radius
+    height,         // Height
+    radialSegments, // Number of radial segments
+    heightSegments, // Number of height segments
+    openEnded,      // Open bottom (default: false)
+    thetaStart,     // Start angle
+    thetaLength     // Sweep angle
+);
+```
+
+### Torus Geometry (Donut)
+```javascript
+const geometry = new THREE.TorusGeometry(
+    radius,         // Major radius
+    tube,           // Minor radius (tube radius)
+    radialSegments, // Number of radial segments
+    tubularSegments, // Number of tubular segments
+    arc             // Central angle (default: Math.PI * 2)
+);
+```
+
+### Plane Geometry (Flat Surface)
+```javascript
+const geometry = new THREE.PlaneGeometry(
+    width,          // Width
+    height,         // Height
+    widthSegments,  // Width segments (default: 1)
+    heightSegments  // Height segments (default: 1)
+);
+// Rotate to be horizontal
+mesh.rotation.x = -Math.PI / 2;
+```
+
+### Ring Geometry
+```javascript
+const geometry = new THREE.RingGeometry(
+    innerRadius,    // Inner radius
+    outerRadius,    // Outer radius
+    thetaSegments,  // Number of segments
+    phiSegments,    // Number of rings
+    thetaStart,     // Start angle
+    thetaLength     // Sweep angle
+);
+```
+
+## Custom Geometry with BufferGeometry
+```javascript
+// Create custom geometry
+const geometry = new THREE.BufferGeometry();
+
+// Define vertices
+const vertices = new Float32Array([
+    -1, -1,  0,  // Vertex 0
+     1, -1,  0,  // Vertex 1
+     1,  1,  0,  // Vertex 2
+    -1,  1,  0   // Vertex 3
+]);
+
+// Define indices (triangles)
+const indices = new Uint16Array([
+    0, 1, 2,  // First triangle
+    0, 2, 3   // Second triangle
+]);
+
+// Define normals (for lighting)
+const normals = new Float32Array([
+    0, 0, 1,  // Normal for vertex 0
+    0, 0, 1,  // Normal for vertex 1
+    0, 0, 1,  // Normal for vertex 2
+    0, 0, 1   // Normal for vertex 3
+]);
+
+// Set attributes
+geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+
+// Compute normals if not provided
+geometry.computeVertexNormals();
+
+const material = new THREE.MeshStandardMaterial({ color: 0x00ff00 });
+const mesh = new THREE.Mesh(geometry, material);
+```
+
+## Geometry Manipulation
+```javascript
+// Scale geometry
+mesh.scale.set(2, 2, 2); // Scale uniformly
+mesh.scale.x = 1.5;      // Scale X axis only
+
+// Rotate geometry
+mesh.rotation.x = Math.PI / 4; // Rotate 45 degrees around X
+mesh.rotation.y += 0.01;       // Continuous rotation
+
+// Translate geometry
+mesh.position.set(x, y, z);
+mesh.position.add(new THREE.Vector3(1, 0, 0)); // Move by offset
+
+// Use quaternion for precise rotations
+mesh.quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 4);
+```
+
+## Geometry Instancing (Performance)
+```javascript
+// Create instanced geometry for many similar objects
+const geometry = new THREE.BoxGeometry(1, 1, 1);
+const material = new THREE.MeshStandardMaterial({ color: 0x00ff00 });
+const mesh = new THREE.InstancedMesh(geometry, material, 1000); // 1000 instances
+
+// Set positions for each instance
+const matrix = new THREE.Matrix4();
+for (let i = 0; i < 1000; i++) {
+    matrix.setPosition(
+        Math.random() * 100 - 50,
+        Math.random() * 100,
+        Math.random() * 100 - 50
+    );
+    mesh.setMatrixAt(i, matrix);
+}
+mesh.instanceMatrix.needsUpdate = true;
+scene.add(mesh);
+```
+
+# Materials and Textures
+
+## Material Types
+
+### MeshBasicMaterial (Unlit)
+```javascript
+const material = new THREE.MeshBasicMaterial({
+    color: 0x00ff00,        // Color
+    transparent: true,      // Enable transparency
+    opacity: 0.5,          // Opacity (0-1)
+    side: THREE.FrontSide, // THREE.FrontSide, THREE.BackSide, THREE.DoubleSide
+    wireframe: false       // Show wireframe
+});
+```
+
+### MeshLambertMaterial (Simple Lighting)
+```javascript
+const material = new THREE.MeshLambertMaterial({
+    color: 0x00ff00,
+    emissive: 0x000000,    // Emissive color (glow)
+    emissiveIntensity: 0.0
+});
+```
+
+### MeshPhongMaterial (Shiny)
+```javascript
+const material = new THREE.MeshPhongMaterial({
+    color: 0x00ff00,
+    specular: 0x111111,    // Specular color
+    shininess: 30,         // Shininess (0-100)
+    emissive: 0x000000,
+    emissiveIntensity: 0.0
+});
+```
+
+### MeshStandardMaterial (PBR - Physically Based Rendering)
+```javascript
+const material = new THREE.MeshStandardMaterial({
+    color: 0x00ff00,
+    roughness: 0.5,        // Surface roughness (0 = mirror, 1 = matte)
+    metalness: 0.0,        // Metalness (0 = dielectric, 1 = metal)
+    emissive: 0x000000,
+    emissiveIntensity: 0.0,
+    normalScale: new THREE.Vector2(1, 1) // Normal map scale
+});
+```
+
+### MeshPhysicalMaterial (Advanced PBR)
+```javascript
+const material = new THREE.MeshPhysicalMaterial({
+    color: 0x00ff00,
+    roughness: 0.5,
+    metalness: 0.0,
+    clearcoat: 1.0,        // Clearcoat layer (0-1)
+    clearcoatRoughness: 0.1,
+    transmission: 0.0,     // Transmission (glass effect)
+    thickness: 0.0,        // Thickness for transmission
+    ior: 1.5              // Index of refraction
+});
+```
+
+## Material Properties
+```javascript
+// Color
+material.color.setHex(0x00ff00);
+material.color.setRGB(0, 1, 0);
+material.color.setHSL(0.33, 1, 0.5);
+
+// Transparency
+material.transparent = true;
+material.opacity = 0.5;
+
+// Emissive (glow)
+material.emissive.setHex(0xff0000);
+material.emissiveIntensity = 0.5;
+
+// Side rendering
+material.side = THREE.DoubleSide; // Render both sides
+
+// Wireframe
+material.wireframe = true;
+```
+
+## Procedural Texture Generation
+```javascript
+// Create canvas for texture
+const canvas = document.createElement('canvas');
+canvas.width = 256;
+canvas.width = 256;
+const ctx = canvas.getContext('2d');
+
+// Draw pattern
+ctx.fillStyle = '#ff0000';
+ctx.fillRect(0, 0, 128, 128);
+ctx.fillStyle = '#0000ff';
+ctx.fillRect(128, 0, 128, 128);
+
+// Create texture from canvas
+const texture = new THREE.CanvasTexture(canvas);
+texture.wrapS = THREE.RepeatWrapping;
+texture.wrapT = THREE.RepeatWrapping;
+texture.repeat.set(2, 2);
+
+// Use texture in material
+const material = new THREE.MeshStandardMaterial({ map: texture });
+```
+
+# Physics and Collisions
+
+## 3D Physics Implementation
+
+### Basic Gravity and Velocity
+```javascript
+export class PhysicsEntity {
+    constructor(mesh) {
+        this.mesh = mesh;
+        this.velocity = new THREE.Vector3(0, 0, 0);
+        this.acceleration = new THREE.Vector3(0, 0, 0);
+        this.mass = 1.0;
+        this.onGround = false;
+    }
+    
+    update(deltaTime) {
+        // Apply gravity
+        if (!this.onGround) {
+            this.acceleration.add(gameState.gravity);
+        }
+        
+        // Update velocity
+        this.velocity.add(this.acceleration.clone().multiplyScalar(deltaTime));
+        
+        // Apply friction/damping
+        this.velocity.multiplyScalar(0.98); // Air resistance
+        
+        // Update position
+        this.mesh.position.add(this.velocity.clone().multiplyScalar(deltaTime));
+        
+        // Reset acceleration
+        this.acceleration.set(0, 0, 0);
+    }
+    
+    applyForce(force) {
+        this.acceleration.add(force.clone().divideScalar(this.mass));
+    }
+}
+```
+
+## Collision Detection
+
+### Bounding Box (AABB - Axis-Aligned Bounding Box)
+```javascript
+function checkAABBCollision(box1, box2) {
+    const box1Min = new THREE.Vector3(
+        box1.position.x - box1.size.x / 2,
+        box1.position.y - box1.size.y / 2,
+        box1.position.z - box1.size.z / 2
+    );
+    const box1Max = new THREE.Vector3(
+        box1.position.x + box1.size.x / 2,
+        box1.position.y + box1.size.y / 2,
+        box1.position.z + box1.size.z / 2
+    );
+    
+    const box2Min = new THREE.Vector3(
+        box2.position.x - box2.size.x / 2,
+        box2.position.y - box2.size.y / 2,
+        box2.position.z - box2.size.z / 2
+    );
+    const box2Max = new THREE.Vector3(
+        box2.position.x + box2.size.x / 2,
+        box2.position.y + box2.size.y / 2,
+        box2.position.z + box2.size.z / 2
+    );
+    
+    return (
+        box1Min.x <= box2Max.x && box1Max.x >= box2Min.x &&
+        box1Min.y <= box2Max.y && box1Max.y >= box2Min.y &&
+        box1Min.z <= box2Max.z && box1Max.z >= box2Min.z
+    );
+}
+```
+
+### Bounding Sphere Collision
+```javascript
+function checkSphereCollision(sphere1, sphere2) {
+    const distance = sphere1.position.distanceTo(sphere2.position);
+    return distance < (sphere1.radius + sphere2.radius);
+}
+
+// With collision response
+function handleSphereCollision(sphere1, sphere2) {
+    const distance = sphere1.position.distanceTo(sphere2.position);
+    const minDistance = sphere1.radius + sphere2.radius;
+    
+    if (distance < minDistance) {
+        // Calculate collision normal
+        const normal = new THREE.Vector3()
+            .subVectors(sphere1.position, sphere2.position)
+            .normalize();
+        
+        // Separate spheres
+        const overlap = minDistance - distance;
+        const separation = normal.clone().multiplyScalar(overlap / 2);
+        sphere1.position.add(separation);
+        sphere2.position.sub(separation);
+        
+        // Calculate relative velocity
+        const relativeVelocity = new THREE.Vector3()
+            .subVectors(sphere1.velocity, sphere2.velocity);
+        
+        // Calculate impulse
+        const velocityAlongNormal = relativeVelocity.dot(normal);
+        if (velocityAlongNormal > 0) return; // Already separating
+        
+        const restitution = 0.8; // Bounciness
+        const impulse = -(1 + restitution) * velocityAlongNormal;
+        const impulseScalar = impulse / (sphere1.mass + sphere2.mass);
+        
+        // Apply impulse
+        sphere1.velocity.add(normal.clone().multiplyScalar(impulseScalar * sphere2.mass));
+        sphere2.velocity.sub(normal.clone().multiplyScalar(impulseScalar * sphere1.mass));
+    }
+}
+```
+
+### Ground Collision Detection
+```javascript
+function checkGroundCollision(entity, groundY) {
+    const entityBottom = entity.mesh.position.y - entity.size.y / 2;
+    
+    if (entityBottom <= groundY) {
+        entity.mesh.position.y = groundY + entity.size.y / 2;
+        entity.velocity.y = 0;
+        entity.onGround = true;
+        return true;
+    }
+    
+    entity.onGround = false;
+    return false;
+}
+```
+
+### Raycasting for Interaction
+```javascript
+// Create raycaster
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+
+// Cast ray from camera through mouse position
+function onMouseClick(event) {
+    mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+    mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+    
+    raycaster.setFromCamera(mouse, gameState.camera);
+    
+    // Check intersection with objects
+    const intersects = raycaster.intersectObjects(gameState.entities.map(e => e.mesh));
+    
+    if (intersects.length > 0) {
+        const clickedObject = intersects[0].object;
+        // Handle click on object
+    }
+}
+
+// Cast ray from position in direction
+function castRay(origin, direction, length) {
+    raycaster.set(origin, direction.normalize());
+    const intersects = raycaster.intersectObjects(gameState.platforms.map(p => p.mesh));
+    
+    if (intersects.length > 0 && intersects[0].distance < length) {
+        return intersects[0];
+    }
+    return null;
+}
+```
+
+## Spatial Partitioning (Performance Optimization)
+
+### Grid-Based Spatial Hashing
+```javascript
+class SpatialGrid {
+    constructor(cellSize) {
+        this.cellSize = cellSize;
+        this.grid = new Map();
+    }
+    
+    getCellKey(x, y, z) {
+        const cellX = Math.floor(x / this.cellSize);
+        const cellY = Math.floor(y / this.cellSize);
+        const cellZ = Math.floor(z / this.cellSize);
+        return `${cellX},${cellY},${cellZ}`;
+    }
+    
+    insert(entity) {
+        const key = this.getCellKey(
+            entity.mesh.position.x,
+            entity.mesh.position.y,
+            entity.mesh.position.z
+        );
+        
+        if (!this.grid.has(key)) {
+            this.grid.set(key, []);
+        }
+        this.grid.get(key).push(entity);
+    }
+    
+    getNearbyEntities(entity) {
+        const nearby = [];
+        const radius = 2; // Check neighboring cells
+        
+        for (let dx = -radius; dx <= radius; dx++) {
+            for (let dy = -radius; dy <= radius; dy++) {
+                for (let dz = -radius; dz <= radius; dz++) {
+                    const key = this.getCellKey(
+                        entity.mesh.position.x + dx * this.cellSize,
+                        entity.mesh.position.y + dy * this.cellSize,
+                        entity.mesh.position.z + dz * this.cellSize
+                    );
+                    
+                    if (this.grid.has(key)) {
+                        nearby.push(...this.grid.get(key));
+                    }
+                }
+            }
+        }
+        
+        return nearby;
+    }
+    
+    clear() {
+        this.grid.clear();
+    }
+}
+```
+
+## Physics Timestep Management
+```javascript
+let lastTime = performance.now();
+const fixedTimeStep = 1 / 60; // 60 FPS
+let accumulator = 0;
+
+function gameLoop(currentTime) {
+    requestAnimationFrame(gameLoop);
+    
+    const deltaTime = (currentTime - lastTime) / 1000; // Convert to seconds
+    lastTime = currentTime;
+    
+    // Cap delta time to prevent large jumps
+    const clampedDelta = Math.min(deltaTime, 0.1);
+    
+    accumulator += clampedDelta;
+    
+    // Fixed timestep physics
+    while (accumulator >= fixedTimeStep) {
+        updatePhysics(fixedTimeStep);
+        accumulator -= fixedTimeStep;
+    }
+    
+    // Interpolate for smooth rendering
+    const alpha = accumulator / fixedTimeStep;
+    render(alpha);
+}
+```
+
+# Camera Control
+
+## Third-Person Camera (Follow)
+```javascript
+function setupThirdPersonCamera() {
+    gameState.cameraMode = "third_person";
+    gameState.cameraOffset.set(0, 5, 10);
+}
+
+function updateThirdPersonCamera() {
+    if (!gameState.player) return;
+    
+    const targetPosition = new THREE.Vector3()
+        .copy(gameState.player.mesh.position)
+        .add(gameState.cameraOffset);
+    
+    // Smooth camera movement
+    gameState.camera.position.lerp(targetPosition, 0.1);
+    gameState.camera.lookAt(gameState.player.mesh.position);
+}
+```
+
+## Third-Person Camera (Orbit)
+```javascript
+let cameraAngle = 0;
+const cameraDistance = 10;
+const cameraHeight = 5;
+
+function updateOrbitCamera() {
+    if (!gameState.player) return;
+    
+    cameraAngle += 0.01; // Rotate around player
+    
+    const offsetX = Math.cos(cameraAngle) * cameraDistance;
+    const offsetZ = Math.sin(cameraAngle) * cameraDistance;
+    
+    gameState.camera.position.set(
+        gameState.player.mesh.position.x + offsetX,
+        gameState.player.mesh.position.y + cameraHeight,
+        gameState.player.mesh.position.z + offsetZ
+    );
+    
+    gameState.camera.lookAt(gameState.player.mesh.position);
+}
+```
+
+## First-Person Camera (FPS)
+```javascript
+function setupFirstPersonCamera() {
+    gameState.cameraMode = "first_person";
+    gameState.cameraOffset.set(0, 1.6, 0); // Eye height
+}
+
+function updateFirstPersonCamera() {
+    if (!gameState.player) return;
+    
+    // Camera at player position + eye height
+    gameState.camera.position.copy(gameState.player.mesh.position);
+    gameState.camera.position.add(gameState.cameraOffset);
+    
+    // Camera rotation matches player rotation
+    gameState.camera.rotation.copy(gameState.player.mesh.rotation);
+}
+```
+
+## Camera Smoothing and Interpolation
+```javascript
+function updateCameraSmooth() {
+    if (!gameState.player) return;
+    
+    const targetPosition = new THREE.Vector3()
+        .copy(gameState.player.mesh.position)
+        .add(gameState.cameraOffset);
+    
+    // Smooth interpolation
+    const smoothingFactor = 0.1;
+    gameState.camera.position.lerp(targetPosition, smoothingFactor);
+    
+    // Smooth look-at
+    const targetLookAt = gameState.player.mesh.position.clone();
+    const currentLookAt = new THREE.Vector3();
+    gameState.camera.getWorldDirection(currentLookAt);
+    currentLookAt.multiplyScalar(10).add(gameState.camera.position);
+    
+    const smoothedLookAt = currentLookAt.lerp(targetLookAt, smoothingFactor);
+    gameState.camera.lookAt(smoothedLookAt);
+}
+```
+
+## Camera Constraints and Boundaries
+```javascript
+function updateCameraWithConstraints() {
+    if (!gameState.player) return;
+    
+    const targetPosition = new THREE.Vector3()
+        .copy(gameState.player.mesh.position)
+        .add(gameState.cameraOffset);
+    
+    // Clamp camera position to boundaries
+    targetPosition.x = Math.max(-50, Math.min(50, targetPosition.x));
+    targetPosition.y = Math.max(5, Math.min(20, targetPosition.y));
+    targetPosition.z = Math.max(-50, Math.min(50, targetPosition.z));
+    
+    gameState.camera.position.lerp(targetPosition, 0.1);
+    gameState.camera.lookAt(gameState.player.mesh.position);
+}
+```
+
+## Camera Shake Effect
+```javascript
+let cameraShake = { intensity: 0, duration: 0 };
+
+function applyCameraShake(intensity, duration) {
+    cameraShake.intensity = intensity;
+    cameraShake.duration = duration;
+}
+
+function updateCameraShake() {
+    if (cameraShake.duration > 0) {
+        const shakeX = (Math.random() - 0.5) * cameraShake.intensity;
+        const shakeY = (Math.random() - 0.5) * cameraShake.intensity;
+        const shakeZ = (Math.random() - 0.5) * cameraShake.intensity;
+        
+        gameState.camera.position.add(new THREE.Vector3(shakeX, shakeY, shakeZ));
+        
+        cameraShake.duration -= gameState.deltaTime;
+        cameraShake.intensity *= 0.9; // Decay
+    }
+}
+```
+
+# Rendering Patterns
+
+## Render Loop Optimization
+```javascript
+let frameCount = 0;
+let lastFrameTime = performance.now();
+
+function gameLoop(currentTime) {
+    requestAnimationFrame(gameLoop);
+    
+    // Calculate delta time
+    gameState.deltaTime = (currentTime - lastFrameTime) / 1000;
+    lastFrameTime = currentTime;
+    gameState.frameCount = frameCount++;
+
+    // Update game logic
+    updateGame();
+
+    // Render scene
+    gameState.renderer.render(gameState.scene, gameState.camera);
+}
+gameLoop();
+```
+
+## Frustum Culling (Automatic)
+```javascript
+// Three.js automatically performs frustum culling
+// Objects outside camera view are not rendered
+// You can manually check:
+const frustum = new THREE.Frustum();
+frustum.setFromProjectionMatrix(
+    new THREE.Matrix4().multiplyMatrices(
+        gameState.camera.projectionMatrix,
+        gameState.camera.matrixWorldInverse
+    )
+);
+
+function isInFrustum(mesh) {
+    return frustum.intersectsObject(mesh);
+}
+```
+
+## Object Visibility Management
+    ```javascript
+// Hide/show objects
+mesh.visible = false; // Hide object
+mesh.visible = true;  // Show object
+
+// Remove from scene (better for performance)
+scene.remove(mesh);
+
+// Add back to scene
+scene.add(mesh);
+```
+
+## Render Order and Transparency
+```javascript
+// Set render order (lower numbers render first)
+opaqueMesh.renderOrder = 0;
+transparentMesh.renderOrder = 1;
+
+// Enable transparency
+material.transparent = true;
+material.opacity = 0.5;
+
+// Set blending mode
+material.blending = THREE.NormalBlending; // Default
+// material.blending = THREE.AdditiveBlending;
+// material.blending = THREE.MultiplyBlending;
+
+// Enable depth writing for proper transparency
+material.depthWrite = false; // For transparent objects
+```
+
+# Entity Classes
+
+## Comprehensive Player Class
+```javascript
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState } from './globals.js';
+
+export class Player {
+    constructor(x, y, z) {
+        // Create 3D mesh
+        const geometry = new THREE.BoxGeometry(1, 2, 1);
+        const material = new THREE.MeshStandardMaterial({ 
+            color: 0x00ff00,
+            roughness: 0.5,
+            metalness: 0.1
+        });
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.position.set(x, y, z);
+        this.mesh.castShadow = true;
+        this.mesh.receiveShadow = true;
+
+        // Physics properties
+        this.velocity = new THREE.Vector3(0, 0, 0);
+        this.acceleration = new THREE.Vector3(0, 0, 0);
+        this.speed = 0.2;
+        this.jumpPower = 0.5;
+        this.onGround = false;
+        this.mass = 1.0;
+        
+        // Game properties
+        this.health = 100;
+        this.maxHealth = 100;
+        this.score = 0;
+        
+        // State
+        this.isMoving = false;
+        this.lastPosition = new THREE.Vector3().copy(this.mesh.position);
+        
+        // Add to scene
+        gameState.scene.add(this.mesh);
+    }
+    
+    update(deltaTime) {
+        // Apply gravity
+        if (!this.onGround) {
+            this.acceleration.add(gameState.gravity);
+        }
+        
+        // Update velocity
+        this.velocity.add(this.acceleration.clone().multiplyScalar(deltaTime));
+        
+        // Apply friction when on ground
+        if (this.onGround) {
+            this.velocity.x *= 0.9;
+            this.velocity.z *= 0.9;
+        } else {
+            // Air resistance
+            this.velocity.multiplyScalar(0.98);
+        }
+
+        // Update position
+        this.mesh.position.add(this.velocity.clone().multiplyScalar(deltaTime));
+        
+        // Check ground collision
+        this.checkGroundCollision();
+        
+        // Reset acceleration
+        this.acceleration.set(0, 0, 0);
+        
+        // Log position changes
+        if (this.mesh.position.distanceTo(this.lastPosition) > 0.1) {
+            this.logPosition();
+            this.lastPosition.copy(this.mesh.position);
+        }
+    }
+    
+    checkGroundCollision() {
+        const groundY = 0;
+        const playerBottom = this.mesh.position.y - 1; // Half height
+        
+        if (playerBottom <= groundY) {
+            this.mesh.position.y = groundY + 1;
+            this.velocity.y = 0;
+            this.onGround = true;
+        } else {
+            this.onGround = false;
+        }
+    }
+
+    moveForward() {
+        const direction = new THREE.Vector3(0, 0, -1);
+        direction.applyQuaternion(this.mesh.quaternion);
+        this.acceleration.add(direction.multiplyScalar(this.speed));
+        this.isMoving = true;
+    }
+
+    moveBackward() {
+        const direction = new THREE.Vector3(0, 0, 1);
+        direction.applyQuaternion(this.mesh.quaternion);
+        this.acceleration.add(direction.multiplyScalar(this.speed));
+        this.isMoving = true;
+    }
+
+    strafeLeft() {
+        const direction = new THREE.Vector3(-1, 0, 0);
+        direction.applyQuaternion(this.mesh.quaternion);
+        this.acceleration.add(direction.multiplyScalar(this.speed));
+        this.isMoving = true;
+    }
+
+    strafeRight() {
+        const direction = new THREE.Vector3(1, 0, 0);
+        direction.applyQuaternion(this.mesh.quaternion);
+        this.acceleration.add(direction.multiplyScalar(this.speed));
+        this.isMoving = true;
+    }
+
+    jump() {
+        if (this.onGround) {
+            this.velocity.y = this.jumpPower;
+            this.onGround = false;
+        }
+    }
+    
+    takeDamage(amount) {
+        this.health = Math.max(0, this.health - amount);
+        if (this.health <= 0) {
+            this.die();
+        }
+    }
+    
+    die() {
+        // Handle player death
+        gameState.gamePhase = "GAME_OVER_LOSE";
+    }
+    
+    logPosition() {
+        if (window.logs && window.logs.player_info) {
+            const screenPos = this.mesh.position.clone().project(gameState.camera);
+            window.logs.player_info.push({
+                screen_x: (screenPos.x + 1) * CANVAS_WIDTH / 2,
+                screen_y: (1 - screenPos.y) * CANVAS_HEIGHT / 2,
+                game_x: this.mesh.position.x,
+                game_y: this.mesh.position.y,
+                game_z: this.mesh.position.z,
+                framecount: gameState.frameCount,
+                timestamp: Date.now()
+            });
+        }
+    }
+}
+```
+
+## Enemy Class with AI
+```javascript
+export class Enemy {
+    constructor(x, y, z) {
+        const geometry = new THREE.SphereGeometry(0.5, 16, 16);
+        const material = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.position.set(x, y, z);
+        this.mesh.castShadow = true;
+        
+        this.velocity = new THREE.Vector3(0, 0, 0);
+        this.speed = 0.1;
+        this.health = 50;
+        this.damage = 10;
+        this.attackRange = 2.0;
+        this.detectionRange = 10.0;
+        
+        gameState.scene.add(this.mesh);
+    }
+    
+    update(deltaTime) {
+        if (!gameState.player) return;
+        
+        const distanceToPlayer = this.mesh.position.distanceTo(
+            gameState.player.mesh.position
+        );
+        
+        // AI behavior
+        if (distanceToPlayer < this.detectionRange) {
+            // Move towards player
+            const direction = new THREE.Vector3()
+                .subVectors(gameState.player.mesh.position, this.mesh.position)
+                .normalize();
+            
+            this.velocity.copy(direction.multiplyScalar(this.speed));
+            this.mesh.position.add(this.velocity.clone().multiplyScalar(deltaTime));
+            
+            // Attack if in range
+            if (distanceToPlayer < this.attackRange) {
+                this.attack();
+            }
+        }
+        
+        // Apply gravity
+        if (!this.onGround) {
+            this.velocity.y += gameState.gravity.y * deltaTime;
+        }
+    }
+    
+    attack() {
+        if (gameState.player) {
+            gameState.player.takeDamage(this.damage);
+        }
+    }
+    
+    takeDamage(amount) {
+        this.health -= amount;
+        if (this.health <= 0) {
+            this.die();
+        }
+    }
+    
+    die() {
+        gameState.scene.remove(this.mesh);
+        const index = gameState.enemies.indexOf(this);
+        if (index > -1) {
+            gameState.enemies.splice(index, 1);
+        }
+    }
+}
+```
+
+## Collectible Class
+```javascript
+export class Collectible {
+    constructor(x, y, z) {
+        const geometry = new THREE.TorusGeometry(0.3, 0.1, 16, 32);
+        const material = new THREE.MeshStandardMaterial({ 
+            color: 0xffff00,
+            emissive: 0xffff00,
+            emissiveIntensity: 0.5
+        });
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.position.set(x, y, z);
+        this.mesh.castShadow = true;
+        
+        this.value = 10;
+        this.rotationSpeed = 0.02;
+        this.bobSpeed = 0.003;
+        this.bobAmount = 0.2;
+        this.initialY = y;
+        
+        gameState.scene.add(this.mesh);
+    }
+    
+    update(deltaTime) {
+        // Rotate
+        this.mesh.rotation.y += this.rotationSpeed;
+        
+        // Bob up and down
+        this.mesh.position.y = this.initialY + 
+            Math.sin(gameState.frameCount * this.bobSpeed) * this.bobAmount;
+        
+        // Check collision with player
+        if (gameState.player) {
+            const distance = this.mesh.position.distanceTo(
+                gameState.player.mesh.position
+            );
+            
+            if (distance < 1.0) {
+                this.collect();
+            }
+        }
+    }
+    
+    collect() {
+        if (gameState.player) {
+            gameState.player.score += this.value;
+            gameState.score += this.value;
+        }
+        
+        gameState.scene.remove(this.mesh);
+        const index = gameState.collectibles.indexOf(this);
+        if (index > -1) {
+            gameState.collectibles.splice(index, 1);
+        }
+    }
+}
+```
+
+## Projectile Class
+```javascript
+export class Projectile {
+    constructor(position, direction, speed = 1.0) {
+        const geometry = new THREE.SphereGeometry(0.1, 8, 8);
+        const material = new THREE.MeshBasicMaterial({ color: 0xffff00 });
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.position.copy(position);
+        
+        this.velocity = direction.normalize().multiplyScalar(speed);
+        this.lifetime = 5.0; // Seconds
+        this.age = 0;
+        this.damage = 20;
+        
+        gameState.scene.add(this.mesh);
+    }
+    
+    update(deltaTime) {
+        // Update position
+        this.mesh.position.add(this.velocity.clone().multiplyScalar(deltaTime));
+        
+        // Update age
+        this.age += deltaTime;
+        
+        // Remove if expired
+        if (this.age >= this.lifetime) {
+            this.destroy();
+            return;
+        }
+        
+        // Check collision with enemies
+        for (const enemy of gameState.enemies) {
+            const distance = this.mesh.position.distanceTo(enemy.mesh.position);
+            if (distance < 0.5) {
+                enemy.takeDamage(this.damage);
+                this.destroy();
+                return;
+            }
+        }
+    }
+    
+    destroy() {
+        gameState.scene.remove(this.mesh);
+        const index = gameState.projectiles.indexOf(this);
+        if (index > -1) {
+            gameState.projectiles.splice(index, 1);
+        }
+    }
+}
+```
+
+## Platform Class
+```javascript
+export class Platform {
+    constructor(x, y, z, width, height, depth) {
+        const geometry = new THREE.BoxGeometry(width, height, depth);
+        const material = new THREE.MeshStandardMaterial({ 
+            color: 0x888888,
+            roughness: 0.8
+        });
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.position.set(x, y, z);
+        this.mesh.receiveShadow = true;
+        
+        // Collision bounds
+        this.bounds = {
+            min: new THREE.Vector3(
+                x - width / 2,
+                y - height / 2,
+                z - depth / 2
+            ),
+            max: new THREE.Vector3(
+                x + width / 2,
+                y + height / 2,
+                z + depth / 2
+            )
+        };
+        
+        gameState.scene.add(this.mesh);
+    }
+    
+    checkCollision(entity) {
+        const pos = entity.mesh.position;
+        return (
+            pos.x >= this.bounds.min.x && pos.x <= this.bounds.max.x &&
+            pos.y >= this.bounds.min.y && pos.y <= this.bounds.max.y &&
+            pos.z >= this.bounds.min.z && pos.z <= this.bounds.max.z
+        );
+    }
+}
+```
+
+# Animation
+
+## Object Animation
+```javascript
+// Position animation
+function animatePosition(mesh, targetPosition, speed) {
+    mesh.position.lerp(targetPosition, speed);
+}
+
+// Rotation animation
+function animateRotation(mesh, targetRotation, speed) {
+    mesh.rotation.x = THREE.MathUtils.lerp(mesh.rotation.x, targetRotation.x, speed);
+    mesh.rotation.y = THREE.MathUtils.lerp(mesh.rotation.y, targetRotation.y, speed);
+    mesh.rotation.z = THREE.MathUtils.lerp(mesh.rotation.z, targetRotation.z, speed);
+}
+
+// Scale animation (pulse effect)
+function animatePulse(mesh, baseScale, pulseAmount, speed) {
+    const scale = baseScale + Math.sin(gameState.frameCount * speed) * pulseAmount;
+    mesh.scale.set(scale, scale, scale);
+}
+```
+
+## Material Animation
+```javascript
+// Color animation
+function animateColor(material, targetColor, speed) {
+    material.color.lerp(targetColor, speed);
+}
+
+// Opacity animation (fade in/out)
+function animateOpacity(material, targetOpacity, speed) {
+    material.opacity = THREE.MathUtils.lerp(material.opacity, targetOpacity, speed);
+}
+
+// Emissive animation (glow)
+function animateEmissive(material, intensity, speed) {
+    material.emissiveIntensity = 0.5 + Math.sin(gameState.frameCount * speed) * 0.5 * intensity;
+}
+```
+
+## Tweening Patterns
+```javascript
+class Tween {
+    constructor(start, end, duration, easing = 'linear') {
+        this.start = start;
+        this.end = end;
+        this.duration = duration;
+        this.time = 0;
+        this.easing = easing;
+        this.onComplete = null;
+    }
+    
+    update(deltaTime) {
+        this.time += deltaTime;
+        const progress = Math.min(this.time / this.duration, 1);
+        
+        let easedProgress = progress;
+        switch (this.easing) {
+            case 'easeIn':
+                easedProgress = progress * progress;
+                break;
+            case 'easeOut':
+                easedProgress = 1 - (1 - progress) * (1 - progress);
+                break;
+            case 'easeInOut':
+                easedProgress = progress < 0.5
+                    ? 2 * progress * progress
+                    : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+                break;
+        }
+        
+        const current = this.start + (this.end - this.start) * easedProgress;
+        
+        if (progress >= 1 && this.onComplete) {
+            this.onComplete();
+        }
+        
+        return current;
+    }
+}
+
+// Usage
+const tween = new Tween(0, 10, 2.0, 'easeInOut');
+tween.onComplete = () => console.log('Tween complete');
+const value = tween.update(deltaTime);
+```
+
+# Game Screens and UI
+
+**CRITICAL: All UI text and overlays MUST be rendered on a canvas element, NOT as HTML elements appended to document.body. This ensures the UI stays within the iframe boundaries and doesn't render outside the game canvas. Use canvas-based rendering for all text, scores, health bars, and game screens.**
+
+## Canvas-Based 2D Overlay Rendering (Recommended for iframe compatibility)
+
+**IMPORTANT: All UI text must be rendered on a canvas overlay, NOT as HTML elements appended to document.body. This ensures text stays within the iframe boundaries.**
+
+```javascript
+// Create 2D canvas overlay for UI (positioned over WebGL canvas)
+const uiCanvas = document.createElement('canvas');
+uiCanvas.width = 600;
+uiCanvas.height = 400;
+uiCanvas.style.position = 'absolute';
+uiCanvas.style.top = '0';
+uiCanvas.style.left = '0';
+uiCanvas.style.pointerEvents = 'none';
+uiCanvas.style.zIndex = '1000';
+uiCanvas.style.margin = '0';
+uiCanvas.style.padding = '0';
+
+// CRITICAL: Append UI canvas to the same container as the renderer
+// This ensures it stays within the iframe boundaries
+if (gameState.gameContainer) {
+    gameState.gameContainer.appendChild(uiCanvas);
+} else {
+    // Fallback: use renderer's parent (should be gameContainer)
+    const container = gameState.renderer.domElement.parentElement;
+    if (container) {
+        container.appendChild(uiCanvas);
+    } else {
+        // Last resort: create container now
+        const gameContainer = document.createElement('div');
+        gameContainer.style.width = '600px';
+        gameContainer.style.height = '400px';
+        gameContainer.style.position = 'relative';
+        gameContainer.style.overflow = 'hidden';
+        document.body.appendChild(gameContainer);
+        gameContainer.appendChild(gameState.renderer.domElement);
+        gameContainer.appendChild(uiCanvas);
+        gameState.gameContainer = gameContainer;
+    }
+}
+
+const uiContext = uiCanvas.getContext('2d');
+
+function renderUI() {
+    // Clear UI canvas
+    uiContext.clearRect(0, 0, 600, 400);
+    
+    if (gameState.gamePhase === "START") {
+        // Render start screen
+        uiContext.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        uiContext.fillRect(0, 0, 600, 400);
+        
+        uiContext.fillStyle = 'white';
+        uiContext.font = 'bold 32px Arial';
+        uiContext.textAlign = 'center';
+        uiContext.fillText('Game Title', 300, 150);
+        
+        uiContext.font = '20px Arial';
+        uiContext.fillText('Press ENTER to Start', 300, 200);
+        
+        uiContext.font = '14px Arial';
+        uiContext.fillText('Arrow Keys: Move | Space: Jump', 300, 250);
+    } else if (gameState.gamePhase === "PLAYING") {
+        // Render HUD (score, health, etc.)
+        uiContext.fillStyle = 'rgba(0, 0, 0, 0.5)';
+        uiContext.fillRect(10, 10, 200, 60);
+        
+        uiContext.fillStyle = 'white';
+        uiContext.font = '16px Arial';
+        uiContext.textAlign = 'left';
+        uiContext.fillText(`Score: ${gameState.score}`, 20, 35);
+        uiContext.fillText(`Health: ${gameState.player ? gameState.player.health : 0}`, 20, 55);
+    } else if (gameState.gamePhase === "PAUSED") {
+        // Render pause overlay
+        uiContext.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        uiContext.fillRect(0, 0, 600, 400);
+        
+        uiContext.fillStyle = 'white';
+        uiContext.font = 'bold 32px Arial';
+        uiContext.textAlign = 'center';
+        uiContext.fillText('PAUSED', 300, 180);
+        
+        uiContext.font = '20px Arial';
+        uiContext.fillText('Press ESC to Resume', 300, 220);
+    } else if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") {
+        // Render game over screen
+        uiContext.fillStyle = 'rgba(0, 0, 0, 0.8)';
+        uiContext.fillRect(0, 0, 600, 400);
+        
+        uiContext.fillStyle = gameState.gamePhase === "GAME_OVER_WIN" ? '#00ff00' : '#ff0000';
+        uiContext.font = 'bold 32px Arial';
+        uiContext.textAlign = 'center';
+        uiContext.fillText(
+            gameState.gamePhase === "GAME_OVER_WIN" ? 'YOU WIN!' : 'GAME OVER',
+            300, 150
+        );
+        
+        uiContext.fillStyle = 'white';
+        uiContext.font = '20px Arial';
+        uiContext.fillText(`Final Score: ${gameState.score}`, 300, 200);
+        uiContext.fillText('Press R to Restart', 300, 240);
+    }
+}
+```
+
+## Alternative: Text as 3D Sprites (For in-world labels)
+
+```javascript
+// Create text texture from canvas
+function createTextTexture(text, fontSize = 32, color = 'white', bgColor = 'transparent') {
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    
+    // Set canvas size based on text
+    context.font = `bold ${fontSize}px Arial`;
+    const metrics = context.measureText(text);
+    canvas.width = Math.max(256, metrics.width + 40);
+    canvas.height = fontSize + 20;
+    
+    // Draw background
+    if (bgColor !== 'transparent') {
+        context.fillStyle = bgColor;
+        context.fillRect(0, 0, canvas.width, canvas.height);
+    }
+    
+    // Draw text
+    context.fillStyle = color;
+    context.font = `bold ${fontSize}px Arial`;
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    context.fillText(text, canvas.width / 2, canvas.height / 2);
+    
+    // Create texture
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.needsUpdate = true;
+    return texture;
+}
+
+// Create sprite with text
+function createTextSprite(text, fontSize = 32) {
+    const texture = createTextTexture(text, fontSize);
+    const spriteMaterial = new THREE.SpriteMaterial({ map: texture });
+    const sprite = new THREE.Sprite(spriteMaterial);
+    sprite.scale.set(2, 1, 1);
+    return sprite;
+}
+
+// Usage: Add text sprite to scene
+const scoreLabel = createTextSprite(`Score: ${gameState.score}`, 24);
+scoreLabel.position.set(0, 5, 0);
+gameState.scene.add(scoreLabel);
+```
+
+## Screen-Space UI Positioning
+
+```javascript
+// Helper function to render text at screen coordinates
+function drawTextAt(x, y, text, fontSize = 16, color = 'white', align = 'left') {
+    uiContext.fillStyle = color;
+    uiContext.font = `${fontSize}px Arial`;
+    uiContext.textAlign = align;
+    uiContext.textBaseline = 'top';
+    uiContext.fillText(text, x, y);
+}
+
+// Helper function to draw filled rectangle
+function drawRect(x, y, width, height, color, alpha = 1.0) {
+    uiContext.fillStyle = color;
+    uiContext.globalAlpha = alpha;
+    uiContext.fillRect(x, y, width, height);
+    uiContext.globalAlpha = 1.0;
+}
+
+// Example: Draw health bar
+function drawHealthBar(x, y, width, height, current, max) {
+    const ratio = current / max;
+    
+    // Background
+    drawRect(x, y, width, height, 'rgba(100, 0, 0, 0.5)');
+    
+    // Health fill
+    drawRect(x, y, width * ratio, height, 'rgba(0, 255, 0, 0.8)');
+    
+    // Border
+    uiContext.strokeStyle = 'white';
+    uiContext.lineWidth = 2;
+    uiContext.strokeRect(x, y, width, height);
+    
+    // Text
+    drawTextAt(x + width / 2, y + height / 2 - 8, `${current}/${max}`, 12, 'white', 'center');
+}
+```
+
+# Game Types and Implementation Patterns
+
+## 3D Platformer
+```javascript
+// Key features:
+// - Jumping and landing on platforms
+// - Collecting items
+// - Avoiding obstacles
+// - Reaching goal
+
+function setupPlatformer() {
+    // Create platforms at different heights
+    const platforms = [
+        new Platform(0, 0, 0, 10, 1, 10),
+        new Platform(15, 3, 0, 8, 1, 8),
+        new Platform(30, 6, 0, 6, 1, 6),
+        new Platform(45, 9, 0, 4, 1, 4) // Goal platform
+    ];
+    
+    // Create collectibles
+    for (let i = 0; i < 20; i++) {
+        const x = Math.random() * 50;
+        const y = Math.random() * 10 + 2;
+        const z = Math.random() * 10 - 5;
+        gameState.collectibles.push(new Collectible(x, y, z));
+    }
+    
+    // Create player at start
+    gameState.player = new Player(0, 2, 0);
+}
+```
+
+## Racing Game
+```javascript
+// Key features:
+// - Track generation
+// - Vehicle physics
+// - Checkpoints
+// - Time/score tracking
+
+function setupRacingGame() {
+    // Create track
+    const trackWidth = 5;
+    const trackPoints = generateTrackPoints(50); // Generate 50 waypoints
+    
+    // Create track mesh
+    const trackGeometry = new THREE.BufferGeometry();
+    const trackVertices = [];
+    // ... build track geometry from points
+    
+    const trackMaterial = new THREE.MeshStandardMaterial({ color: 0x333333 });
+    const trackMesh = new THREE.Mesh(trackGeometry, trackMaterial);
+    gameState.scene.add(trackMesh);
+    
+    // Create vehicle
+    const vehicle = new Vehicle(0, 1, 0);
+    gameState.player = vehicle;
+}
+```
+
+## First-Person Maze
+```javascript
+// Key features:
+// - Maze generation
+// - First-person navigation
+// - Fog for atmosphere
+// - Goal finding
+
+function setupMazeGame() {
+    // Generate maze
+    const maze = generateMaze(20, 20);
+    
+    // Create walls
+    for (let row = 0; row < maze.length; row++) {
+        for (let col = 0; col < maze[row].length; col++) {
+            if (maze[row][col] === 1) { // Wall
+                const wall = new Platform(
+                    col * 2, 0, row * 2,
+                    2, 2, 2
+                );
+                gameState.platforms.push(wall);
+            }
+        }
+    }
+    
+    // Add fog
+    gameState.scene.fog = new THREE.FogExp2(0x000000, 0.1);
+    
+    // Setup first-person camera
+    setupFirstPersonCamera();
+    
+    // Place player at start
+    gameState.player = new Player(1, 1, 1);
+}
+```
+
+## 3D Space Shooter
+```javascript
+// Key features:
+// - 3D movement
+// - Projectile shooting
+// - Enemy waves
+// - Score tracking
+
+function setupSpaceShooter() {
+    // Create space background
+    gameState.scene.background = new THREE.Color(0x000000);
+    
+    // Add stars
+    for (let i = 0; i < 1000; i++) {
+        const star = new THREE.Mesh(
+            new THREE.SphereGeometry(0.05, 8, 8),
+            new THREE.MeshBasicMaterial({ color: 0xffffff })
+        );
+        star.position.set(
+            (Math.random() - 0.5) * 200,
+            (Math.random() - 0.5) * 200,
+            (Math.random() - 0.5) * 200
+        );
+        gameState.scene.add(star);
+    }
+    
+    // Create player ship
+    const player = new SpaceShip(0, 0, 0);
+    gameState.player = player;
+    
+    // Spawn enemies
+    spawnEnemyWave(5);
+}
+```
+
+## 3D Physics Puzzle
+```javascript
+// Key features:
+// - Physics interactions
+// - Stacking objects
+// - Balancing
+// - Goal achievement
+
+function setupPhysicsPuzzle() {
+    // Create base platform
+    const base = new Platform(0, 0, 0, 20, 1, 20);
+    
+    // Create puzzle pieces
+    const pieces = [
+        new PuzzlePiece(0, 2, 0, 2, 2, 2), // Box
+        new PuzzlePiece(5, 2, 0, 1, 4, 1), // Tall box
+        new PuzzlePiece(-5, 2, 0, 3, 1, 3) // Wide box
+    ];
+    
+    // Goal: Stack pieces to reach height
+    gameState.goalHeight = 10;
+}
+```
+
+# Performance Optimization
+
+## Geometry Optimization
+```javascript
+// Reuse geometries
+const sharedGeometry = new THREE.BoxGeometry(1, 1, 1);
+const material1 = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+const material2 = new THREE.MeshStandardMaterial({ color: 0x00ff00 });
+
+const mesh1 = new THREE.Mesh(sharedGeometry, material1);
+const mesh2 = new THREE.Mesh(sharedGeometry, material2);
+// Both meshes share the same geometry, saving memory
+```
+
+## Material Optimization
+```javascript
+// Reuse materials
+const sharedMaterial = new THREE.MeshStandardMaterial({ color: 0x00ff00 });
+const mesh1 = new THREE.Mesh(geometry1, sharedMaterial);
+const mesh2 = new THREE.Mesh(geometry2, sharedMaterial);
+```
+
+## Lighting Optimization
+```javascript
+// Limit number of lights
+// Use ambient + 1-2 directional/point lights max
+// Disable shadows on distant objects
+mesh.castShadow = false; // For objects far from camera
+```
+
+## Render Optimization
+```javascript
+// Use LOD (Level of Detail)
+const highDetailGeometry = new THREE.SphereGeometry(1, 32, 16);
+const lowDetailGeometry = new THREE.SphereGeometry(1, 8, 4);
+
+const lod = new THREE.LOD();
+lod.addLevel(highDetailGeometry, 0);   // Use when close
+lod.addLevel(lowDetailGeometry, 10);    // Use when far
+```
+
+## Memory Management
+```javascript
+// Properly dispose of resources
+function disposeMesh(mesh) {
+    mesh.geometry.dispose();
+    if (Array.isArray(mesh.material)) {
+        mesh.material.forEach(material => material.dispose());
+    } else {
+        mesh.material.dispose();
+    }
+    gameState.scene.remove(mesh);
+}
+```
+
+## Frame Rate Management
+```javascript
+// Cap frame rate if needed
+const targetFPS = 60;
+const frameInterval = 1000 / targetFPS;
+let lastFrameTime = 0;
+
+function gameLoop(currentTime) {
+    const elapsed = currentTime - lastFrameTime;
+    
+    if (elapsed >= frameInterval) {
+        updateGame(elapsed / 1000);
+        render();
+        lastFrameTime = currentTime - (elapsed % frameInterval);
+    }
+    
+    requestAnimationFrame(gameLoop);
+}
+```
+
+# Common Patterns
+
+## Object Pooling
+```javascript
+class ObjectPool {
+    constructor(createFn, initialSize = 10) {
+        this.createFn = createFn;
+        this.pool = [];
+        
+        for (let i = 0; i < initialSize; i++) {
+            this.pool.push(this.createFn());
+        }
+    }
+    
+    acquire() {
+        if (this.pool.length > 0) {
+            return this.pool.pop();
+        }
+        return this.createFn();
+    }
+    
+    release(obj) {
+        // Reset object state
+        obj.reset();
+        this.pool.push(obj);
+    }
+}
+
+// Usage
+const projectilePool = new ObjectPool(() => new Projectile(), 20);
+const projectile = projectilePool.acquire();
+// ... use projectile
+projectilePool.release(projectile);
+```
+
+## Event System
+```javascript
+class EventEmitter {
+    constructor() {
+        this.events = {};
+    }
+    
+    on(event, callback) {
+        if (!this.events[event]) {
+            this.events[event] = [];
+        }
+        this.events[event].push(callback);
+    }
+    
+    emit(event, data) {
+        if (this.events[event]) {
+            this.events[event].forEach(callback => callback(data));
+        }
+    }
+}
+
+// Usage
+const gameEvents = new EventEmitter();
+gameEvents.on('playerDeath', () => {
+    gameState.gamePhase = "GAME_OVER_LOSE";
+});
+gameEvents.emit('playerDeath');
+```
+
+## State Machine
+```javascript
+class StateMachine {
+    constructor(initialState) {
+        this.state = initialState;
+        this.states = {};
+    }
+    
+    addState(name, enterFn, updateFn, exitFn) {
+        this.states[name] = { enter: enterFn, update: updateFn, exit: exitFn };
+    }
+    
+    changeState(newState) {
+        if (this.states[this.state] && this.states[this.state].exit) {
+            this.states[this.state].exit();
+        }
+        this.state = newState;
+        if (this.states[this.state] && this.states[this.state].enter) {
+            this.states[this.state].enter();
+        }
+    }
+    
+    update() {
+        if (this.states[this.state] && this.states[this.state].update) {
+            this.states[this.state].update();
+        }
+    }
+}
+
+// Usage
+const playerState = new StateMachine('idle');
+playerState.addState('idle', () => {}, () => {}, () => {});
+playerState.addState('running', () => {}, () => {}, () => {});
+playerState.changeState('running');
+```
+
+# Game Loop and Input Handling
+
+## Complete Game Loop Example
+```javascript
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { setupScene, setupCamera, setupRenderer, setupLighting } from './setup.js';
+import { Player } from './entities.js';
+import { updatePhysics, handleCollisions } from './physics.js';
+import { updateCamera } from './camera.js';
+import { renderUI } from './ui.js';
+
+// Initialize logs (write-only, never reset!)
+const logs = {
+    "game_info": [],
+    "player_info": [],
+    "inputs": []
+};
+window.logs = logs;
+
+// Input state
+const keys = {};
+
+// Initialize game
+function init() {
+    // Setup three.js
+    setupScene();
+    setupCamera();
+    setupRenderer();
+    setupLighting();
+    
+    // Initialize game state
+    gameState.gamePhase = "START";
+    
+    // Seed random
+    Math.seedrandom(42);
+    
+    // Log initial state
+    logs.game_info.push({
+        game_status: gameState.gamePhase,
+        data: {},
+        framecount: 0,
+        timestamp: Date.now()
+    });
+}
+
+// Update game logic
+function updateGame(deltaTime) {
+    gameState.deltaTime = deltaTime;
+    gameState.frameCount++;
+    
+    // Handle input
+    handleInput();
+    
+    // Update based on game phase
+    switch (gameState.gamePhase) {
+        case "START":
+            // Wait for ENTER
+            break;
+        case "PLAYING":
+            // Update entities
+            if (gameState.player) {
+                gameState.player.update(deltaTime);
+            }
+            
+            gameState.enemies.forEach(enemy => enemy.update(deltaTime));
+            gameState.collectibles.forEach(item => item.update(deltaTime));
+            gameState.projectiles.forEach(projectile => projectile.update(deltaTime));
+            
+            // Update physics
+            updatePhysics(deltaTime);
+            handleCollisions();
+            
+            // Update camera
+            updateCamera();
+            
+            // Check win/lose conditions
+            checkGameConditions();
+            break;
+        case "PAUSED":
+            // Paused - don't update
+            break;
+        case "GAME_OVER_WIN":
+        case "GAME_OVER_LOSE":
+            // Game over - wait for restart
+            break;
+    }
+    
+    // Render UI
+    renderUI();
+}
+
+// Handle input
+function handleInput() {
+    // Log inputs
+    const logInput = (inputType, key, keyCode) => {
+        logs.inputs.push({
+            input_type: inputType,
+            data: { key, keyCode },
+            framecount: gameState.frameCount,
+            timestamp: Date.now()
+        });
+    };
+    
+    // Handle keydown
+    document.addEventListener('keydown', (event) => {
+        logInput('keydown', event.key, event.keyCode);
+        keys[event.keyCode] = true;
+        
+        // Phase controls
+        if (event.keyCode === 13 && gameState.gamePhase === "START") { // ENTER
+            gameState.gamePhase = "PLAYING";
+            logs.game_info.push({
+                game_status: "PLAYING",
+                data: {},
+                framecount: gameState.frameCount,
+                timestamp: Date.now()
+            });
+        }
+        
+        if (event.keyCode === 27) { // ESC
+            if (gameState.gamePhase === "PLAYING") {
+                gameState.gamePhase = "PAUSED";
+            } else if (gameState.gamePhase === "PAUSED") {
+                gameState.gamePhase = "PLAYING";
+            }
+            logs.game_info.push({
+                game_status: gameState.gamePhase,
+                data: {},
+                framecount: gameState.frameCount,
+                timestamp: Date.now()
+            });
+        }
+        
+        if (event.keyCode === 82) { // R - Restart
+            if (gameState.gamePhase === "GAME_OVER_WIN" || 
+                gameState.gamePhase === "GAME_OVER_LOSE") {
+                resetGame();
+                gameState.gamePhase = "START";
+            }
+        }
+        
+        // Gameplay controls
+        if (gameState.gamePhase === "PLAYING" && gameState.player) {
+            if (event.keyCode === 38 || event.keyCode === 87) { // Up Arrow or W
+                gameState.player.moveForward();
+            }
+            if (event.keyCode === 40 || event.keyCode === 83) { // Down Arrow or S
+                gameState.player.moveBackward();
+            }
+            if (event.keyCode === 37 || event.keyCode === 65) { // Left Arrow or A
+                gameState.player.strafeLeft();
+            }
+            if (event.keyCode === 39 || event.keyCode === 68) { // Right Arrow or D
+                gameState.player.strafeRight();
+            }
+            if (event.keyCode === 32) { // Space
+                gameState.player.jump();
+            }
+        }
+    });
+    
+    // Handle keyup
+    document.addEventListener('keyup', (event) => {
+        logInput('keyup', event.key, event.keyCode);
+        keys[event.keyCode] = false;
+    });
+}
+
+// Render game
+function render() {
+    gameState.renderer.render(gameState.scene, gameState.camera);
+}
+
+// Check game conditions
+function checkGameConditions() {
+    // Example: Check if player reached goal
+    if (gameState.player && gameState.player.mesh.position.y > 10) {
+        gameState.gamePhase = "GAME_OVER_WIN";
+        logs.game_info.push({
+            game_status: "GAME_OVER_WIN",
+            data: { score: gameState.score },
+            framecount: gameState.frameCount,
+            timestamp: Date.now()
+        });
+    }
+    
+    // Example: Check if player died
+    if (gameState.player && gameState.player.health <= 0) {
+        gameState.gamePhase = "GAME_OVER_LOSE";
+        logs.game_info.push({
+            game_status: "GAME_OVER_LOSE",
+            data: { score: gameState.score },
+            framecount: gameState.frameCount,
+            timestamp: Date.now()
+        });
+    }
+}
+
+// Reset game
+function resetGame() {
+    // Clear entities
+    gameState.entities.forEach(entity => {
+        gameState.scene.remove(entity.mesh);
+    });
+    gameState.entities = [];
+    gameState.enemies = [];
+    gameState.collectibles = [];
+    gameState.projectiles = [];
+    
+    // Reset player
+    if (gameState.player) {
+        gameState.player.mesh.position.set(0, 2, 0);
+        gameState.player.health = gameState.player.maxHealth;
+        gameState.player.score = 0;
+    }
+    
+    // Reset score
+    gameState.score = 0;
+}
+
+// Main game loop
+let lastTime = performance.now();
+function gameLoop(currentTime) {
+    requestAnimationFrame(gameLoop);
+    
+    const deltaTime = (currentTime - lastTime) / 1000;
+    lastTime = currentTime;
+    
+    updateGame(deltaTime);
+    render();
+}
+
+// Start game
+init();
+gameLoop();
+```
+
+# index.html Structure
+
+**CRITICAL: The HTML file must properly contain all game elements to prevent overflow outside the iframe.**
+
+```html
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Game Title</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        html, body {
+            width: 600px;
+            height: 400px;
+            overflow: hidden;
+            margin: 0;
+            padding: 0;
+            background: #000;
+        }
+        
+        #game-container {
+            width: 600px;
+            height: 400px;
+            position: relative;
+            overflow: hidden;
+            margin: 0;
+            padding: 0;
+        }
+        
+        canvas {
+            display: block;
+            margin: 0;
+            padding: 0;
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/seedrandom@3.0.5/seedrandom.min.js"></script>
+</head>
+<body>
+    <!-- Container will be created by JavaScript, but you can also add it here -->
+    <div id="game-container"></div>
+    <script type="module" src="game.js"></script>
+</body>
+</html>
+```
+
+**Important notes:**
+- Set explicit width/height (600x400) on html, body, and container
+- Use `overflow: hidden` on html, body, and container to prevent any overflow
+- Container must have `position: relative` for absolute-positioned UI canvas
+- All game elements (renderer canvas, UI canvas) must be inside the container
+- Never append elements directly to `document.body` without the container
+
+# Key Points
+
+✅ **Use three.js for:** 3D rendering, geometry creation, materials, lighting, camera control
+✅ **Implement physics manually:** Gravity, velocity, acceleration, collision detection
+✅ **Use proper ES6 modules:** Import/export at top of files, no dynamic imports
+✅ **Maintain logs structure:** game_info, player_info, inputs with framecount and timestamp
+✅ **Don't reset logs:** Write-only, tracks entire game session
+✅ **Game phases:** START → PLAYING → PAUSED → GAME_OVER_WIN/GAME_OVER_LOSE
+✅ **Keyboard-only controls:** Arrow keys, WASD, Space, Shift, Z for gameplay
+✅ **Phase controls:** ENTER to start, ESC to pause, R to restart
+✅ **Procedural generation:** All geometry, materials, and textures created in code
+✅ **Performance:** Use instancing, object pooling, spatial partitioning for optimization
+✅ **CRITICAL - iframe compatibility:** Always use a container div with overflow:hidden, never append directly to document.body, all UI must be canvas-based within the container
+</instructions>
+
+Can you recode this entire game in threejs

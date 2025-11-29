@@ -1,0 +1,232 @@
+<analysis>
+- Issue identified: The collision detection is incorrectly applying ground collision when the player touches a wall. When the player's horizontal bounds overlap with a platform (including walls), the code checks for vertical collision and pushes the player upward, even when they're hitting the platform from the side. This causes the player to be placed on top of walls and potentially pushed out of bounds.
+
+- Files affected: physics.js
+
+- Changes needed: Refactor the collision detection logic in `checkPlayerCollisions()` to:
+  1. Check vertical position more strictly before applying ground collision
+  2. Only apply ground collision when the player is actually falling onto a platform from above (not hitting it from the side)
+  3. Ensure wall collisions are processed separately and don't trigger ground collision
+  4. Add better boundary checks to determine whether it's a ground vs wall collision
+</analysis>
+
+<code filename="physics.js">
+// physics.js - Physics and collision handling
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState } from './globals.js';
+
+export function updatePhysics(deltaTime) {
+    // Update player physics
+    if (gameState.player) {
+        gameState.player.update(deltaTime);
+        checkPlayerCollisions();
+        checkPortalTeleportation();
+    }
+    
+    // Update portals
+    if (gameState.bluePortal) {
+        gameState.bluePortal.update(deltaTime);
+    }
+    if (gameState.orangePortal) {
+        gameState.orangePortal.update(deltaTime);
+    }
+    
+    // Update collectibles
+    gameState.collectibles.forEach(item => item.update(deltaTime));
+    
+    // Update exit door
+    if (gameState.exitDoor) {
+        gameState.exitDoor.update(deltaTime);
+    }
+}
+
+export function checkPlayerCollisions() {
+    if (!gameState.player) return;
+    
+    const player = gameState.player;
+    player.setOnGround(false);
+    
+    // Check collision with each platform
+    for (const platform of gameState.platforms) {
+        const bounds = platform.getBounds();
+        const playerPos = player.mesh.position;
+        const playerRadius = player.radius;
+        const playerHalfHeight = player.height / 2;
+        
+        const playerBottom = playerPos.y - playerHalfHeight;
+        const playerTop = playerPos.y + playerHalfHeight;
+        
+        // Check ground collision (landing on top of platform)
+        // Only if player is above the platform and overlapping horizontally
+        if (playerPos.x + playerRadius > bounds.min.x &&
+            playerPos.x - playerRadius < bounds.max.x &&
+            playerPos.z + playerRadius > bounds.min.z &&
+            playerPos.z - playerRadius < bounds.max.z) {
+            
+            const platformTop = bounds.max.y;
+            const platformBottom = bounds.min.y;
+            
+            // Ground collision - only when falling from above
+            if (playerBottom <= platformTop && 
+                playerBottom > platformTop - 1.0 &&
+                player.velocity.y <= 0) {
+                player.mesh.position.y = platformTop + playerHalfHeight;
+                player.velocity.y = Math.max(0, player.velocity.y);
+                player.setOnGround(true);
+            }
+            
+            // Ceiling collision - only when rising from below
+            if (playerTop >= platformBottom && 
+                playerTop < platformBottom + 1.0 &&
+                player.velocity.y > 0) {
+                player.mesh.position.y = platformBottom - playerHalfHeight;
+                player.velocity.y = 0;
+            }
+        }
+        
+        // Check horizontal collisions (walls)
+        // Only check if player is at the same height as the platform
+        if (playerBottom < bounds.max.y && playerTop > bounds.min.y) {
+            
+            // Check Z-axis collisions first
+            if (playerPos.x + playerRadius > bounds.min.x &&
+                playerPos.x - playerRadius < bounds.max.x) {
+                
+                // Collision with front face (negative Z)
+                if (playerPos.z - playerRadius < bounds.max.z &&
+                    playerPos.z - playerRadius > bounds.max.z - playerRadius * 2) {
+                    player.mesh.position.z = bounds.max.z + playerRadius;
+                    if (player.velocity.z < 0) player.velocity.z = 0;
+                }
+                // Collision with back face (positive Z)
+                else if (playerPos.z + playerRadius > bounds.min.z &&
+                         playerPos.z + playerRadius < bounds.min.z + playerRadius * 2) {
+                    player.mesh.position.z = bounds.min.z - playerRadius;
+                    if (player.velocity.z > 0) player.velocity.z = 0;
+                }
+            }
+            
+            // Check X-axis collisions
+            if (playerPos.z + playerRadius > bounds.min.z &&
+                playerPos.z - playerRadius < bounds.max.z) {
+                
+                // Collision with right face (negative X)
+                if (playerPos.x - playerRadius < bounds.max.x &&
+                    playerPos.x - playerRadius > bounds.max.x - playerRadius * 2) {
+                    player.mesh.position.x = bounds.max.x + playerRadius;
+                    if (player.velocity.x < 0) player.velocity.x = 0;
+                }
+                // Collision with left face (positive X)
+                else if (playerPos.x + playerRadius > bounds.min.x &&
+                         playerPos.x + playerRadius < bounds.min.x + playerRadius * 2) {
+                    player.mesh.position.x = bounds.min.x - playerRadius;
+                    if (player.velocity.x > 0) player.velocity.x = 0;
+                }
+            }
+        }
+    }
+    
+    // Check if player fell off the world
+    if (player.mesh.position.y < -10) {
+        // Respawn player
+        player.mesh.position.set(0, 2, 0);
+        player.velocity.set(0, 0, 0);
+    }
+}
+
+export function checkPortalTeleportation() {
+    if (!gameState.player || gameState.player.justTeleported) return;
+    
+    const bluePortal = gameState.bluePortal;
+    const orangePortal = gameState.orangePortal;
+    
+    // Check if both portals are active
+    if (!bluePortal || !orangePortal || !bluePortal.active || !orangePortal.active) {
+        return;
+    }
+    
+    const player = gameState.player;
+    const playerPos = player.mesh.position;
+    
+    // Check distance to blue portal
+    const distToBlue = playerPos.distanceTo(bluePortal.position);
+    if (distToBlue < 1.2) {
+        // Check if player is moving towards portal
+        const dirToBlue = new THREE.Vector3().subVectors(bluePortal.position, playerPos).normalize();
+        const dot = player.velocity.clone().normalize().dot(dirToBlue);
+        
+        if (dot > 0.3) {
+            teleportPlayer(bluePortal, orangePortal);
+            return;
+        }
+    }
+    
+    // Check distance to orange portal
+    const distToOrange = playerPos.distanceTo(orangePortal.position);
+    if (distToOrange < 1.2) {
+        // Check if player is moving towards portal
+        const dirToOrange = new THREE.Vector3().subVectors(orangePortal.position, playerPos).normalize();
+        const dot = player.velocity.clone().normalize().dot(dirToOrange);
+        
+        if (dot > 0.3) {
+            teleportPlayer(orangePortal, bluePortal);
+            return;
+        }
+    }
+}
+
+function teleportPlayer(fromPortal, toPortal) {
+    const player = gameState.player;
+    
+    // Calculate exit position (in front of exit portal)
+    const exitPos = toPortal.position.clone().add(
+        toPortal.normal.clone().multiplyScalar(1.5)
+    );
+    
+    // Transform velocity through portals
+    const entryVelocity = player.velocity.clone();
+    const entryNormal = fromPortal.normal.clone();
+    const exitNormal = toPortal.normal.clone();
+    
+    // Calculate velocity relative to entry portal
+    const velocityAlongNormal = entryVelocity.dot(entryNormal);
+    const tangentialVelocity = entryVelocity.clone().sub(
+        entryNormal.clone().multiplyScalar(velocityAlongNormal)
+    );
+    
+    // Reflect velocity to exit portal
+    const exitVelocity = exitNormal.clone().multiplyScalar(Math.abs(velocityAlongNormal))
+        .add(tangentialVelocity);
+    
+    // Apply slight velocity boost to prevent getting stuck (but capped)
+    exitVelocity.multiplyScalar(1.1);
+    
+    // Clamp exit velocity to reasonable limits
+    const maxExitSpeed = 0.4;
+    if (exitVelocity.length() > maxExitSpeed) {
+        exitVelocity.normalize().multiplyScalar(maxExitSpeed);
+    }
+    
+    // Teleport player
+    player.teleport(exitPos, exitVelocity);
+}
+
+export function castRayForPortal(origin, direction) {
+    const raycaster = new THREE.Raycaster(origin, direction, 0, 50);
+    
+    // Only check portal surfaces
+    const surfaceMeshes = gameState.portalSurfaces.map(s => s.mesh);
+    const intersects = raycaster.intersectObjects(surfaceMeshes);
+    
+    if (intersects.length > 0) {
+        const hit = intersects[0];
+        return {
+            position: hit.point,
+            normal: hit.face.normal.clone().transformDirection(hit.object.matrixWorld),
+            surface: gameState.portalSurfaces.find(s => s.mesh === hit.object)
+        };
+    }
+    
+    return null;
+}
+</code>

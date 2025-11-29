@@ -24,6 +24,7 @@ export const PLAYER_SPEED = 4;
 export const PLAYER_JUMP_FORCE = -12;
 export const MAX_FALL_SPEED = 15;
 export const FRICTION = 0.8;
+export const PLAYER_SIZE = 30;
 
 // Gravity gun constants
 export const GRAVITY_GUN_RANGE = 150;
@@ -31,6 +32,7 @@ export const GRAVITY_GUN_FORCE = 0.8;
 export const MAX_ENERGY = 100;
 export const ENERGY_DRAIN_RATE = 0.5;
 export const ENERGY_RECHARGE_RATE = 0.3;
+export const THROW_FORCE = 12;
 
 // Game state object
 export const gameState = {
@@ -40,14 +42,21 @@ export const gameState = {
   enemies: [],
   platforms: [],
   hazards: [],
+  movableObjects: [],
+  exitPortal: null,
   goal: null,
   score: 0,
+  health: 100,
   gamePhase: GAME_PHASES.START,
   controlMode: CONTROL_MODES.HUMAN,
   energy: MAX_ENERGY,
   gravityGunMode: "ATTRACT", // "ATTRACT" or "REPEL"
   gravityGunActive: false,
+  grabbedObject: null,
+  pullMode: true,
   level: 1,
+  cameraX: 0,
+  levelWidth: 2500,
   targetedObject: null,
   keys: {
     left: false,

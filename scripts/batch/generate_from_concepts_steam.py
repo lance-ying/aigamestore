@@ -156,7 +156,8 @@ def generate_game(
     dry_run: bool = False,
     output_folder: str = None,
     csv_row_index: int = None,
-    use_new_p5_gen: bool = False
+    use_new_p5_gen: bool = False,
+    model: str = None
 ) -> Dict[str, Any]:
     """
     Generate a single game using p5.js.
@@ -169,6 +170,7 @@ def generate_game(
         output_folder: Custom output folder name under games/
         csv_row_index: Original CSV row index (for manifest)
         use_new_p5_gen: If True, use the new expanded p5.js generator config
+        model: Override model from config (e.g., 'google:gemini-3-pro-preview')
         
     Returns:
         Dict with generation result
@@ -195,9 +197,15 @@ def generate_game(
     if output_folder:
         cmd.extend(["--output_folder", output_folder])
     
+    # Add model override if specified
+    if model:
+        cmd.extend(["--model", model])
+    
     print(f"\n{'='*80}")
     print(f"Game #{game_index}: {name or 'Unnamed'}")
     print(f"Library: {library}")
+    if model:
+        print(f"Model: {model}")
     print(f"Concept preview: {concept[:100]}...")
     print(f"Command: {' '.join(cmd)}")
     print(f"{'='*80}\n")
@@ -446,6 +454,12 @@ def main():
         action="store_true",
         help="Use the new expanded p5.js generator config (with max_tokens: 80000 and comprehensive instructions)"
     )
+    parser.add_argument(
+        "--model",
+        type=str,
+        required=False,
+        help="Override model from config (e.g., 'google:gemini-3-pro-preview')"
+    )
     
     args = parser.parse_args()
     
@@ -502,7 +516,8 @@ def main():
             dry_run=args.dry_run,
             output_folder=args.output_dir,
             csv_row_index=csv_row_index,
-            use_new_p5_gen=args.p5_gen_new
+            use_new_p5_gen=args.p5_gen_new,
+            model=args.model
         )
         generation_results.append(result)
     

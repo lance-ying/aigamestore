@@ -56,22 +56,6 @@ let gameInstance = new p5(p => {
       initializeGrid(level, gameState);
     }
     
-    // Reset player for new level
-    if (gameState.gamePhase === "PLAYING" && gameState.levelComplete === false && gameState.currentLevel < LEVELS.length) {
-      const level = LEVELS[gameState.currentLevel];
-      if (gameState.player && (gameState.player.gridX !== level.playerStart.x || gameState.player.gridY !== level.playerStart.y)) {
-        // Check if we just completed a level
-        const demonGirl = gameState.entities.find(e => e.type === 5);
-        if (!demonGirl || (gameState.player.gridX !== demonGirl.gridX || gameState.player.gridY !== demonGirl.gridY)) {
-          gameState.maxMoves = level.maxMoves;
-          gameState.movesRemaining = level.maxMoves;
-          gameState.player = new Player(level.playerStart.x, level.playerStart.y);
-          gameState.player.health = 3;
-          initializeGrid(level, gameState);
-        }
-      }
-    }
-    
     // Render based on game phase
     if (gameState.gamePhase === "START") {
       renderStartScreen(p);

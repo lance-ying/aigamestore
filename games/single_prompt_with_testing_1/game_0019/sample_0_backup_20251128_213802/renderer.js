@@ -1,0 +1,40 @@
+// renderer.js - Three.js renderer setup
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export function setupRenderer() {
+  // Create container
+  const gameContainer = document.createElement('div');
+  gameContainer.id = 'game-container';
+  gameContainer.style.width = CANVAS_WIDTH + 'px';
+  gameContainer.style.height = CANVAS_HEIGHT + 'px';
+  gameContainer.style.position = 'relative';
+  gameContainer.style.overflow = 'hidden';
+  gameContainer.style.margin = '0';
+  gameContainer.style.padding = '0';
+  gameContainer.style.border = 'none';
+  document.body.appendChild(gameContainer);
+  
+  // Set body styles
+  document.body.style.margin = '0';
+  document.body.style.padding = '0';
+  document.body.style.overflow = 'hidden';
+  document.body.style.width = CANVAS_WIDTH + 'px';
+  document.body.style.height = CANVAS_HEIGHT + 'px';
+  
+  // Create WebGL renderer
+  const renderer = new THREE.WebGLRenderer({ 
+    antialias: true,
+    alpha: false,
+    powerPreference: "high-performance"
+  });
+  
+  renderer.setSize(CANVAS_WIDTH, CANVAS_HEIGHT);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  
+  gameContainer.appendChild(renderer.domElement);
+  
+  gameState.renderer = renderer;
+  gameState.gameContainer = gameContainer;
+}

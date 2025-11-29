@@ -1,7 +1,7 @@
 // input.js - Input handling
 
-import { gameState, GAME_PHASES } from './globals.js';
-import { handleHotspotInteraction, handleInventoryCombination } from './game_logic.js';
+import { gameState, GAME_PHASES, resetGameState } from './globals.js';
+import { handleHotspotInteraction, handleInventoryCombination, showDialogue } from './game_logic.js';
 
 export function handleKeyPressed(p, keyCode, key, scenes) {
   // Log input
@@ -47,7 +47,6 @@ export function handleKeyPressed(p, keyCode, key, scenes) {
   if (keyCode === 82) { // R
     if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN || 
         gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE) {
-      const { resetGameState } = await import('./globals.js');
       resetGameState();
       gameState.gamePhase = GAME_PHASES.START;
       p.logs.game_info.push({
@@ -90,7 +89,6 @@ export function handleKeyPressed(p, keyCode, key, scenes) {
     } else if (keyCode === 16) { // SHIFT - Examine item
       if (gameState.selectedInventoryIndex >= 0) {
         const item = gameState.inventory[gameState.selectedInventoryIndex];
-        const { showDialogue } = await import('./game_logic.js');
         showDialogue(item.description, p);
       }
     } else if (keyCode === 32) { // SPACE - Try to combine items

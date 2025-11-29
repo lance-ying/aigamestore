@@ -1,5 +1,6 @@
 import { gameState, GAME_CONFIG } from './globals.js';
-import { revealCell, quickOpen, toggleFlag, placeMines, checkWinCondition } from './grid.js';
+import { revealCell, quickOpen, toggleFlag, placeMines, checkWinCondition, initializeGrid } from './grid.js';
+import { Player } from './player.js';
 
 export function handleKeyPressed(key, keyCode, p) {
   // Log the input
@@ -161,10 +162,6 @@ function gameOver(won, p) {
 }
 
 function startGame(p) {
-  // Import needed
-  const { initializeGrid } = await import('./grid.js');
-  const { Player } = await import('./player.js');
-  
   gameState.gamePhase = "PLAYING";
   gameState.grid = initializeGrid();
   gameState.cursorX = 0;

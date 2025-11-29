@@ -1,0 +1,1893 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+this game is just blank when it loads
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">Underworld Escape</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Movement)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Win)</button>
+        <button id="test_3_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_3')">TEST (Combat)</button>
+        <button id="test_4_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_4')">TEST (Boons)</button>
+        <button id="test_5_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_5')">TEST (Enemy AI)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Escape the Underworld as Zagreus, the immortal prince! Battle through ever-shifting dungeon rooms filled with deadly enemies. Collect powerful boons from the Olympian gods to enhance your abilities. Defeat room guardians, survive increasingly difficult encounters, and reach the surface to win. Each run makes you stronger with permanent upgrades. Death is not the end—it's just the beginning of your next attempt!</p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Arrow Keys: Move Zagreus | Space: Dash (dodge with invulnerability) | Z: Attack | Enter: Start game | Esc: Pause/Unpause | R: Return to start screen</p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="automated_testing_controller.js">
+// automated_testing_controller.js - Automated testing AI
+
+function getTestWinAction(gameState) {
+  const player = gameState.player;
+  if (!player) return { arrow_right: true };
+  
+  const room = gameState.roomData[gameState.currentRoom];
+  if (!room) return { arrow_right: true };
+  
+  // If selecting boon, choose first option
+  if (gameState.selectingBoon) {
+    return { space: true };
+  }
+  
+  // Find nearest enemy
+  let nearestEnemy = null;
+  let nearestDist = Infinity;
+  
+  for (const enemy of room.enemies) {
+    const dx = enemy.x - player.x;
+    const dy = enemy.y - player.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    
+    if (dist < nearestDist) {
+      nearestDist = dist;
+      nearestEnemy = enemy;
+    }
+  }
+  
+  // If there are enemies, engage them
+  if (nearestEnemy) {
+    const dx = nearestEnemy.x - player.x;
+    const dy = nearestEnemy.y - player.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    
+    // Attack if in range
+    if (dist < 50 && player.attackCooldown === 0) {
+      return { z: true };
+    }
+    
+    // Dash if enemy is close and dash is ready
+    if (dist < 60 && player.dashCooldown === 0 && player.health < player.maxHealth * 0.5) {
+      return { space: true };
+    }
+    
+    // Move toward enemy
+    const angle = Math.atan2(dy, dx);
+    return {
+      arrow_right: Math.cos(angle) > 0.3,
+      arrow_left: Math.cos(angle) < -0.3,
+      arrow_down: Math.sin(angle) > 0.3,
+      arrow_up: Math.sin(angle) < -0.3
+    };
+  }
+  
+  // No enemies, collect pickups
+  for (const pickup of room.pickups) {
+    if (!pickup.active) continue;
+    
+    const dx = pickup.x - player.x;
+    const dy = pickup.y - player.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    
+    if (dist > 10) {
+      const angle = Math.atan2(dy, dx);
+      return {
+        arrow_right: Math.cos(angle) > 0.3,
+        arrow_left: Math.cos(angle) < -0.3,
+        arrow_down: Math.sin(angle) > 0.3,
+        arrow_up: Math.sin(angle) < -0.3
+      };
+    }
+  }
+  
+  // Room cleared, move to exit
+  if (room.cleared) {
+    // Move right to exit
+    if (player.x < 560) {
+      return { arrow_right: true };
+    }
+  }
+  
+  return {};
+}
+
+function getTestMovementAction(gameState) {
+  const player = gameState.player;
+  if (!player) return { arrow_right: true };
+  
+  // Simple movement test - move in a pattern
+  const frame = gameState.frameCount;
+  const pattern = Math.floor(frame / 60) % 4;
+  
+  switch (pattern) {
+    case 0: return { arrow_right: true };
+    case 1: return { arrow_down: true };
+    case 2: return { arrow_left: true };
+    case 3: return { arrow_up: true };
+  }
+  
+  return {};
+}
+
+function getTestCombatAction(gameState) {
+  const player = gameState.player;
+  if (!player) return {};
+  
+  const room = gameState.roomData[gameState.currentRoom];
+  if (!room || room.enemies.length === 0) {
+    return { arrow_right: true };
+  }
+  
+  const enemy = room.enemies[0];
+  const dx = enemy.x - player.x;
+  const dy = enemy.y - player.y;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  
+  // Attack when close
+  if (dist < 45) {
+    return { z: true };
+  }
+  
+  // Use dash occasionally
+  if (dist < 80 && player.dashCooldown === 0 && Math.random() < 0.1) {
+    return { space: true };
+  }
+  
+  // Move toward enemy
+  const angle = Math.atan2(dy, dx);
+  return {
+    arrow_right: Math.cos(angle) > 0.3,
+    arrow_left: Math.cos(angle) < -0.3,
+    arrow_down: Math.sin(angle) > 0.3,
+    arrow_up: Math.sin(angle) < -0.3
+  };
+}
+
+function getTestBoonAction(gameState) {
+  // Test boon collection by clearing rooms
+  if (gameState.selectingBoon) {
+    // Cycle through different boon choices
+    const choice = gameState.roomsCleared % 3;
+    gameState.boonChoice = choice;
+    return { space: true };
+  }
+  
+  return getTestWinAction(gameState);
+}
+
+function getTestEnemyAIAction(gameState) {
+  // Observe enemy behavior by moving around
+  const player = gameState.player;
+  if (!player) return {};
+  
+  const frame = gameState.frameCount;
+  
+  // Move in circles to test enemy pursuit
+  const angle = (frame / 60) * Math.PI * 2;
+  const centerX = 300;
+  const centerY = 200;
+  const radius = 100;
+  
+  const targetX = centerX + Math.cos(angle) * radius;
+  const targetY = centerY + Math.sin(angle) * radius;
+  
+  const dx = targetX - player.x;
+  const dy = targetY - player.y;
+  
+  return {
+    arrow_right: dx > 10,
+    arrow_left: dx < -10,
+    arrow_down: dy > 10,
+    arrow_up: dy < -10
+  };
+}
+
+function getRandomAction(gameState) {
+  const rand = Math.random();
+  
+  if (rand < 0.1) return { z: true };
+  if (rand < 0.15) return { space: true };
+  
+  const dir = Math.random();
+  if (dir < 0.25) return { arrow_up: true };
+  if (dir < 0.5) return { arrow_down: true };
+  if (dir < 0.75) return { arrow_left: true };
+  return { arrow_right: true };
+}
+
+export function get_automated_testing_action(gameState) {
+  switch (gameState.controlMode) {
+    case "TEST_1":
+      return getTestMovementAction(gameState);
+    case "TEST_2":
+      return getTestWinAction(gameState);
+    case "TEST_3":
+      return getTestCombatAction(gameState);
+    case "TEST_4":
+      return getTestBoonAction(gameState);
+    case "TEST_5":
+      return getTestEnemyAIAction(gameState);
+    default:
+      return getRandomAction(gameState);
+  }
+}
+
+// Expose globally
+if (typeof window !== 'undefined') {
+  window.get_automated_testing_action = get_automated_testing_action;
+}
+
+export default get_automated_testing_action;
+</file>
+
+<file name="globals.js">
+// globals.js - Global constants and game state
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const TARGET_FPS = 60;
+
+// Game phases
+export const PHASE_START = "START";
+export const PHASE_PLAYING = "PLAYING";
+export const PHASE_PAUSED = "PAUSED";
+export const PHASE_GAME_OVER_WIN = "GAME_OVER_WIN";
+export const PHASE_GAME_OVER_LOSE = "GAME_OVER_LOSE";
+
+// Control modes
+export const CONTROL_HUMAN = "HUMAN";
+export const CONTROL_TEST_1 = "TEST_1";
+export const CONTROL_TEST_2 = "TEST_2";
+export const CONTROL_TEST_3 = "TEST_3";
+export const CONTROL_TEST_4 = "TEST_4";
+export const CONTROL_TEST_5 = "TEST_5";
+
+// Room dimensions
+export const ROOM_WIDTH = 600;
+export const ROOM_HEIGHT = 400;
+export const WALL_THICKNESS = 20;
+
+// Player constants
+export const PLAYER_SIZE = 20;
+export const PLAYER_SPEED = 3;
+export const PLAYER_DASH_SPEED = 12;
+export const PLAYER_DASH_DURATION = 10;
+export const PLAYER_DASH_COOLDOWN = 30;
+export const PLAYER_MAX_HEALTH = 100;
+export const PLAYER_ATTACK_RANGE = 40;
+export const PLAYER_ATTACK_DAMAGE = 20;
+export const PLAYER_ATTACK_COOLDOWN = 20;
+export const PLAYER_INVULN_FRAMES = 10;
+
+// Enemy constants
+export const ENEMY_SIZE = 18;
+export const ENEMY_SPEED = 1.5;
+export const ENEMY_DAMAGE = 10;
+export const ENEMY_ATTACK_COOLDOWN = 60;
+export const ENEMY_HEALTH = 60;
+export const ENEMY_DETECTION_RANGE = 300;
+
+// Boon types
+export const BOON_ATTACK = "ATTACK";
+export const BOON_SPEED = "SPEED";
+export const BOON_HEALTH = "HEALTH";
+export const BOON_DASH = "DASH";
+
+// Game state object
+export const gameState = {
+  player: null,
+  enemies: [],
+  projectiles: [],
+  particles: [],
+  entities: [],
+  
+  currentRoom: 0,
+  roomsCleared: 0,
+  roomData: [],
+  
+  boonOffered: false,
+  boonChoice: null,
+  selectingBoon: false,
+  
+  score: 0,
+  gamePhase: PHASE_START,
+  controlMode: CONTROL_HUMAN,
+  
+  frameCount: 0,
+  
+  // Power-ups collected
+  attackBonus: 0,
+  speedBonus: 0,
+  dashBonus: 0,
+  
+  // Camera offset for room transitions
+  cameraX: 0,
+  cameraY: 0,
+  
+  // Transition state
+  transitioning: false,
+  transitionProgress: 0,
+  targetRoom: 0
+};
+
+// Expose gameState globally
+if (typeof window !== 'undefined') {
+  window.getGameState = () => gameState;
+}
+</file>
+
+<file name="game.js">
+// game.js - Main game file
+
+import { gameState } from './globals.js';
+import {
+  CANVAS_WIDTH, CANVAS_HEIGHT, TARGET_FPS,
+  PHASE_START, PHASE_PLAYING, PHASE_PAUSED,
+  PHASE_GAME_OVER_WIN, PHASE_GAME_OVER_LOSE,
+  CONTROL_HUMAN
+} from './globals.js';
+import { Player } from './player.js';
+import { generateRooms } from './room.js';
+import { handleKeyPress, handleGameInput } from './input.js';
+import { renderUI } from './ui.js';
+import { updateParticles, renderParticles } from './particles.js';
+import { offerRandomBoons, applyBoon, renderBoonSelection } from './boons.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+  // Initialize p5 logs
+  p.logs = {
+    game_info: [],
+    inputs: [],
+    player_info: []
+  };
+  
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(TARGET_FPS);
+    p.randomSeed(42);
+    
+    // Initialize game state
+    gameState.gamePhase = PHASE_START;
+    gameState.controlMode = CONTROL_HUMAN;
+    
+    // Log initial state
+    p.logs.game_info.push({
+      data: { phase: PHASE_START, message: "Game initialized" },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  };
+  
+  p.draw = function() {
+    p.background(20, 15, 30);
+    
+    gameState.frameCount = p.frameCount;
+    
+    const phase = gameState.gamePhase;
+    
+    if (phase === PHASE_START) {
+      renderUI(p, gameState);
+    } else if (phase === PHASE_PLAYING) {
+      updateGame(p);
+      renderGame(p);
+      renderUI(p, gameState);
+      
+      // Handle boon selection
+      if (gameState.selectingBoon && gameState.boonOffered) {
+        renderBoonSelection(p, gameState.boonOffered, gameState.boonChoice || 0);
+      }
+    } else if (phase === PHASE_PAUSED) {
+      renderGame(p);
+      renderUI(p, gameState);
+    } else if (phase === PHASE_GAME_OVER_WIN || phase === PHASE_GAME_OVER_LOSE) {
+      renderGame(p);
+      renderUI(p, gameState);
+    }
+  };
+  
+  p.keyPressed = function() {
+    handleKeyPress(p, gameState);
+  };
+  
+  function updateGame(p) {
+    // Initialize game on first frame
+    if (!gameState.player) {
+      initializeGame(p);
+    }
+    
+    // Handle input
+    handleGameInput(p, gameState);
+    
+    // Don't update game logic during boon selection
+    if (gameState.selectingBoon) return;
+    
+    const player = gameState.player;
+    if (!player) return;
+    
+    // Update player
+    player.update(gameState);
+    
+    // Log player info periodically
+    if (p.frameCount % 10 === 0) {
+      p.logs.player_info.push({
+        screen_x: player.x,
+        screen_y: player.y,
+        game_x: player.x,
+        game_y: player.y,
+        framecount: p.frameCount
+      });
+    }
+    
+    // Update current room
+    const room = gameState.roomData[gameState.currentRoom];
+    if (room) {
+      room.update(gameState);
+      
+      // Check if room is cleared and offer boon
+      if (room.cleared && !gameState.boonOffered && room.enemies.length === 0) {
+        // Offer boon every 2 rooms
+        if ((gameState.currentRoom + 1) % 2 === 0 && gameState.currentRoom < 8) {
+          gameState.boonOffered = offerRandomBoons(gameState, p);
+          gameState.selectingBoon = true;
+          gameState.boonChoice = 0;
+        }
+      }
+      
+      // Check for room transition
+      checkRoomTransition(p);
+    }
+    
+    // Update particles
+    updateParticles(gameState);
+    
+    // Check game over conditions
+    checkGameOver(p);
+  }
+  
+  function renderGame(p) {
+    const room = gameState.roomData[gameState.currentRoom];
+    if (room) {
+      room.render(p);
+    }
+    
+    // Render player
+    if (gameState.player) {
+      gameState.player.render(p);
+    }
+    
+    // Render particles
+    renderParticles(p, gameState.particles);
+  }
+  
+  function initializeGame(p) {
+    // Generate rooms
+    gameState.roomData = generateRooms(p);
+    gameState.currentRoom = 0;
+    gameState.roomsCleared = 0;
+    gameState.score = 0;
+    gameState.boonOffered = false;
+    gameState.selectingBoon = false;
+    gameState.attackBonus = 0;
+    gameState.speedBonus = 0;
+    gameState.dashBonus = 0;
+    
+    // Create player
+    gameState.player = new Player(100, 200, p);
+    
+    p.logs.game_info.push({
+      data: { message: "Game initialized", room: 0 },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+  
+  function checkRoomTransition(p) {
+    const player = gameState.player;
+    const room = gameState.roomData[gameState.currentRoom];
+    
+    if (!player || !room || !room.cleared) return;
+    
+    // Check if player is at the right exit
+    if (player.x > 580 && room.exits.right) {
+      // Check if this is the escape room
+      if (room.isEscape) {
+        // Win!
+        gameState.gamePhase = PHASE_GAME_OVER_WIN;
+        p.logs.game_info.push({
+          data: { phase: PHASE_GAME_OVER_WIN, message: "Player escaped!" },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+        return;
+      }
+      
+      // Move to next room
+      gameState.currentRoom++;
+      player.x = 40;
+      
+      p.logs.game_info.push({
+        data: { message: "Room transition", room: gameState.currentRoom },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  }
+  
+  function checkGameOver(p) {
+    const player = gameState.player;
+    if (!player) return;
+    
+    // Check for death
+    if (player.health <= 0) {
+      gameState.gamePhase = PHASE_GAME_OVER_LOSE;
+      p.logs.game_info.push({
+        data: { phase: PHASE_GAME_OVER_LOSE, message: "Player defeated" },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  }
+});
+
+// Expose game instance globally
+window.gameInstance = gameInstance;
+
+// Control mode setter
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  
+  // Update button states
+  const buttons = ['humanModeBtn', 'test_1_ModeBtn', 'test_2_ModeBtn', 'test_3_ModeBtn', 'test_4_ModeBtn', 'test_5_ModeBtn'];
+  buttons.forEach(btnId => {
+    const btn = document.getElementById(btnId);
+    if (btn) {
+      btn.classList.remove('active');
+    }
+  });
+  
+  const modeMap = {
+    'HUMAN': 'humanModeBtn',
+    'TEST_1': 'test_1_ModeBtn',
+    'TEST_2': 'test_2_ModeBtn',
+    'TEST_3': 'test_3_ModeBtn',
+    'TEST_4': 'test_4_ModeBtn',
+    'TEST_5': 'test_5_ModeBtn'
+  };
+  
+  const activeBtn = document.getElementById(modeMap[mode]);
+  if (activeBtn) {
+    activeBtn.classList.add('active');
+  }
+};
+</file>
+
+<file name="ui.js">
+// ui.js - User interface rendering
+
+import {
+  PHASE_START, PHASE_PLAYING, PHASE_PAUSED,
+  PHASE_GAME_OVER_WIN, PHASE_GAME_OVER_LOSE,
+  CANVAS_WIDTH, CANVAS_HEIGHT
+} from './globals.js';
+
+export function renderUI(p, gameState) {
+  const phase = gameState.gamePhase;
+  
+  if (phase === PHASE_START) {
+    renderStartScreen(p);
+  } else if (phase === PHASE_PLAYING) {
+    renderGameUI(p, gameState);
+  } else if (phase === PHASE_PAUSED) {
+    renderGameUI(p, gameState);
+    renderPauseOverlay(p);
+  } else if (phase === PHASE_GAME_OVER_WIN || phase === PHASE_GAME_OVER_LOSE) {
+    renderGameOverScreen(p, gameState);
+  }
+}
+
+function renderStartScreen(p) {
+  p.background(20, 15, 30);
+  
+  // Decorative background
+  for (let i = 0; i < 20; i++) {
+    const x = (i * 137.508) % CANVAS_WIDTH;
+    const y = (i * 73.234) % CANVAS_HEIGHT;
+    const size = (i * 23) % 30 + 10;
+    p.fill(80, 50, 100, 50);
+    p.noStroke();
+    p.ellipse(x, y, size, size);
+  }
+  
+  // Title
+  p.fill(200, 150, 255);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text("UNDERWORLD", CANVAS_WIDTH / 2, 80);
+  
+  p.fill(150, 100, 200);
+  p.textSize(24);
+  p.text("ESCAPE", CANVAS_WIDTH / 2, 120);
+  
+  // Description
+  p.fill(200, 200, 200);
+  p.textSize(14);
+  p.textAlign(p.CENTER, p.CENTER);
+  const desc = "Battle through the depths of the Underworld!\nDefeat enemies, collect boons from the gods,\nand reach the surface to escape!";
+  p.text(desc, CANVAS_WIDTH / 2, 180);
+  
+  // Instructions
+  p.fill(255, 220, 150);
+  p.textSize(16);
+  p.text("CONTROLS:", CANVAS_WIDTH / 2, 250);
+  
+  p.fill(200, 200, 200);
+  p.textSize(14);
+  p.textAlign(p.LEFT, p.CENTER);
+  const instructions = [
+    "Arrow Keys - Move Zagreus",
+    "Z - Attack enemies",
+    "Space - Dash (dodge with invulnerability)",
+    "ESC - Pause game",
+    "R - Restart (from game over)"
+  ];
+  
+  let y = 280;
+  for (const inst of instructions) {
+    p.text(inst, 120, y);
+    y += 22;
+  }
+  
+  // Start prompt
+  p.fill(255, 255, 100);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(20);
+  const flash = Math.floor(p.frameCount / 30) % 2 === 0;
+  if (flash) {
+    p.text("PRESS ENTER TO START", CANVAS_WIDTH / 2, 380);
+  }
+}
+
+function renderGameUI(p, gameState) {
+  const player = gameState.player;
+  if (!player) return;
+  
+  // Health bar
+  const hpBarX = 10;
+  const hpBarY = 10;
+  const hpBarWidth = 150;
+  const hpBarHeight = 20;
+  
+  p.fill(50, 50, 50);
+  p.noStroke();
+  p.rect(hpBarX, hpBarY, hpBarWidth, hpBarHeight);
+  
+  const hpPercent = player.health / player.maxHealth;
+  const hpColor = hpPercent > 0.5 ? [100, 255, 100] : hpPercent > 0.25 ? [255, 200, 100] : [255, 100, 100];
+  p.fill(...hpColor);
+  p.rect(hpBarX, hpBarY, hpBarWidth * hpPercent, hpBarHeight);
+  
+  p.fill(255);
+  p.textAlign(p.LEFT, p.TOP);
+  p.textSize(12);
+  p.text(`HP: ${Math.floor(player.health)}/${player.maxHealth}`, hpBarX + 5, hpBarY + 4);
+  
+  // Score
+  p.fill(255, 220, 100);
+  p.textAlign(p.RIGHT, p.TOP);
+  p.textSize(16);
+  p.text(`Score: ${gameState.score}`, CANVAS_WIDTH - 10, 10);
+  
+  // Rooms cleared
+  p.fill(200, 200, 255);
+  p.textSize(14);
+  p.text(`Room: ${gameState.currentRoom + 1}/9`, CANVAS_WIDTH - 10, 35);
+  
+  // Dash cooldown indicator
+  if (player.dashCooldown > 0) {
+    const cooldownPercent = player.dashCooldown / 30;
+    p.fill(100, 150, 255, 150);
+    p.rect(10, 40, 100 * (1 - cooldownPercent), 8);
+    
+    p.fill(200, 200, 255);
+    p.textAlign(p.LEFT, p.TOP);
+    p.textSize(10);
+    p.text("Dash Ready", 10, 50);
+  } else {
+    p.fill(100, 255, 100);
+    p.textAlign(p.LEFT, p.TOP);
+    p.textSize(10);
+    p.text("Dash Ready!", 10, 40);
+  }
+  
+  // Boons collected
+  if (gameState.attackBonus > 0 || gameState.speedBonus > 0 || gameState.dashBonus > 0) {
+    p.fill(255, 220, 100);
+    p.textAlign(p.LEFT, p.TOP);
+    p.textSize(11);
+    let boonY = 60;
+    
+    if (gameState.attackBonus > 0) {
+      p.text(`⚡ Attack +${gameState.attackBonus}`, 10, boonY);
+      boonY += 15;
+    }
+    if (gameState.speedBonus > 0) {
+      p.text(`🏃 Speed +${gameState.speedBonus}`, 10, boonY);
+      boonY += 15;
+    }
+    if (gameState.dashBonus > 0) {
+      p.text(`🌊 Dash +${gameState.dashBonus}`, 10, boonY);
+      boonY += 15;
+    }
+  }
+}
+
+function renderPauseOverlay(p) {
+  p.fill(255, 255, 255);
+  p.textAlign(p.RIGHT, p.TOP);
+  p.textSize(14);
+  p.text("PAUSED", CANVAS_WIDTH - 10, 60);
+}
+
+function renderGameOverScreen(p, gameState) {
+  // Dim background
+  p.fill(0, 0, 0, 200);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  const win = gameState.gamePhase === PHASE_GAME_OVER_WIN;
+  
+  // Title
+  if (win) {
+    p.fill(100, 255, 100);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(48);
+    p.text("ESCAPED!", CANVAS_WIDTH / 2, 120);
+    
+    p.fill(200, 255, 200);
+    p.textSize(20);
+    p.text("You have defied the god of the dead!", CANVAS_WIDTH / 2, 170);
+  } else {
+    p.fill(255, 100, 100);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(48);
+    p.text("DEFEATED", CANVAS_WIDTH / 2, 120);
+    
+    p.fill(255, 200, 200);
+    p.textSize(20);
+    p.text("The Underworld claims you... for now.", CANVAS_WIDTH / 2, 170);
+  }
+  
+  // Final score
+  p.fill(255, 220, 100);
+  p.textSize(24);
+  p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, 220);
+  
+  // Stats
+  p.fill(200, 200, 200);
+  p.textSize(16);
+  p.text(`Rooms Cleared: ${gameState.roomsCleared}`, CANVAS_WIDTH / 2, 260);
+  p.text(`Boons Collected: ${gameState.attackBonus + gameState.speedBonus + gameState.dashBonus}`, CANVAS_WIDTH / 2, 285);
+  
+  // Restart prompt
+  p.fill(255, 255, 255);
+  p.textSize(18);
+  p.text("PRESS R TO RESTART", CANVAS_WIDTH / 2, 340);
+}
+</file>
+
+<file name="boons.js">
+// boons.js - Boon (power-up) system
+
+import {
+  BOON_ATTACK, BOON_SPEED, BOON_HEALTH, BOON_DASH
+} from './globals.js';
+
+export const BOON_DEFINITIONS = {
+  [BOON_ATTACK]: {
+    name: "Zeus's Thunder",
+    description: "Increase attack damage",
+    effect: (gameState) => {
+      gameState.attackBonus++;
+      gameState.player.attackDamage += 10;
+    }
+  },
+  [BOON_SPEED]: {
+    name: "Hermes's Swift",
+    description: "Increase movement speed",
+    effect: (gameState) => {
+      gameState.speedBonus++;
+    }
+  },
+  [BOON_HEALTH]: {
+    name: "Athena's Blessing",
+    description: "Restore and increase max health",
+    effect: (gameState) => {
+      gameState.player.maxHealth += 20;
+      gameState.player.heal(50);
+    }
+  },
+  [BOON_DASH]: {
+    name: "Poseidon's Wave",
+    description: "Improve dash ability",
+    effect: (gameState) => {
+      gameState.dashBonus++;
+    }
+  }
+};
+
+export function offerRandomBoons(gameState, p) {
+  const boonTypes = Object.keys(BOON_DEFINITIONS);
+  const shuffled = boonTypes.sort(() => p.random() - 0.5);
+  return [shuffled[0], shuffled[1], shuffled[2]];
+}
+
+export function applyBoon(boonType, gameState) {
+  const boon = BOON_DEFINITIONS[boonType];
+  if (boon) {
+    boon.effect(gameState);
+    gameState.score += 50;
+  }
+}
+
+export function renderBoonSelection(p, boons, selectedIndex) {
+  const centerX = 300;
+  const startY = 150;
+  const spacing = 80;
+  
+  // Dim background
+  p.fill(0, 0, 0, 180);
+  p.noStroke();
+  p.rect(0, 0, 600, 400);
+  
+  // Title
+  p.fill(255, 220, 100);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(24);
+  p.text("Choose Your Boon", centerX, 80);
+  
+  // Render each boon option
+  for (let i = 0; i < boons.length; i++) {
+    const boonType = boons[i];
+    const boon = BOON_DEFINITIONS[boonType];
+    const y = startY + i * spacing;
+    const selected = i === selectedIndex;
+    
+    // Background box
+    p.fill(...(selected ? [100, 80, 150] : [50, 40, 80]));
+    p.stroke(...(selected ? [200, 180, 255] : [100, 80, 150]));
+    p.strokeWeight(2);
+    p.rect(centerX - 200, y - 25, 400, 50, 5);
+    
+    // Icon
+    p.fill(255, 220, 100);
+    p.noStroke();
+    p.textSize(20);
+    p.text(getBoonIcon(boonType), centerX - 170, y);
+    
+    // Name
+    p.fill(255, 255, 255);
+    p.textAlign(p.LEFT, p.CENTER);
+    p.textSize(16);
+    p.text(boon.name, centerX - 140, y - 5);
+    
+    // Description
+    p.fill(200, 200, 200);
+    p.textSize(12);
+    p.text(boon.description, centerX - 140, y + 10);
+  }
+  
+  // Instructions
+  p.fill(200, 200, 200);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(14);
+  p.text("Use UP/DOWN arrows to select, SPACE to choose", centerX, 350);
+}
+
+function getBoonIcon(boonType) {
+  switch (boonType) {
+    case BOON_ATTACK: return "⚡";
+    case BOON_SPEED: return "🏃";
+    case BOON_HEALTH: return "❤️";
+    case BOON_DASH: return "🌊";
+    default: return "★";
+  }
+}
+</file>
+
+<file name="room.js">
+// room.js - Room generation and management
+
+import { Enemy } from './enemy.js';
+import {
+  ROOM_WIDTH, ROOM_HEIGHT, WALL_THICKNESS,
+  CANVAS_WIDTH, CANVAS_HEIGHT
+} from './globals.js';
+
+export class Room {
+  constructor(index, difficulty, p) {
+    this.index = index;
+    this.difficulty = difficulty;
+    this.p = p;
+    
+    this.cleared = false;
+    this.enemies = [];
+    this.pickups = [];
+    
+    // Room has exits in different directions
+    this.exits = {
+      top: index < 8,
+      bottom: false,
+      left: false,
+      right: index < 8
+    };
+    
+    // Generate room content
+    this.generate();
+  }
+  
+  generate() {
+    const p = this.p;
+    
+    // Spawn enemies based on difficulty
+    const enemyCount = 2 + Math.floor(this.difficulty / 2);
+    
+    for (let i = 0; i < enemyCount; i++) {
+      const x = 100 + p.random(ROOM_WIDTH - 200);
+      const y = 100 + p.random(ROOM_HEIGHT - 200);
+      
+      let type = 'basic';
+      const roll = p.random();
+      if (roll < 0.2 && this.difficulty > 1) {
+        type = 'fast';
+      } else if (roll < 0.35 && this.difficulty > 2) {
+        type = 'heavy';
+      }
+      
+      this.enemies.push(new Enemy(x, y, type, p));
+    }
+    
+    // Chance for health pickup
+    if (p.random() < 0.3) {
+      this.pickups.push({
+        x: ROOM_WIDTH / 2 + p.random(-50, 50),
+        y: ROOM_HEIGHT / 2 + p.random(-50, 50),
+        type: 'health',
+        active: true
+      });
+    }
+  }
+  
+  update(gameState) {
+    // Update enemies
+    for (const enemy of this.enemies) {
+      enemy.update(gameState);
+    }
+    
+    // Check if room is cleared
+    if (!this.cleared && this.enemies.length === 0) {
+      this.cleared = true;
+      gameState.roomsCleared++;
+    }
+    
+    // Check pickup collection
+    const player = gameState.player;
+    if (player) {
+      for (const pickup of this.pickups) {
+        if (!pickup.active) continue;
+        
+        const dx = player.x - pickup.x;
+        const dy = player.y - pickup.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        
+        if (dist < 20) {
+          pickup.active = false;
+          if (pickup.type === 'health') {
+            player.heal(30);
+          }
+        }
+      }
+    }
+  }
+  
+  render(p) {
+    // Floor
+    p.fill(30, 25, 40);
+    p.noStroke();
+    p.rect(0, 0, ROOM_WIDTH, ROOM_HEIGHT);
+    
+    // Floor pattern
+    p.stroke(40, 35, 50);
+    p.strokeWeight(1);
+    const tileSize = 40;
+    for (let x = 0; x < ROOM_WIDTH; x += tileSize) {
+      for (let y = 0; y < ROOM_HEIGHT; y += tileSize) {
+        p.line(x, 0, x, ROOM_HEIGHT);
+        p.line(0, y, ROOM_WIDTH, y);
+      }
+    }
+    
+    // Walls
+    p.fill(60, 50, 70);
+    p.stroke(80, 70, 90);
+    p.strokeWeight(2);
+    
+    // Top wall
+    if (!this.exits.top) {
+      p.rect(0, 0, ROOM_WIDTH, WALL_THICKNESS);
+    } else {
+      p.rect(0, 0, ROOM_WIDTH / 2 - 40, WALL_THICKNESS);
+      p.rect(ROOM_WIDTH / 2 + 40, 0, ROOM_WIDTH / 2 - 40, WALL_THICKNESS);
+    }
+    
+    // Bottom wall
+    if (!this.exits.bottom) {
+      p.rect(0, ROOM_HEIGHT - WALL_THICKNESS, ROOM_WIDTH, WALL_THICKNESS);
+    } else {
+      p.rect(0, ROOM_HEIGHT - WALL_THICKNESS, ROOM_WIDTH / 2 - 40, WALL_THICKNESS);
+      p.rect(ROOM_WIDTH / 2 + 40, ROOM_HEIGHT - WALL_THICKNESS, ROOM_WIDTH / 2 - 40, WALL_THICKNESS);
+    }
+    
+    // Left wall
+    if (!this.exits.left) {
+      p.rect(0, 0, WALL_THICKNESS, ROOM_HEIGHT);
+    } else {
+      p.rect(0, 0, WALL_THICKNESS, ROOM_HEIGHT / 2 - 40);
+      p.rect(0, ROOM_HEIGHT / 2 + 40, WALL_THICKNESS, ROOM_HEIGHT / 2 - 40);
+    }
+    
+    // Right wall
+    if (!this.exits.right) {
+      p.rect(ROOM_WIDTH - WALL_THICKNESS, 0, WALL_THICKNESS, ROOM_HEIGHT);
+    } else {
+      p.rect(ROOM_WIDTH - WALL_THICKNESS, 0, WALL_THICKNESS, ROOM_HEIGHT / 2 - 40);
+      p.rect(ROOM_WIDTH - WALL_THICKNESS, ROOM_HEIGHT / 2 + 40, WALL_THICKNESS, ROOM_HEIGHT / 2 - 40);
+      
+      // Exit indicator
+      if (this.cleared) {
+        p.fill(100, 255, 100, 150);
+        p.noStroke();
+        p.rect(ROOM_WIDTH - WALL_THICKNESS, ROOM_HEIGHT / 2 - 40, WALL_THICKNESS, 80);
+      }
+    }
+    
+    // Render pickups
+    for (const pickup of this.pickups) {
+      if (!pickup.active) continue;
+      
+      p.push();
+      p.translate(pickup.x, pickup.y);
+      
+      if (pickup.type === 'health') {
+        // Health orb
+        p.fill(255, 100, 100, 200);
+        p.stroke(255, 150, 150);
+        p.strokeWeight(2);
+        p.ellipse(0, 0, 16, 16);
+        
+        p.fill(255, 200, 200);
+        p.noStroke();
+        p.ellipse(0, 0, 8, 8);
+      }
+      
+      p.pop();
+    }
+    
+    // Render enemies
+    for (const enemy of this.enemies) {
+      enemy.render(p);
+    }
+  }
+}
+
+export function generateRooms(p) {
+  const rooms = [];
+  
+  // Create 9 rooms (3x3 grid conceptually, but linear progression)
+  for (let i = 0; i < 9; i++) {
+    const difficulty = Math.floor(i / 2) + 1;
+    rooms.push(new Room(i, difficulty, p));
+  }
+  
+  // Last room is the escape
+  rooms[8].enemies = [];
+  rooms[8].exits.right = true;
+  rooms[8].isEscape = true;
+  
+  return rooms;
+}
+</file>
+
+<file name="enemy.js">
+// enemy.js - Enemy classes and AI
+
+import {
+  ENEMY_SIZE, ENEMY_SPEED, ENEMY_DAMAGE, ENEMY_ATTACK_COOLDOWN,
+  ENEMY_HEALTH, ENEMY_DETECTION_RANGE, WALL_THICKNESS,
+  ROOM_WIDTH, ROOM_HEIGHT
+} from './globals.js';
+
+export class Enemy {
+  constructor(x, y, type, p) {
+    this.x = x;
+    this.y = y;
+    this.type = type; // 'basic', 'fast', 'heavy'
+    this.p = p;
+    
+    this.width = ENEMY_SIZE;
+    this.height = ENEMY_SIZE;
+    
+    this.health = ENEMY_HEALTH;
+    this.maxHealth = ENEMY_HEALTH;
+    this.damage = ENEMY_DAMAGE;
+    this.speed = ENEMY_SPEED;
+    
+    // Type-specific stats
+    if (type === 'fast') {
+      this.speed = ENEMY_SPEED * 1.5;
+      this.health = ENEMY_HEALTH * 0.7;
+      this.maxHealth = this.health;
+      this.width = ENEMY_SIZE * 0.8;
+      this.height = ENEMY_SIZE * 0.8;
+    } else if (type === 'heavy') {
+      this.speed = ENEMY_SPEED * 0.7;
+      this.health = ENEMY_HEALTH * 1.5;
+      this.maxHealth = this.health;
+      this.damage = ENEMY_DAMAGE * 1.5;
+      this.width = ENEMY_SIZE * 1.3;
+      this.height = ENEMY_SIZE * 1.3;
+    }
+    
+    this.vx = 0;
+    this.vy = 0;
+    
+    this.attackCooldown = 0;
+    this.hitFlash = 0;
+    
+    this.animFrame = 0;
+    this.dead = false;
+  }
+  
+  update(gameState) {
+    if (this.dead) return;
+    
+    this.animFrame++;
+    
+    if (this.attackCooldown > 0) this.attackCooldown--;
+    if (this.hitFlash > 0) this.hitFlash--;
+    
+    const player = gameState.player;
+    if (!player) return;
+    
+    // Calculate distance to player
+    const dx = player.x - this.x;
+    const dy = player.y - this.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    
+    // AI behavior
+    if (dist < ENEMY_DETECTION_RANGE) {
+      // Move toward player
+      const angle = Math.atan2(dy, dx);
+      this.vx = Math.cos(angle) * this.speed;
+      this.vy = Math.sin(angle) * this.speed;
+      
+      // Attack if close enough
+      if (dist < 30 && this.attackCooldown === 0) {
+        this.attack(player);
+      }
+    } else {
+      // Idle movement
+      this.vx *= 0.9;
+      this.vy *= 0.9;
+    }
+    
+    // Apply movement
+    this.x += this.vx;
+    this.y += this.vy;
+    
+    // Constrain to room
+    this.constrainToRoom();
+  }
+  
+  constrainToRoom() {
+    const minX = WALL_THICKNESS + this.width / 2;
+    const maxX = ROOM_WIDTH - WALL_THICKNESS - this.width / 2;
+    const minY = WALL_THICKNESS + this.height / 2;
+    const maxY = ROOM_HEIGHT - WALL_THICKNESS - this.height / 2;
+    
+    if (this.x < minX) {
+      this.x = minX;
+      this.vx = 0;
+    }
+    if (this.x > maxX) {
+      this.x = maxX;
+      this.vx = 0;
+    }
+    if (this.y < minY) {
+      this.y = minY;
+      this.vy = 0;
+    }
+    if (this.y > maxY) {
+      this.y = maxY;
+      this.vy = 0;
+    }
+  }
+  
+  attack(player) {
+    player.takeDamage(this.damage);
+    this.attackCooldown = ENEMY_ATTACK_COOLDOWN;
+  }
+  
+  takeDamage(amount, gameState) {
+    this.health -= amount;
+    this.hitFlash = 10;
+    
+    if (this.health <= 0) {
+      this.die(gameState);
+    }
+  }
+  
+  die(gameState) {
+    this.dead = true;
+    gameState.score += 100;
+    
+    // Remove from enemies array
+    const index = gameState.enemies.indexOf(this);
+    if (index > -1) {
+      gameState.enemies.splice(index, 1);
+    }
+    
+    // Spawn particles
+    this.spawnDeathParticles(gameState);
+  }
+  
+  spawnDeathParticles(gameState) {
+    const colors = this.getColors();
+    for (let i = 0; i < 8; i++) {
+      const angle = (i / 8) * Math.PI * 2;
+      const speed = 2 + Math.random() * 2;
+      gameState.particles.push({
+        x: this.x,
+        y: this.y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        life: 30,
+        maxLife: 30,
+        color: colors.main
+      });
+    }
+  }
+  
+  getColors() {
+    if (this.type === 'fast') {
+      return {
+        main: [100, 200, 255],
+        dark: [50, 100, 200],
+        eye: [255, 255, 255]
+      };
+    } else if (this.type === 'heavy') {
+      return {
+        main: [200, 50, 50],
+        dark: [150, 30, 30],
+        eye: [255, 200, 100]
+      };
+    }
+    return {
+      main: [80, 180, 80],
+      dark: [40, 100, 40],
+      eye: [255, 100, 100]
+    };
+  }
+  
+  render(p) {
+    if (this.dead) return;
+    
+    p.push();
+    
+    // Shadow
+    p.fill(0, 0, 0, 50);
+    p.noStroke();
+    p.ellipse(this.x, this.y + 5, this.width * 1.2, this.height * 0.4);
+    
+    const colors = this.getColors();
+    
+    // Hit flash
+    const flash = this.hitFlash > 0;
+    
+    // Main body
+    p.fill(...(flash ? [255, 255, 255] : colors.main));
+    p.stroke(...colors.dark);
+    p.strokeWeight(2);
+    p.ellipse(this.x, this.y, this.width, this.height);
+    
+    if (!flash) {
+      // Eyes
+      p.fill(...colors.eye);
+      p.noStroke();
+      const eyeOffset = this.width * 0.2;
+      p.ellipse(this.x - eyeOffset, this.y - eyeOffset * 0.5, 4, 4);
+      p.ellipse(this.x + eyeOffset, this.y - eyeOffset * 0.5, 4, 4);
+      
+      // Type indicator
+      if (this.type === 'fast') {
+        // Speed lines
+        p.stroke(150, 220, 255, 100);
+        p.strokeWeight(1);
+        for (let i = 0; i < 3; i++) {
+          const offset = (this.animFrame + i * 5) % 15 - 7;
+          p.line(this.x - this.width, this.y + offset, this.x - this.width - 10, this.y + offset);
+        }
+      } else if (this.type === 'heavy') {
+        // Armor plates
+        p.fill(100, 30, 30);
+        p.noStroke();
+        p.rect(this.x - this.width * 0.3, this.y - this.height * 0.5, this.width * 0.2, this.height * 0.3);
+        p.rect(this.x + this.width * 0.1, this.y - this.height * 0.5, this.width * 0.2, this.height * 0.3);
+      }
+    }
+    
+    // Health bar
+    if (this.health < this.maxHealth) {
+      const barWidth = this.width;
+      const barHeight = 4;
+      const barY = this.y - this.height / 2 - 10;
+      
+      p.fill(50, 50, 50);
+      p.noStroke();
+      p.rect(this.x - barWidth / 2, barY, barWidth, barHeight);
+      
+      p.fill(200, 50, 50);
+      const healthWidth = (this.health / this.maxHealth) * barWidth;
+      p.rect(this.x - barWidth / 2, barY, healthWidth, barHeight);
+    }
+    
+    p.pop();
+  }
+}
+</file>
+
+<file name="player.js">
+// player.js - Player character class and logic
+
+import {
+  PLAYER_SIZE, PLAYER_SPEED, PLAYER_DASH_SPEED, PLAYER_DASH_DURATION,
+  PLAYER_DASH_COOLDOWN, PLAYER_MAX_HEALTH, PLAYER_ATTACK_RANGE,
+  PLAYER_ATTACK_DAMAGE, PLAYER_ATTACK_COOLDOWN, PLAYER_INVULN_FRAMES,
+  ROOM_WIDTH, ROOM_HEIGHT, WALL_THICKNESS
+} from './globals.js';
+
+export class Player {
+  constructor(x, y, p) {
+    this.x = x;
+    this.y = y;
+    this.p = p;
+    
+    this.width = PLAYER_SIZE;
+    this.height = PLAYER_SIZE;
+    
+    this.vx = 0;
+    this.vy = 0;
+    
+    this.health = PLAYER_MAX_HEALTH;
+    this.maxHealth = PLAYER_MAX_HEALTH;
+    
+    // Movement
+    this.speed = PLAYER_SPEED;
+    this.facing = 0; // 0=right, 1=down, 2=left, 3=up
+    
+    // Dash
+    this.dashing = false;
+    this.dashTimer = 0;
+    this.dashCooldown = 0;
+    this.dashDirX = 0;
+    this.dashDirY = 0;
+    
+    // Attack
+    this.attacking = false;
+    this.attackTimer = 0;
+    this.attackCooldown = 0;
+    this.attackDamage = PLAYER_ATTACK_DAMAGE;
+    
+    // Invulnerability
+    this.invulnFrames = 0;
+    
+    // Animation
+    this.animFrame = 0;
+  }
+  
+  update(gameState) {
+    this.animFrame++;
+    
+    // Update timers
+    if (this.dashCooldown > 0) this.dashCooldown--;
+    if (this.attackCooldown > 0) this.attackCooldown--;
+    if (this.invulnFrames > 0) this.invulnFrames--;
+    
+    // Dashing
+    if (this.dashing) {
+      this.dashTimer--;
+      this.vx = this.dashDirX * PLAYER_DASH_SPEED;
+      this.vy = this.dashDirY * PLAYER_DASH_SPEED;
+      
+      if (this.dashTimer <= 0) {
+        this.dashing = false;
+        this.vx = 0;
+        this.vy = 0;
+      }
+    }
+    
+    // Attack animation
+    if (this.attacking) {
+      this.attackTimer--;
+      if (this.attackTimer <= 0) {
+        this.attacking = false;
+      }
+    }
+    
+    // Apply movement
+    this.x += this.vx;
+    this.y += this.vy;
+    
+    // Collision with walls
+    this.constrainToRoom();
+  }
+  
+  constrainToRoom() {
+    const minX = WALL_THICKNESS + this.width / 2;
+    const maxX = ROOM_WIDTH - WALL_THICKNESS - this.width / 2;
+    const minY = WALL_THICKNESS + this.height / 2;
+    const maxY = ROOM_HEIGHT - WALL_THICKNESS - this.height / 2;
+    
+    if (this.x < minX) this.x = minX;
+    if (this.x > maxX) this.x = maxX;
+    if (this.y < minY) this.y = minY;
+    if (this.y > maxY) this.y = maxY;
+  }
+  
+  move(dx, dy) {
+    if (this.dashing) return;
+    
+    this.vx = dx * (this.speed + gameState.speedBonus * 0.5);
+    this.vy = dy * (this.speed + gameState.speedBonus * 0.5);
+    
+    // Update facing direction
+    if (dx > 0) this.facing = 0;
+    else if (dx < 0) this.facing = 2;
+    else if (dy > 0) this.facing = 1;
+    else if (dy < 0) this.facing = 3;
+  }
+  
+  dash() {
+    if (this.dashCooldown > 0 || this.dashing) return;
+    
+    // Dash in facing direction
+    const dirs = [[1, 0], [0, 1], [-1, 0], [0, -1]];
+    const dir = dirs[this.facing];
+    
+    this.dashDirX = dir[0];
+    this.dashDirY = dir[1];
+    this.dashing = true;
+    this.dashTimer = PLAYER_DASH_DURATION + gameState.dashBonus * 2;
+    this.dashCooldown = PLAYER_DASH_COOLDOWN - gameState.dashBonus * 3;
+    this.invulnFrames = PLAYER_DASH_DURATION + gameState.dashBonus * 2;
+  }
+  
+  attack(gameState) {
+    if (this.attackCooldown > 0 || this.attacking) return false;
+    
+    this.attacking = true;
+    this.attackTimer = 15;
+    this.attackCooldown = PLAYER_ATTACK_COOLDOWN;
+    
+    return true;
+  }
+  
+  takeDamage(amount) {
+    if (this.invulnFrames > 0) return;
+    
+    this.health -= amount;
+    this.invulnFrames = PLAYER_INVULN_FRAMES;
+    
+    if (this.health <= 0) {
+      this.health = 0;
+    }
+  }
+  
+  heal(amount) {
+    this.health = Math.min(this.health + amount, this.maxHealth);
+  }
+  
+  getAttackHitbox() {
+    const dirs = [[1, 0], [0, 1], [-1, 0], [0, -1]];
+    const dir = dirs[this.facing];
+    
+    return {
+      x: this.x + dir[0] * PLAYER_ATTACK_RANGE,
+      y: this.y + dir[1] * PLAYER_ATTACK_RANGE,
+      radius: 25
+    };
+  }
+  
+  render(p) {
+    p.push();
+    
+    // Draw shadow
+    p.fill(0, 0, 0, 50);
+    p.noStroke();
+    p.ellipse(this.x, this.y + 5, this.width * 1.2, this.height * 0.4);
+    
+    // Invulnerability flash
+    const invuln = this.invulnFrames > 0 && Math.floor(this.animFrame / 4) % 2 === 0;
+    if (!invuln) {
+      // Main body (purple/red gradient)
+      p.fill(150, 50, 150);
+      p.stroke(100, 30, 100);
+      p.strokeWeight(2);
+      p.ellipse(this.x, this.y, this.width, this.height);
+      
+      // Inner glow
+      p.fill(200, 100, 200, 150);
+      p.noStroke();
+      p.ellipse(this.x, this.y, this.width * 0.6, this.height * 0.6);
+      
+      // Eyes based on facing
+      p.fill(255, 255, 100);
+      const eyeOffset = 4;
+      if (this.facing === 0) { // right
+        p.ellipse(this.x + 5, this.y - 2, 4, 4);
+        p.ellipse(this.x + 5, this.y + 2, 4, 4);
+      } else if (this.facing === 2) { // left
+        p.ellipse(this.x - 5, this.y - 2, 4, 4);
+        p.ellipse(this.x - 5, this.y + 2, 4, 4);
+      } else if (this.facing === 3) { // up
+        p.ellipse(this.x - 2, this.y - 5, 4, 4);
+        p.ellipse(this.x + 2, this.y - 5, 4, 4);
+      } else { // down
+        p.ellipse(this.x - 2, this.y + 5, 4, 4);
+        p.ellipse(this.x + 2, this.y + 5, 4, 4);
+      }
+    }
+    
+    // Attack visual
+    if (this.attacking) {
+      const hitbox = this.getAttackHitbox();
+      const alpha = (this.attackTimer / 15) * 200;
+      p.fill(255, 200, 100, alpha);
+      p.noStroke();
+      p.ellipse(hitbox.x, hitbox.y, hitbox.radius * 2, hitbox.radius * 2);
+      
+      // Slash effect
+      p.stroke(255, 255, 200, alpha);
+      p.strokeWeight(3);
+      const dirs = [[1, 0], [0, 1], [-1, 0], [0, -1]];
+      const dir = dirs[this.facing];
+      const angle = Math.atan2(dir[1], dir[0]);
+      p.line(
+        this.x + Math.cos(angle - 0.5) * 15,
+        this.y + Math.sin(angle - 0.5) * 15,
+        this.x + Math.cos(angle - 0.5) * 15 + dir[0] * 40,
+        this.y + Math.sin(angle - 0.5) * 15 + dir[1] * 40
+      );
+      p.line(
+        this.x + Math.cos(angle + 0.5) * 15,
+        this.y + Math.sin(angle + 0.5) * 15,
+        this.x + Math.cos(angle + 0.5) * 15 + dir[0] * 40,
+        this.y + Math.sin(angle + 0.5) * 15 + dir[1] * 40
+      );
+    }
+    
+    // Dash trail
+    if (this.dashing) {
+      for (let i = 1; i <= 3; i++) {
+        const alpha = (i / 3) * 100;
+        p.fill(150, 50, 150, alpha);
+        p.noStroke();
+        p.ellipse(
+          this.x - this.vx * i * 0.3,
+          this.y - this.vy * i * 0.3,
+          this.width * (1 - i * 0.2),
+          this.height * (1 - i * 0.2)
+        );
+      }
+    }
+    
+    p.pop();
+  }
+}
+</file>
+
+<file name="particles.js">
+// particles.js - Particle effects system
+
+export function updateParticles(gameState) {
+  for (let i = gameState.particles.length - 1; i >= 0; i--) {
+    const particle = gameState.particles[i];
+    
+    particle.x += particle.vx;
+    particle.y += particle.vy;
+    particle.vx *= 0.95;
+    particle.vy *= 0.95;
+    particle.life--;
+    
+    if (particle.life <= 0) {
+      gameState.particles.splice(i, 1);
+    }
+  }
+}
+
+export function renderParticles(p, particles) {
+  for (const particle of particles) {
+    const alpha = (particle.life / particle.maxLife) * 255;
+    p.fill(...particle.color, alpha);
+    p.noStroke();
+    const size = (particle.life / particle.maxLife) * 6 + 2;
+    p.ellipse(particle.x, particle.y, size, size);
+  }
+}
+</file>
+
+<file name="input.js">
+// input.js - Input handling
+
+import {
+  PHASE_START, PHASE_PLAYING, PHASE_PAUSED,
+  PHASE_GAME_OVER_WIN, PHASE_GAME_OVER_LOSE
+} from './globals.js';
+
+export function handleKeyPress(p, gameState) {
+  const key = p.key;
+  const keyCode = p.keyCode;
+  
+  // Log input
+  p.logs.inputs.push({
+    input_type: "keyPressed",
+    data: { key, keyCode },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+  
+  // ENTER - Start game
+  if (keyCode === 13 && gameState.gamePhase === PHASE_START) {
+    startGame(gameState, p);
+  }
+  
+  // ESC - Pause/Unpause
+  if (keyCode === 27) {
+    if (gameState.gamePhase === PHASE_PLAYING) {
+      pauseGame(gameState, p);
+    } else if (gameState.gamePhase === PHASE_PAUSED) {
+      unpauseGame(gameState, p);
+    }
+  }
+  
+  // R - Restart
+  if (keyCode === 82) {
+    restartGame(gameState, p);
+  }
+  
+  // Boon selection
+  if (gameState.selectingBoon) {
+    if (keyCode === 38) { // UP
+      gameState.boonChoice = Math.max(0, (gameState.boonChoice || 0) - 1);
+    } else if (keyCode === 40) { // DOWN
+      gameState.boonChoice = Math.min(2, (gameState.boonChoice || 0) + 1);
+    } else if (keyCode === 32) { // SPACE
+      selectBoon(gameState);
+    }
+  }
+}
+
+export function handleGameInput(p, gameState) {
+  if (gameState.gamePhase !== PHASE_PLAYING) return;
+  if (gameState.selectingBoon) return;
+  
+  const player = gameState.player;
+  if (!player) return;
+  
+  let dx = 0;
+  let dy = 0;
+  
+  // Get input based on control mode
+  let action = null;
+  if (gameState.controlMode === "HUMAN") {
+    // Arrow keys for movement
+    if (p.keyIsDown(37)) dx = -1; // LEFT
+    if (p.keyIsDown(39)) dx = 1;  // RIGHT
+    if (p.keyIsDown(38)) dy = -1; // UP
+    if (p.keyIsDown(40)) dy = 1;  // DOWN
+    
+    // Space for dash
+    if (p.keyIsDown(32)) {
+      action = { type: 'dash' };
+    }
+    
+    // Z for attack
+    if (p.keyIsDown(90)) {
+      action = { type: 'attack' };
+    }
+  } else {
+    // Automated testing
+    action = window.get_automated_testing_action(gameState);
+    
+    if (action) {
+      if (action.arrow_left) dx = -1;
+      if (action.arrow_right) dx = 1;
+      if (action.arrow_up) dy = -1;
+      if (action.arrow_down) dy = 1;
+    }
+  }
+  
+  // Apply movement
+  if (dx !== 0 || dy !== 0) {
+    // Normalize diagonal movement
+    const mag = Math.sqrt(dx * dx + dy * dy);
+    dx /= mag;
+    dy /= mag;
+    player.move(dx, dy);
+  } else {
+    player.move(0, 0);
+  }
+  
+  // Apply actions
+  if (action) {
+    if (action.type === 'dash' || action.space) {
+      player.dash();
+    }
+    if (action.type === 'attack' || action.z) {
+      const attacked = player.attack(gameState);
+      if (attacked) {
+        checkPlayerAttackHits(gameState);
+      }
+    }
+  }
+}
+
+function checkPlayerAttackHits(gameState) {
+  const player = gameState.player;
+  const hitbox = player.getAttackHitbox();
+  
+  const room = gameState.roomData[gameState.currentRoom];
+  if (!room) return;
+  
+  for (const enemy of room.enemies) {
+    const dx = enemy.x - hitbox.x;
+    const dy = enemy.y - hitbox.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    
+    if (dist < hitbox.radius + enemy.width / 2) {
+      enemy.takeDamage(player.attackDamage, gameState);
+    }
+  }
+}
+
+function startGame(gameState, p) {
+  gameState.gamePhase = PHASE_PLAYING;
+  p.logs.game_info.push({
+    data: { phase: PHASE_PLAYING },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function pauseGame(gameState, p) {
+  gameState.gamePhase = PHASE_PAUSED;
+  p.noLoop();
+  p.logs.game_info.push({
+    data: { phase: PHASE_PAUSED },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function unpauseGame(gameState, p) {
+  gameState.gamePhase = PHASE_PLAYING;
+  p.loop();
+  p.logs.game_info.push({
+    data: { phase: PHASE_PLAYING },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function restartGame(gameState, p) {
+  // Reset to start screen
+  gameState.gamePhase = PHASE_START;
+  gameState.player = null;
+  gameState.enemies = [];
+  gameState.particles = [];
+  gameState.roomData = [];
+  gameState.currentRoom = 0;
+  gameState.roomsCleared = 0;
+  gameState.score = 0;
+  gameState.boonOffered = false;
+  gameState.selectingBoon = false;
+  gameState.attackBonus = 0;
+  gameState.speedBonus = 0;
+  gameState.dashBonus = 0;
+  
+  p.loop();
+  
+  p.logs.game_info.push({
+    data: { phase: PHASE_START, action: "restart" },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function selectBoon(gameState) {
+  if (!gameState.boonOffered) return;
+  
+  const boons = gameState.boonOffered;
+  const choice = gameState.boonChoice || 0;
+  const selectedBoon = boons[choice];
+  
+  const { applyBoon } = require('./boons.js');
+  applyBoon(selectedBoon, gameState);
+  
+  gameState.selectingBoon = false;
+  gameState.boonOffered = false;
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

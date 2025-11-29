@@ -1,0 +1,181 @@
+<analysis>
+- Issue identified: Syntax error in input.js - the `resetGame` function uses `await` keyword without being declared as `async`, which prevents the module from loading and causes the game to fail
+- Files affected: input.js (syntax error fix), possibly minor import adjustments
+- Changes needed: 
+  1. Fix the syntax error by removing async/await from resetGame function
+  2. Import resetGameState from globals.js to avoid circular dependency
+  3. Simplify resetGame to just reset state and set phase to START (initGame is already called automatically when phase changes to PLAYING)
+</analysis>
+
+<code filename="input.js">
+// input.js - Input handling
+
+import { gameState, resetGameState } from './globals.js';
+
+// Key state tracking
+const keys = {};
+
+export function initInput(p) {
+  p.keyPressed = function() {
+    keys[p.keyCode] = true;
+    
+    // Log input
+    if (p.logs) {
+      p.logs.inputs.push({
+        input_type: 'keyPressed',
+        data: { key: p.key, keyCode: p.keyCode },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+    
+    return handleKeyPress(p);
+  };
+  
+  p.keyReleased = function() {
+    keys[p.keyCode] = false;
+    
+    // Log input
+    if (p.logs) {
+      p.logs.inputs.push({
+        input_type: 'keyReleased',
+        data: { key: p.key, keyCode: p.keyCode },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+    
+    return handleKeyRelease(p);
+  };
+}
+
+function handleKeyPress(p) {
+  // Phase controls
+  if (p.keyCode === 13) { // ENTER
+    if (gameState.gamePhase === "START") {
+      gameState.gamePhase = "PLAYING";
+      if (p.logs) {
+        p.logs.game_info.push({
+          data: { gamePhase: "PLAYING" },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    }
+    return false;
+  }
+  
+  if (p.keyCode === 27) { // ESC
+    if (gameState.gamePhase === "PLAYING") {
+      gameState.gamePhase = "PAUSED";
+    } else if (gameState.gamePhase === "PAUSED") {
+      gameState.gamePhase = "PLAYING";
+    }
+    return false;
+  }
+  
+  if (p.keyCode === 82) { // R
+    if (gameState.gamePhase === "GAME_OVER_WIN" || 
+        gameState.gamePhase === "GAME_OVER_LOSE" ||
+        gameState.gamePhase === "PAUSED") {
+      resetGame(p);
+    }
+    return false;
+  }
+  
+  // Gameplay controls
+  if (gameState.gamePhase === "PLAYING" && gameState.player) {
+    if (p.keyCode === 32) { // SPACE - Jump
+      gameState.player.jump();
+      return false;
+    }
+    
+    if (p.keyCode === 16) { // SHIFT - Dash
+      gameState.player.dash();
+      return false;
+    }
+    
+    if (p.keyCode === 90) { // Z - Fire rocket
+      gameState.player.fireRocket();
+      return false;
+    }
+  }
+  
+  return false;
+}
+
+function handleKeyRelease(p) {
+  // Stop sliding when down arrow is released
+  if (p.keyCode === 40 && gameState.player) { // DOWN
+    gameState.player.stopSlide();
+  }
+  
+  return false;
+}
+
+export function handleInput(p) {
+  if (gameState.gamePhase !== "PLAYING" || !gameState.player) return;
+  
+  // Check for automated testing
+  if (gameState.controlMode !== "HUMAN") {
+    const action = window.get_automated_testing_action?.(gameState);
+    if (action && action.keyCode) {
+      simulateKeyPress(action.keyCode, p);
+    }
+    return;
+  }
+  
+  // Movement
+  if (keys[37]) { // LEFT
+    gameState.player.moveLeft();
+  }
+  if (keys[39]) { // RIGHT
+    gameState.player.moveRight();
+  }
+  
+  // Chainsaw slide
+  if (keys[40] && (keys[37] || keys[39])) { // DOWN + (LEFT or RIGHT)
+    gameState.player.startSlide();
+  } else if (!keys[40]) {
+    gameState.player.stopSlide();
+  }
+}
+
+function simulateKeyPress(keyCode, p) {
+  keys[keyCode] = true;
+  
+  if (gameState.player) {
+    if (keyCode === 37) gameState.player.moveLeft();
+    if (keyCode === 39) gameState.player.moveRight();
+    if (keyCode === 32) gameState.player.jump();
+    if (keyCode === 16) gameState.player.dash();
+    if (keyCode === 90) gameState.player.fireRocket();
+    if (keyCode === 40 && (keys[37] || keys[39])) gameState.player.startSlide();
+  }
+  
+  // Auto-release after one frame
+  setTimeout(() => {
+    keys[keyCode] = false;
+    if (keyCode === 40 && gameState.player) {
+      gameState.player.stopSlide();
+    }
+  }, 50);
+}
+
+export function isKeyPressed(keyCode) {
+  return keys[keyCode] === true;
+}
+
+function resetGame(p) {
+  resetGameState();
+  gameState.gamePhase = "START";
+  
+  if (p.logs) {
+    p.logs.game_info.push({
+      data: { gamePhase: "START", event: "reset" },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+}
+</code>

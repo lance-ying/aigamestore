@@ -1,0 +1,394 @@
+// ui.js - UI rendering
+
+import { 
+  gameState, 
+  CANVAS_WIDTH, 
+  CANVAS_HEIGHT,
+  GRID_ROWS,
+  GRID_COLS,
+  GRID_START_X,
+  GRID_START_Y,
+  CELL_WIDTH,
+  CELL_HEIGHT,
+  getGridPosition
+} from './globals.js';
+import { getPlantCost } from './game_logic.js';
+import { getPlantMenuIndex, getPlantTypes } from './input.js';
+
+export function renderStartScreen(p) {
+  // Background gradient
+  for (let i = 0; i < CANVAS_HEIGHT; i++) {
+    const inter = i / CANVAS_HEIGHT;
+    const c = p.lerpColor(p.color(50, 100, 150), p.color(100, 150, 100), inter);
+    p.stroke(c);
+    p.line(0, i, CANVAS_WIDTH, i);
+  }
+  
+  // Title
+  p.fill(255, 255, 100);
+  p.stroke(200, 100, 0);
+  p.strokeWeight(4);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(42);
+  p.text('PLANTS vs ZOMBIES', CANVAS_WIDTH / 2, 80);
+  
+  // Subtitle
+  p.fill(255);
+  p.noStroke();
+  p.textSize(16);
+  p.text('Tower Defense Edition', CANVAS_WIDTH / 2, 120);
+  
+  // Instructions box
+  p.fill(0, 0, 0, 150);
+  p.noStroke();
+  p.rect(150, 160, 300, 180, 10);
+  
+  // Instructions
+  p.fill(255, 255, 0);
+  p.textSize(14);
+  p.textAlign(p.LEFT, p.TOP);
+  let y = 175;
+  const instructions = [
+    'Defend your lawn from zombies!',
+    '',
+    'Arrow Keys: Navigate',
+    'Space: Select/Place plants',
+    'Z: Collect sun',
+    'Shift: Cancel selection',
+    'ESC: Pause',
+  ];
+  
+  instructions.forEach(line => {
+    p.text(line, 170, y);
+    y += 20;
+  });
+  
+  // Start prompt
+  p.fill(255, 255, 0);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(20);
+  const flash = Math.sin(gameState.frameCount * 0.1) * 0.5 + 0.5;
+  p.fill(255, 255, 0, 255 * flash);
+  p.text('PRESS ENTER TO START', CANVAS_WIDTH / 2, 360);
+}
+
+export function renderGame(p) {
+  // Background - lawn
+  p.background(100, 180, 100);
+  
+  // Draw lanes
+  for (let row = 0; row < GRID_ROWS; row++) {
+    const y = GRID_START_Y + row * CELL_HEIGHT;
+    const shade = row % 2 === 0 ? 120 : 140;
+    p.fill(shade, 200 + shade / 2, shade);
+    p.noStroke();
+    p.rect(GRID_START_X, y, CELL_WIDTH * GRID_COLS, CELL_HEIGHT);
+  }
+  
+  // Draw grid lines (subtle)
+  p.stroke(80, 160, 80, 50);
+  p.strokeWeight(1);
+  for (let row = 0; row <= GRID_ROWS; row++) {
+    const y = GRID_START_Y + row * CELL_HEIGHT;
+    p.line(GRID_START_X, y, GRID_START_X + CELL_WIDTH * GRID_COLS, y);
+  }
+  for (let col = 0; col <= GRID_COLS; col++) {
+    const x = GRID_START_X + col * CELL_WIDTH;
+    p.line(x, GRID_START_Y, x, GRID_START_Y + CELL_HEIGHT * GRID_ROWS);
+  }
+  
+  // Draw house on the left
+  p.fill(150, 100, 80);
+  p.stroke(100, 70, 50);
+  p.strokeWeight(2);
+  p.rect(10, 100, 70, 200, 5);
+  
+  // Windows
+  p.fill(200, 200, 100);
+  p.rect(25, 120, 20, 25);
+  p.rect(55, 120, 20, 25);
+  p.rect(25, 160, 20, 25);
+  p.rect(55, 160, 20, 25);
+  
+  // Door
+  p.fill(100, 50, 30);
+  p.rect(35, 220, 25, 40);
+  
+  // Render all entities
+  gameState.entities.forEach(entity => {
+    if (entity.active) {
+      entity.render(p);
+    }
+  });
+  
+  // Render cursor if plant selected
+  if (gameState.selectedPlantType) {
+    renderPlacementCursor(p);
+  }
+  
+  // Render UI
+  renderHUD(p);
+}
+
+function renderPlacementCursor(p) {
+  const pos = getGridPosition(gameState.cursorRow, gameState.cursorCol);
+  
+  // Check if cell is occupied
+  const occupied = gameState.plants[gameState.cursorRow][gameState.cursorCol] !== null;
+  
+  // Check if we have enough sun
+  const cost = getPlantCost(gameState.selectedPlantType);
+  const canAfford = gameState.sun >= cost;
+  
+  // Cursor color based on validity
+  if (occupied) {
+    p.fill(255, 0, 0, 100);
+    p.stroke(255, 0, 0, 200);
+  } else if (!canAfford) {
+    p.fill(255, 150, 0, 100);
+    p.stroke(255, 150, 0, 200);
+  } else {
+    p.fill(0, 255, 0, 100);
+    p.stroke(0, 255, 0, 200);
+  }
+  
+  p.strokeWeight(3);
+  p.rectMode(p.CENTER);
+  p.rect(pos.x, pos.y, CELL_WIDTH - 4, CELL_HEIGHT - 4, 5);
+  p.rectMode(p.CORNER);
+  
+  // Show plant preview
+  renderPlantPreview(p, pos.x, pos.y);
+}
+
+function renderPlantPreview(p, x, y) {
+  p.push();
+  p.translate(x, y);
+  p.scale(0.7);
+  
+  // Draw simplified plant icon
+  switch (gameState.selectedPlantType) {
+    case 'SUNFLOWER':
+      p.fill(255, 220, 0);
+      p.stroke(200, 180, 0);
+      p.strokeWeight(2);
+      p.circle(0, 0, 25);
+      break;
+    case 'PEASHOOTER':
+      p.fill(100, 200, 100);
+      p.stroke(70, 170, 70);
+      p.strokeWeight(2);
+      p.circle(0, 0, 25);
+      break;
+    case 'WALLNUT':
+      p.fill(139, 90, 43);
+      p.stroke(101, 67, 33);
+      p.strokeWeight(2);
+      p.circle(0, 0, 30);
+      break;
+    case 'CHERRY_BOMB':
+      p.fill(200, 0, 0);
+      p.stroke(150, 0, 0);
+      p.strokeWeight(2);
+      p.circle(0, 0, 20);
+      break;
+  }
+  
+  p.pop();
+}
+
+function renderHUD(p) {
+  // HUD background
+  p.fill(40, 30, 20, 220);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, 40);
+  
+  // Sun counter
+  p.fill(255, 255, 0);
+  p.stroke(200, 200, 0);
+  p.strokeWeight(2);
+  p.textAlign(p.LEFT, p.CENTER);
+  p.textSize(20);
+  p.text(`☀ ${gameState.sun}`, 10, 20);
+  
+  // Score
+  p.fill(255);
+  p.noStroke();
+  p.textSize(16);
+  p.text(`Score: ${gameState.score}`, 120, 20);
+  
+  // Wave info
+  p.textAlign(p.CENTER, p.CENTER);
+  p.text(`Wave ${gameState.currentWave + 1}/3`, CANVAS_WIDTH / 2, 20);
+  
+  // Zombies remaining
+  const remaining = gameState.totalZombiesInWave - gameState.zombiesKilled;
+  p.text(`Zombies: ${remaining}`, CANVAS_WIDTH / 2 + 120, 20);
+  
+  // Plant menu
+  renderPlantMenu(p);
+}
+
+function renderPlantMenu(p) {
+  const menuX = 10;
+  const menuY = 50;
+  const plantTypes = getPlantTypes();
+  const selectedIndex = getPlantMenuIndex();
+  
+  plantTypes.forEach((type, index) => {
+    const x = menuX;
+    const y = menuY + index * 60;
+    const cost = getPlantCost(type);
+    const canAfford = gameState.sun >= cost;
+    const isSelected = gameState.selectedPlantType === type;
+    
+    // Background
+    if (index === selectedIndex && gameState.selectedPlantType === null) {
+      p.fill(100, 100, 50, 200);
+    } else if (isSelected) {
+      p.fill(50, 150, 50, 200);
+    } else {
+      p.fill(60, 40, 30, 200);
+    }
+    
+    if (!canAfford) {
+      p.fill(80, 50, 50, 200);
+    }
+    
+    p.stroke(canAfford ? 150 : 100, canAfford ? 120 : 50, canAfford ? 80 : 50);
+    p.strokeWeight(2);
+    p.rect(x, y, 80, 50, 5);
+    
+    // Plant icon
+    p.push();
+    p.translate(x + 25, y + 25);
+    p.scale(0.6);
+    
+    switch (type) {
+      case 'SUNFLOWER':
+        // Sunflower icon
+        p.fill(255, 220, 0);
+        p.stroke(200, 180, 0);
+        p.strokeWeight(2);
+        for (let i = 0; i < 8; i++) {
+          const angle = (i / 8) * p.TWO_PI;
+          const px = p.cos(angle) * 12;
+          const py = p.sin(angle) * 12;
+          p.circle(px, py, 8);
+        }
+        p.fill(255, 180, 0);
+        p.circle(0, 0, 15);
+        break;
+      case 'PEASHOOTER':
+        // Peashooter icon
+        p.fill(100, 200, 100);
+        p.stroke(70, 170, 70);
+        p.strokeWeight(2);
+        p.circle(0, 0, 25);
+        p.fill(50, 100, 50);
+        p.noStroke();
+        p.circle(10, 0, 10);
+        break;
+      case 'WALLNUT':
+        // Wallnut icon
+        p.fill(139, 90, 43);
+        p.stroke(101, 67, 33);
+        p.strokeWeight(2);
+        p.circle(0, 0, 28);
+        break;
+      case 'CHERRY_BOMB':
+        // Cherry Bomb icon
+        p.fill(200, 0, 0);
+        p.stroke(150, 0, 0);
+        p.strokeWeight(2);
+        p.circle(-6, 0, 15);
+        p.circle(6, 0, 15);
+        break;
+    }
+    
+    p.pop();
+    
+    // Cost
+    p.fill(canAfford ? 255 : 150, canAfford ? 255 : 100, 0);
+    p.noStroke();
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(12);
+    p.text(cost, x + 60, y + 25);
+  });
+  
+  // Instructions
+  if (gameState.selectedPlantType === null) {
+    p.fill(255, 255, 200);
+    p.textSize(10);
+    p.textAlign(p.LEFT, p.TOP);
+    p.text('↑↓ Navigate\nSpace Select', menuX, menuY + plantTypes.length * 60 + 10);
+  } else {
+    p.fill(255, 255, 200);
+    p.textSize(10);
+    p.textAlign(p.LEFT, p.TOP);
+    p.text('Arrows Move\nSpace Place\nShift Cancel', menuX, menuY + plantTypes.length * 60 + 10);
+  }
+}
+
+export function renderPausedOverlay(p) {
+  // Semi-transparent overlay
+  p.fill(0, 0, 0, 180);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  // Paused text
+  p.fill(255, 255, 0);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text('PAUSED', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 20);
+  
+  p.textSize(20);
+  p.fill(255);
+  p.text('Press ESC to Resume', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 30);
+}
+
+export function renderGameOver(p) {
+  // Background overlay
+  p.fill(0, 0, 0, 200);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  const isWin = gameState.gamePhase === "GAME_OVER_WIN";
+  
+  // Game over text
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(56);
+  
+  if (isWin) {
+    p.fill(100, 255, 100);
+    p.stroke(50, 200, 50);
+    p.strokeWeight(4);
+    p.text('VICTORY!', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 80);
+    
+    p.fill(255, 255, 150);
+    p.noStroke();
+    p.textSize(24);
+    p.text('All waves defended!', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 30);
+  } else {
+    p.fill(255, 100, 100);
+    p.stroke(200, 50, 50);
+    p.strokeWeight(4);
+    p.text('GAME OVER', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 80);
+    
+    p.fill(255, 150, 150);
+    p.noStroke();
+    p.textSize(24);
+    p.text('The zombies ate your brains!', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 30);
+  }
+  
+  // Final score
+  p.fill(255);
+  p.textSize(28);
+  p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 20);
+  
+  // Restart instruction
+  p.textSize(20);
+  const flash = Math.sin(gameState.frameCount * 0.15) * 0.5 + 0.5;
+  p.fill(255, 255, 0, 255 * flash);
+  p.text('Press R to Restart', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 70);
+}

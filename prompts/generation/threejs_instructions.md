@@ -972,10 +972,10 @@ function gameLoop(currentTime) {
     gameState.deltaTime = (currentTime - lastFrameTime) / 1000;
     lastFrameTime = currentTime;
     gameState.frameCount = frameCount++;
-    
+
     // Update game logic
     updateGame();
-    
+
     // Render scene
     gameState.renderer.render(gameState.scene, gameState.camera);
 }
@@ -1001,7 +1001,7 @@ function isInFrustum(mesh) {
 ```
 
 ## Object Visibility Management
-```javascript
+    ```javascript
 // Hide/show objects
 mesh.visible = false; // Hide object
 mesh.visible = true;  // Show object
@@ -1052,7 +1052,7 @@ export class Player {
         this.mesh.position.set(x, y, z);
         this.mesh.castShadow = true;
         this.mesh.receiveShadow = true;
-        
+
         // Physics properties
         this.velocity = new THREE.Vector3(0, 0, 0);
         this.acceleration = new THREE.Vector3(0, 0, 0);
@@ -1091,7 +1091,7 @@ export class Player {
             // Air resistance
             this.velocity.multiplyScalar(0.98);
         }
-        
+
         // Update position
         this.mesh.position.add(this.velocity.clone().multiplyScalar(deltaTime));
         
@@ -1120,35 +1120,35 @@ export class Player {
             this.onGround = false;
         }
     }
-    
+
     moveForward() {
         const direction = new THREE.Vector3(0, 0, -1);
         direction.applyQuaternion(this.mesh.quaternion);
         this.acceleration.add(direction.multiplyScalar(this.speed));
         this.isMoving = true;
     }
-    
+
     moveBackward() {
         const direction = new THREE.Vector3(0, 0, 1);
         direction.applyQuaternion(this.mesh.quaternion);
         this.acceleration.add(direction.multiplyScalar(this.speed));
         this.isMoving = true;
     }
-    
+
     strafeLeft() {
         const direction = new THREE.Vector3(-1, 0, 0);
         direction.applyQuaternion(this.mesh.quaternion);
         this.acceleration.add(direction.multiplyScalar(this.speed));
         this.isMoving = true;
     }
-    
+
     strafeRight() {
         const direction = new THREE.Vector3(1, 0, 0);
         direction.applyQuaternion(this.mesh.quaternion);
         this.acceleration.add(direction.multiplyScalar(this.speed));
         this.isMoving = true;
     }
-    
+
     jump() {
         if (this.onGround) {
             this.velocity.y = this.jumpPower;

@@ -1,0 +1,439 @@
+<analysis>
+- Issue identified: The game fails to load due to conflicting p5.collide2d imports. The library is loaded via CDN script tag in index.html (which makes functions available on the p5 instance), but entities.js and game.js attempt to import it as an ES module from a different CDN URL. This causes module loading failures.
+
+- Files affected: 
+  - entities.js (remove ESM import, use p5 instance method instead)
+  - game.js (remove unused ESM import)
+
+- Changes needed: 
+  1. Remove ES module import of collideLineLine from both files
+  2. Change usage in entities.js to use p.collideLineLine() since p5.collide2d is already loaded globally via script tag
+  3. This allows the game to load properly using the existing CDN library loaded in the HTML
+</analysis>
+
+<code filename="game.js">
+import { 
+    CANVAS_WIDTH, CANVAS_HEIGHT, TARGET_FPS, COLORS, 
+    gameState, initLogs, getGameState 
+} from './globals.js';
+import { GameGrid } from './grid.js';
+import { Player, Bot } from './entities.js';
+import { handleInput, handleKeyPress } from './input.js';
+import { renderStartScreen, renderHUD, renderGameOver, renderPaused } from './ui.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+    
+    initLogs(p);
+
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(TARGET_FPS);
+        p.randomSeed(42);
+        
+        // Initialize Game State
+        gameState.worldGrid = new GameGrid(p);
+        resetGame(p);
+        
+        // Initial Log
+        p.logs.game_info.push({
+            event: "SETUP_COMPLETE",
+            timestamp: Date.now()
+        });
+    };
+
+    p.draw = function() {
+        // Time management
+        const now = p.millis();
+        gameState.deltaTime = (now - gameState.lastFrameTime) / 1000;
+        gameState.lastFrameTime = now;
+        gameState.frameCount = p.frameCount;
+        
+        // Clear background
+        p.background(COLORS.BACKGROUND);
+
+        switch (gameState.gamePhase) {
+            case "START":
+                renderStartScreen(p);
+                break;
+            case "PLAYING":
+                updateGame(p);
+                renderGame(p);
+                renderHUD(p);
+                break;
+            case "PAUSED":
+                renderGame(p);
+                renderPaused(p);
+                renderHUD(p);
+                break;
+            case "GAME_OVER_WIN":
+            case "GAME_OVER_LOSE":
+                renderGame(p);
+                renderGameOver(p);
+                break;
+        }
+    };
+
+    p.keyPressed = function() {
+        handleKeyPress(p);
+    };
+    
+    p.keyReleased = function() {
+        // Optional: Handle release if needed for smooth controls
+        p.logs.inputs.push({
+            type: "RELEASE",
+            key: p.key,
+            keyCode: p.keyCode,
+            frame: p.frameCount
+        });
+    };
+});
+
+function resetGame(p) {
+    gameState.worldGrid.reset(p);
+    gameState.entities = [];
+    gameState.enemies = [];
+    
+    // Create Player
+    gameState.player = new Player(100, 100);
+    // Give player initial territory
+    gameState.worldGrid.setSpawnArea(100, 100, 30, 1, p);
+    
+    gameState.entities.push(gameState.player);
+    
+    // Create Bots
+    const botConfigs = [
+        {id: 2, x: 500, y: 100, c: COLORS.ENEMY_1, tc: COLORS.ENEMY_1_TERRITORY},
+        {id: 3, x: 100, y: 300, c: COLORS.ENEMY_2, tc: COLORS.ENEMY_2_TERRITORY},
+        {id: 4, x: 500, y: 300, c: COLORS.ENEMY_3, tc: COLORS.ENEMY_3_TERRITORY}
+    ];
+    
+    botConfigs.forEach(cfg => {
+        const bot = new Bot(cfg.id, cfg.x, cfg.y, cfg.c, cfg.tc);
+        gameState.worldGrid.setSpawnArea(cfg.x, cfg.y, 30, cfg.id, p);
+        gameState.enemies.push(bot);
+        gameState.entities.push(bot);
+    });
+    
+    gameState.score = 0;
+}
+
+// Exposed globally for the 'R' key handler in input.js
+window.resetGame = resetGame;
+
+function updateGame(p) {
+    handleInput(p);
+    
+    // 1. Update all entities (Movement, Trails)
+    gameState.entities.forEach(e => e.update(p));
+    
+    // 2. Cross-Entity Collision (Head vs Trail)
+    checkCollisions();
+    
+    // 3. Update Score
+    gameState.score = gameState.worldGrid.getScore(1); // Player ID 1
+    
+    // 4. Win Condition
+    if (gameState.score >= 90) { // Win at 90%
+        gameState.gamePhase = "GAME_OVER_WIN";
+    }
+    
+    // Remove dead entities
+    gameState.entities = gameState.entities.filter(e => e.alive);
+    gameState.enemies = gameState.enemies.filter(e => e.alive);
+    
+    // Check if player died (removed from entities list or marked dead)
+    if (!gameState.player.alive) {
+        gameState.gamePhase = "GAME_OVER_LOSE";
+    }
+}
+
+function checkCollisions() {
+    // Check every entity against every other entity's trail
+    
+    for (let attacker of gameState.entities) {
+        if (!attacker.alive) continue;
+        
+        for (let victim of gameState.entities) {
+            if (!victim.alive) continue;
+            if (victim.trail.length < 2) continue;
+            
+            // Optimization: Bounding box check first
+            // But for low entity count (4), O(N^2) is fine.
+            
+            // Check attacker HEAD against victim TRAIL
+            // Using a simple proximity check for each trail segment
+            // This is O(TrailLength), potentially expensive. 
+            // Optimization: Only check if attacker is NOT in their own territory (assumed safe? No, can be killed in own territory if trail is cut outside)
+            // Wait, trail only exists outside territory.
+            
+            // If Attacker hits Victim's trail:
+            // 1. Attacker kills Victim (if Attacker != Victim)
+            // 2. Attacker kills Self (if Attacker == Victim) -> Handled in Entity.update already
+            
+            if (attacker === victim) continue; // Self-collision handled in update
+            
+            // Check segments
+            for (let i = 0; i < victim.trail.length - 1; i++) {
+                const p1 = victim.trail[i];
+                const p2 = victim.trail[i+1];
+                
+                // Segment collision with Attacker Head (Point/Small Circle)
+                // p5.collide2d collideLineCircle(x1, y1, x2, y2, cx, cy, d)
+                // Note: p5.collide2d needs to be accessible. We use imported functions usually or raw math.
+                // Using simple distance to segment check
+                
+                if (distToSegment(attacker.x, attacker.y, p1.x, p1.y, p2.x, p2.y) < attacker.radius) {
+                    victim.die(`KILLED_BY_${attacker.id}`);
+                    // Award bonus?
+                    break;
+                }
+            }
+        }
+        
+        // Head to Head collision
+        for (let other of gameState.entities) {
+            if (attacker === other || !other.alive) continue;
+            
+            const dist = Math.hypot(attacker.x - other.x, attacker.y - other.y);
+            if (dist < attacker.radius + other.radius) {
+                // Both die
+                attacker.die("HEAD_ON_COLLISION");
+                other.die("HEAD_ON_COLLISION");
+            }
+        }
+    }
+}
+
+function distToSegment(px, py, x1, y1, x2, y2) {
+    const l2 = (x1-x2)*(x1-x2) + (y1-y2)*(y1-y2);
+    if (l2 === 0) return Math.hypot(px-x1, py-y1);
+    let t = ((px-x1)*(x2-x1) + (py-y1)*(y2-y1)) / l2;
+    t = Math.max(0, Math.min(1, t));
+    return Math.hypot(px - (x1 + t*(x2-x1)), py - (y1 + t*(y2-y1)));
+}
+
+function renderGame(p) {
+    gameState.worldGrid.render(p);
+    gameState.entities.forEach(e => e.render(p));
+}
+
+window.gameInstance = gameInstance;
+</code>
+
+<code filename="entities.js">
+import { CANVAS_WIDTH, CANVAS_HEIGHT, COLORS, gameState } from './globals.js';
+
+export class Entity {
+    constructor(id, x, y, color, territoryColor) {
+        this.id = id;
+        this.x = x;
+        this.y = y;
+        this.color = color;
+        this.territoryColor = territoryColor;
+        this.radius = 6;
+        
+        this.heading = 0; // Radians
+        this.speed = 2.0;
+        this.boostSpeed = 3.5;
+        this.turnSpeed = 0.08;
+        
+        this.trail = []; // Array of {x, y}
+        this.isBoosting = false;
+        this.alive = true;
+        
+        // Trail Optimization: don't add point every frame
+        this.lastTrailPos = {x: x, y: y};
+        this.trailInterval = 5; // Distance before adding new point
+    }
+
+    update(p) {
+        if (!this.alive) return;
+
+        // 1. Move
+        const currentSpeed = this.isBoosting ? this.boostSpeed : this.speed;
+        this.x += Math.cos(this.heading) * currentSpeed;
+        this.y += Math.sin(this.heading) * currentSpeed;
+
+        // 2. Bound checks (Walls are deadly)
+        if (this.x < 0 || this.x > CANVAS_WIDTH || this.y < 0 || this.y > CANVAS_HEIGHT) {
+            this.die("WALL_COLLISION");
+            return;
+        }
+
+        // 3. Trail Logic
+        const dist = Math.hypot(this.x - this.lastTrailPos.x, this.y - this.lastTrailPos.y);
+        
+        // Check if inside own territory
+        const inOwnTerritory = gameState.worldGrid.isOwned(this.x, this.y, this.id);
+
+        if (!inOwnTerritory) {
+            // Currently outside: extending trail
+            if (dist > this.trailInterval) {
+                this.trail.push({x: this.x, y: this.y});
+                this.lastTrailPos = {x: this.x, y: this.y};
+            }
+        } else {
+            // Inside territory
+            if (this.trail.length > 0) {
+                // JUST ENTERED territory: Close the loop!
+                this.trail.push({x: this.x, y: this.y}); // Add final point
+                gameState.worldGrid.captureTerritory(this.trail, this.id, p);
+                this.trail = []; // Clear trail
+                
+                // Audio cue simulation (visual flash)
+                // p.background(255, 50); // too jarring? maybe particle effect
+            }
+            // Update last pos so we start a fresh trail correctly when leaving
+            this.lastTrailPos = {x: this.x, y: this.y};
+        }
+
+        // 4. Self Trail Collision (Suicide)
+        // Only check if trail is long enough to hit
+        if (this.trail.length > 5) {
+            // Check collision with all segments except the most recent few (to avoid self-clipping)
+            for (let i = 0; i < this.trail.length - 3; i++) {
+                const p1 = this.trail[i];
+                const p2 = this.trail[i+1];
+                // Simple point-to-segment distance check or line intersection?
+                // p5.collide2d linePoint isn't imported, let's use circle-line
+                // Actually, head is a point/circle.
+                
+                // Head segment
+                const h1 = {x: this.x - Math.cos(this.heading) * 5, y: this.y - Math.sin(this.heading) * 5};
+                const h2 = {x: this.x, y: this.y};
+                
+                if (p.collideLineLine(p1.x, p1.y, p2.x, p2.y, h1.x, h1.y, h2.x, h2.y)) {
+                    this.die("SELF_TRAIL");
+                    return;
+                }
+            }
+        }
+    }
+
+    render(p) {
+        if (!this.alive) return;
+
+        // Draw Trail
+        if (this.trail.length > 0) {
+            p.noFill();
+            p.stroke(this.color); // Full brightness
+            p.strokeWeight(2);
+            p.beginShape();
+            for (let pt of this.trail) {
+                p.vertex(pt.x, pt.y);
+            }
+            p.vertex(this.x, this.y); // Connect to head
+            p.endShape();
+            
+            // Draw faint fill for trail polygon to indicate "active capture"
+            // (Optional, can be performance heavy, skipping for now)
+        }
+
+        // Draw Player Head
+        p.push();
+        p.translate(this.x, this.y);
+        p.rotate(this.heading);
+        p.fill(255);
+        p.stroke(this.color);
+        p.strokeWeight(3);
+        p.rectMode(p.CENTER);
+        p.rect(0, 0, 16, 16, 2);
+        
+        // Direction indicator
+        // p.fill(0);
+        // p.circle(5, 0, 4);
+        p.pop();
+    }
+
+    die(reason) {
+        if (!this.alive) return;
+        this.alive = false;
+        console.log(`Entity ${this.id} died: ${reason}`);
+        
+        // Remove territory
+        if (gameState.worldGrid) {
+            gameState.worldGrid.clearTerritory(this.id, window.gameInstance);
+        }
+
+        // Trigger particles
+        // (Assuming particle system exists in gameState)
+        // createExplosion(this.x, this.y, this.color);
+        
+        if (this.id === 1) { // Player
+            gameState.gamePhase = "GAME_OVER_LOSE";
+        } else {
+            // Remove from enemies list logic handled in game loop
+        }
+    }
+}
+
+export class Player extends Entity {
+    constructor(x, y) {
+        super(1, x, y, COLORS.PLAYER, COLORS.PLAYER_TERRITORY);
+    }
+    
+    update(p) {
+        super.update(p);
+        
+        // Log player info
+        if (p.frameCount % 10 === 0) {
+             p.logs.player_info.push({
+                x: this.x,
+                y: this.y,
+                trailLength: this.trail.length,
+                score: gameState.score,
+                alive: this.alive,
+                framecount: p.frameCount,
+                timestamp: Date.now()
+            });
+        }
+    }
+}
+
+export class Bot extends Entity {
+    constructor(id, x, y, color, territoryColor) {
+        super(id, x, y, color, territoryColor);
+        this.changeDirTimer = 0;
+        this.targetDir = Math.random() * Math.PI * 2;
+    }
+
+    update(p) {
+        // AI Logic
+        this.changeDirTimer--;
+        
+        if (this.changeDirTimer <= 0) {
+            // Pick a new target direction
+            // Simple AI: Prefer moving towards center if too close to edge
+            const margin = 50;
+            if (this.x < margin) this.targetDir = 0;
+            else if (this.x > CANVAS_WIDTH - margin) this.targetDir = Math.PI;
+            else if (this.y < margin) this.targetDir = Math.PI / 2;
+            else if (this.y > CANVAS_HEIGHT - margin) this.targetDir = 3 * Math.PI / 2;
+            else {
+                // Random wander + bias towards unowned territory?
+                // For simplicity: random wander
+                this.targetDir = (Math.random() * Math.PI * 2);
+            }
+            
+            // Randomize timer
+            this.changeDirTimer = 30 + Math.random() * 60;
+        }
+
+        // Smoothly rotate towards targetDir
+        // Shortest angle difference
+        let diff = this.targetDir - this.heading;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        
+        if (Math.abs(diff) > this.turnSpeed) {
+            this.heading += Math.sign(diff) * this.turnSpeed;
+        } else {
+            this.heading = this.targetDir;
+        }
+
+        super.update(p);
+    }
+}
+</code>

@@ -2,6 +2,7 @@
 
 import { gameState, GAME_PHASES } from './globals.js';
 import { handlePlayerMovement } from './gameplay.js';
+import { initializeWorld } from './world.js';
 
 export function handleKeyPressed(p) {
   const key = p.key;
@@ -62,7 +63,6 @@ export function processGameplayInput(p) {
 }
 
 function startGame(p) {
-  const { initializeWorld } = require('./world.js');
   initializeWorld(p);
   gameState.gamePhase = GAME_PHASES.PLAYING;
   p.logs.game_info.push({

@@ -1,0 +1,1822 @@
+<analysis>
+- Issue identified: The game currently uses p5.js (2D canvas) and Matter.js (2D physics). The request is to regenerate it using three.js for 3D graphics and rendering.
+- Files affected: All files need to be rewritten/modified:
+  - index.html: Remove p5.js, add three.js
+  - globals.js: Replace Matter.js state with three.js objects (scene, camera, renderer)
+  - game.js: Complete rewrite for three.js game loop and initialization
+  - entities.js: Rewrite to create 3D meshes instead of 2D sprites/bodies
+  - physics.js: Replace Matter.js with custom 3D physics for aircraft
+  - camera.js: NEW - 3D camera control and following
+  - lighting.js: NEW - 3D lighting setup
+  - ui.js: Rewrite to use 2D canvas overlay for HUD
+  - automation.js: Update to work with 3D coordinate system
+- Changes needed: 
+  - Convert 2D aircraft simulation to 3D with proper aerodynamics
+  - Create 3D runway, terrain, and sky
+  - Implement third-person camera following aircraft
+  - Add lighting (ambient, directional)
+  - Create canvas-based HUD overlay for instruments
+  - Maintain all game mechanics (landing, crashes, systems, emergencies)
+  - Preserve test automation modes
+</analysis>
+
+<code filename="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Extreme Landings Pro 3D</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      
+      html, body {
+        width: 600px;
+        height: 400px;
+        overflow: hidden;
+        margin: 0;
+        padding: 0;
+        background: #000;
+      }
+      
+      #game-container {
+        width: 600px;
+        height: 400px;
+        position: relative;
+        overflow: hidden;
+        margin: 0 auto;
+        padding: 0;
+      }
+      
+      canvas {
+        display: block;
+        margin: 0;
+        padding: 0;
+      }
+      
+      .ui-overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        pointer-events: none;
+        z-index: 1000;
+      }
+      
+      .control-panel {
+        text-align: center;
+        margin-bottom: 20px;
+        background: #222;
+        padding: 20px;
+      }
+      
+      .control-buttons {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 10px;
+        flex-wrap: wrap;
+        justify-content: center;
+      }
+      
+      .control-button {
+        padding: 8px 16px;
+        cursor: pointer;
+        background: #444;
+        color: #fff;
+        border: none;
+        border-radius: 4px;
+        font-size: 12px;
+      }
+      
+      .control-button.active {
+        background: #007bff;
+      }
+      
+      h1 {
+        color: #fff;
+        font-family: Arial, sans-serif;
+        margin-bottom: 10px;
+        font-size: 24px;
+      }
+      
+      p {
+        color: #ccc;
+        font-family: Arial, sans-serif;
+        max-width: 600px;
+        margin: 0 auto 10px auto;
+        line-height: 1.4;
+        font-size: 12px;
+      }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/seedrandom@3.0.5/seedrandom.min.js"></script>
+  </head>
+  <body>
+    <div class="control-panel">
+      <h1 id="gameTitle">Extreme Landings Pro 3D</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Basic Controls)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Landing)</button>
+        <button id="test_3_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_3')">TEST (Emergency)</button>
+        <button id="test_4_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_4')">TEST (Fuel)</button>
+        <button id="test_5_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_5')">TEST (Crash)</button>
+        <button id="test_6_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_6')">TEST (Instruments)</button>
+        <button id="test_7_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_7')">TEST (Pause/Restart)</button>
+      </div>
+      <p id="gameDescription">Pilot a realistic aircraft in 3D through challenging landing scenarios. Navigate using your instruments, manage critical systems, and respond to emergencies. Complete missions by landing safely on the runway.</p>
+      <p id="gameControls">W/S: Pitch control | A/D: Roll control | ←/→: Rudder | ↑/↓: Throttle | Space: Landing gear | Shift: Flaps | Z: Spoilers | Enter: Start | ESC: Pause | R: Restart</p>
+    </div>
+    <div id="game-container"></div>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</code>
+
+<code filename="globals.js">
+// globals.js - Global constants and game state
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+export const GAME_PHASES = {
+  START: "START",
+  PLAYING: "PLAYING",
+  PAUSED: "PAUSED",
+  GAME_OVER_WIN: "GAME_OVER_WIN",
+  GAME_OVER_LOSE: "GAME_OVER_LOSE"
+};
+
+export const CONTROL_MODES = {
+  HUMAN: "HUMAN",
+  TEST_1: "TEST_1",
+  TEST_2: "TEST_2",
+  TEST_3: "TEST_3",
+  TEST_4: "TEST_4",
+  TEST_5: "TEST_5",
+  TEST_6: "TEST_6",
+  TEST_7: "TEST_7"
+};
+
+// Game state object
+export const gameState = {
+  gamePhase: GAME_PHASES.START,
+  controlMode: CONTROL_MODES.HUMAN,
+  
+  // Three.js core objects
+  scene: null,
+  camera: null,
+  renderer: null,
+  gameContainer: null,
+  
+  // Lighting
+  lights: [],
+  ambientLight: null,
+  directionalLight: null,
+  
+  // Game entities
+  player: null,
+  entities: [],
+  runway: null,
+  terrain: null,
+  
+  // Flight state
+  altitude: 300, // meters (1000 feet)
+  speed: 77, // m/s (150 knots)
+  verticalSpeed: 0, // m/s
+  heading: 0, // degrees
+  pitch: 0, // degrees
+  roll: 0, // degrees
+  
+  // Physics
+  velocity: new THREE.Vector3(0, 0, 0),
+  angularVelocity: new THREE.Vector3(0, 0, 0),
+  gravity: new THREE.Vector3(0, -9.81, 0),
+  
+  // Aircraft systems
+  throttle: 0.5, // 0-1
+  flapSetting: 0, // 0-4 (0=retracted, 4=full)
+  gearDeployed: false,
+  spoilersDeployed: false,
+  fuel: 100, // percentage
+  
+  // Engine state
+  engine1Running: true,
+  engine2Running: true,
+  
+  // Control inputs
+  pitchInput: 0,
+  rollInput: 0,
+  yawInput: 0,
+  
+  // Emergencies
+  activeEmergencies: [],
+  emergencyTimer: 0,
+  
+  // Landing metrics
+  touchdownSpeed: 0,
+  touchdownVerticalSpeed: 0,
+  touchdownAlignment: 0,
+  landedSafely: false,
+  crashReason: "",
+  
+  // Score and mission
+  score: 0,
+  missionTime: 0,
+  
+  // Input state
+  keys: {},
+  
+  // Performance tracking
+  frameCount: 0,
+  lastFrameTime: 0,
+  deltaTime: 0,
+  
+  // Test automation
+  testFrameCount: 0,
+  testPhase: 0,
+  
+  // Camera state
+  cameraMode: "third_person",
+  cameraOffset: new THREE.Vector3(0, 3, 8),
+  cameraTarget: null
+};
+
+// Physics constants
+export const GRAVITY = 9.81;
+export const AIRCRAFT_MASS = 50000; // kg
+export const MAX_SPEED = 154; // m/s (300 knots)
+export const STALL_SPEED = 51; // m/s (100 knots)
+export const LANDING_SPEED_TARGET = 72; // m/s (140 knots)
+export const MAX_LANDING_VERTICAL_SPEED = 1.5; // m/s (300 fpm)
+
+// Runway parameters (in meters)
+export const RUNWAY_LENGTH = 100;
+export const RUNWAY_WIDTH = 15;
+
+// Emergency types
+export const EMERGENCY_TYPES = [
+  "ENGINE_FIRE",
+  "HYDRAULIC_FAILURE",
+  "ENGINE_FAILURE",
+  "FUEL_LEAK",
+  "ELECTRICAL_FAILURE"
+];
+
+export function getGameState() {
+  return gameState;
+}
+
+// Expose globally
+if (typeof window !== 'undefined') {
+  window.getGameState = getGameState;
+}
+</code>
+
+<code filename="game.js">
+// game.js - Main game file
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+import { 
+  gameState, 
+  CANVAS_WIDTH, 
+  CANVAS_HEIGHT, 
+  GAME_PHASES,
+  CONTROL_MODES,
+  EMERGENCY_TYPES,
+  getGameState
+} from './globals.js';
+
+import { Aircraft, Runway, Terrain } from './entities.js';
+import { updatePhysics, checkCollisions, checkBoundaries } from './physics.js';
+import { setupCamera, updateCamera } from './camera.js';
+import { setupLighting } from './lighting.js';
+import { 
+  renderUI,
+  renderStartScreen, 
+  renderHUD, 
+  renderPausedOverlay, 
+  renderGameOver 
+} from './ui.js';
+import { updateAutomation } from './automation.js';
+
+// Initialize logs (write-only, never reset!)
+const logs = {
+  "game_info": [],
+  "player_info": [],
+  "inputs": []
+};
+window.logs = logs;
+
+// Initialize game
+function init() {
+  // Seed random
+  Math.seedrandom(42);
+  
+  // Create game container
+  const gameContainer = document.createElement('div');
+  gameContainer.id = 'game-container';
+  gameContainer.style.width = CANVAS_WIDTH + 'px';
+  gameContainer.style.height = CANVAS_HEIGHT + 'px';
+  gameContainer.style.position = 'relative';
+  gameContainer.style.overflow = 'hidden';
+  gameContainer.style.margin = '0';
+  gameContainer.style.padding = '0';
+  gameContainer.style.border = 'none';
+  
+  const existingContainer = document.getElementById('game-container');
+  if (existingContainer) {
+    existingContainer.parentElement.replaceChild(gameContainer, existingContainer);
+  } else {
+    document.body.appendChild(gameContainer);
+  }
+  
+  gameState.gameContainer = gameContainer;
+  
+  // Create scene
+  gameState.scene = new THREE.Scene();
+  gameState.scene.background = new THREE.Color(0x87CEEB); // Sky blue
+  gameState.scene.fog = new THREE.Fog(0x87CEEB, 50, 500);
+  
+  // Setup camera
+  setupCamera();
+  
+  // Setup renderer
+  gameState.renderer = new THREE.WebGLRenderer({ 
+    antialias: true,
+    alpha: false,
+    powerPreference: "high-performance"
+  });
+  gameState.renderer.setSize(CANVAS_WIDTH, CANVAS_HEIGHT);
+  gameState.renderer.shadowMap.enabled = true;
+  gameState.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  
+  gameContainer.appendChild(gameState.renderer.domElement);
+  
+  // Setup lighting
+  setupLighting();
+  
+  // Initialize entities
+  initializeGame();
+  
+  // Setup input handlers
+  setupInputHandlers();
+  
+  // Log initial state
+  logs.game_info.push({
+    game_status: gameState.gamePhase,
+    data: {},
+    framecount: 0,
+    timestamp: Date.now()
+  });
+}
+
+function initializeGame() {
+  // Clear existing entities
+  gameState.entities.forEach(entity => {
+    if (entity.mesh) {
+      gameState.scene.remove(entity.mesh);
+    }
+  });
+  gameState.entities = [];
+  
+  // Create terrain
+  gameState.terrain = new Terrain();
+  gameState.entities.push(gameState.terrain);
+  
+  // Create runway
+  gameState.runway = new Runway();
+  gameState.entities.push(gameState.runway);
+  
+  // Create aircraft
+  gameState.player = new Aircraft(0, 300, -150);
+  gameState.entities.push(gameState.player);
+  gameState.cameraTarget = gameState.player;
+  
+  // Reset game state
+  gameState.score = 0;
+  gameState.missionTime = 0;
+  gameState.fuel = 100;
+  gameState.throttle = 0.5;
+  gameState.flapSetting = 0;
+  gameState.gearDeployed = false;
+  gameState.spoilersDeployed = false;
+  gameState.engine1Running = true;
+  gameState.engine2Running = true;
+  gameState.activeEmergencies = [];
+  gameState.emergencyTimer = 0;
+  gameState.touchdownSpeed = 0;
+  gameState.touchdownVerticalSpeed = 0;
+  gameState.touchdownAlignment = 0;
+  gameState.landedSafely = false;
+  gameState.crashReason = "";
+  gameState.keys = {};
+  gameState.testFrameCount = 0;
+  gameState.testPhase = 0;
+  gameState.pitchInput = 0;
+  gameState.rollInput = 0;
+  gameState.yawInput = 0;
+  
+  // Set initial velocity
+  gameState.velocity.set(0, 0, 30); // Moving toward runway
+  gameState.angularVelocity.set(0, 0, 0);
+}
+
+function setupInputHandlers() {
+  // Keydown handler
+  document.addEventListener('keydown', (event) => {
+    // Log input
+    logs.inputs.push({
+      input_type: "keydown",
+      data: { key: event.key, keyCode: event.keyCode },
+      framecount: gameState.frameCount,
+      timestamp: Date.now()
+    });
+    
+    gameState.keys[event.keyCode] = true;
+    
+    // Phase control keys
+    if (event.keyCode === 13 && gameState.gamePhase === GAME_PHASES.START) {
+      // ENTER - Start game
+      gameState.gamePhase = GAME_PHASES.PLAYING;
+      gameState.testFrameCount = 0;
+      logs.game_info.push({
+        game_status: GAME_PHASES.PLAYING,
+        data: {},
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+      });
+    }
+    
+    if (event.keyCode === 27) {
+      // ESC - Pause/Unpause
+      if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+        gameState.gamePhase = GAME_PHASES.PAUSED;
+        logs.game_info.push({
+          game_status: GAME_PHASES.PAUSED,
+          data: {},
+          framecount: gameState.frameCount,
+          timestamp: Date.now()
+        });
+      } else if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+        gameState.gamePhase = GAME_PHASES.PLAYING;
+        logs.game_info.push({
+          game_status: GAME_PHASES.PLAYING,
+          data: {},
+          framecount: gameState.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    }
+    
+    if (event.keyCode === 82) {
+      // R - Restart
+      if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN ||
+          gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE) {
+        initializeGame();
+        gameState.gamePhase = GAME_PHASES.START;
+        logs.game_info.push({
+          game_status: GAME_PHASES.START,
+          data: {},
+          framecount: gameState.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    }
+    
+    // System controls (toggle on press)
+    if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+      if (event.keyCode === 32 && !event.repeat) {
+        // SPACE - Landing gear
+        gameState.gearDeployed = !gameState.gearDeployed;
+      }
+      
+      if (event.keyCode === 16 && !event.repeat) {
+        // SHIFT - Flaps (cycle through settings)
+        gameState.flapSetting = (gameState.flapSetting + 1) % 5;
+      }
+      
+      if (event.keyCode === 90 && !event.repeat) {
+        // Z - Spoilers
+        gameState.spoilersDeployed = !gameState.spoilersDeployed;
+      }
+    }
+    
+    event.preventDefault();
+    return false;
+  });
+  
+  // Keyup handler
+  document.addEventListener('keyup', (event) => {
+    // Log input
+    logs.inputs.push({
+      input_type: "keyup",
+      data: { key: event.key, keyCode: event.keyCode },
+      framecount: gameState.frameCount,
+      timestamp: Date.now()
+    });
+    
+    gameState.keys[event.keyCode] = false;
+    
+    event.preventDefault();
+    return false;
+  });
+}
+
+function updateGame() {
+  // Update automation if in test mode
+  updateAutomation();
+  
+  // Handle player input
+  handleInput();
+  
+  // Update entities
+  gameState.entities.forEach(entity => {
+    if (entity.update) {
+      entity.update(gameState.deltaTime);
+    }
+  });
+  
+  // Update physics
+  if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+    updatePhysics(gameState.deltaTime);
+    checkCollisions();
+    checkBoundaries();
+  }
+  
+  // Update camera
+  updateCamera();
+  
+  // Update mission time
+  gameState.missionTime += gameState.deltaTime;
+  
+  // Random emergency generation
+  if (Math.random() < 0.0001 && gameState.activeEmergencies.length === 0) {
+    const emergency = EMERGENCY_TYPES[Math.floor(Math.random() * EMERGENCY_TYPES.length)];
+    gameState.activeEmergencies.push(emergency);
+    
+    // Apply emergency effect
+    if (emergency === "ENGINE_FAILURE") {
+      if (Math.random() < 0.5) {
+        gameState.engine1Running = false;
+      } else {
+        gameState.engine2Running = false;
+      }
+    }
+  }
+}
+
+function handleInput() {
+  if (!gameState.player || gameState.gamePhase !== GAME_PHASES.PLAYING) return;
+  
+  // Pitch control (W/S)
+  gameState.pitchInput = 0;
+  if (gameState.keys[87]) gameState.pitchInput -= 1; // W - pitch up
+  if (gameState.keys[83]) gameState.pitchInput += 1; // S - pitch down
+  
+  // Roll control (A/D)
+  gameState.rollInput = 0;
+  if (gameState.keys[65]) gameState.rollInput -= 1; // A - roll left
+  if (gameState.keys[68]) gameState.rollInput += 1; // D - roll right
+  
+  // Rudder control (Arrow Left/Right)
+  gameState.yawInput = 0;
+  if (gameState.keys[37]) gameState.yawInput -= 1; // Left arrow
+  if (gameState.keys[39]) gameState.yawInput += 1; // Right arrow
+  
+  // Throttle control (Arrow Up/Down)
+  if (gameState.keys[38]) {
+    gameState.throttle = Math.min(1, gameState.throttle + 0.01);
+  }
+  if (gameState.keys[40]) {
+    gameState.throttle = Math.max(0, gameState.throttle - 0.01);
+  }
+}
+
+function render() {
+  gameState.renderer.render(gameState.scene, gameState.camera);
+  renderUI();
+}
+
+// Main game loop
+let lastTime = performance.now();
+function gameLoop(currentTime) {
+  requestAnimationFrame(gameLoop);
+  
+  // Calculate delta time
+  gameState.deltaTime = (currentTime - lastTime) / 1000;
+  gameState.deltaTime = Math.min(gameState.deltaTime, 0.1); // Cap at 100ms
+  lastTime = currentTime;
+  gameState.frameCount++;
+  
+  // Update and render based on game phase
+  switch (gameState.gamePhase) {
+    case GAME_PHASES.START:
+      render();
+      renderStartScreen();
+      break;
+      
+    case GAME_PHASES.PLAYING:
+      updateGame();
+      render();
+      break;
+      
+    case GAME_PHASES.PAUSED:
+      render();
+      renderPausedOverlay();
+      break;
+      
+    case GAME_PHASES.GAME_OVER_WIN:
+    case GAME_PHASES.GAME_OVER_LOSE:
+      render();
+      renderGameOver();
+      break;
+  }
+}
+
+// Control mode switching
+window.setControlMode = function(mode) {
+  if (CONTROL_MODES[mode]) {
+    gameState.controlMode = mode;
+    gameState.testFrameCount = 0;
+    gameState.testPhase = 0;
+    
+    // Update button states
+    Object.keys(CONTROL_MODES).forEach(m => {
+      const btn = document.getElementById(`${m === 'HUMAN' ? 'humanModeBtn' : m.toLowerCase() + '_ModeBtn'}`);
+      if (btn) {
+        if (m === mode) {
+          btn.classList.add('active');
+        } else {
+          btn.classList.remove('active');
+        }
+      }
+    });
+    
+    // Reset game when changing modes
+    if (gameState.gamePhase !== GAME_PHASES.START) {
+      initializeGame();
+      gameState.gamePhase = GAME_PHASES.START;
+    }
+  }
+};
+
+// Start game
+init();
+gameLoop(performance.now());
+</code>
+
+<code filename="entities.js">
+// entities.js - Game entity classes
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, RUNWAY_LENGTH, RUNWAY_WIDTH } from './globals.js';
+
+export class Aircraft {
+  constructor(x, y, z) {
+    // Create aircraft mesh
+    const geometry = new THREE.BoxGeometry(3, 1, 8);
+    const material = new THREE.MeshStandardMaterial({ 
+      color: 0xccccdd,
+      roughness: 0.5,
+      metalness: 0.3
+    });
+    this.mesh = new THREE.Mesh(geometry, material);
+    this.mesh.position.set(x, y, z);
+    this.mesh.castShadow = true;
+    this.mesh.receiveShadow = true;
+    
+    // Add wings
+    const wingGeometry = new THREE.BoxGeometry(12, 0.3, 2);
+    const wingMaterial = new THREE.MeshStandardMaterial({ 
+      color: 0xaaaacc,
+      roughness: 0.5,
+      metalness: 0.3
+    });
+    const wings = new THREE.Mesh(wingGeometry, wingMaterial);
+    wings.position.set(0, -0.2, 0);
+    wings.castShadow = true;
+    this.mesh.add(wings);
+    
+    // Add tail
+    const tailGeometry = new THREE.BoxGeometry(2, 2, 0.3);
+    const tail = new THREE.Mesh(tailGeometry, wingMaterial);
+    tail.position.set(0, 0.5, -3.5);
+    tail.castShadow = true;
+    this.mesh.add(tail);
+    
+    // Add vertical stabilizer
+    const vstabGeometry = new THREE.BoxGeometry(0.3, 1.5, 1.5);
+    const vstab = new THREE.Mesh(vstabGeometry, wingMaterial);
+    vstab.position.set(0, 1, -3.5);
+    vstab.castShadow = true;
+    this.mesh.add(vstab);
+    
+    // Add cockpit
+    const cockpitGeometry = new THREE.SphereGeometry(0.6, 8, 8);
+    const cockpitMaterial = new THREE.MeshStandardMaterial({ 
+      color: 0x333366,
+      roughness: 0.2,
+      metalness: 0.5,
+      transparent: true,
+      opacity: 0.7
+    });
+    const cockpit = new THREE.Mesh(cockpitGeometry, cockpitMaterial);
+    cockpit.position.set(0, 0.5, 2.5);
+    cockpit.scale.set(1, 0.8, 1.2);
+    cockpit.castShadow = true;
+    this.mesh.add(cockpit);
+    
+    gameState.scene.add(this.mesh);
+    
+    this.lastLoggedPos = new THREE.Vector3().copy(this.mesh.position);
+    this.onGround = false;
+  }
+  
+  update(deltaTime) {
+    // Log position if changed significantly
+    const distance = this.mesh.position.distanceTo(this.lastLoggedPos);
+    if (distance > 5) {
+      const screenPos = this.mesh.position.clone().project(gameState.camera);
+      window.logs.player_info.push({
+        screen_x: (screenPos.x + 1) * 300,
+        screen_y: (1 - screenPos.y) * 200,
+        game_x: this.mesh.position.x,
+        game_y: this.mesh.position.y,
+        game_z: this.mesh.position.z,
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+      });
+      this.lastLoggedPos.copy(this.mesh.position);
+    }
+    
+    // Update game state from aircraft
+    gameState.altitude = Math.max(0, this.mesh.position.y);
+    
+    // Calculate speed from velocity
+    const speed = gameState.velocity.length();
+    gameState.speed = speed;
+    
+    // Convert to knots for display (1 m/s ≈ 1.944 knots)
+    const speedKnots = speed * 1.944;
+    
+    // Vertical speed in m/s, converted to fpm for display
+    gameState.verticalSpeed = gameState.velocity.y * 196.85; // m/s to fpm
+    
+    // Get pitch and roll from mesh rotation
+    const euler = new THREE.Euler().setFromQuaternion(this.mesh.quaternion);
+    gameState.pitch = THREE.MathUtils.radToDeg(euler.x);
+    gameState.roll = THREE.MathUtils.radToDeg(euler.z);
+    
+    // Calculate heading from forward direction
+    const forward = new THREE.Vector3(0, 0, 1);
+    forward.applyQuaternion(this.mesh.quaternion);
+    gameState.heading = (Math.atan2(forward.x, forward.z) * 180 / Math.PI + 360) % 360;
+    
+    // Fuel consumption
+    if (gameState.engine1Running || gameState.engine2Running) {
+      const consumption = gameState.throttle * 0.02 * deltaTime;
+      gameState.fuel = Math.max(0, gameState.fuel - consumption);
+      
+      if (gameState.fuel <= 0) {
+        gameState.engine1Running = false;
+        gameState.engine2Running = false;
+      }
+    }
+  }
+}
+
+export class Runway {
+  constructor() {
+    // Create runway surface
+    const geometry = new THREE.BoxGeometry(RUNWAY_WIDTH, 0.1, RUNWAY_LENGTH);
+    const material = new THREE.MeshStandardMaterial({ 
+      color: 0x3a3a44,
+      roughness: 0.9,
+      metalness: 0.1
+    });
+    this.mesh = new THREE.Mesh(geometry, material);
+    this.mesh.position.set(0, 0, 0);
+    this.mesh.receiveShadow = true;
+    
+    gameState.scene.add(this.mesh);
+    
+    // Create centerline markings
+    const markingGeometry = new THREE.BoxGeometry(0.3, 0.15, 3);
+    const markingMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    
+    for (let i = 0; i < 15; i++) {
+      const marking = new THREE.Mesh(markingGeometry, markingMaterial);
+      marking.position.set(0, 0.1, -RUNWAY_LENGTH/2 + i * 7 + 3);
+      this.mesh.add(marking);
+    }
+    
+    // Create threshold markings
+    const thresholdGeometry = new THREE.BoxGeometry(RUNWAY_WIDTH - 2, 0.15, 0.5);
+    const threshold = new THREE.Mesh(thresholdGeometry, markingMaterial);
+    threshold.position.set(0, 0.1, RUNWAY_LENGTH/2 - 2);
+    this.mesh.add(threshold);
+    
+    // Create runway edge lights
+    const lightGeometry = new THREE.CylinderGeometry(0.2, 0.2, 0.5, 8);
+    const lightMaterial = new THREE.MeshStandardMaterial({ 
+      color: 0xffff00,
+      emissive: 0xffff00,
+      emissiveIntensity: 0.8
+    });
+    
+    for (let i = 0; i < 20; i++) {
+      const z = -RUNWAY_LENGTH/2 + i * 5;
+      
+      const leftLight = new THREE.Mesh(lightGeometry, lightMaterial);
+      leftLight.position.set(-RUNWAY_WIDTH/2 - 0.5, 0.3, z);
+      gameState.scene.add(leftLight);
+      
+      const rightLight = new THREE.Mesh(lightGeometry, lightMaterial);
+      rightLight.position.set(RUNWAY_WIDTH/2 + 0.5, 0.3, z);
+      gameState.scene.add(rightLight);
+    }
+  }
+  
+  update(deltaTime) {
+    // Runway is static, no update needed
+  }
+}
+
+export class Terrain {
+  constructor() {
+    // Create large ground plane
+    const geometry = new THREE.PlaneGeometry(1000, 1000, 50, 50);
+    
+    // Add some height variation
+    const positions = geometry.attributes.position;
+    for (let i = 0; i < positions.count; i++) {
+      const x = positions.getX(i);
+      const z = positions.getY(i);
+      const height = Math.sin(x * 0.02) * Math.cos(z * 0.02) * 2;
+      positions.setZ(i, height);
+    }
+    geometry.computeVertexNormals();
+    
+    const material = new THREE.MeshStandardMaterial({ 
+      color: 0x5a7a3a,
+      roughness: 0.9,
+      metalness: 0.0
+    });
+    
+    this.mesh = new THREE.Mesh(geometry, material);
+    this.mesh.rotation.x = -Math.PI / 2;
+    this.mesh.position.y = -1;
+    this.mesh.receiveShadow = true;
+    
+    gameState.scene.add(this.mesh);
+    
+    // Add some clouds
+    this.createClouds();
+  }
+  
+  createClouds() {
+    const cloudGeometry = new THREE.SphereGeometry(15, 8, 8);
+    const cloudMaterial = new THREE.MeshStandardMaterial({ 
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.7,
+      roughness: 1.0
+    });
+    
+    for (let i = 0; i < 20; i++) {
+      const cloud = new THREE.Mesh(cloudGeometry, cloudMaterial);
+      cloud.position.set(
+        (Math.random() - 0.5) * 500,
+        100 + Math.random() * 100,
+        (Math.random() - 0.5) * 500
+      );
+      cloud.scale.set(
+        1 + Math.random(),
+        0.5 + Math.random() * 0.5,
+        1 + Math.random()
+      );
+      gameState.scene.add(cloud);
+    }
+  }
+  
+  update(deltaTime) {
+    // Terrain is static
+  }
+}
+</code>
+
+<code filename="physics.js">
+// physics.js - Physics and collision handling
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { 
+  gameState, 
+  GAME_PHASES, 
+  MAX_LANDING_VERTICAL_SPEED,
+  AIRCRAFT_MASS,
+  STALL_SPEED 
+} from './globals.js';
+
+export function updatePhysics(deltaTime) {
+  if (!gameState.player) return;
+  
+  const aircraft = gameState.player;
+  
+  // Apply gravity
+  const gravityForce = gameState.gravity.clone().multiplyScalar(AIRCRAFT_MASS * deltaTime);
+  gameState.velocity.add(gravityForce.divideScalar(AIRCRAFT_MASS));
+  
+  // Apply aerodynamics
+  applyAerodynamics(deltaTime);
+  
+  // Update position
+  const deltaPos = gameState.velocity.clone().multiplyScalar(deltaTime);
+  aircraft.mesh.position.add(deltaPos);
+  
+  // Update rotation based on angular velocity
+  const deltaRot = gameState.angularVelocity.clone().multiplyScalar(deltaTime);
+  aircraft.mesh.rotateX(deltaRot.x);
+  aircraft.mesh.rotateY(deltaRot.y);
+  aircraft.mesh.rotateZ(deltaRot.z);
+  
+  // Apply damping
+  gameState.angularVelocity.multiplyScalar(0.95);
+}
+
+function applyAerodynamics(deltaTime) {
+  const aircraft = gameState.player;
+  const speed = gameState.velocity.length();
+  
+  if (speed < 0.1) return;
+  
+  // Get aircraft orientation
+  const forward = new THREE.Vector3(0, 0, 1);
+  forward.applyQuaternion(aircraft.mesh.quaternion);
+  
+  const up = new THREE.Vector3(0, 1, 0);
+  up.applyQuaternion(aircraft.mesh.quaternion);
+  
+  const right = new THREE.Vector3(1, 0, 0);
+  right.applyQuaternion(aircraft.mesh.quaternion);
+  
+  // Calculate angle of attack
+  const velocityDir = gameState.velocity.clone().normalize();
+  const angleOfAttack = Math.acos(forward.dot(velocityDir));
+  
+  // Lift force (perpendicular to velocity)
+  let liftCoef = Math.sin(angleOfAttack) * 2.5;
+  liftCoef += gameState.flapSetting * 0.3; // Flaps increase lift
+  
+  // Spoilers reduce lift
+  if (gameState.spoilersDeployed) {
+    liftCoef *= 0.4;
+  }
+  
+  const liftMagnitude = liftCoef * speed * speed * 0.1;
+  const liftDir = new THREE.Vector3().crossVectors(velocityDir, right).normalize();
+  const liftForce = liftDir.multiplyScalar(liftMagnitude * deltaTime);
+  
+  gameState.velocity.add(liftForce);
+  
+  // Thrust from engines
+  const engineCount = (gameState.engine1Running ? 1 : 0) + (gameState.engine2Running ? 1 : 0);
+  const thrustMagnitude = gameState.throttle * engineCount * 80 * deltaTime;
+  const thrustForce = forward.clone().multiplyScalar(thrustMagnitude);
+  
+  gameState.velocity.add(thrustForce);
+  
+  // Drag
+  const dragCoef = 0.1 + (gameState.spoilersDeployed ? 0.2 : 0) + (gameState.gearDeployed ? 0.1 : 0);
+  const dragMagnitude = dragCoef * speed * speed * deltaTime;
+  const dragForce = velocityDir.clone().multiplyScalar(-dragMagnitude);
+  
+  gameState.velocity.add(dragForce);
+  
+  // Control surface forces
+  const controlAuthority = Math.min(speed / 30, 1.0); // More authority at higher speeds
+  
+  // Pitch (elevator)
+  gameState.angularVelocity.x += gameState.pitchInput * 0.8 * controlAuthority * deltaTime;
+  
+  // Roll (ailerons)
+  gameState.angularVelocity.z -= gameState.rollInput * 1.2 * controlAuthority * deltaTime;
+  
+  // Yaw (rudder)
+  gameState.angularVelocity.y += gameState.yawInput * 0.6 * controlAuthority * deltaTime;
+  
+  // Stability augmentation (auto-leveling tendency)
+  const euler = new THREE.Euler().setFromQuaternion(aircraft.mesh.quaternion);
+  gameState.angularVelocity.x -= euler.x * 0.5 * deltaTime;
+  gameState.angularVelocity.z -= euler.z * 0.5 * deltaTime;
+}
+
+export function checkCollisions() {
+  if (!gameState.player || !gameState.runway) return;
+  
+  const aircraft = gameState.player;
+  const runway = gameState.runway;
+  
+  // Check if aircraft is near ground/runway
+  const groundY = 0.5; // Half of runway height
+  const aircraftBottom = aircraft.mesh.position.y - 0.5; // Half of aircraft height
+  
+  if (aircraftBottom <= groundY && !aircraft.onGround) {
+    // Touchdown!
+    aircraft.onGround = true;
+    
+    // Check if on runway
+    const onRunway = Math.abs(aircraft.mesh.position.x - runway.mesh.position.x) < 7.5 &&
+                     Math.abs(aircraft.mesh.position.z - runway.mesh.position.z) < 50;
+    
+    if (onRunway) {
+      handleRunwayLanding();
+    } else {
+      handleTerrainCrash();
+    }
+  }
+  
+  // If on ground, stop descent
+  if (aircraft.mesh.position.y < groundY) {
+    aircraft.mesh.position.y = groundY + 0.5;
+    gameState.velocity.y = Math.max(0, gameState.velocity.y);
+  }
+}
+
+function handleRunwayLanding() {
+  if (gameState.gamePhase !== GAME_PHASES.PLAYING) return;
+  
+  // Record touchdown metrics
+  gameState.touchdownSpeed = gameState.speed * 1.944; // Convert to knots
+  gameState.touchdownVerticalSpeed = Math.abs(gameState.velocity.y * 196.85); // Convert to fpm
+  gameState.touchdownAlignment = Math.abs(gameState.player.mesh.position.x);
+  
+  // Check landing criteria
+  const safeVerticalSpeed = Math.abs(gameState.velocity.y) < MAX_LANDING_VERTICAL_SPEED;
+  const gearDown = gameState.gearDeployed;
+  const reasonableSpeed = gameState.speed > 30 && gameState.speed < 90;
+  const goodAlignment = gameState.touchdownAlignment < 5;
+  const levelPitch = Math.abs(gameState.pitch) < 15;
+  const levelRoll = Math.abs(gameState.roll) < 20;
+  
+  if (safeVerticalSpeed && gearDown && reasonableSpeed && goodAlignment && levelPitch && levelRoll) {
+    // Successful landing
+    gameState.landedSafely = true;
+    gameState.score += 1000;
+    gameState.score += Math.floor((MAX_LANDING_VERTICAL_SPEED - Math.abs(gameState.velocity.y)) * 500);
+    gameState.score -= Math.floor(gameState.touchdownAlignment * 20);
+    gameState.gamePhase = GAME_PHASES.GAME_OVER_WIN;
+    
+    window.logs.game_info.push({
+      game_status: GAME_PHASES.GAME_OVER_WIN,
+      data: { score: gameState.score },
+      framecount: gameState.frameCount,
+      timestamp: Date.now()
+    });
+  } else {
+    // Crash landing
+    const reasons = [];
+    if (!gearDown) reasons.push("Gear not deployed");
+    if (!safeVerticalSpeed) reasons.push("Vertical speed too high");
+    if (!reasonableSpeed) reasons.push("Approach speed incorrect");
+    if (!goodAlignment) reasons.push("Poor runway alignment");
+    if (!levelPitch) reasons.push("Excessive pitch angle");
+    if (!levelRoll) reasons.push("Excessive roll angle");
+    
+    gameState.crashReason = reasons.join(", ");
+    gameState.gamePhase = GAME_PHASES.GAME_OVER_LOSE;
+    
+    window.logs.game_info.push({
+      game_status: GAME_PHASES.GAME_OVER_LOSE,
+      data: { reason: gameState.crashReason },
+      framecount: gameState.frameCount,
+      timestamp: Date.now()
+    });
+  }
+}
+
+function handleTerrainCrash() {
+  if (gameState.gamePhase !== GAME_PHASES.PLAYING) return;
+  
+  gameState.crashReason = "Crashed into terrain - missed runway";
+  gameState.touchdownSpeed = gameState.speed * 1.944;
+  gameState.touchdownVerticalSpeed = Math.abs(gameState.velocity.y * 196.85);
+  gameState.gamePhase = GAME_PHASES.GAME_OVER_LOSE;
+  
+  window.logs.game_info.push({
+    game_status: GAME_PHASES.GAME_OVER_LOSE,
+    data: { reason: gameState.crashReason },
+    framecount: gameState.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+export function checkBoundaries() {
+  if (gameState.gamePhase !== GAME_PHASES.PLAYING) return;
+  
+  const aircraft = gameState.player;
+  if (!aircraft) return;
+  
+  // Check if aircraft went too far out of bounds
+  if (Math.abs(aircraft.mesh.position.x) > 500 ||
+      Math.abs(aircraft.mesh.position.z) > 500 ||
+      aircraft.mesh.position.y < -10) {
+    gameState.crashReason = "Aircraft left operational area";
+    gameState.gamePhase = GAME_PHASES.GAME_OVER_LOSE;
+    
+    window.logs.game_info.push({
+      game_status: GAME_PHASES.GAME_OVER_LOSE,
+      data: { reason: gameState.crashReason },
+      framecount: gameState.frameCount,
+      timestamp: Date.now()
+    });
+  }
+  
+  // Check for stall
+  if (gameState.speed < STALL_SPEED && gameState.altitude > 10) {
+    gameState.crashReason = "Aircraft stalled";
+    gameState.gamePhase = GAME_PHASES.GAME_OVER_LOSE;
+    
+    window.logs.game_info.push({
+      game_status: GAME_PHASES.GAME_OVER_LOSE,
+      data: { reason: gameState.crashReason },
+      framecount: gameState.frameCount,
+      timestamp: Date.now()
+    });
+  }
+}
+</code>
+
+<code filename="camera.js">
+// camera.js - Camera setup and control
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export function setupCamera() {
+  gameState.camera = new THREE.PerspectiveCamera(
+    60,
+    CANVAS_WIDTH / CANVAS_HEIGHT,
+    0.1,
+    1000
+  );
+  
+  gameState.camera.position.set(0, 5, 10);
+  gameState.camera.lookAt(0, 0, 0);
+}
+
+export function updateCamera() {
+  if (!gameState.player) return;
+  
+  const aircraft = gameState.player;
+  
+  // Third-person camera following aircraft
+  const targetPosition = new THREE.Vector3();
+  const cameraOffset = gameState.cameraOffset.clone();
+  
+  // Rotate offset by aircraft rotation
+  cameraOffset.applyQuaternion(aircraft.mesh.quaternion);
+  
+  // Calculate camera position
+  targetPosition.copy(aircraft.mesh.position).add(cameraOffset);
+  
+  // Smooth camera movement
+  gameState.camera.position.lerp(targetPosition, 0.1);
+  
+  // Look at aircraft position (slightly ahead)
+  const lookAtPos = aircraft.mesh.position.clone();
+  const forward = new THREE.Vector3(0, 0, 1);
+  forward.applyQuaternion(aircraft.mesh.quaternion);
+  lookAtPos.add(forward.multiplyScalar(2));
+  
+  gameState.camera.lookAt(lookAtPos);
+}
+</code>
+
+<code filename="lighting.js">
+// lighting.js - Lighting setup
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState } from './globals.js';
+
+export function setupLighting() {
+  // Ambient light
+  const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+  gameState.scene.add(ambientLight);
+  gameState.ambientLight = ambientLight;
+  gameState.lights.push(ambientLight);
+  
+  // Directional light (sun)
+  const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+  directionalLight.position.set(50, 100, 50);
+  directionalLight.castShadow = true;
+  
+  // Configure shadow map
+  directionalLight.shadow.mapSize.width = 2048;
+  directionalLight.shadow.mapSize.height = 2048;
+  directionalLight.shadow.camera.near = 0.5;
+  directionalLight.shadow.camera.far = 500;
+  directionalLight.shadow.camera.left = -100;
+  directionalLight.shadow.camera.right = 100;
+  directionalLight.shadow.camera.top = 100;
+  directionalLight.shadow.camera.bottom = -100;
+  
+  gameState.scene.add(directionalLight);
+  gameState.directionalLight = directionalLight;
+  gameState.lights.push(directionalLight);
+  
+  // Hemisphere light for ambient sky/ground lighting
+  const hemisphereLight = new THREE.HemisphereLight(
+    0x87CEEB, // Sky color
+    0x5a7a3a, // Ground color
+    0.3
+  );
+  gameState.scene.add(hemisphereLight);
+  gameState.lights.push(hemisphereLight);
+}
+</code>
+
+<code filename="ui.js">
+// ui.js - UI rendering functions
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, GAME_PHASES } from './globals.js';
+
+let uiCanvas = null;
+let uiContext = null;
+
+function initUICanvas() {
+  if (uiCanvas) return;
+  
+  uiCanvas = document.createElement('canvas');
+  uiCanvas.width = CANVAS_WIDTH;
+  uiCanvas.height = CANVAS_HEIGHT;
+  uiCanvas.className = 'ui-overlay';
+  uiCanvas.style.position = 'absolute';
+  uiCanvas.style.top = '0';
+  uiCanvas.style.left = '0';
+  uiCanvas.style.pointerEvents = 'none';
+  uiCanvas.style.zIndex = '1000';
+  
+  if (gameState.gameContainer) {
+    gameState.gameContainer.appendChild(uiCanvas);
+  }
+  
+  uiContext = uiCanvas.getContext('2d');
+}
+
+export function renderUI() {
+  initUICanvas();
+  
+  // Clear canvas
+  uiContext.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  switch (gameState.gamePhase) {
+    case GAME_PHASES.START:
+      renderStartScreen();
+      break;
+    case GAME_PHASES.PLAYING:
+      renderHUD();
+      break;
+    case GAME_PHASES.PAUSED:
+      renderHUD();
+      renderPausedOverlay();
+      break;
+    case GAME_PHASES.GAME_OVER_WIN:
+    case GAME_PHASES.GAME_OVER_LOSE:
+      renderGameOver();
+      break;
+  }
+}
+
+export function renderStartScreen() {
+  const ctx = uiContext;
+  
+  // Semi-transparent background
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+  ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  // Title
+  ctx.fillStyle = 'white';
+  ctx.font = 'bold 28px Arial';
+  ctx.textAlign = 'center';
+  ctx.fillText('EXTREME LANDINGS PRO 3D', CANVAS_WIDTH / 2, 80);
+  
+  // Instructions
+  ctx.font = '14px Arial';
+  ctx.fillStyle = '#aaaaaa';
+  ctx.fillText('Navigate your aircraft to a safe landing', CANVAS_WIDTH / 2, 120);
+  ctx.fillText('Manage systems and respond to emergencies', CANVAS_WIDTH / 2, 140);
+  
+  // Controls
+  ctx.font = '11px Arial';
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#999999';
+  ctx.fillText('W/S: Pitch Control', 50, 180);
+  ctx.fillText('A/D: Roll Control', 50, 195);
+  ctx.fillText('←/→: Rudder', 50, 210);
+  ctx.fillText('↑/↓: Throttle', 50, 225);
+  
+  ctx.fillText('SPACE: Landing Gear', 320, 180);
+  ctx.fillText('SHIFT: Flaps', 320, 195);
+  ctx.fillText('Z: Spoilers', 320, 210);
+  
+  // Start prompt
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 16px Arial';
+  ctx.fillStyle = '#66ff66';
+  ctx.fillText('PRESS ENTER TO START', CANVAS_WIDTH / 2, 320);
+}
+
+export function renderHUD() {
+  const ctx = uiContext;
+  
+  // Background panel
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+  ctx.fillRect(0, 0, CANVAS_WIDTH, 70);
+  
+  // Primary Flight Display
+  ctx.font = '11px Arial';
+  ctx.textAlign = 'left';
+  
+  // Altitude
+  ctx.fillStyle = 'white';
+  ctx.fillText(`ALT: ${Math.floor(gameState.altitude)} m`, 10, 15);
+  
+  // Speed (convert to knots for display)
+  const speedKnots = Math.floor(gameState.speed * 1.944);
+  const speedColor = speedKnots < 100 ? '#ff6666' : 
+                     speedKnots > 180 ? '#ffcc66' : '#66ff66';
+  ctx.fillStyle = speedColor;
+  ctx.fillText(`SPD: ${speedKnots} kts`, 10, 28);
+  
+  // Vertical Speed
+  const vsColor = Math.abs(gameState.verticalSpeed) > 500 ? '#ff6666' : 'white';
+  ctx.fillStyle = vsColor;
+  const vsSign = gameState.verticalSpeed > 0 ? '+' : '';
+  ctx.fillText(`V/S: ${vsSign}${Math.floor(gameState.verticalSpeed)} fpm`, 10, 41);
+  
+  // Heading
+  ctx.fillStyle = 'white';
+  ctx.fillText(`HDG: ${Math.floor(gameState.heading)}°`, 10, 54);
+  
+  // Pitch and Roll
+  ctx.fillText(`PITCH: ${Math.floor(gameState.pitch)}°`, 10, 67);
+  
+  // Systems (center)
+  ctx.textAlign = 'center';
+  
+  // Throttle
+  ctx.fillStyle = 'white';
+  ctx.fillText(`THR: ${Math.floor(gameState.throttle * 100)}%`, CANVAS_WIDTH / 2, 15);
+  
+  // Gear
+  const gearColor = gameState.gearDeployed ? '#66ff66' : '#999999';
+  ctx.fillStyle = gearColor;
+  ctx.fillText(gameState.gearDeployed ? 'GEAR DOWN' : 'GEAR UP', CANVAS_WIDTH / 2, 28);
+  
+  // Flaps
+  ctx.fillStyle = 'white';
+  ctx.fillText(`FLAPS: ${gameState.flapSetting}`, CANVAS_WIDTH / 2, 41);
+  
+  // Spoilers
+  if (gameState.spoilersDeployed) {
+    ctx.fillStyle = '#ffcc66';
+    ctx.fillText('SPOILERS', CANVAS_WIDTH / 2, 54);
+  }
+  
+  // Fuel and engines (right)
+  ctx.textAlign = 'right';
+  
+  // Fuel
+  const fuelColor = gameState.fuel < 20 ? '#ff6666' : 
+                    gameState.fuel < 50 ? '#ffcc66' : '#66ff66';
+  ctx.fillStyle = fuelColor;
+  ctx.fillText(`FUEL: ${Math.floor(gameState.fuel)}%`, CANVAS_WIDTH - 10, 15);
+  
+  // Engines
+  ctx.fillStyle = gameState.engine1Running ? '#66ff66' : '#ff6666';
+  ctx.fillText(`ENG1: ${gameState.engine1Running ? 'ON' : 'OFF'}`, CANVAS_WIDTH - 10, 28);
+  
+  ctx.fillStyle = gameState.engine2Running ? '#66ff66' : '#ff6666';
+  ctx.fillText(`ENG2: ${gameState.engine2Running ? 'ON' : 'OFF'}`, CANVAS_WIDTH - 10, 41);
+  
+  // Score
+  ctx.fillStyle = 'white';
+  ctx.fillText(`SCORE: ${gameState.score}`, CANVAS_WIDTH - 10, 54);
+  
+  // Roll indicator (bottom center)
+  ctx.fillText(`ROLL: ${Math.floor(gameState.roll)}°`, CANVAS_WIDTH - 10, 67);
+  
+  // Emergency alerts
+  if (gameState.activeEmergencies.length > 0) {
+    ctx.fillStyle = 'rgba(255, 0, 0, 0.8)';
+    ctx.fillRect(0, 70, CANVAS_WIDTH, 25);
+    ctx.fillStyle = 'white';
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 12px Arial';
+    ctx.fillText(`⚠ ${gameState.activeEmergencies[0]} ⚠`, CANVAS_WIDTH / 2, 85);
+  }
+  
+  // Artificial Horizon (simplified)
+  renderArtificialHorizon();
+}
+
+function renderArtificialHorizon() {
+  const ctx = uiContext;
+  const centerX = CANVAS_WIDTH / 2;
+  const centerY = CANVAS_HEIGHT / 2 + 50;
+  const size = 40;
+  
+  ctx.save();
+  ctx.translate(centerX, centerY);
+  
+  // Rotate based on roll
+  ctx.rotate(-gameState.roll * Math.PI / 180);
+  
+  // Sky
+  ctx.fillStyle = 'rgba(100, 150, 255, 0.6)';
+  ctx.fillRect(-size, -size - gameState.pitch, size * 2, size + gameState.pitch);
+  
+  // Ground
+  ctx.fillStyle = 'rgba(139, 90, 43, 0.6)';
+  ctx.fillRect(-size, -gameState.pitch, size * 2, size + gameState.pitch);
+  
+  // Horizon line
+  ctx.strokeStyle = 'white';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(-size, -gameState.pitch);
+  ctx.lineTo(size, -gameState.pitch);
+  ctx.stroke();
+  
+  ctx.restore();
+  
+  // Aircraft reference (fixed)
+  ctx.strokeStyle = '#ffff00';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(centerX - 25, centerY);
+  ctx.lineTo(centerX - 10, centerY);
+  ctx.moveTo(centerX + 10, centerY);
+  ctx.lineTo(centerX + 25, centerY);
+  ctx.moveTo(centerX, centerY - 5);
+  ctx.lineTo(centerX, centerY + 5);
+  ctx.stroke();
+}
+
+export function renderPausedOverlay() {
+  const ctx = uiContext;
+  
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+  ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  ctx.fillStyle = 'white';
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 32px Arial';
+  ctx.fillText('PAUSED', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 10);
+  
+  ctx.font = '16px Arial';
+  ctx.fillText('Press ESC to resume', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 20);
+}
+
+export function renderGameOver() {
+  const ctx = uiContext;
+  
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+  ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  ctx.textAlign = 'center';
+  
+  if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN) {
+    // Success
+    ctx.fillStyle = '#66ff66';
+    ctx.font = 'bold 32px Arial';
+    ctx.fillText('LANDING SUCCESSFUL', CANVAS_WIDTH / 2, 80);
+    
+    ctx.fillStyle = 'white';
+    ctx.font = '14px Arial';
+    ctx.fillText(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, 130);
+    
+    ctx.font = '12px Arial';
+    ctx.fillStyle = '#cccccc';
+    ctx.fillText(`Touchdown Speed: ${Math.floor(gameState.touchdownSpeed)} kts`, CANVAS_WIDTH / 2, 160);
+    ctx.fillText(`Vertical Speed: ${Math.floor(gameState.touchdownVerticalSpeed)} fpm`, CANVAS_WIDTH / 2, 175);
+    ctx.fillText(`Centerline Deviation: ${Math.floor(gameState.touchdownAlignment)} m`, CANVAS_WIDTH / 2, 190);
+    
+    // Rating
+    let rating = 'EXCELLENT';
+    if (gameState.touchdownVerticalSpeed > 200 || gameState.touchdownAlignment > 3) {
+      rating = 'GOOD';
+    }
+    if (gameState.touchdownVerticalSpeed > 250 || gameState.touchdownAlignment > 4) {
+      rating = 'FAIR';
+    }
+    
+    ctx.fillStyle = '#ffff66';
+    ctx.font = 'bold 18px Arial';
+    ctx.fillText(`Landing Rating: ${rating}`, CANVAS_WIDTH / 2, 230);
+    
+  } else {
+    // Failure
+    ctx.fillStyle = '#ff6666';
+    ctx.font = 'bold 32px Arial';
+    ctx.fillText('CRASH', CANVAS_WIDTH / 2, 80);
+    
+    ctx.fillStyle = 'white';
+    ctx.font = '13px Arial';
+    const lines = wrapText(ctx, gameState.crashReason || 'Aircraft crashed', 500);
+    lines.forEach((line, i) => {
+      ctx.fillText(line, CANVAS_WIDTH / 2, 130 + i * 18);
+    });
+    
+    ctx.font = '12px Arial';
+    ctx.fillStyle = '#cccccc';
+    if (gameState.touchdownSpeed > 0) {
+      ctx.fillText(`Impact Speed: ${Math.floor(gameState.touchdownSpeed)} kts`, CANVAS_WIDTH / 2, 200);
+      ctx.fillText(`Vertical Speed: ${Math.floor(gameState.touchdownVerticalSpeed)} fpm`, CANVAS_WIDTH / 2, 215);
+    }
+  }
+  
+  ctx.fillStyle = '#66ffff';
+  ctx.font = 'bold 16px Arial';
+  ctx.fillText('PRESS R TO RESTART', CANVAS_WIDTH / 2, 320);
+}
+
+function wrapText(ctx, text, maxWidth) {
+  const words = text.split(' ');
+  const lines = [];
+  let currentLine = '';
+  
+  words.forEach(word => {
+    const testLine = currentLine + word + ' ';
+    const metrics = ctx.measureText(testLine);
+    if (metrics.width > maxWidth && currentLine !== '') {
+      lines.push(currentLine.trim());
+      currentLine = word + ' ';
+    } else {
+      currentLine = testLine;
+    }
+  });
+  
+  if (currentLine) {
+    lines.push(currentLine.trim());
+  }
+  
+  return lines;
+}
+</code>
+
+<code filename="automation.js">
+// automation.js - Automated testing functions
+import { gameState, CONTROL_MODES, GAME_PHASES } from './globals.js';
+
+export function updateAutomation() {
+  if (gameState.controlMode === CONTROL_MODES.HUMAN) return;
+  
+  gameState.testFrameCount++;
+  
+  switch (gameState.controlMode) {
+    case CONTROL_MODES.TEST_1:
+      runTest1();
+      break;
+    case CONTROL_MODES.TEST_2:
+      runTest2();
+      break;
+    case CONTROL_MODES.TEST_3:
+      runTest3();
+      break;
+    case CONTROL_MODES.TEST_4:
+      runTest4();
+      break;
+    case CONTROL_MODES.TEST_5:
+      runTest5();
+      break;
+    case CONTROL_MODES.TEST_6:
+      runTest6();
+      break;
+    case CONTROL_MODES.TEST_7:
+      runTest7();
+      break;
+  }
+}
+
+function simulateKeyPress(keyCode) {
+  gameState.keys[keyCode] = true;
+  setTimeout(() => {
+    gameState.keys[keyCode] = false;
+  }, 100);
+}
+
+// TEST_1: Basic flight controls test
+function runTest1() {
+  if (gameState.gamePhase === GAME_PHASES.START) {
+    if (gameState.testFrameCount === 60) {
+      gameState.keys[13] = true; // Enter
+      setTimeout(() => gameState.keys[13] = false, 100);
+    }
+    return;
+  }
+  
+  if (gameState.gamePhase !== GAME_PHASES.PLAYING) return;
+  
+  const frame = gameState.testFrameCount;
+  
+  // Reset all inputs first
+  Object.keys(gameState.keys).forEach(key => gameState.keys[key] = false);
+  
+  // Test pitch control
+  if (frame > 120 && frame < 180) {
+    gameState.keys[87] = true; // W - pitch up
+  } else if (frame > 180 && frame < 240) {
+    gameState.keys[83] = true; // S - pitch down
+  }
+  
+  // Test roll control
+  if (frame > 240 && frame < 300) {
+    gameState.keys[65] = true; // A - roll left
+  } else if (frame > 300 && frame < 360) {
+    gameState.keys[68] = true; // D - roll right
+  }
+  
+  // Test rudder
+  if (frame > 360 && frame < 420) {
+    gameState.keys[37] = true; // Left arrow
+  } else if (frame > 420 && frame < 480) {
+    gameState.keys[39] = true; // Right arrow
+  }
+  
+  // Test throttle
+  if (frame > 480 && frame < 540) {
+    gameState.keys[38] = true; // Up arrow
+  } else if (frame > 540 && frame < 600) {
+    gameState.keys[40] = true; // Down arrow
+  }
+}
+
+// TEST_2: Successful landing test
+function runTest2() {
+  if (gameState.gamePhase === GAME_PHASES.START) {
+    if (gameState.testFrameCount === 60) {
+      simulateKeyPress(13); // Enter
+    }
+    return;
+  }
+  
+  if (gameState.gamePhase !== GAME_PHASES.PLAYING) return;
+  
+  const frame = gameState.testFrameCount;
+  
+  // Deploy gear early
+  if (frame === 120) {
+    simulateKeyPress(32); // Space
+  }
+  
+  // Deploy flaps
+  if (frame === 150 || frame === 180 || frame === 210) {
+    simulateKeyPress(16); // Shift
+  }
+  
+  // Guide toward runway
+  if (gameState.player) {
+    const aircraft = gameState.player;
+    
+    // Align with runway
+    if (Math.abs(aircraft.mesh.position.x) > 2) {
+      if (aircraft.mesh.position.x > 0) {
+        gameState.keys[65] = true; // Roll left
+      } else {
+        gameState.keys[68] = true; // Roll right
+      }
+    }
+    
+    // Descend gradually
+    if (gameState.altitude > 30) {
+      gameState.keys[83] = true; // Pitch down
+    } else if (gameState.altitude < 10) {
+      gameState.keys[87] = true; // Pitch up to flare
+    }
+    
+    // Manage throttle
+    const speedKnots = gameState.speed * 1.944;
+    if (speedKnots > 150) {
+      gameState.keys[40] = true; // Reduce throttle
+    } else if (speedKnots < 130) {
+      gameState.keys[38] = true; // Increase throttle
+    }
+  }
+}
+
+// TEST_3: Emergency scenarios test
+function runTest3() {
+  if (gameState.gamePhase === GAME_PHASES.START) {
+    if (gameState.testFrameCount === 60) {
+      simulateKeyPress(13);
+    }
+    return;
+  }
+  
+  if (gameState.gamePhase !== GAME_PHASES.PLAYING) return;
+  
+  const frame = gameState.testFrameCount;
+  
+  // Trigger emergency
+  if (frame === 200) {
+    gameState.engine1Running = false;
+    gameState.activeEmergencies.push("ENGINE_FAILURE");
+  }
+  
+  // Compensate with remaining engine
+  if (frame > 200) {
+    gameState.throttle = 0.9;
+  }
+}
+
+// TEST_4: Fuel management test
+function runTest4() {
+  if (gameState.gamePhase === GAME_PHASES.START) {
+    if (gameState.testFrameCount === 60) {
+      simulateKeyPress(13);
+    }
+    return;
+  }
+  
+  if (gameState.gamePhase !== GAME_PHASES.PLAYING) return;
+  
+  // Run at high throttle to burn fuel
+  if (gameState.testFrameCount < 300) {
+    gameState.keys[38] = true; // Full throttle
+  }
+}
+
+// TEST_5: Crash detection test
+function runTest5() {
+  if (gameState.gamePhase === GAME_PHASES.START) {
+    if (gameState.testFrameCount === 60) {
+      simulateKeyPress(13);
+    }
+    return;
+  }
+  
+  if (gameState.gamePhase !== GAME_PHASES.PLAYING) return;
+  
+  // Intentionally crash by diving
+  if (gameState.testFrameCount > 120) {
+    gameState.keys[83] = true; // Pitch down hard
+    gameState.keys[38] = true; // Full throttle
+  }
+}
+
+// TEST_6: Instrument display test
+function runTest6() {
+  if (gameState.gamePhase === GAME_PHASES.START) {
+    if (gameState.testFrameCount === 60) {
+      simulateKeyPress(13);
+    }
+    return;
+  }
+  
+  if (gameState.gamePhase !== GAME_PHASES.PLAYING) return;
+  
+  const frame = gameState.testFrameCount;
+  
+  // Perform various maneuvers
+  if (frame > 120 && frame < 240) {
+    gameState.keys[87] = true; // Pitch up
+  } else if (frame > 240 && frame < 360) {
+    gameState.keys[38] = true; // Throttle up
+  } else if (frame > 360 && frame < 480) {
+    gameState.keys[68] = true; // Roll
+  }
+}
+
+// TEST_7: Pause and restart test
+function runTest7() {
+  if (gameState.gamePhase === GAME_PHASES.START) {
+    if (gameState.testFrameCount === 60) {
+      simulateKeyPress(13);
+    }
+    return;
+  }
+  
+  if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+    if (gameState.testFrameCount === 200) {
+      simulateKeyPress(27); // Pause
+    }
+  }
+  
+  if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+    if (gameState.testFrameCount === 300) {
+      simulateKeyPress(27); // Unpause
+    }
+  }
+  
+  // Crash intentionally
+  if (gameState.gamePhase === GAME_PHASES.PLAYING && gameState.testFrameCount > 400) {
+    gameState.keys[83] = true; // Dive
+    gameState.keys[38] = true; // Full throttle
+  }
+  
+  if (gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE) {
+    if (gameState.testFrameCount > 500) {
+      simulateKeyPress(82); // Restart
+    }
+  }
+}
+</code>

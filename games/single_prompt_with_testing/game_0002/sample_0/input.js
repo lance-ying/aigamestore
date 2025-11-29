@@ -4,6 +4,7 @@ import {
   PHASE_START, PHASE_PLAYING, PHASE_PAUSED,
   PHASE_GAME_OVER_WIN, PHASE_GAME_OVER_LOSE
 } from './globals.js';
+import { applyBoon } from './boons.js';
 
 export function handleKeyPress(p, gameState) {
   const key = p.key;
@@ -94,15 +95,15 @@ export function handleGameInput(p, gameState) {
     const mag = Math.sqrt(dx * dx + dy * dy);
     dx /= mag;
     dy /= mag;
-    player.move(dx, dy);
+    player.move(dx, dy, gameState);
   } else {
-    player.move(0, 0);
+    player.move(0, 0, gameState);
   }
   
   // Apply actions
   if (action) {
     if (action.type === 'dash' || action.space) {
-      player.dash();
+      player.dash(gameState);
     }
     if (action.type === 'attack' || action.z) {
       const attacked = player.attack(gameState);
@@ -192,7 +193,6 @@ function selectBoon(gameState) {
   const choice = gameState.boonChoice || 0;
   const selectedBoon = boons[choice];
   
-  const { applyBoon } = require('./boons.js');
   applyBoon(selectedBoon, gameState);
   
   gameState.selectingBoon = false;

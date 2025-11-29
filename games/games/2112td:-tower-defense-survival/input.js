@@ -1,5 +1,7 @@
-import { gameState, TOWER_TYPES, GRID_SIZE } from './globals.js';
+import { gameState, TOWER_TYPES, GRID_SIZE, MAPS } from './globals.js';
 import { Tower } from './entities.js';
+import { startWave, canStartWave } from './waveManager.js';
+import { generatePath, generateValidTowerPositions } from './pathGeneration.js';
 
 export function handleKeyPressed(p, key, keyCode) {
   p.logs.inputs.push({
@@ -11,7 +13,7 @@ export function handleKeyPressed(p, key, keyCode) {
   
   if (gameState.gamePhase === "START") {
     if (keyCode === 13) {
-      startGame(p);
+      startMap(p, "EASY");
     }
   } else if (gameState.gamePhase === "PLAYING") {
     if (keyCode === 27) {
@@ -22,10 +24,19 @@ export function handleKeyPressed(p, key, keyCode) {
       handleZKey();
     } else if (keyCode === 37 || keyCode === 39) {
       handleArrowKeys(keyCode);
+    } else if (keyCode === 87) {
+      // W key to start wave
+      handleWaveStart(p);
     }
   } else if (gameState.gamePhase === "PAUSED") {
     if (keyCode === 27) {
       unpauseGame(p);
+    }
+  } else if (gameState.gamePhase === "MAP_COMPLETE") {
+    if (keyCode === 13) {
+      progressToNextMap(p);
+    } else if (keyCode === 82) {
+      restartGame(p);
     }
   } else if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") {
     if (keyCode === 82) {
@@ -34,13 +45,58 @@ export function handleKeyPressed(p, key, keyCode) {
   }
 }
 
-function startGame(p) {
+function progressToNextMap(p) {
+  if (gameState.currentMap === "EASY") {
+    startMap(p, "MEDIUM");
+  } else if (gameState.currentMap === "MEDIUM") {
+    startMap(p, "HARD");
+  } else if (gameState.currentMap === "HARD") {
+    gameState.gamePhase = "GAME_OVER_WIN";
+    p.logs.game_info.push({
+      data: { phase: "GAME_OVER_WIN" },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+}
+
+function startMap(p, mapKey) {
+  const mapData = MAPS[mapKey];
+  
+  gameState.currentMap = mapKey;
+  gameState.path = generatePath(mapKey);
+  gameState.validTowerPositions = generateValidTowerPositions(gameState.path);
+  
   gameState.gamePhase = "PLAYING";
+  gameState.towers = [];
+  gameState.enemies = [];
+  gameState.projectiles = [];
+  gameState.entities = [];
+  gameState.money = mapData.startMoney;
+  gameState.wave = 0;
+  gameState.waveActive = false;
+  gameState.commandCenterHealth = 100;
+  gameState.selectedTowerType = null;
+  gameState.placementMode = false;
+  gameState.selectedTower = null;
+  gameState.enemiesReachedGoal = 0;
+  
   p.logs.game_info.push({
-    data: { phase: "PLAYING" },
+    data: { phase: "PLAYING", map: gameState.currentMap },
     framecount: p.frameCount,
     timestamp: Date.now()
   });
+}
+
+function handleWaveStart(p) {
+  if (canStartWave()) {
+    startWave();
+    p.logs.game_info.push({
+      data: { action: "START_WAVE", wave: gameState.wave },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
 }
 
 function pauseGame(p) {
@@ -63,19 +119,7 @@ function unpauseGame(p) {
 
 function restartGame(p) {
   gameState.gamePhase = "START";
-  gameState.towers = [];
-  gameState.enemies = [];
-  gameState.projectiles = [];
-  gameState.entities = [];
   gameState.score = 0;
-  gameState.money = 200;
-  gameState.wave = 0;
-  gameState.waveActive = false;
-  gameState.commandCenterHealth = 100;
-  gameState.selectedTowerType = null;
-  gameState.placementMode = false;
-  gameState.selectedTower = null;
-  gameState.enemiesReachedGoal = 0;
   
   p.logs.game_info.push({
     data: { phase: "START" },

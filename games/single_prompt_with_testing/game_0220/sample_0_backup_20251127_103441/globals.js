@@ -1,0 +1,132 @@
+// globals.js - Global constants, game state, and utility functions
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+// Game state object that tracks all game data
+export const gameState = {
+  player: null,           // The creature (player)
+  entities: [],           // All game entities
+  humans: [],             // Human NPCs
+  particles: [],          // Particle effects
+  tentacles: [],          // Active tentacles
+  walls: [],              // Wall collision geometry
+  
+  score: 0,               // Humans consumed
+  gamePhase: "START",     // "START", "PLAYING", "PAUSED", "GAME_OVER_WIN", "GAME_OVER_LOSE"
+  controlMode: "HUMAN",   // "HUMAN", "TEST_1", "TEST_2", etc.
+  
+  // Physics
+  gravity: 0,             // No gravity - top-down view
+  friction: 0.85,
+  
+  // Game-specific state
+  biomass: 1,             // Current creature size (1-3 scale)
+  totalHumans: 15,        // Total humans to consume
+  humansConsumed: 0,      // Humans consumed count
+  evolutionStage: "SMALL", // "SMALL", "MEDIUM", "LARGE"
+  
+  // Abilities
+  canUseTentacles: false,
+  canUseBloodTrail: false,
+  bloodTrailActive: false,
+  bloodTrailTimer: 0,
+  bloodTrailCooldown: 0,
+  
+  // Camera
+  cameraX: 0,
+  cameraY: 0,
+  
+  // Timing
+  frameCount: 0,
+  lastFrameTime: 0,
+  deltaTime: 0,
+  
+  // Level
+  levelWidth: 1200,
+  levelHeight: 800,
+  
+  // UI
+  shakeAmount: 0,
+  flashAmount: 0
+};
+
+// Key codes
+export const KEY_LEFT = 37;
+export const KEY_UP = 38;
+export const KEY_RIGHT = 39;
+export const KEY_DOWN = 40;
+export const KEY_SPACE = 32;
+export const KEY_SHIFT = 16;
+export const KEY_Z = 90;
+export const KEY_ENTER = 13;
+export const KEY_ESC = 27;
+export const KEY_R = 82;
+
+// Color palette
+export const COLORS = {
+  background: [10, 5, 15],
+  wall: [30, 25, 35],
+  wallHighlight: [45, 40, 50],
+  creature: [120, 20, 30],
+  creatureDark: [80, 10, 20],
+  blood: [180, 0, 20],
+  human: [220, 200, 180],
+  humanClothes: [40, 60, 90],
+  alert: [255, 200, 0],
+  tentacle: [140, 30, 40],
+  text: [255, 255, 255],
+  ui: [200, 200, 200]
+};
+
+// Expose gameState getter
+export function getGameState() {
+  return gameState;
+}
+
+// Expose globally
+if (typeof window !== 'undefined') {
+  window.getGameState = getGameState;
+}
+
+// Helper functions
+export function distance(x1, y1, x2, y2) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+export function angleBetween(x1, y1, x2, y2) {
+  return Math.atan2(y2 - y1, x2 - x1);
+}
+
+export function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+export function lerp(start, end, amt) {
+  return start + (end - start) * amt;
+}
+
+// Reset game state
+export function resetGame() {
+  gameState.player = null;
+  gameState.entities = [];
+  gameState.humans = [];
+  gameState.particles = [];
+  gameState.tentacles = [];
+  gameState.score = 0;
+  gameState.biomass = 1;
+  gameState.humansConsumed = 0;
+  gameState.evolutionStage = "SMALL";
+  gameState.canUseTentacles = false;
+  gameState.canUseBloodTrail = false;
+  gameState.bloodTrailActive = false;
+  gameState.bloodTrailTimer = 0;
+  gameState.bloodTrailCooldown = 0;
+  gameState.cameraX = 0;
+  gameState.cameraY = 0;
+  gameState.shakeAmount = 0;
+  gameState.flashAmount = 0;
+  gameState.frameCount = 0;
+}

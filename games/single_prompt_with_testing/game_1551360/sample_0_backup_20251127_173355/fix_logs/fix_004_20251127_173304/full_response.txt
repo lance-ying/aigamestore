@@ -1,0 +1,484 @@
+<analysis>
+- Issue identified: The vehicle rotation logic requires `currentSpeed > 0.1` to apply rotation, which prevents the car from turning when stationary. However, the user reports being able to rotate, which suggests `angularVelocity` is accumulating but not being applied or reduced properly. The core issue is that when the car is stationary, the angular velocity keeps building up without being reduced (since the reduction only happens inside the speed-check condition). This creates inconsistent behavior where rotation might suddenly happen if any speed is gained, but forward movement doesn't work as expected.
+
+- Files affected: entities.js
+
+- Changes needed: 
+  1. Allow rotation even when stationary by removing or modifying the speed check in the rotation logic
+  2. Always reduce angular velocity to prevent infinite accumulation
+  3. Use a minimum turn factor so the car can turn in place (at reduced rate)
+  4. Ensure the vehicle physics updates correctly every frame
+</analysis>
+
+<code filename="entities.js">
+// entities.js - Game entity classes
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, logPlayerInfo } from './globals.js';
+
+export class Vehicle {
+  constructor(x, y, z) {
+    // Create vehicle mesh (sports car style)
+    const group = new THREE.Group();
+    
+    // Car body
+    const bodyGeometry = new THREE.BoxGeometry(2, 0.8, 4);
+    const bodyMaterial = new THREE.MeshStandardMaterial({
+      color: 0xFF4500,
+      metalness: 0.7,
+      roughness: 0.3
+    });
+    const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
+    body.position.y = 0.6;
+    body.castShadow = true;
+    body.receiveShadow = true;
+    group.add(body);
+    
+    // Car cabin
+    const cabinGeometry = new THREE.BoxGeometry(1.6, 0.7, 2);
+    const cabinMaterial = new THREE.MeshStandardMaterial({
+      color: 0x1A1A1A,
+      metalness: 0.5,
+      roughness: 0.5
+    });
+    const cabin = new THREE.Mesh(cabinGeometry, cabinMaterial);
+    cabin.position.y = 1.2;
+    cabin.position.z = -0.3;
+    cabin.castShadow = true;
+    group.add(cabin);
+    
+    // Wheels
+    const wheelGeometry = new THREE.CylinderGeometry(0.4, 0.4, 0.3, 16);
+    const wheelMaterial = new THREE.MeshStandardMaterial({
+      color: 0x1A1A1A,
+      metalness: 0.3,
+      roughness: 0.7
+    });
+    
+    const wheelPositions = [
+      [-1.1, 0.4, 1.2],  // Front left
+      [1.1, 0.4, 1.2],   // Front right
+      [-1.1, 0.4, -1.2], // Back left
+      [1.1, 0.4, -1.2]   // Back right
+    ];
+    
+    this.wheels = [];
+    wheelPositions.forEach(pos => {
+      const wheel = new THREE.Mesh(wheelGeometry, wheelMaterial);
+      wheel.rotation.z = Math.PI / 2;
+      wheel.position.set(...pos);
+      wheel.castShadow = true;
+      group.add(wheel);
+      this.wheels.push(wheel);
+    });
+    
+    // Headlights
+    const lightGeometry = new THREE.SphereGeometry(0.15, 8, 8);
+    const lightMaterial = new THREE.MeshStandardMaterial({
+      color: 0xFFFFFF,
+      emissive: 0xFFFF00,
+      emissiveIntensity: 0.8
+    });
+    
+    const leftLight = new THREE.Mesh(lightGeometry, lightMaterial);
+    leftLight.position.set(-0.6, 0.5, 2.1);
+    group.add(leftLight);
+    
+    const rightLight = new THREE.Mesh(lightGeometry, lightMaterial);
+    rightLight.position.set(0.6, 0.5, 2.1);
+    group.add(rightLight);
+    
+    this.mesh = group;
+    this.mesh.position.set(x, y, z);
+    gameState.scene.add(this.mesh);
+    
+    // Physics properties
+    this.velocity = new THREE.Vector3(0, 0, 0);
+    this.acceleration = new THREE.Vector3(0, 0, 0);
+    this.angularVelocity = 0;
+    
+    // Vehicle properties
+    this.maxSpeed = 1.2;
+    this.accelerationPower = 0.03;
+    this.brakePower = 0.06;
+    this.turnSpeed = 0.04;
+    this.driftFactor = 0.95;
+    this.friction = 0.98;
+    this.boostMultiplier = 2.0;
+    
+    // State
+    this.currentSpeed = 0;
+    this.isAccelerating = false;
+    this.isBraking = false;
+    this.isDrifting = false;
+    this.isBoosting = false;
+    this.boostTimer = 0;
+    this.boostDuration = 2.0;
+    
+    // Collision
+    this.radius = 2.5;
+    this.lastPosition = new THREE.Vector3().copy(this.mesh.position);
+    
+    // Animation
+    this.wheelRotation = 0;
+  }
+  
+  update(deltaTime) {
+    // Store last position for collision response
+    this.lastPosition.copy(this.mesh.position);
+    
+    // Update boost timer
+    if (this.isBoosting) {
+      this.boostTimer -= deltaTime;
+      if (this.boostTimer <= 0) {
+        this.isBoosting = false;
+      }
+    }
+    
+    // Calculate forward direction
+    const forward = new THREE.Vector3(0, 0, -1);
+    forward.applyQuaternion(this.mesh.quaternion);
+    
+    // Apply acceleration
+    if (this.isAccelerating) {
+      const power = this.isBoosting ? 
+        this.accelerationPower * this.boostMultiplier : 
+        this.accelerationPower;
+      this.acceleration.add(forward.clone().multiplyScalar(power));
+    }
+    
+    // Apply braking
+    if (this.isBraking) {
+      this.velocity.multiplyScalar(1 - this.brakePower);
+    }
+    
+    // Update velocity
+    this.velocity.add(this.acceleration);
+    
+    // Apply friction
+    const frictionAmount = this.isDrifting ? this.driftFactor : this.friction;
+    this.velocity.multiplyScalar(frictionAmount);
+    
+    // Clamp speed
+    const maxSpeed = this.isBoosting ? this.maxSpeed * this.boostMultiplier : this.maxSpeed;
+    this.currentSpeed = this.velocity.length();
+    if (this.currentSpeed > maxSpeed) {
+      this.velocity.normalize().multiplyScalar(maxSpeed);
+      this.currentSpeed = maxSpeed;
+    }
+    
+    // Update position
+    this.mesh.position.add(this.velocity.clone().multiplyScalar(deltaTime * 60));
+    
+    // Update rotation based on angular velocity
+    // Allow rotation even when stationary (at reduced rate)
+    if (Math.abs(this.angularVelocity) > 0.001) {
+      // Use minimum turn factor of 0.3 when stationary, scale up with speed
+      const speedFactor = this.currentSpeed > 0.05 ? 
+        (this.currentSpeed / this.maxSpeed) : 0.3;
+      const turnAmount = this.angularVelocity * speedFactor;
+      this.mesh.rotateY(turnAmount);
+      
+      // Always reduce angular velocity to prevent accumulation
+      this.angularVelocity *= 0.9;
+    }
+    
+    // Keep vehicle grounded
+    this.mesh.position.y = 0.2;
+    
+    // Animate wheels
+    this.wheelRotation += this.currentSpeed * 0.5;
+    this.wheels.forEach(wheel => {
+      wheel.rotation.x = this.wheelRotation;
+    });
+    
+    // Reset acceleration
+    this.acceleration.set(0, 0, 0);
+    this.isAccelerating = false;
+    this.isBraking = false;
+    
+    // Log position periodically
+    if (gameState.frameCount % 30 === 0) {
+      this.logPosition();
+    }
+  }
+  
+  accelerate() {
+    this.isAccelerating = true;
+  }
+  
+  brake() {
+    this.isBraking = true;
+  }
+  
+  turnLeft() {
+    this.angularVelocity += this.turnSpeed;
+  }
+  
+  turnRight() {
+    this.angularVelocity -= this.turnSpeed;
+  }
+  
+  handbrake() {
+    this.isDrifting = true;
+    this.velocity.multiplyScalar(0.95);
+  }
+  
+  activateBoost() {
+    if (gameState.boostsAvailable > 0 && !this.isBoosting) {
+      this.isBoosting = true;
+      this.boostTimer = this.boostDuration;
+      gameState.boostsAvailable--;
+    }
+  }
+  
+  handleCollision(obstacle) {
+    // Move back to last position
+    this.mesh.position.copy(this.lastPosition);
+    
+    // Reduce velocity significantly
+    this.velocity.multiplyScalar(0.3);
+    
+    // Bounce back slightly
+    const direction = new THREE.Vector3()
+      .subVectors(this.mesh.position, obstacle.position)
+      .normalize();
+    this.velocity.add(direction.multiplyScalar(0.2));
+  }
+  
+  logPosition() {
+    const screenPos = this.mesh.position.clone().project(gameState.camera);
+    logPlayerInfo(
+      (screenPos.x + 1) * 300,
+      (1 - screenPos.y) * 200,
+      this.mesh.position.x,
+      this.mesh.position.y,
+      this.mesh.position.z,
+      {
+        speed: this.currentSpeed,
+        isBoosting: this.isBoosting,
+        tokensCollected: gameState.tokensCollected
+      }
+    );
+  }
+}
+
+export class Token {
+  constructor(x, y, z) {
+    // Create token mesh (glowing ring)
+    const geometry = new THREE.TorusGeometry(0.5, 0.15, 16, 32);
+    const material = new THREE.MeshStandardMaterial({
+      color: 0xFFD700,
+      emissive: 0xFFD700,
+      emissiveIntensity: 0.8,
+      metalness: 0.7,
+      roughness: 0.3
+    });
+    
+    this.mesh = new THREE.Mesh(geometry, material);
+    this.mesh.position.set(x, y, z);
+    this.mesh.castShadow = true;
+    
+    // Outer glow ring
+    const glowGeometry = new THREE.TorusGeometry(0.7, 0.1, 16, 32);
+    const glowMaterial = new THREE.MeshBasicMaterial({
+      color: 0xFFFF00,
+      transparent: true,
+      opacity: 0.3
+    });
+    this.glow = new THREE.Mesh(glowGeometry, glowMaterial);
+    this.glow.position.copy(this.mesh.position);
+    
+    gameState.scene.add(this.mesh);
+    gameState.scene.add(this.glow);
+    
+    this.value = 10;
+    this.rotationSpeed = 0.03;
+    this.bobSpeed = 0.002;
+    this.bobAmount = 0.3;
+    this.initialY = y;
+    this.collected = false;
+  }
+  
+  update(deltaTime) {
+    if (this.collected) return;
+    
+    // Rotate
+    this.mesh.rotation.y += this.rotationSpeed;
+    this.glow.rotation.y -= this.rotationSpeed * 0.5;
+    
+    // Bob up and down
+    const bobOffset = Math.sin(gameState.frameCount * this.bobSpeed) * this.bobAmount;
+    this.mesh.position.y = this.initialY + bobOffset;
+    this.glow.position.y = this.mesh.position.y;
+    
+    // Pulse glow
+    this.glow.scale.setScalar(1 + Math.sin(gameState.frameCount * 0.05) * 0.1);
+    
+    // Check collision with player
+    if (gameState.player) {
+      const distance = this.mesh.position.distanceTo(gameState.player.mesh.position);
+      if (distance < 2.0) {
+        this.collect();
+      }
+    }
+  }
+  
+  collect() {
+    this.collected = true;
+    gameState.score += this.value;
+    gameState.tokensCollected++;
+    
+    // Add boost charge every few tokens
+    if (gameState.tokensCollected % 3 === 0) {
+      gameState.boostsAvailable++;
+    }
+    
+    // Remove from scene
+    gameState.scene.remove(this.mesh);
+    gameState.scene.remove(this.glow);
+    
+    // Remove from tokens array
+    const index = gameState.tokens.indexOf(this);
+    if (index > -1) {
+      gameState.tokens.splice(index, 1);
+    }
+    
+    // Spawn new token
+    spawnToken();
+  }
+}
+
+export class Checkpoint {
+  constructor(x, y, z, index) {
+    // Create checkpoint arch
+    const group = new THREE.Group();
+    
+    // Left pillar
+    const pillarGeometry = new THREE.CylinderGeometry(0.5, 0.5, 8, 16);
+    const pillarMaterial = new THREE.MeshStandardMaterial({
+      color: 0x00FF00,
+      emissive: 0x00FF00,
+      emissiveIntensity: 0.5,
+      metalness: 0.5,
+      roughness: 0.5
+    });
+    
+    const leftPillar = new THREE.Mesh(pillarGeometry, pillarMaterial);
+    leftPillar.position.set(-3, 4, 0);
+    leftPillar.castShadow = true;
+    group.add(leftPillar);
+    
+    // Right pillar
+    const rightPillar = new THREE.Mesh(pillarGeometry, pillarMaterial);
+    rightPillar.position.set(3, 4, 0);
+    rightPillar.castShadow = true;
+    group.add(rightPillar);
+    
+    // Top bar
+    const barGeometry = new THREE.BoxGeometry(6.5, 0.5, 0.5);
+    const bar = new THREE.Mesh(barGeometry, pillarMaterial);
+    bar.position.y = 8;
+    bar.castShadow = true;
+    group.add(bar);
+    
+    // Checkpoint plane (collision detection)
+    const planeGeometry = new THREE.PlaneGeometry(6, 8);
+    const planeMaterial = new THREE.MeshBasicMaterial({
+      color: 0x00FF00,
+      transparent: true,
+      opacity: 0.2,
+      side: THREE.DoubleSide
+    });
+    this.plane = new THREE.Mesh(planeGeometry, planeMaterial);
+    this.plane.position.y = 4;
+    group.add(this.plane);
+    
+    this.mesh = group;
+    this.mesh.position.set(x, y, z);
+    gameState.scene.add(this.mesh);
+    
+    this.index = index;
+    this.collected = false;
+    this.value = 50;
+    this.pulsePhase = 0;
+  }
+  
+  update(deltaTime) {
+    if (this.collected) return;
+    
+    // Pulse effect
+    this.pulsePhase += 0.05;
+    const scale = 1 + Math.sin(this.pulsePhase) * 0.1;
+    this.mesh.scale.set(scale, 1, scale);
+    
+    // Update material emissive intensity
+    this.mesh.children.forEach(child => {
+      if (child.material && child.material.emissive) {
+        child.material.emissiveIntensity = 0.3 + Math.sin(this.pulsePhase) * 0.3;
+      }
+    });
+    
+    // Check collision with player
+    if (gameState.player) {
+      const distance = this.mesh.position.distanceTo(gameState.player.mesh.position);
+      if (distance < 4.0) {
+        this.collect();
+      }
+    }
+  }
+  
+  collect() {
+    this.collected = true;
+    gameState.score += this.value;
+    gameState.checkpointsCompleted++;
+    
+    // Remove from scene
+    gameState.scene.remove(this.mesh);
+    
+    // Spawn next checkpoint
+    spawnCheckpoint();
+  }
+}
+
+// Spawn functions
+export function spawnToken() {
+  const x = (Math.random() - 0.5) * 180;
+  const z = (Math.random() - 0.5) * 180;
+  const y = 2;
+  
+  const token = new Token(x, y, z);
+  gameState.tokens.push(token);
+  gameState.entities.push(token);
+}
+
+export function spawnCheckpoint() {
+  // Random position away from player
+  let x, z;
+  let attempts = 0;
+  
+  do {
+    x = (Math.random() - 0.5) * 160;
+    z = (Math.random() - 0.5) * 160;
+    attempts++;
+  } while (
+    gameState.player && 
+    Math.sqrt(x * x + z * z) < 30 && 
+    attempts < 10
+  );
+  
+  const checkpoint = new Checkpoint(x, 0, z, gameState.checkpointIndex++);
+  gameState.checkpoints.push(checkpoint);
+  gameState.entities.push(checkpoint);
+  gameState.activeCheckpoint = checkpoint;
+}
+
+export function initializeEntities() {
+  // Spawn initial tokens
+  for (let i = 0; i < 15; i++) {
+    spawnToken();
+  }
+  
+  // Spawn first checkpoint
+  spawnCheckpoint();
+}
+</code>

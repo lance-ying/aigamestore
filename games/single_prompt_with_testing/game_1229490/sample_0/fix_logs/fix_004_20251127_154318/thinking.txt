@@ -1,0 +1,90 @@
+Let me analyze the feedback:
+
+1. "I want WASD to respect the camera position" - This means when the player presses W, they should move forward in the direction the camera is facing. Currently looking at the code, in `entities.js`, the `move` method does try to apply camera rotation:
+
+```javascript
+move(direction) {
+  if (this.isDashing) return;
+  
+  // Convert direction to world space based on camera rotation
+  const forward = new THREE.Vector3(0, 0, -1);
+  const right = new THREE.Vector3(1, 0, 0);
+  
+  forward.applyAxisAngle(new THREE.Vector3(0, 1, 0), gameState.cameraAngleX);
+  right.applyAxisAngle(new THREE.Vector3(0, 1, 0), gameState.cameraAngleX);
+  
+  const movement = new THREE.Vector3();
+  if (direction.z !== 0) movement.add(forward.multiplyScalar(direction.z));
+  if (direction.x !== 0) movement.add(right.multiplyScalar(direction.x));
+  
+  movement.normalize().multiplyScalar(this.speed);
+  this.acceleration.add(movement);
+}
+```
+
+This looks correct, so the issue might be somewhere else.
+
+2. "somehow I end up moving very slow after like 3 seconds after the game has started" - This is a performance issue. Let me look at what could cause slowdown after 3 seconds.
+
+Looking at the `update` method in Player class:
+
+```javascript
+// Apply friction when on ground - reduced for better momentum
+if (this.onGround) {
+  this.velocity.x *= 0.88;
+  this.velocity.z *= 0.88;
+} else {
+  // Higher air resistance for floating effect
+  this.velocity.multiplyScalar(0.99);
+
+
+}
+```
+
+The velocity decay mechanism seems problematic. Multiplying all velocity components by 0.99 while in air causes rapid deceleration, especially for horizontal movement. This could explain the gradual slowdown experienced after a few seconds of gameplay.
+
+The position update calculation involves multiplying velocity by `deltaTime * 60`, which introduces frame-rate dependency. This means movement speed could vary across different hardware or performance conditions. The acceleration integration method also appears non-standard, potentially causing unintended velocity accumulation.
+
+The current implementation mixes time-based physics calculations with frame-rate scaling, which could lead to inconsistent player movement dynamics.
+
+Friction reduction happens per frame, causing exponential velocity decay that's too aggressive. Mathematically, applying a constant friction factor each frame results in dramatic velocity reduction over time, effectively dampening player movement unnaturally.
+
+A more consistent approach would involve calculating friction decay relative to actual elapsed time, ensuring smoother and more predictable motion characteristics.
+
+The acceleration mechanism compounds this issue - continuous input adds velocity while simultaneous per-frame friction progressively diminishes movement potential, creating an unintended deceleration effect that prevents sustained player momentum.
+
+The ground friction of 0.88 dramatically reduces velocity, making sustained movement challenging. By calculating the equilibrium velocity, I see the system prevents players from maintaining consistent speed despite continuous directional input.
+
+The frame-by-frame mechanics reveal a nuanced problem: acceleration gets added, immediately transformed into velocity, then partially negated by friction before being reset, resulting in a dampened motion model that feels unresponsive.
+
+The ground collision detection confirms players transition between grounded and airborne states, which further complicates the velocity calculations. This suggests the friction mechanism needs recalibration to create more natural player movement.
+
+The current velocity reduction strategy indiscriminately dampens all velocity components, causing significant horizontal speed decay over time. By applying a blanket 0.99 multiplier across x, y, and z axes, horizontal momentum diminishes dramatically - dropping to approximately 16% after just three seconds of aerial movement.
+
+The proposed solution involves selectively applying friction, targeting only horizontal velocity components to preserve more authentic player dynamics. I'll rotate the forward and right vectors based on the camera's horizontal angle, ensuring movement aligns with the camera's perspective. The method calculates movement direction by adding scaled forward and right vectors, then normalizes and applies the player's speed to the acceleration. This approach should provide camera-relative movement, allowing the player to move in the direction they're facing.
+
+The potential issue involves vector modification during movement calculation. When adding movement components, the `multiplyScalar()` method directly changes the original vector, which could lead to unexpected behavior if multiple directions are combined.
+
+However, since forward and right vectors are recreated each frame with `new THREE.Vector3()`, the in-place modifications won't persist across frames. The `applyAxisAngle()` method will rotate the vector without causing cumulative changes.
+
+The core issue seems to be the friction mechanism, which uniformly reduces velocity and causes unintended player slowdown. I'll focus on a targeted solution that preserves horizontal momentum while providing controlled deceleration when the player is grounded.
+
+The proposed fix involves selectively applying friction to horizontal velocity components and ensuring frame-rate independence through an exponential decay approach using `Math.pow()`. This strategy will maintain player movement dynamics while preventing abrupt speed reductions.
+
+By carefully adjusting friction coefficients and using delta time scaling, we can create a more natural and responsive movement system that respects the player's intended momentum.
+
+The core problem lies in frame-dependent physics calculations. When friction and gravity are applied per frame without time normalization, performance variations directly impact player movement dynamics. This introduces unpredictable acceleration and deceleration behaviors that can feel inconsistent across different hardware configurations.
+
+The gravity implementation suggests a subtle complexity where vertical acceleration might not be consistently applied, potentially causing unexpected vertical motion during player interactions.
+
+The air resistance mechanism appears particularly problematic. By uniformly reducing velocity across all axes, the code creates an unintended floating effect where vertical descent becomes increasingly slower, disrupting natural gravitational behavior.
+
+The unit calculations reveal subtle scaling complexities. Acceleration and velocity contributions are being modulated by frame-dependent time scaling, which could introduce potential inconsistencies in movement precision. The multiplication by 60 suggests a frame-rate normalization strategy, attempting to standardize movement across different refresh rates.
+
+The core issue centers on how deltaTime transforms small incremental changes into meaningful positional shifts, with each component potentially introducing subtle computational artifacts that might deviate from intended physical simulation.
+
+Friction mechanics demonstrate exponential velocity decay - ground friction rapidly diminishes velocity to near zero, while aerial friction allows more gradual deceleration. This creates distinct movement characteristics depending on player state.
+
+The ground collision detection uses a fixed vertical threshold of 0.8, which determines whether the player is considered grounded or airborne. This binary state transition could potentially create unexpected movement behaviors if not carefully managed.
+
+Potential optimization strategies include implementing frame-rate independent resistance calculations, selectively applying friction to horizontal components, and fine-tuning friction coefficients to achieve more natural player movement dynamics.

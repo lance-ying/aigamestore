@@ -1,0 +1,1277 @@
+<analysis>
+- Issue identified: Level 1 (room 0) has no clear win condition or visible exit. Players can technically transition rooms by going off the bottom of the screen, but there's no visual indicator of this, and no requirement to defeat enemies first. The game needs a clear exit mechanism that unlocks when room objectives are met.
+
+- Files affected: 
+  - world.js (add Exit class and exit spawning)
+  - game.js (check exit collision and handle progression)
+  - player.js (minor adjustment to prevent automatic room transitions)
+
+- Changes needed:
+  1. Create an Exit class that renders a visible portal/door
+  2. Add exits to each room that are locked by default
+  3. Exits unlock when all enemies in the room are defeated
+  4. Player must collide with unlocked exit to progress to next room
+  5. Display status text on exits (locked/unlocked)
+  6. Remove automatic room transition when going off-screen
+</analysis>
+
+<code filename="world.js">
+// world.js - World generation and management
+
+import { CANVAS_WIDTH, CANVAS_HEIGHT, gameState } from './globals.js';
+import { Enemy, Boss } from './enemies.js';
+
+export class Platform {
+  constructor(p, x, y, width, height, room) {
+    this.p = p;
+    this.x = x;
+    this.y = y;
+    this.width = width;
+    this.height = height;
+    this.room = room;
+  }
+
+  render() {
+    this.p.push();
+    this.p.fill(60, 60, 70);
+    this.p.noStroke();
+    this.p.rect(this.x, this.y, this.width, this.height);
+    
+    // Stone texture
+    this.p.stroke(50, 50, 60, 100);
+    for (let i = 0; i < 3; i++) {
+      this.p.line(this.x, this.y + 5 + i * 5, this.x + this.width, this.y + 5 + i * 5);
+    }
+    this.p.pop();
+  }
+}
+
+export class Exit {
+  constructor(p, x, y, room) {
+    this.p = p;
+    this.x = x;
+    this.y = y;
+    this.width = 50;
+    this.height = 60;
+    this.room = room;
+    this.locked = true;
+    this.animTimer = 0;
+  }
+
+  update() {
+    this.animTimer++;
+    
+    // Check if all enemies are defeated
+    if (this.locked && this.room === gameState.currentRoom) {
+      let allDefeated = true;
+      
+      // Check regular enemies
+      for (let enemy of gameState.enemies) {
+        if (enemy.room === this.room && !enemy.dead) {
+          allDefeated = false;
+          break;
+        }
+      }
+      
+      // Check bosses
+      if (allDefeated) {
+        for (let boss of gameState.bosses) {
+          if (boss.room === this.room && !boss.dead) {
+            allDefeated = false;
+            break;
+          }
+        }
+      }
+      
+      if (allDefeated) {
+        this.locked = false;
+      }
+    }
+  }
+
+  checkPlayerCollision(player) {
+    if (this.locked || this.room !== gameState.currentRoom) return false;
+    
+    const dist = this.p.dist(
+      this.x + this.width/2, this.y + this.height/2,
+      player.x + player.width/2, player.y + player.height/2
+    );
+    
+    return dist < 40;
+  }
+
+  render() {
+    this.p.push();
+    
+    const floatOffset = Math.sin(this.animTimer * 0.05) * 3;
+    const y = this.y + floatOffset;
+    
+    if (this.locked) {
+      // Locked exit - red/inactive
+      this.p.fill(100, 30, 30, 150);
+      this.p.stroke(150, 50, 50);
+      this.p.strokeWeight(3);
+      this.p.rect(this.x, y, this.width, this.height, 5);
+      
+      // Lock icon
+      this.p.fill(150, 50, 50);
+      this.p.noStroke();
+      this.p.rect(this.x + 15, y + 25, 20, 15, 2);
+      this.p.arc(this.x + 25, y + 25, 12, 12, this.p.PI, this.p.TWO_PI);
+      
+      // Status text
+      this.p.fill(200, 100, 100);
+      this.p.textAlign(this.p.CENTER, this.p.CENTER);
+      this.p.textSize(10);
+      this.p.text('LOCKED', this.x + this.width/2, y + 50);
+    } else {
+      // Unlocked exit - green/active with glow
+      const glowSize = 70 + Math.sin(this.animTimer * 0.1) * 10;
+      this.p.fill(50, 200, 100, 80);
+      this.p.noStroke();
+      this.p.ellipse(this.x + this.width/2, y + this.height/2, glowSize, glowSize);
+      
+      this.p.fill(50, 150, 80, 200);
+      this.p.stroke(100, 255, 150);
+      this.p.strokeWeight(3);
+      this.p.rect(this.x, y, this.width, this.height, 5);
+      
+      // Open door icon
+      this.p.fill(100, 255, 150);
+      this.p.noStroke();
+      this.p.rect(this.x + 10, y + 15, 30, 35, 5);
+      this.p.fill(50, 150, 80);
+      this.p.rect(this.x + 15, y + 20, 20, 25);
+      
+      // Particles
+      for (let i = 0; i < 3; i++) {
+        const angle = (this.animTimer * 0.05 + i * this.p.TWO_PI / 3);
+        const px = this.x + this.width/2 + Math.cos(angle) * 25;
+        const py = y + this.height/2 + Math.sin(angle) * 25;
+        this.p.fill(100, 255, 150, 150);
+        this.p.ellipse(px, py, 4, 4);
+      }
+      
+      // Status text
+      this.p.fill(150, 255, 180);
+      this.p.textAlign(this.p.CENTER, this.p.CENTER);
+      this.p.textSize(10);
+      this.p.text('ENTER', this.x + this.width/2, y + 53);
+    }
+    
+    // Helper text when locked
+    if (this.locked && this.room === gameState.currentRoom) {
+      this.p.fill(200, 150, 150);
+      this.p.textAlign(this.p.CENTER, this.p.TOP);
+      this.p.textSize(9);
+      this.p.text('Defeat all enemies', this.x + this.width/2, y + this.height + 5);
+    }
+    
+    this.p.pop();
+  }
+}
+
+export class AbilityPickup {
+  constructor(p, x, y, room, type) {
+    this.p = p;
+    this.x = x;
+    this.y = y;
+    this.width = 20;
+    this.height = 20;
+    this.room = room;
+    this.type = type; // 'dash' or 'spell'
+    this.collected = false;
+    this.animTimer = 0;
+  }
+
+  update() {
+    if (this.collected) return;
+    
+    this.animTimer++;
+    
+    const player = gameState.player;
+    if (player && this.room === gameState.currentRoom) {
+      const dist = this.p.dist(this.x + this.width/2, this.y + this.height/2,
+                               player.x + player.width/2, player.y + player.height/2);
+      if (dist < 25) {
+        this.collect(player);
+      }
+    }
+  }
+
+  collect(player) {
+    this.collected = true;
+    if (this.type === 'dash') {
+      gameState.unlockedAbilities.dash = true;
+    }
+    gameState.score += 100;
+  }
+
+  render() {
+    if (this.collected) return;
+    
+    this.p.push();
+    
+    const floatOffset = Math.sin(this.animTimer * 0.1) * 5;
+    const y = this.y + floatOffset;
+    
+    // Glow
+    this.p.fill(100, 200, 255, 100);
+    this.p.noStroke();
+    this.p.ellipse(this.x + this.width/2, y + this.height/2, 35, 35);
+    
+    // Core
+    this.p.fill(150, 220, 255);
+    this.p.ellipse(this.x + this.width/2, y + this.height/2, 18, 18);
+    
+    // Inner glow
+    this.p.fill(200, 240, 255);
+    this.p.ellipse(this.x + this.width/2, y + this.height/2, 10, 10);
+    
+    // Rotating particles
+    for (let i = 0; i < 4; i++) {
+      const angle = (i / 4) * this.p.TWO_PI + this.animTimer * 0.05;
+      const px = this.x + this.width/2 + Math.cos(angle) * 15;
+      const py = y + this.height/2 + Math.sin(angle) * 15;
+      this.p.fill(180, 230, 255, 200);
+      this.p.ellipse(px, py, 4, 4);
+    }
+    
+    this.p.pop();
+  }
+}
+
+export function initializeWorld(p) {
+  gameState.rooms = [];
+  gameState.platforms = [];
+  gameState.enemies = [];
+  gameState.bosses = [];
+  gameState.abilities = [];
+  gameState.exits = [];
+  gameState.currentRoom = 0;
+  
+  // EASY LEVEL 1 - Room 0: Starting area
+  gameState.rooms.push({ id: 0, type: 'start', name: 'Entrance', difficulty: 'Easy' });
+  createPlatforms(p, 0);
+  createEnemies(p, 0, 1); // Just 1 enemy to learn combat
+  createExit(p, 0);
+  
+  // EASY LEVEL 2 - Room 1: Simple cavern
+  gameState.rooms.push({ id: 1, type: 'cavern', name: 'Upper Cavern', difficulty: 'Easy' });
+  createPlatforms(p, 1);
+  createEnemies(p, 1, 2); // 2 easy enemies
+  const dashAbility = new AbilityPickup(p, CANVAS_WIDTH/2 - 10, 200, 1, 'dash');
+  gameState.abilities.push(dashAbility);
+  gameState.entities.push(dashAbility);
+  createExit(p, 1);
+  
+  // MEDIUM LEVEL 1 - Room 2: Challenging cavern with more enemies
+  gameState.rooms.push({ id: 2, type: 'cavern', name: 'Lower Cavern', difficulty: 'Medium' });
+  createPlatforms(p, 2);
+  createEnemies(p, 2, 4); // 4 enemies
+  createExit(p, 2);
+  
+  // MEDIUM LEVEL 2 - Room 3: First boss chamber
+  gameState.rooms.push({ id: 3, type: 'boss', name: 'Guardian Chamber', difficulty: 'Medium' });
+  createPlatforms(p, 3);
+  const boss1 = new Boss(p, CANVAS_WIDTH/2 - 30, 150, 3, 'guardian');
+  gameState.bosses.push(boss1);
+  gameState.entities.push(boss1);
+  createExit(p, 3);
+  
+  // HARD LEVEL 1 - Room 4: Deep cavern with many enemies
+  gameState.rooms.push({ id: 4, type: 'cavern', name: 'Deep Cavern', difficulty: 'Hard' });
+  createPlatforms(p, 4);
+  createEnemies(p, 4, 6); // 6 enemies - challenging
+  createExit(p, 4);
+  
+  // HARD LEVEL 2 - Room 5: Final boss room
+  gameState.rooms.push({ id: 5, type: 'final_boss', name: 'Heart of Corruption', difficulty: 'Hard' });
+  createPlatforms(p, 5);
+  const finalBoss = new Boss(p, CANVAS_WIDTH/2 - 30, 100, 5, 'corrupted_heart');
+  gameState.bosses.push(finalBoss);
+  gameState.entities.push(finalBoss);
+  // No exit in final room - game ends when boss is defeated
+}
+
+function createExit(p, room) {
+  // Place exit at bottom center of room
+  const exit = new Exit(p, CANVAS_WIDTH/2 - 25, CANVAS_HEIGHT - 80, room);
+  gameState.exits.push(exit);
+  gameState.entities.push(exit);
+}
+
+function createPlatforms(p, room) {
+  // Floor
+  gameState.platforms.push(new Platform(p, 0, CANVAS_HEIGHT - 20, CANVAS_WIDTH, 20, room));
+  
+  // Room-specific platforms
+  if (room === 0) {
+    // EASY 1 - Simple starting platforms
+    gameState.platforms.push(new Platform(p, 150, 320, 150, 15, room));
+    gameState.platforms.push(new Platform(p, 350, 300, 150, 15, room));
+  } else if (room === 1) {
+    // EASY 2 - Basic platforming
+    gameState.platforms.push(new Platform(p, 100, 300, 120, 15, room));
+    gameState.platforms.push(new Platform(p, 300, 280, 120, 15, room));
+  } else if (room === 2) {
+    // MEDIUM 1 - More complex platforming
+    gameState.platforms.push(new Platform(p, 50, 300, 100, 15, room));
+    gameState.platforms.push(new Platform(p, 200, 250, 100, 15, room));
+    gameState.platforms.push(new Platform(p, 400, 200, 100, 15, room));
+    gameState.platforms.push(new Platform(p, 250, 320, 100, 15, room));
+  } else if (room === 3) {
+    // MEDIUM 2 - Boss arena
+    gameState.platforms.push(new Platform(p, 100, 300, 400, 15, room));
+    gameState.platforms.push(new Platform(p, 0, 250, 80, 15, room));
+    gameState.platforms.push(new Platform(p, 520, 250, 80, 15, room));
+  } else if (room === 4) {
+    // HARD 1 - Challenging platforming
+    gameState.platforms.push(new Platform(p, 50, 320, 100, 15, room));
+    gameState.platforms.push(new Platform(p, 200, 280, 80, 15, room));
+    gameState.platforms.push(new Platform(p, 350, 240, 80, 15, room));
+    gameState.platforms.push(new Platform(p, 480, 200, 80, 15, room));
+    gameState.platforms.push(new Platform(p, 150, 180, 100, 15, room));
+  } else if (room === 5) {
+    // HARD 2 - Final boss arena
+    gameState.platforms.push(new Platform(p, 50, 320, 500, 15, room));
+    gameState.platforms.push(new Platform(p, 0, 200, 50, 15, room));
+    gameState.platforms.push(new Platform(p, 550, 200, 50, 15, room));
+    gameState.platforms.push(new Platform(p, 250, 250, 100, 15, room));
+  }
+  
+  // Side walls for all rooms
+  gameState.platforms.push(new Platform(p, 0, 0, 10, CANVAS_HEIGHT, room));
+  gameState.platforms.push(new Platform(p, CANVAS_WIDTH - 10, 0, 10, CANVAS_HEIGHT, room));
+}
+
+function createEnemies(p, room, count) {
+  const positions = [
+    { x: 250, y: 250, ai: 'patrol' },
+    { x: 150, y: 200, ai: 'patrol' },
+    { x: 350, y: 200, ai: 'fly' },
+    { x: 450, y: 250, ai: 'patrol' },
+    { x: 200, y: 150, ai: 'fly' },
+    { x: 400, y: 180, ai: 'patrol' }
+  ];
+  
+  for (let i = 0; i < count && i < positions.length; i++) {
+    const pos = positions[i];
+    const enemy = new Enemy(p, pos.x, pos.y, room);
+    enemy.ai = pos.ai;
+    gameState.enemies.push(enemy);
+    gameState.entities.push(enemy);
+  }
+}
+
+export function renderBackground(p, room) {
+  // Depth-based gradient
+  const depth = room / gameState.rooms.length;
+  const r = 20 + depth * 40;
+  const g = 15 + depth * 30;
+  const b = 25 + depth * 50;
+  
+  p.background(r, g, b);
+  
+  // Cave details
+  p.push();
+  p.noStroke();
+  
+  // Stalactites
+  for (let i = 0; i < 5; i++) {
+    const x = 100 + i * 120 + (room * 37) % 50;
+    p.fill(40, 40, 50, 150);
+    p.triangle(x, 0, x - 10, 0, x - 5, 40 + (room * 13 + i * 7) % 30);
+  }
+  
+  // Background rocks
+  for (let i = 0; i < 3; i++) {
+    const x = 150 + i * 200 + (room * 43) % 100;
+    const y = 100 + i * 80 + (room * 29) % 50;
+    p.fill(30, 30, 40, 100);
+    p.ellipse(x, y, 80, 60);
+  }
+  
+  p.pop();
+}
+
+export function renderUI(p) {
+  const player = gameState.player;
+  if (!player) return;
+  
+  p.push();
+  p.textAlign(p.LEFT, p.TOP);
+  p.textSize(14);
+  
+  // Health
+  p.fill(255);
+  p.text('Health:', 10, 10);
+  for (let i = 0; i < player.maxHealth; i++) {
+    if (i < player.health) {
+      p.fill(255, 100, 100);
+    } else {
+      p.fill(60, 30, 30);
+    }
+    p.ellipse(80 + i * 20, 18, 12, 12);
+  }
+  
+  // Soul meter
+  p.fill(255);
+  p.text('Soul:', 10, 35);
+  p.fill(40, 40, 50);
+  p.rect(60, 30, 100, 12);
+  p.fill(150, 200, 255);
+  p.rect(60, 30, (player.soul / player.maxSoul) * 100, 12);
+  
+  // Score
+  p.fill(255);
+  p.text(`Score: ${gameState.score}`, 10, 60);
+  
+  // Room info with difficulty
+  const currentRoom = gameState.rooms[gameState.currentRoom];
+  if (currentRoom) {
+    p.fill(200, 200, 220);
+    p.textAlign(p.CENTER, p.TOP);
+    p.text(`${currentRoom.name} [${currentRoom.difficulty}]`, CANVAS_WIDTH/2, 10);
+    
+    // Level counter
+    p.textSize(12);
+    p.fill(180, 180, 200);
+    p.text(`Level ${gameState.currentRoom + 1} of 6`, CANVAS_WIDTH/2, 28);
+  }
+  
+  // Ability indicators
+  p.textAlign(p.RIGHT, p.TOP);
+  p.textSize(12);
+  let yPos = 10;
+  
+  if (gameState.unlockedAbilities.dash) {
+    p.fill(player.dashCooldown > 0 ? [100, 100, 100] : [150, 220, 255]);
+    p.text('SHIFT: Dash', CANVAS_WIDTH - 10, yPos);
+    yPos += 20;
+  }
+  
+  if (gameState.unlockedAbilities.spell) {
+    p.fill(player.soul >= 33 ? [150, 220, 255] : [100, 100, 100]);
+    p.text('Z: Spell', CANVAS_WIDTH - 10, yPos);
+  }
+  
+  p.pop();
+}
+</code>
+
+<code filename="globals.js">
+// globals.js - Global constants and game state
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+export const GAME_PHASES = {
+  START: "START",
+  PLAYING: "PLAYING",
+  PAUSED: "PAUSED",
+  GAME_OVER_WIN: "GAME_OVER_WIN",
+  GAME_OVER_LOSE: "GAME_OVER_LOSE"
+};
+
+export const CONTROL_MODES = {
+  HUMAN: "HUMAN",
+  TEST_1: "TEST_1",
+  TEST_2: "TEST_2",
+  TEST_3: "TEST_3",
+  TEST_4: "TEST_4",
+  TEST_5: "TEST_5"
+};
+
+export const KEYS = {
+  ENTER: 13,
+  ESC: 27,
+  SPACE: 32,
+  LEFT: 37,
+  UP: 38,
+  RIGHT: 39,
+  DOWN: 40,
+  SHIFT: 16,
+  Z: 90,
+  R: 82
+};
+
+export const gameState = {
+  player: null,
+  entities: [],
+  enemies: [],
+  projectiles: [],
+  particles: [],
+  platforms: [],
+  abilities: [],
+  bosses: [],
+  exits: [],
+  currentRoom: 0,
+  rooms: [],
+  score: 0,
+  gamePhase: GAME_PHASES.START,
+  controlMode: CONTROL_MODES.HUMAN,
+  cameraY: 0,
+  defeatedBosses: [],
+  unlockedAbilities: {
+    dash: false,
+    spell: false
+  }
+};
+
+// Expose gameState globally
+window.getGameState = function() {
+  return gameState;
+};
+</code>
+
+<code filename="game.js">
+// game.js - Main game file
+
+import { CANVAS_WIDTH, CANVAS_HEIGHT, GAME_PHASES, CONTROL_MODES, KEYS, gameState } from './globals.js';
+import { Player, Projectile } from './player.js';
+import { Enemy, Boss } from './enemies.js';
+import { initializeWorld, renderBackground, renderUI } from './world.js';
+import { renderStartScreen, renderGameOverScreen, renderPausedIndicator } from './screens.js';
+import { get_automated_testing_action } from './automated_testing_controller.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+  let pressedKeys = new Set();
+
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(60);
+    p.randomSeed(42);
+    
+    // Initialize logs
+    p.logs = {
+      game_info: [],
+      inputs: [],
+      player_info: []
+    };
+    
+    // Log game start
+    p.logs.game_info.push({
+      data: { phase: gameState.gamePhase },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+    
+    // Initialize world
+    initializeWorld(p);
+    
+    // Create player
+    gameState.player = new Player(p, CANVAS_WIDTH/2 - 8, 100);
+    gameState.entities.push(gameState.player);
+  };
+
+  p.draw = function() {
+    // Handle game phases
+    if (gameState.gamePhase === GAME_PHASES.START) {
+      renderStartScreen(p);
+      return;
+    }
+    
+    if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+      // Render game state but show paused indicator
+      renderGame();
+      renderPausedIndicator(p);
+      return;
+    }
+    
+    if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN || 
+        gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE) {
+      renderGame();
+      renderGameOverScreen(p);
+      return;
+    }
+    
+    // Playing phase
+    if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+      handleAutomatedTesting();
+      updateGame();
+      renderGame();
+    }
+  };
+
+  function handleAutomatedTesting() {
+    if (gameState.controlMode === CONTROL_MODES.HUMAN) return;
+    
+    const action = get_automated_testing_action(gameState);
+    
+    if (action && action.keys) {
+      pressedKeys.clear();
+      action.keys.forEach(key => pressedKeys.add(key));
+    }
+  }
+
+  function updateGame() {
+    const player = gameState.player;
+    if (!player) return;
+    
+    // Handle player input
+    if (pressedKeys.has(KEYS.LEFT)) {
+      player.moveLeft();
+    } else if (pressedKeys.has(KEYS.RIGHT)) {
+      player.moveRight();
+    } else {
+      player.stop();
+    }
+    
+    if (pressedKeys.has(KEYS.UP)) {
+      player.jump();
+    }
+    
+    if (pressedKeys.has(KEYS.SPACE)) {
+      player.attack();
+    }
+    
+    if (pressedKeys.has(KEYS.SHIFT)) {
+      player.dash();
+    }
+    
+    if (pressedKeys.has(KEYS.Z)) {
+      player.castSpell();
+    }
+    
+    // Update entities
+    player.update();
+    
+    // Update enemies
+    for (let enemy of gameState.enemies) {
+      enemy.update();
+    }
+    
+    // Update bosses
+    for (let boss of gameState.bosses) {
+      boss.update();
+    }
+    
+    // Update projectiles
+    for (let proj of gameState.projectiles) {
+      if (proj.type === 'projectile') {
+        proj.update();
+      } else if (proj.type === 'enemy_projectile') {
+        proj.x += proj.vx;
+        proj.y += proj.vy;
+        proj.lifetime--;
+        
+        if (proj.lifetime <= 0 || proj.x < -20 || proj.x > CANVAS_WIDTH + 20) {
+          proj.dead = true;
+        }
+        
+        // Hit player
+        if (proj.room === gameState.currentRoom && !player.invulnerable) {
+          const dist = p.dist(proj.x, proj.y, 
+                             player.x + player.width/2, player.y + player.height/2);
+          if (dist < 15) {
+            player.takeDamage(1);
+            proj.dead = true;
+          }
+        }
+      }
+    }
+    
+    // Update abilities
+    for (let ability of gameState.abilities) {
+      ability.update();
+    }
+    
+    // Update exits
+    for (let exit of gameState.exits) {
+      exit.update();
+      
+      // Check if player touches unlocked exit
+      if (exit.checkPlayerCollision(player)) {
+        const nextRoom = gameState.currentRoom + 1;
+        if (nextRoom < gameState.rooms.length) {
+          gameState.currentRoom = nextRoom;
+          player.x = CANVAS_WIDTH / 2 - player.width / 2;
+          player.y = 50;
+          player.vy = 0;
+          player.vx = 0;
+          gameState.score += 50; // Bonus for completing room
+        }
+      }
+    }
+    
+    // Update particles
+    for (let particle of gameState.particles) {
+      particle.x += particle.vx;
+      particle.y += particle.vy;
+      particle.vy += 0.2;
+      particle.life--;
+    }
+    
+    // Clean up dead entities
+    gameState.projectiles = gameState.projectiles.filter(p => !p.dead);
+    gameState.particles = gameState.particles.filter(p => p.life > 0);
+    
+    // Log player info periodically
+    if (p.frameCount % 30 === 0) {
+      p.logs.player_info.push({
+        screen_x: player.x,
+        screen_y: player.y,
+        game_x: player.x,
+        game_y: player.y + gameState.currentRoom * CANVAS_HEIGHT,
+        framecount: p.frameCount
+      });
+    }
+  }
+
+  function renderGame() {
+    // Background
+    renderBackground(p, gameState.currentRoom);
+    
+    // Platforms
+    for (let platform of gameState.platforms) {
+      if (platform.room === gameState.currentRoom) {
+        platform.render();
+      }
+    }
+    
+    // Exits
+    for (let exit of gameState.exits) {
+      if (exit.room === gameState.currentRoom) {
+        exit.render();
+      }
+    }
+    
+    // Abilities
+    for (let ability of gameState.abilities) {
+      if (ability.room === gameState.currentRoom) {
+        ability.render();
+      }
+    }
+    
+    // Enemies
+    for (let enemy of gameState.enemies) {
+      if (enemy.room === gameState.currentRoom) {
+        enemy.render();
+      }
+    }
+    
+    // Bosses
+    for (let boss of gameState.bosses) {
+      if (boss.room === gameState.currentRoom) {
+        boss.render();
+      }
+    }
+    
+    // Projectiles
+    for (let proj of gameState.projectiles) {
+      if (proj.room === gameState.currentRoom) {
+        if (proj.type === 'projectile') {
+          proj.render();
+        } else if (proj.type === 'enemy_projectile') {
+          p.push();
+          p.fill(255, 100, 0, 200);
+          p.noStroke();
+          p.ellipse(proj.x, proj.y, 10, 10);
+          p.pop();
+        }
+      }
+    }
+    
+    // Particles
+    for (let particle of gameState.particles) {
+      if (particle.room === gameState.currentRoom) {
+        p.push();
+        const alpha = (particle.life / particle.maxLife) * 255;
+        p.fill(255, 150, 50, alpha);
+        p.noStroke();
+        p.ellipse(particle.x, particle.y, 4, 4);
+        p.pop();
+      }
+    }
+    
+    // Player
+    if (gameState.player) {
+      gameState.player.render();
+    }
+    
+    // UI
+    renderUI(p);
+  }
+
+  p.keyPressed = function() {
+    // Log input
+    p.logs.inputs.push({
+      input_type: 'keyPressed',
+      data: { key: p.key, keyCode: p.keyCode },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+    
+    // Game phase transitions
+    if (p.keyCode === KEYS.ENTER && gameState.gamePhase === GAME_PHASES.START) {
+      gameState.gamePhase = GAME_PHASES.PLAYING;
+      p.logs.game_info.push({
+        data: { phase: gameState.gamePhase },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+      return;
+    }
+    
+    if (p.keyCode === KEYS.ESC && gameState.gamePhase === GAME_PHASES.PLAYING) {
+      gameState.gamePhase = GAME_PHASES.PAUSED;
+      p.logs.game_info.push({
+        data: { phase: gameState.gamePhase },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+      return;
+    }
+    
+    if (p.keyCode === KEYS.ESC && gameState.gamePhase === GAME_PHASES.PAUSED) {
+      gameState.gamePhase = GAME_PHASES.PLAYING;
+      p.logs.game_info.push({
+        data: { phase: gameState.gamePhase },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+      return;
+    }
+    
+    if (p.keyCode === KEYS.R && (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN || 
+                                  gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE)) {
+      restartGame();
+      return;
+    }
+    
+    // Gameplay keys
+    if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+      pressedKeys.add(p.keyCode);
+    }
+  };
+
+  p.keyReleased = function() {
+    // Log input
+    p.logs.inputs.push({
+      input_type: 'keyReleased',
+      data: { key: p.key, keyCode: p.keyCode },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+    
+    pressedKeys.delete(p.keyCode);
+  };
+
+  function restartGame() {
+    // Reset game state
+    gameState.gamePhase = GAME_PHASES.START;
+    gameState.currentRoom = 0;
+    gameState.score = 0;
+    gameState.defeatedBosses = [];
+    gameState.unlockedAbilities = {
+      dash: false,
+      spell: false
+    };
+    
+    // Clear entities
+    gameState.entities = [];
+    gameState.enemies = [];
+    gameState.bosses = [];
+    gameState.projectiles = [];
+    gameState.particles = [];
+    gameState.platforms = [];
+    gameState.abilities = [];
+    gameState.exits = [];
+    
+    // Reinitialize
+    initializeWorld(p);
+    gameState.player = new Player(p, CANVAS_WIDTH/2 - 8, 100);
+    gameState.entities.push(gameState.player);
+    
+    pressedKeys.clear();
+    
+    p.logs.game_info.push({
+      data: { phase: gameState.gamePhase, action: 'restart' },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+});
+
+// Expose game instance globally
+window.gameInstance = gameInstance;
+
+// Control mode switching
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  
+  // Update button states
+  const modes = ['HUMAN', 'TEST_1', 'TEST_2', 'TEST_3', 'TEST_4', 'TEST_5'];
+  modes.forEach(m => {
+    const btnId = m === 'HUMAN' ? 'humanModeBtn' : `test_${m.split('_')[1]}_ModeBtn`;
+    const btn = document.getElementById(btnId);
+    if (btn) {
+      if (m === mode) {
+        btn.classList.add('active');
+      } else {
+        btn.classList.remove('active');
+      }
+    }
+  });
+};
+</code>
+
+<code filename="player.js">
+// player.js - Player class and related functionality
+
+import { CANVAS_WIDTH, CANVAS_HEIGHT, gameState } from './globals.js';
+
+export class Player {
+  constructor(p, x, y) {
+    this.p = p;
+    this.x = x;
+    this.y = y;
+    this.width = 16;
+    this.height = 24;
+    this.vx = 0;
+    this.vy = 0;
+    this.maxSpeed = 3;
+    this.jumpPower = -8;
+    this.gravity = 0.4;
+    this.onGround = false;
+    this.health = 5;
+    this.maxHealth = 5;
+    this.soul = 0;
+    this.maxSoul = 99;
+    this.facing = 1; // 1 = right, -1 = left
+    this.attacking = false;
+    this.attackTimer = 0;
+    this.attackDuration = 15;
+    this.dashTimer = 0;
+    this.dashDuration = 10;
+    this.dashCooldown = 0;
+    this.invulnerable = false;
+    this.invulnerableTimer = 0;
+    this.type = 'player';
+    this.animFrame = 0;
+    this.animTimer = 0;
+  }
+
+  update() {
+    this.animTimer++;
+    if (this.animTimer % 8 === 0) {
+      this.animFrame = (this.animFrame + 1) % 4;
+    }
+
+    // Apply gravity
+    if (!this.onGround) {
+      this.vy += this.gravity;
+    }
+
+    // Terminal velocity
+    if (this.vy > 10) this.vy = 10;
+
+    // Update timers
+    if (this.attackTimer > 0) this.attackTimer--;
+    if (this.attackTimer === 0) this.attacking = false;
+    
+    if (this.dashTimer > 0) {
+      this.dashTimer--;
+      this.invulnerable = true;
+    }
+    
+    if (this.dashCooldown > 0) this.dashCooldown--;
+    
+    if (this.invulnerableTimer > 0) {
+      this.invulnerableTimer--;
+      if (this.invulnerableTimer === 0) this.invulnerable = false;
+    }
+
+    // Apply velocity
+    this.x += this.vx;
+    this.y += this.vy;
+
+    // Check ground collision
+    this.checkPlatformCollisions();
+
+    // Keep in bounds (left and right)
+    if (this.x < 10) this.x = 10;
+    if (this.x > CANVAS_WIDTH - 10 - this.width) this.x = CANVAS_WIDTH - 10 - this.width;
+
+    // Prevent falling into void
+    if (this.y > CANVAS_HEIGHT + 100) {
+      this.takeDamage(1);
+      this.respawn();
+    }
+  }
+
+  checkPlatformCollisions() {
+    this.onGround = false;
+    
+    for (let platform of gameState.platforms) {
+      if (platform.room !== gameState.currentRoom) continue;
+      
+      // Only check collision if moving down
+      if (this.vy >= 0) {
+        if (this.x + this.width > platform.x && 
+            this.x < platform.x + platform.width &&
+            this.y + this.height >= platform.y &&
+            this.y + this.height <= platform.y + platform.height + this.vy) {
+          this.y = platform.y - this.height;
+          this.vy = 0;
+          this.onGround = true;
+        }
+      }
+      
+      // Wall collision
+      if (this.y + this.height > platform.y && 
+          this.y < platform.y + platform.height) {
+        // Right wall
+        if (this.vx > 0 && this.x + this.width > platform.x && 
+            this.x < platform.x) {
+          this.x = platform.x - this.width;
+          this.vx = 0;
+        }
+        // Left wall
+        if (this.vx < 0 && this.x < platform.x + platform.width && 
+            this.x + this.width > platform.x + platform.width) {
+          this.x = platform.x + platform.width;
+          this.vx = 0;
+        }
+      }
+    }
+  }
+
+  moveLeft() {
+    if (this.dashTimer > 0) return;
+    this.vx = -this.maxSpeed;
+    this.facing = -1;
+  }
+
+  moveRight() {
+    if (this.dashTimer > 0) return;
+    this.vx = this.maxSpeed;
+    this.facing = 1;
+  }
+
+  stop() {
+    if (this.dashTimer > 0) return;
+    this.vx = 0;
+  }
+
+  jump() {
+    if (this.onGround && this.dashTimer === 0) {
+      this.vy = this.jumpPower;
+      this.onGround = false;
+    }
+  }
+
+  attack() {
+    if (this.attacking || this.dashTimer > 0) return;
+    this.attacking = true;
+    this.attackTimer = this.attackDuration;
+    
+    // Create attack hitbox
+    const attackX = this.x + (this.facing > 0 ? this.width : -20);
+    const attackY = this.y;
+    
+    // Check enemy collisions
+    for (let enemy of gameState.enemies) {
+      if (enemy.room !== gameState.currentRoom) continue;
+      if (enemy.dead) continue;
+      
+      const dist = this.p.dist(attackX + 10, attackY + 12, 
+                               enemy.x + enemy.width/2, enemy.y + enemy.height/2);
+      if (dist < 30) {
+        enemy.takeDamage(1);
+        this.gainSoul(10);
+      }
+    }
+    
+    // Check boss collisions
+    for (let boss of gameState.bosses) {
+      if (boss.room !== gameState.currentRoom) continue;
+      if (boss.dead) continue;
+      
+      const dist = this.p.dist(attackX + 10, attackY + 12,
+                               boss.x + boss.width/2, boss.y + boss.height/2);
+      if (dist < 50) {
+        boss.takeDamage(1);
+        this.gainSoul(5);
+      }
+    }
+  }
+
+  dash() {
+    if (!gameState.unlockedAbilities.dash) return;
+    if (this.dashCooldown > 0 || this.dashTimer > 0) return;
+    
+    this.dashTimer = this.dashDuration;
+    this.dashCooldown = 60;
+    this.vx = this.facing * 10;
+    this.vy = 0;
+  }
+
+  castSpell() {
+    if (!gameState.unlockedAbilities.spell) return;
+    if (this.soul < 33) return;
+    
+    this.soul -= 33;
+    
+    // Create projectile
+    const proj = new Projectile(
+      this.p,
+      this.x + this.width/2,
+      this.y + this.height/2,
+      this.facing,
+      gameState.currentRoom
+    );
+    gameState.projectiles.push(proj);
+    gameState.entities.push(proj);
+  }
+
+  takeDamage(amount) {
+    if (this.invulnerable) return;
+    
+    this.health -= amount;
+    this.invulnerable = true;
+    this.invulnerableTimer = 60;
+    
+    if (this.health <= 0) {
+      this.health = 0;
+      gameState.gamePhase = "GAME_OVER_LOSE";
+    }
+  }
+
+  gainSoul(amount) {
+    this.soul = Math.min(this.maxSoul, this.soul + amount);
+  }
+
+  heal(amount) {
+    this.health = Math.min(this.maxHealth, this.health + amount);
+  }
+
+  respawn() {
+    this.x = CANVAS_WIDTH / 2;
+    this.y = 100;
+    this.vx = 0;
+    this.vy = 0;
+  }
+
+  render() {
+    this.p.push();
+    
+    // Flicker when invulnerable
+    if (this.invulnerable && this.p.frameCount % 6 < 3) {
+      this.p.pop();
+      return;
+    }
+    
+    this.p.fill(240, 240, 240);
+    this.p.noStroke();
+    
+    // Body
+    this.p.ellipse(this.x + this.width/2, this.y + this.height - 8, 14, 16);
+    
+    // Head/mask
+    this.p.fill(255);
+    this.p.ellipse(this.x + this.width/2, this.y + 8, 12, 12);
+    
+    // Horns
+    this.p.fill(240, 240, 240);
+    this.p.triangle(
+      this.x + this.width/2 - 4, this.y + 4,
+      this.x + this.width/2 - 6, this.y - 2,
+      this.x + this.width/2 - 2, this.y + 2
+    );
+    this.p.triangle(
+      this.x + this.width/2 + 4, this.y + 4,
+      this.x + this.width/2 + 6, this.y - 2,
+      this.x + this.width/2 + 2, this.y + 2
+    );
+    
+    // Eyes
+    this.p.fill(40, 40, 50);
+    this.p.ellipse(this.x + this.width/2 - 2, this.y + 8, 2, 3);
+    this.p.ellipse(this.x + this.width/2 + 2, this.y + 8, 2, 3);
+    
+    // Cape
+    this.p.fill(200, 200, 210);
+    this.p.arc(this.x + this.width/2, this.y + this.height - 8, 16, 18, 0, this.p.PI);
+    
+    // Nail (sword) when attacking
+    if (this.attacking) {
+      this.p.stroke(180, 180, 190);
+      this.p.strokeWeight(2);
+      const nailX = this.x + this.width/2 + this.facing * 12;
+      const nailY = this.y + this.height/2;
+      this.p.line(nailX, nailY - 8, nailX, nailY + 8);
+    }
+    
+    this.p.pop();
+  }
+}
+
+export class Projectile {
+  constructor(p, x, y, direction, room) {
+    this.p = p;
+    this.x = x;
+    this.y = y;
+    this.vx = direction * 6;
+    this.vy = 0;
+    this.width = 8;
+    this.height = 8;
+    this.room = room;
+    this.dead = false;
+    this.lifetime = 120;
+    this.type = 'projectile';
+  }
+
+  update() {
+    this.x += this.vx;
+    this.y += this.vy;
+    this.lifetime--;
+    
+    if (this.lifetime <= 0 || this.x < -20 || this.x > CANVAS_WIDTH + 20) {
+      this.dead = true;
+      return;
+    }
+    
+    // Hit enemies
+    for (let enemy of gameState.enemies) {
+      if (enemy.room !== this.room) continue;
+      if (enemy.dead) continue;
+      
+      const dist = this.p.dist(this.x, this.y, 
+                               enemy.x + enemy.width/2, enemy.y + enemy.height/2);
+      if (dist < 20) {
+        enemy.takeDamage(2);
+        this.dead = true;
+        gameState.player.gainSoul(3);
+      }
+    }
+    
+    // Hit bosses
+    for (let boss of gameState.bosses) {
+      if (boss.room !== this.room) continue;
+      if (boss.dead) continue;
+      
+      const dist = this.p.dist(this.x, this.y,
+                               boss.x + boss.width/2, boss.y + boss.height/2);
+      if (dist < 40) {
+        boss.takeDamage(2);
+        this.dead = true;
+        gameState.player.gainSoul(2);
+      }
+    }
+  }
+
+  render() {
+    this.p.push();
+    this.p.fill(150, 200, 255, 200);
+    this.p.noStroke();
+    this.p.ellipse(this.x, this.y, 12, 12);
+    this.p.fill(200, 230, 255, 150);
+    this.p.ellipse(this.x, this.y, 8, 8);
+    this.p.pop();
+  }
+}
+</code>

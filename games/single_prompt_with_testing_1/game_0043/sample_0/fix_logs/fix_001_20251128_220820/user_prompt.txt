@@ -1,0 +1,1629 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+this game doesn't load
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">Aventureros al Tren®</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Basic Actions)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Win Strategy)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Build railway routes across North America in this turn-based strategy game! Collect colored train cards and claim routes between cities to score points. Complete destination tickets to earn bonus points by connecting specific cities. The game ends when a player has 3 or fewer trains left, triggering the final round. Win by having the highest score from claimed routes, completed destinations, and the longest continuous path!</p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Arrow Keys: Navigate menu options and select cards/routes | Space: Confirm selection or action | Z: Cancel current action or go back | Shift: Toggle between draw cards/claim route/draw destinations actions | Enter: Start game from menu | Esc: Pause/unpause game | R: Restart game (returns to start screen)</p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="automated_testing_controller.js">
+// automated_testing_controller.js - Automated testing
+
+import { gameState } from './globals.js';
+
+function getTestWinAction(gameState) {
+  // Optimal strategy to win the game
+  
+  // If choosing initial destinations, select all
+  if (gameState.currentAction === "CHOOSE_INITIAL_DESTINATIONS") {
+    if (gameState.destinationsDrawn && gameState.destinationsDrawn.length > 0) {
+      const unselected = gameState.destinationsDrawn.find(d => !d.selected);
+      if (unselected) {
+        return { keyCode: 32 }; // SPACE to toggle
+      } else {
+        return { keyCode: 90 }; // Z to confirm
+      }
+    }
+  }
+  
+  // If selecting destinations mid-game
+  if (gameState.currentAction === "SELECTING_DESTINATIONS") {
+    if (gameState.destinationsDrawn && gameState.destinationsDrawn.length > 0) {
+      const selectedCount = gameState.destinationsDrawn.filter(d => d.selected).length;
+      if (selectedCount < 1) {
+        return { keyCode: 32 }; // SPACE to select first
+      } else {
+        return { keyCode: 90 }; // Z to confirm
+      }
+    }
+  }
+  
+  // If no action chosen, prioritize claiming routes if we have cards
+  if (!gameState.currentAction) {
+    const unclaimedRoutes = gameState.routes.filter(r => !r.claimed);
+    const claimableRoute = findBestClaimableRoute(gameState, unclaimedRoutes);
+    
+    if (claimableRoute) {
+      // Navigate to claim route action
+      if (gameState.menuSelection !== 1) {
+        return { keyCode: 16 }; // SHIFT
+      } else {
+        return { keyCode: 32 }; // SPACE to select
+      }
+    } else {
+      // Navigate to draw cards
+      if (gameState.menuSelection !== 0) {
+        return { keyCode: 16 }; // SHIFT
+      } else {
+        return { keyCode: 32 }; // SPACE to select
+      }
+    }
+  }
+  
+  // Drawing cards
+  if (gameState.currentAction === "DRAW_CARDS") {
+    if (gameState.cardsDrawnThisTurn >= 2) {
+      return { keyCode: 90 }; // Z to end turn (shouldn't happen)
+    }
+    
+    // Prioritize collecting colors we need
+    const targetColors = findNeededColors(gameState);
+    
+    // Check face-up cards
+    for (let i = 0; i < 5; i++) {
+      const card = gameState.faceUpCards[i];
+      if (targetColors.includes(card)) {
+        if (gameState.selectedCardIndex !== i) {
+          return { keyCode: gameState.selectedCardIndex < i ? 39 : 37 }; // RIGHT or LEFT
+        } else {
+          return { keyCode: 32 }; // SPACE to draw
+        }
+      }
+    }
+    
+    // Draw from deck
+    if (gameState.selectedCardIndex !== 5) {
+      return { keyCode: gameState.selectedCardIndex < 5 ? 39 : 37 }; // Navigate to deck
+    } else {
+      return { keyCode: 32 }; // SPACE to draw
+    }
+  }
+  
+  // Claiming routes
+  if (gameState.currentAction === "CLAIM_ROUTE") {
+    const unclaimedRoutes = gameState.routes.filter(r => !r.claimed);
+    const claimableRoute = findBestClaimableRoute(gameState, unclaimedRoutes);
+    
+    if (claimableRoute) {
+      const targetIndex = unclaimedRoutes.indexOf(claimableRoute);
+      if (gameState.selectedRouteIndex !== targetIndex) {
+        return { keyCode: gameState.selectedRouteIndex < targetIndex ? 40 : 38 }; // DOWN or UP
+      } else {
+        return { keyCode: 32 }; // SPACE to claim
+      }
+    } else {
+      return { keyCode: 90 }; // Z to cancel
+    }
+  }
+  
+  return { keyCode: 32 }; // Default
+}
+
+function findNeededColors(gameState) {
+  const colorPriority = {};
+  
+  // Count cards we have
+  const cardCounts = {};
+  gameState.playerHand.forEach(card => {
+    cardCounts[card] = (cardCounts[card] || 0) + 1;
+  });
+  
+  // Check unclaimed routes we can potentially claim
+  const unclaimedRoutes = gameState.routes.filter(r => !r.claimed);
+  unclaimedRoutes.forEach(route => {
+    const color = route.color;
+    if (color !== 'GRAY') {
+      const need = route.length - (cardCounts[color] || 0) - (cardCounts['RAINBOW'] || 0);
+      if (need <= 3 && need > 0) {
+        colorPriority[color] = (colorPriority[color] || 0) + route.getPoints();
+      }
+    }
+  });
+  
+  // Return colors sorted by priority
+  return Object.keys(colorPriority)
+    .sort((a, b) => colorPriority[b] - colorPriority[a])
+    .concat(['RAINBOW']);
+}
+
+function findBestClaimableRoute(gameState, unclaimedRoutes) {
+  const cardCounts = {};
+  gameState.playerHand.forEach(card => {
+    cardCounts[card] = (cardCounts[card] || 0) + 1;
+  });
+  
+  const wildCount = cardCounts['RAINBOW'] || 0;
+  
+  let bestRoute = null;
+  let bestValue = 0;
+  
+  unclaimedRoutes.forEach(route => {
+    if (gameState.trainsRemaining < route.length) return;
+    
+    const colorNeeded = route.color;
+    let canClaim = false;
+    
+    if (colorNeeded === 'GRAY') {
+      // Check any color
+      for (let color in cardCounts) {
+        if (color !== 'RAINBOW') {
+          if (cardCounts[color] + wildCount >= route.length) {
+            canClaim = true;
+            break;
+          }
+        }
+      }
+      if (!canClaim && wildCount >= route.length) {
+        canClaim = true;
+      }
+    } else {
+      const specificCount = cardCounts[colorNeeded] || 0;
+      if (specificCount + wildCount >= route.length) {
+        canClaim = true;
+      }
+    }
+    
+    if (canClaim) {
+      const value = route.getPoints();
+      if (value > bestValue) {
+        bestValue = value;
+        bestRoute = route;
+      }
+    }
+  });
+  
+  return bestRoute;
+}
+
+function getBasicTestAction(gameState) {
+  // Basic test: just try different actions
+  
+  if (gameState.currentAction === "CHOOSE_INITIAL_DESTINATIONS") {
+    const selected = gameState.destinationsDrawn.filter(d => d.selected).length;
+    if (selected < 1) {
+      return { keyCode: 32 }; // Select first
+    } else {
+      return { keyCode: 90 }; // Confirm
+    }
+  }
+  
+  if (gameState.currentAction === "SELECTING_DESTINATIONS") {
+    const selected = gameState.destinationsDrawn.filter(d => d.selected).length;
+    if (selected < 1) {
+      return { keyCode: 32 };
+    } else {
+      return { keyCode: 90 };
+    }
+  }
+  
+  if (!gameState.currentAction) {
+    return { keyCode: 32 }; // Select current menu option
+  }
+  
+  if (gameState.currentAction === "DRAW_CARDS") {
+    if (gameState.cardsDrawnThisTurn < 2) {
+      return { keyCode: 32 }; // Draw current card
+    }
+  }
+  
+  if (gameState.currentAction === "CLAIM_ROUTE") {
+    return { keyCode: 32 }; // Try to claim
+  }
+  
+  return { keyCode: 32 };
+}
+
+function getRandomAction(gameState) {
+  const actions = [37, 38, 39, 40, 32, 16, 90]; // Arrow keys, space, shift, z
+  return { keyCode: actions[Math.floor(Math.random() * actions.length)] };
+}
+
+export function get_automated_testing_action(gameState) {
+  switch (gameState.controlMode) {
+    case "TEST_1":
+      return getBasicTestAction(gameState);
+    case "TEST_2":
+      return getTestWinAction(gameState);
+    default:
+      return getRandomAction(gameState);
+  }
+}
+
+// Expose globally
+if (typeof window !== 'undefined') {
+  window.get_automated_testing_action = get_automated_testing_action;
+}
+
+export default get_automated_testing_action;
+</file>
+
+<file name="globals.js">
+// globals.js - Global state and constants
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+export const TRAIN_COLORS = ['RED', 'BLUE', 'GREEN', 'YELLOW', 'BLACK', 'WHITE', 'ORANGE', 'PURPLE'];
+export const WILD_COLOR = 'RAINBOW';
+
+export const gameState = {
+  gamePhase: "START", // "START", "PLAYING", "PAUSED", "GAME_OVER_WIN", "GAME_OVER_LOSE"
+  controlMode: "HUMAN", // "HUMAN", "TEST_1", "TEST_2"
+  
+  // Player data
+  player: null,
+  entities: [],
+  
+  // Game data
+  trainCards: [], // deck of train cards
+  faceUpCards: [], // 5 face-up cards
+  destinationTickets: [], // deck of destination tickets
+  
+  routes: [], // all routes on the map
+  cities: [], // all cities
+  
+  // Player state
+  playerHand: [], // cards in hand
+  playerDestinations: [], // destination tickets
+  claimedRoutes: [], // routes claimed by player
+  trainsRemaining: 45,
+  score: 0,
+  
+  // Turn state
+  currentAction: null, // "DRAW_CARDS", "CLAIM_ROUTE", "DRAW_DESTINATIONS"
+  selectedCardIndex: -1,
+  selectedRouteIndex: -1,
+  cardsDrawnThisTurn: 0,
+  destinationsDrawn: [],
+  mustKeepDestinations: 0,
+  
+  // Game end tracking
+  finalRoundTriggered: false,
+  gameOver: false,
+  
+  // UI state
+  menuSelection: 0,
+  message: "",
+  messageTimer: 0
+};
+
+// Export function to access game state
+export function getGameState() {
+  return gameState;
+}
+
+// Attach to window
+if (typeof window !== 'undefined') {
+  window.getGameState = getGameState;
+}
+</file>
+
+<file name="game.js">
+// game.js - Main game file
+
+import { gameState, getGameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { Player } from './entities.js';
+import { createCities, createRoutes, createTrainCardDeck, createDestinationTickets } from './game_data.js';
+import { shuffleArray, drawCard } from './utils.js';
+import { initInputHandler, handleKeyPressed } from './input_handler.js';
+import { renderGame } from './renderer.js';
+import get_automated_testing_action from './automated_testing_controller.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+  // Initialize logs
+  p.logs = {
+    "game_info": [],
+    "inputs": [],
+    "player_info": []
+  };
+  
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(60);
+    p.randomSeed(42);
+    
+    // Initialize game data
+    gameState.cities = createCities();
+    gameState.routes = createRoutes(gameState.cities);
+    gameState.trainCards = shuffleArray(createTrainCardDeck(), p);
+    gameState.destinationTickets = shuffleArray(createDestinationTickets(), p);
+    
+    // Deal face-up cards
+    gameState.faceUpCards = [];
+    for (let i = 0; i < 5; i++) {
+      gameState.faceUpCards.push(drawCard(p));
+    }
+    
+    // Deal initial hand
+    gameState.playerHand = [];
+    for (let i = 0; i < 4; i++) {
+      gameState.playerHand.push(drawCard(p));
+    }
+    
+    // Initialize player
+    gameState.player = new Player();
+    gameState.entities = [gameState.player];
+    
+    // Initialize input handler
+    initInputHandler(p);
+    
+    p.logs.game_info.push({
+      data: { phase: "START", action: "Game Initialized" },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  };
+  
+  p.draw = function() {
+    // Handle automated testing
+    if (gameState.controlMode !== "HUMAN" && gameState.gamePhase === "PLAYING") {
+      if (p.frameCount % 10 === 0) { // Execute every 10 frames
+        const action = get_automated_testing_action(gameState);
+        if (action && action.keyCode) {
+          simulateKeyPress(p, action.keyCode);
+        }
+      }
+    }
+    
+    // Update message timer
+    if (gameState.messageTimer > 0) {
+      gameState.messageTimer--;
+    }
+    
+    // Render
+    renderGame(p);
+    
+    // Log player info periodically
+    if (p.frameCount % 60 === 0 && gameState.player) {
+      p.logs.player_info.push({
+        screen_x: 0,
+        screen_y: 0,
+        game_x: 0,
+        game_y: 0,
+        framecount: p.frameCount
+      });
+    }
+  };
+  
+  p.keyPressed = function() {
+    if (gameState.controlMode === "HUMAN") {
+      handleKeyPressed(p);
+    }
+    return false;
+  };
+  
+  function simulateKeyPress(p, keyCode) {
+    p.keyCode = keyCode;
+    p.key = String.fromCharCode(keyCode);
+    handleKeyPressed(p);
+  }
+});
+
+// Expose game instance globally
+window.gameInstance = gameInstance;
+
+// Control mode functions
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  
+  // Update button states
+  const buttons = ['humanModeBtn', 'test_1_ModeBtn', 'test_2_ModeBtn'];
+  buttons.forEach(btnId => {
+    const btn = document.getElementById(btnId);
+    if (btn) {
+      btn.classList.remove('active');
+    }
+  });
+  
+  const activeBtn = mode === 'HUMAN' ? 'humanModeBtn' : 
+                    mode === 'TEST_1' ? 'test_1_ModeBtn' :
+                    mode === 'TEST_2' ? 'test_2_ModeBtn' : null;
+  
+  if (activeBtn) {
+    const btn = document.getElementById(activeBtn);
+    if (btn) {
+      btn.classList.add('active');
+    }
+  }
+};
+</file>
+
+<file name="renderer.js">
+// renderer.js - Rendering functions
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { TRAIN_COLORS } from './globals.js';
+
+export function renderGame(p) {
+  p.background(240, 230, 210);
+  
+  if (gameState.gamePhase === "START") {
+    renderStartScreen(p);
+  } else if (gameState.gamePhase === "PLAYING") {
+    renderPlayingScreen(p);
+  } else if (gameState.gamePhase === "PAUSED") {
+    renderPlayingScreen(p);
+    renderPausedOverlay(p);
+  } else if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") {
+    renderGameOverScreen(p);
+  }
+}
+
+function renderStartScreen(p) {
+  p.fill(20, 40, 60);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(36);
+  p.text("Aventureros al Tren®", CANVAS_WIDTH / 2, 80);
+  
+  p.textSize(14);
+  p.fill(60, 80, 100);
+  const instructions = [
+    "Build railway routes across North America!",
+    "",
+    "COLLECT colored train cards",
+    "CLAIM routes by spending matching cards",
+    "COMPLETE destination tickets for bonus points",
+    "",
+    "Arrow Keys: Navigate menus",
+    "Space: Confirm action",
+    "Shift: Change action (Draw/Claim/Destinations)",
+    "Z: Cancel or go back",
+    "",
+    "Game ends when trains run low.",
+    "Win with 60+ points!"
+  ];
+  
+  let y = 150;
+  instructions.forEach(line => {
+    p.text(line, CANVAS_WIDTH / 2, y);
+    y += 18;
+  });
+  
+  p.textSize(18);
+  p.fill(180, 50, 50);
+  p.text("PRESS ENTER TO START", CANVAS_WIDTH / 2, 370);
+}
+
+function renderPlayingScreen(p) {
+  // Render map background
+  p.fill(220, 210, 190);
+  p.noStroke();
+  p.rect(10, 10, 380, 280);
+  
+  // Render routes
+  gameState.routes.forEach((route, index) => {
+    const highlight = (gameState.currentAction === "CLAIM_ROUTE" && 
+                      gameState.selectedRouteIndex === gameState.routes.filter(r => !r.claimed).indexOf(route));
+    renderRoute(p, route, highlight);
+  });
+  
+  // Render cities
+  gameState.cities.forEach(city => {
+    renderCity(p, city);
+  });
+  
+  // Render UI
+  renderUI(p);
+  
+  // Render message
+  if (gameState.messageTimer > 0) {
+    p.fill(0, 0, 0, 200);
+    p.noStroke();
+    p.rect(100, 180, 400, 40, 5);
+    p.fill(255);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(14);
+    p.text(gameState.message, 300, 200);
+  }
+}
+
+function renderRoute(p, route, highlight) {
+  const color = getColorRGB(route.color);
+  
+  p.push();
+  if (route.claimed) {
+    p.strokeWeight(6);
+    p.stroke(100, 100, 100);
+    p.line(route.x1, route.y1, route.x2, route.y2);
+    
+    // Draw claimed indicator
+    const mx = (route.x1 + route.x2) / 2;
+    const my = (route.y1 + route.y2) / 2;
+    p.noStroke();
+    p.fill(60, 60, 60);
+    p.circle(mx, my, 8);
+  } else {
+    p.strokeWeight(highlight ? 5 : 3);
+    p.stroke(...color, highlight ? 255 : 150);
+    p.line(route.x1, route.y1, route.x2, route.y2);
+    
+    // Draw segments
+    const dx = (route.x2 - route.x1) / route.length;
+    const dy = (route.y2 - route.y1) / route.length;
+    p.noStroke();
+    p.fill(...color, 200);
+    for (let i = 0; i < route.length; i++) {
+      const x = route.x1 + dx * (i + 0.5);
+      const y = route.y1 + dy * (i + 0.5);
+      p.circle(x, y, highlight ? 6 : 4);
+    }
+  }
+  p.pop();
+}
+
+function renderCity(p, city) {
+  p.fill(40, 40, 40);
+  p.noStroke();
+  p.circle(city.x, city.y, 8);
+  
+  p.fill(255);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(8);
+  p.text(city.name, city.x, city.y - 12);
+}
+
+function renderUI(p) {
+  // Right panel
+  p.fill(250, 245, 235);
+  p.stroke(100);
+  p.strokeWeight(1);
+  p.rect(400, 10, 190, 380);
+  
+  let y = 20;
+  
+  // Score and trains
+  p.fill(20);
+  p.noStroke();
+  p.textAlign(p.LEFT, p.TOP);
+  p.textSize(14);
+  p.text(`Score: ${gameState.score}`, 410, y);
+  y += 20;
+  p.text(`Trains: ${gameState.trainsRemaining}`, 410, y);
+  y += 25;
+  
+  // Hand
+  p.textSize(12);
+  p.text("Hand:", 410, y);
+  y += 18;
+  renderHand(p, 410, y);
+  y += 60;
+  
+  // Face-up cards
+  if (gameState.currentAction === "DRAW_CARDS") {
+    p.text("Face-up cards:", 410, y);
+    y += 18;
+    renderFaceUpCards(p, 410, y);
+    y += 50;
+  }
+  
+  // Destinations
+  p.text("Destinations:", 410, y);
+  y += 18;
+  renderDestinations(p, 410, y);
+  y += Math.max(gameState.playerDestinations.length * 25, 30);
+  
+  // Action menu
+  if (!gameState.currentAction || gameState.currentAction === null) {
+    p.text("Choose action (SHIFT):", 410, y);
+    y += 18;
+    const actions = ["Draw Cards", "Claim Route", "Draw Destinations"];
+    actions.forEach((action, i) => {
+      if (i === gameState.menuSelection) {
+        p.fill(180, 50, 50);
+        p.text("> " + action, 410, y);
+      } else {
+        p.fill(100);
+        p.text("  " + action, 410, y);
+      }
+      y += 18;
+    });
+    p.fill(20);
+    p.textSize(10);
+    p.text("Press SPACE to select", 410, y);
+  } else if (gameState.currentAction === "DRAW_CARDS") {
+    p.fill(180, 50, 50);
+    p.text("Drawing cards...", 410, y);
+    y += 18;
+    p.fill(100);
+    p.textSize(10);
+    p.text(`${gameState.cardsDrawnThisTurn}/2 drawn`, 410, y);
+    y += 15;
+    p.text("Arrow keys + SPACE", 410, y);
+    y += 12;
+    p.text("Z to cancel", 410, y);
+  } else if (gameState.currentAction === "CLAIM_ROUTE") {
+    p.fill(180, 50, 50);
+    p.text("Claiming route...", 410, y);
+    y += 18;
+    p.fill(100);
+    p.textSize(10);
+    p.text("Arrow keys to select", 410, y);
+    y += 12;
+    p.text("SPACE to claim", 410, y);
+    y += 12;
+    p.text("Z to cancel", 410, y);
+  } else if (gameState.currentAction === "SELECTING_DESTINATIONS" || 
+             gameState.currentAction === "CHOOSE_INITIAL_DESTINATIONS") {
+    p.fill(180, 50, 50);
+    p.text("Select destinations:", 410, y);
+    y += 18;
+    renderDestinationSelection(p, 410, y);
+  }
+  
+  // Instructions at bottom
+  p.fill(100);
+  p.textSize(9);
+  p.textAlign(p.LEFT, p.BOTTOM);
+  p.text("ESC: Pause | R: Restart", 410, 385);
+}
+
+function renderHand(p, x, y) {
+  const cardCounts = {};
+  gameState.playerHand.forEach(card => {
+    cardCounts[card] = (cardCounts[card] || 0) + 1;
+  });
+  
+  let cx = x;
+  let cy = y;
+  Object.keys(cardCounts).forEach(color => {
+    const count = cardCounts[color];
+    const rgb = getColorRGB(color);
+    p.fill(...rgb);
+    p.stroke(50);
+    p.strokeWeight(1);
+    p.rect(cx, cy, 20, 30, 2);
+    
+    p.fill(255);
+    p.noStroke();
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(12);
+    p.text(count, cx + 10, cy + 15);
+    
+    cx += 25;
+    if (cx > x + 150) {
+      cx = x;
+      cy += 35;
+    }
+  });
+}
+
+function renderFaceUpCards(p, x, y) {
+  for (let i = 0; i < 5; i++) {
+    const card = gameState.faceUpCards[i];
+    const rgb = getColorRGB(card);
+    
+    const highlight = (gameState.currentAction === "DRAW_CARDS" && gameState.selectedCardIndex === i);
+    
+    p.fill(...rgb);
+    p.stroke(highlight ? 255 : 50);
+    p.strokeWeight(highlight ? 3 : 1);
+    p.rect(x + i * 25, y, 20, 30, 2);
+  }
+  
+  // Deck indicator
+  const deckHighlight = (gameState.currentAction === "DRAW_CARDS" && gameState.selectedCardIndex === 5);
+  p.fill(100);
+  p.stroke(deckHighlight ? 255 : 50);
+  p.strokeWeight(deckHighlight ? 3 : 1);
+  p.rect(x + 5 * 25 + 10, y, 20, 30, 2);
+  p.fill(255);
+  p.noStroke();
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(10);
+  p.text("?", x + 5 * 25 + 20, y + 15);
+}
+
+function renderDestinations(p, x, y) {
+  if (gameState.playerDestinations.length === 0) {
+    p.fill(150);
+    p.textSize(10);
+    p.text("None yet", x, y);
+    return;
+  }
+  
+  gameState.playerDestinations.forEach((dest, i) => {
+    p.fill(dest.completed ? 50 : 100);
+    p.textSize(9);
+    const text = `${dest.city1.substring(0, 8)}-${dest.city2.substring(0, 8)} (${dest.points})`;
+    p.text(text, x, y + i * 12);
+    if (dest.completed) {
+      p.stroke(50, 150, 50);
+      p.strokeWeight(1);
+      p.line(x, y + i * 12 + 5, x + 150, y + i * 12 + 5);
+      p.noStroke();
+    }
+  });
+}
+
+function renderDestinationSelection(p, x, y) {
+  gameState.destinationsDrawn.forEach((dest, i) => {
+    const selected = dest.selected || false;
+    const highlight = i === gameState.menuSelection;
+    
+    p.fill(highlight ? 180 : 100);
+    p.textSize(10);
+    const checkbox = selected ? "[X]" : "[ ]";
+    const text = `${checkbox} ${dest.city1.substring(0, 6)}-${dest.city2.substring(0, 6)} (${dest.points}pts)`;
+    p.text(text, x, y + i * 15);
+  });
+  
+  p.fill(150);
+  p.textSize(9);
+  p.text("SPACE: toggle | Z: confirm", x, y + gameState.destinationsDrawn.length * 15 + 10);
+}
+
+function renderPausedOverlay(p) {
+  p.fill(255);
+  p.noStroke();
+  p.textAlign(p.RIGHT, p.TOP);
+  p.textSize(16);
+  p.text("PAUSED", CANVAS_WIDTH - 10, 10);
+}
+
+function renderGameOverScreen(p) {
+  p.background(240, 230, 210);
+  
+  const isWin = gameState.gamePhase === "GAME_OVER_WIN";
+  
+  p.fill(isWin ? 50 : 150, isWin ? 150 : 50, 50);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(42);
+  p.text(isWin ? "VICTORY!" : "GAME OVER", CANVAS_WIDTH / 2, 100);
+  
+  p.fill(60);
+  p.textSize(24);
+  p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, 160);
+  
+  p.textSize(16);
+  p.fill(100);
+  let y = 210;
+  
+  p.text(`Routes Claimed: ${gameState.claimedRoutes.length}`, CANVAS_WIDTH / 2, y);
+  y += 25;
+  
+  const completedDests = gameState.playerDestinations.filter(d => d.completed).length;
+  p.text(`Destinations Completed: ${completedDests}/${gameState.playerDestinations.length}`, CANVAS_WIDTH / 2, y);
+  y += 25;
+  
+  p.text(`Trains Remaining: ${gameState.trainsRemaining}`, CANVAS_WIDTH / 2, y);
+  y += 50;
+  
+  p.fill(180, 50, 50);
+  p.textSize(20);
+  p.text("PRESS R TO RESTART", CANVAS_WIDTH / 2, 340);
+}
+
+function getColorRGB(colorName) {
+  const colors = {
+    'RED': [220, 50, 50],
+    'BLUE': [50, 100, 200],
+    'GREEN': [50, 180, 80],
+    'YELLOW': [240, 200, 50],
+    'BLACK': [40, 40, 40],
+    'WHITE': [240, 240, 240],
+    'ORANGE': [255, 140, 50],
+    'PURPLE': [180, 80, 200],
+    'RAINBOW': [150, 100, 255],
+    'GRAY': [150, 150, 150]
+  };
+  return colors[colorName] || [128, 128, 128];
+}
+</file>
+
+<file name="entities.js">
+// entities.js - Game entities and data structures
+
+export class City {
+  constructor(name, x, y) {
+    this.name = name;
+    this.x = x;
+    this.y = y;
+  }
+}
+
+export class Route {
+  constructor(city1, city2, color, length, x1, y1, x2, y2) {
+    this.city1 = city1;
+    this.city2 = city2;
+    this.color = color; // train color needed
+    this.length = length; // number of segments
+    this.x1 = x1;
+    this.y1 = y1;
+    this.x2 = x2;
+    this.y2 = y2;
+    this.claimed = false;
+    this.claimedBy = null;
+  }
+  
+  getPoints() {
+    const pointsMap = {1: 1, 2: 2, 3: 4, 4: 7, 5: 10, 6: 15};
+    return pointsMap[this.length] || 0;
+  }
+}
+
+export class DestinationTicket {
+  constructor(city1, city2, points) {
+    this.city1 = city1;
+    this.city2 = city2;
+    this.points = points;
+    this.completed = false;
+  }
+}
+
+export class Player {
+  constructor() {
+    this.hand = [];
+    this.destinations = [];
+    this.claimedRoutes = [];
+    this.trainsRemaining = 45;
+    this.score = 0;
+  }
+}
+</file>
+
+<file name="input_handler.js">
+// input_handler.js - Handle keyboard input
+
+import { gameState } from './globals.js';
+import { shuffleArray, drawCard, canClaimRoute, claimRoute, checkDestinationCompletion, calculateLongestPath, setMessage } from './utils.js';
+
+let p5Instance = null;
+
+export function initInputHandler(p) {
+  p5Instance = p;
+}
+
+export function handleKeyPressed(p) {
+  // Log input
+  p.logs.inputs.push({
+    input_type: "keyPressed",
+    data: { key: p.key, keyCode: p.keyCode },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+  
+  // Game phase transitions
+  if (p.keyCode === 13) { // ENTER
+    if (gameState.gamePhase === "START") {
+      startGame(p);
+    }
+    return;
+  }
+  
+  if (p.keyCode === 27) { // ESC
+    if (gameState.gamePhase === "PLAYING") {
+      gameState.gamePhase = "PAUSED";
+      p.logs.game_info.push({
+        data: { phase: "PAUSED" },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    } else if (gameState.gamePhase === "PAUSED") {
+      gameState.gamePhase = "PLAYING";
+      p.logs.game_info.push({
+        data: { phase: "PLAYING" },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+    return;
+  }
+  
+  if (p.keyCode === 82) { // R
+    if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") {
+      resetGame(p);
+    }
+    return;
+  }
+  
+  // Gameplay controls
+  if (gameState.gamePhase === "PLAYING") {
+    handleGameplayInput(p);
+  }
+}
+
+function startGame(p) {
+  gameState.gamePhase = "PLAYING";
+  gameState.currentAction = null;
+  gameState.selectedCardIndex = -1;
+  gameState.selectedRouteIndex = -1;
+  gameState.menuSelection = 0;
+  gameState.cardsDrawnThisTurn = 0;
+  
+  // Draw initial destination tickets
+  gameState.destinationsDrawn = [];
+  for (let i = 0; i < 3; i++) {
+    if (gameState.destinationTickets.length > 0) {
+      gameState.destinationsDrawn.push(gameState.destinationTickets.pop());
+    }
+  }
+  gameState.mustKeepDestinations = 1;
+  gameState.currentAction = "CHOOSE_INITIAL_DESTINATIONS";
+  
+  p.logs.game_info.push({
+    data: { phase: "PLAYING", action: "Game Started" },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function resetGame(p) {
+  gameState.gamePhase = "START";
+  gameState.score = 0;
+  gameState.trainsRemaining = 45;
+  gameState.playerHand = [];
+  gameState.playerDestinations = [];
+  gameState.claimedRoutes = [];
+  gameState.currentAction = null;
+  gameState.finalRoundTriggered = false;
+  gameState.gameOver = false;
+  gameState.message = "";
+  
+  // Reset routes
+  gameState.routes.forEach(route => {
+    route.claimed = false;
+    route.claimedBy = null;
+  });
+  
+  // Recreate decks
+  const createTrainCardDeck = (await import('./game_data.js')).createTrainCardDeck;
+  const createDestinationTickets = (await import('./game_data.js')).createDestinationTickets;
+  
+  gameState.trainCards = shuffleArray(createTrainCardDeck(), p);
+  gameState.destinationTickets = shuffleArray(createDestinationTickets(), p);
+  
+  // Deal face-up cards
+  gameState.faceUpCards = [];
+  for (let i = 0; i < 5; i++) {
+    gameState.faceUpCards.push(drawCard(p));
+  }
+  
+  // Deal initial hand
+  for (let i = 0; i < 4; i++) {
+    gameState.playerHand.push(drawCard(p));
+  }
+  
+  p.logs.game_info.push({
+    data: { phase: "START", action: "Game Reset" },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function handleGameplayInput(p) {
+  const keyCode = p.keyCode;
+  
+  // Handle initial destination selection
+  if (gameState.currentAction === "CHOOSE_INITIAL_DESTINATIONS") {
+    if (keyCode === 38 || keyCode === 40) { // UP/DOWN
+      const dir = keyCode === 38 ? -1 : 1;
+      gameState.menuSelection = (gameState.menuSelection + dir + gameState.destinationsDrawn.length) % gameState.destinationsDrawn.length;
+    } else if (keyCode === 32) { // SPACE - toggle selection
+      const dest = gameState.destinationsDrawn[gameState.menuSelection];
+      dest.selected = !dest.selected;
+      
+      const selectedCount = gameState.destinationsDrawn.filter(d => d.selected).length;
+      if (selectedCount >= gameState.mustKeepDestinations) {
+        // Can confirm
+      }
+    } else if (keyCode === 90) { // Z - confirm selection
+      const selected = gameState.destinationsDrawn.filter(d => d.selected);
+      if (selected.length >= gameState.mustKeepDestinations) {
+        selected.forEach(dest => {
+          delete dest.selected;
+          gameState.playerDestinations.push(dest);
+        });
+        gameState.destinationsDrawn = [];
+        gameState.currentAction = null;
+        setMessage("Destinations kept. Choose your action.", 120);
+      } else {
+        setMessage(`Must keep at least ${gameState.mustKeepDestinations} destination(s)!`, 120);
+      }
+    }
+    return;
+  }
+  
+  // Handle mid-turn destination selection
+  if (gameState.currentAction === "SELECTING_DESTINATIONS") {
+    if (keyCode === 38 || keyCode === 40) { // UP/DOWN
+      const dir = keyCode === 38 ? -1 : 1;
+      gameState.menuSelection = (gameState.menuSelection + dir + gameState.destinationsDrawn.length) % gameState.destinationsDrawn.length;
+    } else if (keyCode === 32) { // SPACE - toggle selection
+      const dest = gameState.destinationsDrawn[gameState.menuSelection];
+      dest.selected = !dest.selected;
+    } else if (keyCode === 90) { // Z - confirm selection
+      const selected = gameState.destinationsDrawn.filter(d => d.selected);
+      if (selected.length >= gameState.mustKeepDestinations) {
+        selected.forEach(dest => {
+          delete dest.selected;
+          gameState.playerDestinations.push(dest);
+        });
+        gameState.destinationsDrawn = [];
+        gameState.currentAction = null;
+        endTurn(p);
+      } else {
+        setMessage(`Must keep at least ${gameState.mustKeepDestinations} destination(s)!`, 120);
+      }
+    } else if (keyCode === 90 && gameState.destinationsDrawn.length === 0) {
+      gameState.currentAction = null;
+    }
+    return;
+  }
+  
+  // Normal turn actions
+  if (!gameState.currentAction) {
+    // Choose action
+    if (keyCode === 16) { // SHIFT - cycle actions
+      const actions = ["DRAW_CARDS", "CLAIM_ROUTE", "DRAW_DESTINATIONS"];
+      gameState.menuSelection = (gameState.menuSelection + 1) % actions.length;
+    } else if (keyCode === 32) { // SPACE - select action
+      const actions = ["DRAW_CARDS", "CLAIM_ROUTE", "DRAW_DESTINATIONS"];
+      gameState.currentAction = actions[gameState.menuSelection];
+      gameState.selectedCardIndex = -1;
+      gameState.selectedRouteIndex = -1;
+      gameState.cardsDrawnThisTurn = 0;
+      
+      if (gameState.currentAction === "DRAW_DESTINATIONS") {
+        // Draw 3 destination tickets
+        gameState.destinationsDrawn = [];
+        for (let i = 0; i < 3; i++) {
+          if (gameState.destinationTickets.length > 0) {
+            gameState.destinationsDrawn.push(gameState.destinationTickets.pop());
+          }
+        }
+        if (gameState.destinationsDrawn.length === 0) {
+          setMessage("No more destination tickets!", 120);
+          gameState.currentAction = null;
+        } else {
+          gameState.mustKeepDestinations = 1;
+          gameState.currentAction = "SELECTING_DESTINATIONS";
+          gameState.menuSelection = 0;
+        }
+      }
+    }
+  } else if (gameState.currentAction === "DRAW_CARDS") {
+    // Drawing cards
+    if (keyCode === 37 || keyCode === 39) { // LEFT/RIGHT
+      const dir = keyCode === 37 ? -1 : 1;
+      gameState.selectedCardIndex = (gameState.selectedCardIndex + dir + 7) % 7; // 5 face-up + deck + back
+    } else if (keyCode === 32) { // SPACE - draw card
+      if (gameState.cardsDrawnThisTurn >= 2) {
+        setMessage("Already drew 2 cards this turn!", 60);
+        return;
+      }
+      
+      if (gameState.selectedCardIndex < 5) {
+        // Face-up card
+        const card = gameState.faceUpCards[gameState.selectedCardIndex];
+        if (card === 'RAINBOW' && gameState.cardsDrawnThisTurn === 1) {
+          setMessage("Cannot draw wild as 2nd card!", 60);
+          return;
+        }
+        gameState.playerHand.push(card);
+        gameState.faceUpCards[gameState.selectedCardIndex] = drawCard(p);
+        
+        if (card === 'RAINBOW') {
+          gameState.cardsDrawnThisTurn = 2; // Wild counts as both
+        } else {
+          gameState.cardsDrawnThisTurn++;
+        }
+      } else if (gameState.selectedCardIndex === 5) {
+        // Deck
+        const card = drawCard(p);
+        if (card) {
+          gameState.playerHand.push(card);
+          gameState.cardsDrawnThisTurn++;
+        }
+      }
+      
+      if (gameState.cardsDrawnThisTurn >= 2) {
+        endTurn(p);
+      }
+    } else if (keyCode === 90) { // Z - cancel
+      gameState.currentAction = null;
+    }
+  } else if (gameState.currentAction === "CLAIM_ROUTE") {
+    // Claiming routes
+    if (keyCode === 38 || keyCode === 40) { // UP/DOWN
+      const dir = keyCode === 38 ? -1 : 1;
+      const unclaimedRoutes = gameState.routes.filter(r => !r.claimed);
+      if (unclaimedRoutes.length > 0) {
+        gameState.selectedRouteIndex = (gameState.selectedRouteIndex + dir + unclaimedRoutes.length) % unclaimedRoutes.length;
+      }
+    } else if (keyCode === 32) { // SPACE - claim route
+      const unclaimedRoutes = gameState.routes.filter(r => !r.claimed);
+      if (gameState.selectedRouteIndex >= 0 && gameState.selectedRouteIndex < unclaimedRoutes.length) {
+        const route = unclaimedRoutes[gameState.selectedRouteIndex];
+        if (canClaimRoute(route, gameState.playerHand)) {
+          claimRoute(route, gameState.playerHand);
+          setMessage(`Claimed route! +${route.getPoints()} points`, 120);
+          endTurn(p);
+        } else {
+          setMessage("Not enough cards to claim this route!", 120);
+        }
+      }
+    } else if (keyCode === 90) { // Z - cancel
+      gameState.currentAction = null;
+    }
+  }
+}
+
+function endTurn(p) {
+  gameState.currentAction = null;
+  gameState.selectedCardIndex = -1;
+  gameState.selectedRouteIndex = -1;
+  gameState.cardsDrawnThisTurn = 0;
+  
+  // Check destination completion
+  gameState.playerDestinations.forEach(dest => {
+    if (!dest.completed) {
+      if (checkDestinationCompletion(dest, gameState.claimedRoutes, gameState.cities)) {
+        dest.completed = true;
+        gameState.score += dest.points;
+        setMessage(`Destination completed! +${dest.points} points`, 180);
+      }
+    }
+  });
+  
+  // Check end game condition
+  if (gameState.trainsRemaining <= 3 && !gameState.finalRoundTriggered) {
+    gameState.finalRoundTriggered = true;
+    setMessage("Final round! Game will end after this turn.", 180);
+  }
+  
+  if (gameState.finalRoundTriggered) {
+    endGame(p);
+  }
+}
+
+function endGame(p) {
+  // Calculate final score
+  let finalScore = gameState.score;
+  
+  // Subtract incomplete destinations
+  gameState.playerDestinations.forEach(dest => {
+    if (!dest.completed) {
+      finalScore -= dest.points;
+    }
+  });
+  
+  // Add longest path bonus
+  const longestPath = calculateLongestPath(gameState.claimedRoutes, gameState.cities);
+  if (longestPath >= 6) {
+    finalScore += 10;
+    setMessage(`Longest path bonus! +10 points (${longestPath} trains)`, 300);
+  }
+  
+  gameState.score = finalScore;
+  
+  // Determine win/lose
+  if (finalScore >= 60) {
+    gameState.gamePhase = "GAME_OVER_WIN";
+  } else {
+    gameState.gamePhase = "GAME_OVER_LOSE";
+  }
+  
+  p.logs.game_info.push({
+    data: { phase: gameState.gamePhase, score: finalScore },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+</file>
+
+<file name="utils.js">
+// utils.js - Utility functions
+
+import { gameState } from './globals.js';
+
+export function shuffleArray(array, p) {
+  // Fisher-Yates shuffle
+  for (let i = array.length - 1; i > 0; i--) {
+    const j = Math.floor(p.random() * (i + 1));
+    [array[i], array[j]] = [array[j], array[i]];
+  }
+  return array;
+}
+
+export function drawCard(p) {
+  if (gameState.trainCards.length === 0) {
+    // Reshuffle discard or create new deck if needed
+    return null;
+  }
+  return gameState.trainCards.pop();
+}
+
+export function canClaimRoute(route, hand) {
+  if (route.claimed) return false;
+  if (gameState.trainsRemaining < route.length) return false;
+  
+  const colorNeeded = route.color === 'GRAY' ? null : route.color;
+  
+  // Count cards by color
+  const colorCounts = {};
+  hand.forEach(card => {
+    colorCounts[card] = (colorCounts[card] || 0) + 1;
+  });
+  
+  const wildCount = colorCounts['RAINBOW'] || 0;
+  
+  if (colorNeeded) {
+    // Specific color route
+    const specificCount = colorCounts[colorNeeded] || 0;
+    return (specificCount + wildCount) >= route.length;
+  } else {
+    // Gray route - can use any single color
+    for (let color in colorCounts) {
+      if (color !== 'RAINBOW') {
+        if (colorCounts[color] + wildCount >= route.length) {
+          return true;
+        }
+      }
+    }
+    // All wilds
+    return wildCount >= route.length;
+  }
+}
+
+export function claimRoute(route, hand) {
+  const colorNeeded = route.color === 'GRAY' ? null : route.color;
+  const cardsToRemove = [];
+  
+  // Find which color to use for gray routes
+  let chosenColor = colorNeeded;
+  if (!colorNeeded) {
+    const colorCounts = {};
+    hand.forEach(card => {
+      if (card !== 'RAINBOW') {
+        colorCounts[card] = (colorCounts[card] || 0) + 1;
+      }
+    });
+    
+    // Pick color with most cards
+    let maxCount = 0;
+    for (let color in colorCounts) {
+      if (colorCounts[color] > maxCount) {
+        maxCount = colorCounts[color];
+        chosenColor = color;
+      }
+    }
+    if (!chosenColor) chosenColor = 'RAINBOW'; // all wilds
+  }
+  
+  // Remove cards from hand
+  let needed = route.length;
+  for (let i = hand.length - 1; i >= 0 && needed > 0; i--) {
+    if (hand[i] === chosenColor) {
+      cardsToRemove.push(i);
+      needed--;
+    }
+  }
+  
+  // Use wilds if needed
+  for (let i = hand.length - 1; i >= 0 && needed > 0; i--) {
+    if (hand[i] === 'RAINBOW' && !cardsToRemove.includes(i)) {
+      cardsToRemove.push(i);
+      needed--;
+    }
+  }
+  
+  // Remove cards in reverse order
+  cardsToRemove.sort((a, b) => b - a);
+  cardsToRemove.forEach(index => {
+    hand.splice(index, 1);
+  });
+  
+  route.claimed = true;
+  route.claimedBy = 'PLAYER';
+  gameState.claimedRoutes.push(route);
+  gameState.trainsRemaining -= route.length;
+  gameState.score += route.getPoints();
+  
+  return true;
+}
+
+export function checkDestinationCompletion(destination, claimedRoutes, cities) {
+  // Simple BFS to check if cities are connected
+  const graph = {};
+  cities.forEach(city => {
+    graph[city.name] = [];
+  });
+  
+  claimedRoutes.forEach(route => {
+    graph[route.city1].push(route.city2);
+    graph[route.city2].push(route.city1);
+  });
+  
+  const visited = new Set();
+  const queue = [destination.city1];
+  visited.add(destination.city1);
+  
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (current === destination.city2) {
+      return true;
+    }
+    
+    const neighbors = graph[current] || [];
+    neighbors.forEach(neighbor => {
+      if (!visited.has(neighbor)) {
+        visited.add(neighbor);
+        queue.push(neighbor);
+      }
+    });
+  }
+  
+  return false;
+}
+
+export function calculateLongestPath(claimedRoutes, cities) {
+  if (claimedRoutes.length === 0) return 0;
+  
+  // Build adjacency list
+  const graph = {};
+  cities.forEach(city => {
+    graph[city.name] = [];
+  });
+  
+  claimedRoutes.forEach(route => {
+    graph[route.city1].push({city: route.city2, length: route.length});
+    graph[route.city2].push({city: route.city1, length: route.length});
+  });
+  
+  // DFS from each city to find longest path
+  let maxLength = 0;
+  
+  function dfs(city, visited, length) {
+    maxLength = Math.max(maxLength, length);
+    
+    const neighbors = graph[city] || [];
+    neighbors.forEach(neighbor => {
+      const edge = `${city}-${neighbor.city}`;
+      const edgeRev = `${neighbor.city}-${city}`;
+      if (!visited.has(edge) && !visited.has(edgeRev)) {
+        visited.add(edge);
+        visited.add(edgeRev);
+        dfs(neighbor.city, visited, length + neighbor.length);
+        visited.delete(edge);
+        visited.delete(edgeRev);
+      }
+    });
+  }
+  
+  cities.forEach(city => {
+    dfs(city.name, new Set(), 0);
+  });
+  
+  return maxLength;
+}
+
+export function setMessage(message, duration = 120) {
+  gameState.message = message;
+  gameState.messageTimer = duration;
+}
+</file>
+
+<file name="game_data.js">
+// game_data.js - Initialize game data (map, routes, cards)
+
+import { City, Route, DestinationTicket } from './entities.js';
+import { TRAIN_COLORS, WILD_COLOR } from './globals.js';
+
+export function createCities() {
+  return [
+    new City("Vancouver", 50, 80),
+    new City("Seattle", 80, 120),
+    new City("Portland", 90, 160),
+    new City("San Francisco", 70, 240),
+    new City("Los Angeles", 100, 300),
+    new City("Calgary", 150, 60),
+    new City("Helena", 180, 120),
+    new City("Salt Lake", 170, 200),
+    new City("Denver", 240, 220),
+    new City("Phoenix", 180, 300),
+    new City("El Paso", 240, 320),
+    new City("Winnipeg", 280, 60),
+    new City("Duluth", 330, 100),
+    new City("Omaha", 320, 180),
+    new City("Kansas City", 350, 220),
+    new City("Oklahoma", 350, 280),
+    new City("Dallas", 360, 320),
+    new City("Chicago", 400, 160),
+    new City("St Louis", 400, 220),
+    new City("Nashville", 430, 240),
+    new City("Atlanta", 460, 280),
+    new City("Miami", 500, 350),
+    new City("Toronto", 470, 120),
+    new City("Pittsburgh", 480, 180),
+    new City("Washington", 520, 210),
+    new City("New York", 540, 160),
+    new City("Boston", 560, 120)
+  ];
+}
+
+export function createRoutes(cities) {
+  const routes = [];
+  
+  // Helper to find city by name
+  const findCity = (name) => cities.find(c => c.name === name);
+  
+  // Define routes with connections
+  const routeData = [
+    ["Vancouver", "Seattle", "GRAY", 1],
+    ["Vancouver", "Calgary", "GRAY", 3],
+    ["Seattle", "Portland", "GRAY", 1],
+    ["Seattle", "Calgary", "GRAY", 4],
+    ["Portland", "San Francisco", "GREEN", 5],
+    ["Portland", "Salt Lake", "BLUE", 6],
+    ["San Francisco", "Los Angeles", "YELLOW", 3],
+    ["San Francisco", "Salt Lake", "ORANGE", 5],
+    ["Los Angeles", "Phoenix", "GRAY", 3],
+    ["Los Angeles", "El Paso", "BLACK", 6],
+    ["Calgary", "Helena", "GRAY", 4],
+    ["Calgary", "Winnipeg", "WHITE", 6],
+    ["Helena", "Salt Lake", "PURPLE", 3],
+    ["Helena", "Duluth", "ORANGE", 6],
+    ["Salt Lake", "Denver", "RED", 3],
+    ["Salt Lake", "Denver", "YELLOW", 3],
+    ["Denver", "Phoenix", "WHITE", 5],
+    ["Denver", "Omaha", "PURPLE", 4],
+    ["Denver", "Kansas City", "BLACK", 4],
+    ["Denver", "Oklahoma", "RED", 4],
+    ["Phoenix", "El Paso", "GRAY", 3],
+    ["Phoenix", "Oklahoma", "GRAY", 5],
+    ["El Paso", "Dallas", "RED", 4],
+    ["El Paso", "Oklahoma", "YELLOW", 5],
+    ["Winnipeg", "Duluth", "BLACK", 4],
+    ["Duluth", "Omaha", "GRAY", 2],
+    ["Duluth", "Chicago", "RED", 3],
+    ["Omaha", "Kansas City", "GRAY", 1],
+    ["Omaha", "Chicago", "BLUE", 4],
+    ["Kansas City", "Oklahoma", "GRAY", 2],
+    ["Kansas City", "St Louis", "PURPLE", 2],
+    ["Oklahoma", "Dallas", "GRAY", 2],
+    ["Oklahoma", "Nashville", "GRAY", 4],
+    ["Dallas", "Nashville", "GRAY", 5],
+    ["Chicago", "St Louis", "GREEN", 2],
+    ["Chicago", "Pittsburgh", "ORANGE", 3],
+    ["St Louis", "Nashville", "GRAY", 2],
+    ["St Louis", "Pittsburgh", "GREEN", 5],
+    ["Nashville", "Atlanta", "GRAY", 1],
+    ["Nashville", "Pittsburgh", "YELLOW", 4],
+    ["Atlanta", "Miami", "BLUE", 5],
+    ["Atlanta", "Washington", "GRAY", 4],
+    ["Toronto", "Duluth", "PURPLE", 6],
+    ["Toronto", "Chicago", "WHITE", 4],
+    ["Toronto", "Pittsburgh", "GRAY", 2],
+    ["Pittsburgh", "Washington", "GRAY", 2],
+    ["Pittsburgh", "New York", "WHITE", 2],
+    ["Washington", "New York", "ORANGE", 2],
+    ["Washington", "Miami", "GRAY", 6],
+    ["New York", "Boston", "YELLOW", 2]
+  ];
+  
+  routeData.forEach(([c1Name, c2Name, color, length]) => {
+    const c1 = findCity(c1Name);
+    const c2 = findCity(c2Name);
+    if (c1 && c2) {
+      routes.push(new Route(c1Name, c2Name, color, length, c1.x, c1.y, c2.x, c2.y));
+    }
+  });
+  
+  return routes;
+}
+
+export function createTrainCardDeck() {
+  const deck = [];
+  
+  // 12 cards of each color
+  TRAIN_COLORS.forEach(color => {
+    for (let i = 0; i < 12; i++) {
+      deck.push(color);
+    }
+  });
+  
+  // 14 wild cards
+  for (let i = 0; i < 14; i++) {
+    deck.push(WILD_COLOR);
+  }
+  
+  return deck;
+}
+
+export function createDestinationTickets() {
+  return [
+    new DestinationTicket("Vancouver", "Montreal", 20),
+    new DestinationTicket("Seattle", "New York", 22),
+    new DestinationTicket("Portland", "Nashville", 17),
+    new DestinationTicket("San Francisco", "Atlanta", 17),
+    new DestinationTicket("Los Angeles", "Miami", 20),
+    new DestinationTicket("Los Angeles", "Chicago", 16),
+    new DestinationTicket("Calgary", "Phoenix", 13),
+    new DestinationTicket("Calgary", "Salt Lake", 7),
+    new DestinationTicket("Helena", "Los Angeles", 8),
+    new DestinationTicket("Denver", "Pittsburgh", 11),
+    new DestinationTicket("Denver", "El Paso", 4),
+    new DestinationTicket("Winnipeg", "Houston", 12),
+    new DestinationTicket("Duluth", "Houston", 8),
+    new DestinationTicket("Omaha", "Duluth", 5),
+    new DestinationTicket("Kansas City", "Houston", 5),
+    new DestinationTicket("Chicago", "New Orleans", 7),
+    new DestinationTicket("Chicago", "Santa Fe", 9),
+    new DestinationTicket("St Louis", "Nashville", 4),
+    new DestinationTicket("Nashville", "Atlanta", 3),
+    new DestinationTicket("Toronto", "Miami", 10),
+    new DestinationTicket("Boston", "Miami", 12),
+    new DestinationTicket("New York", "Atlanta", 6)
+  ];
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

@@ -1,0 +1,1562 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+this game crashes when i press enter
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">SteamWorld Quest: Card Combat</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Basic)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Win)</button>
+        <button id="test_3_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_3')">TEST (Deck Build)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">SteamWorld Quest: Card Combat is a turn-based card battle game where you control a party of three steampunk heroes fighting against waves of enemies. Build your deck from over 30 unique punch-cards, each with different attack, defense, and special abilities. Play 3 cards per turn to execute powerful combos. Defeat all enemies in each battle to progress through 5 challenging encounters. Level up your heroes, earn gold, and strategically upgrade your deck to overcome increasingly difficult foes. Victory comes from mastering card synergies and tactical planning!</p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Arrow Keys: Navigate menu selections and card choices | Space: Confirm card selection / Execute turn | Shift: View detailed card information | Z: Cancel last card selection | Enter: Start game from title screen | ESC: Pause/Unpause game | R: Return to start screen from game over</p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="automated_testing_controller.js">
+// automated_testing_controller.js - Automated testing
+import { gameState, GAME_PHASES } from './globals.js';
+
+function getTestWinAction(gameState) {
+  // TEST_2: Optimal strategy to win
+  
+  // During card selection
+  if (gameState.turnPhase === "SELECT_CARDS") {
+    // Strategy: Select high-damage cards, prioritize attack over defense
+    if (gameState.selectedCards.length < 3 && gameState.hand.length > 0) {
+      // Find best card to play
+      let bestCardIndex = -1;
+      let bestScore = -1;
+      
+      for (let i = 0; i < gameState.hand.length; i++) {
+        const card = gameState.hand[i];
+        if (!gameState.selectedCards.includes(card)) {
+          // Score cards: damage is most important, defense secondary
+          let score = card.getDisplayDamage() * 2 + card.getDisplayDefense();
+          
+          // Boost heal cards if heroes are low on health
+          if (card.special === "HEAL") {
+            const avgHealth = gameState.heroes.reduce((sum, h) => sum + h.health, 0) / gameState.heroes.length;
+            if (avgHealth < 50) {
+              score += 30;
+            }
+          }
+          
+          // Boost AOE if multiple enemies
+          if (card.special === "AOE" && gameState.enemies.length > 1) {
+            score += 20;
+          }
+          
+          if (score > bestScore) {
+            bestScore = score;
+            bestCardIndex = i;
+          }
+        }
+      }
+      
+      if (bestCardIndex >= 0) {
+        // Navigate to card
+        if (gameState.selectedHandIndex < bestCardIndex) {
+          return { keyCode: 39 }; // Right arrow
+        } else if (gameState.selectedHandIndex > bestCardIndex) {
+          return { keyCode: 37 }; // Left arrow
+        } else {
+          return { keyCode: 32 }; // Space to select
+        }
+      }
+    } else if (gameState.selectedCards.length === 3) {
+      // Execute turn
+      return { keyCode: 32 }; // Space
+    }
+  }
+  
+  // In shop: buy powerful cards
+  if (gameState.shopOpen) {
+    if (gameState.availableCards.length === 0) {
+      return { keyCode: 90 }; // Z to close shop
+    }
+    
+    // Try to buy the most expensive card we can afford
+    let bestCardIndex = -1;
+    let bestValue = -1;
+    
+    for (let i = 0; i < gameState.availableCards.length; i++) {
+      const card = gameState.availableCards[i];
+      if (card.cost <= gameState.gold) {
+        const value = card.damage * 2 + card.defense + (card.special ? 15 : 0);
+        if (value > bestValue) {
+          bestValue = value;
+          bestCardIndex = i;
+        }
+      }
+    }
+    
+    if (bestCardIndex >= 0) {
+      if (gameState.selectedShopIndex < bestCardIndex) {
+        return { keyCode: 39 }; // Right
+      } else if (gameState.selectedShopIndex > bestCardIndex) {
+        return { keyCode: 37 }; // Left
+      } else {
+        return { keyCode: 32 }; // Buy
+      }
+    } else {
+      return { keyCode: 90 }; // Can't afford anything, close shop
+    }
+  }
+  
+  return null;
+}
+
+function getBasicTestAction(gameState) {
+  // TEST_1: Basic random card playing
+  
+  if (gameState.turnPhase === "SELECT_CARDS") {
+    if (gameState.selectedCards.length < 3 && gameState.hand.length > 0) {
+      // Randomly navigate and select
+      const actions = [37, 39, 32]; // Left, Right, Space
+      return { keyCode: actions[Math.floor(Math.random() * actions.length)] };
+    } else if (gameState.selectedCards.length === 3) {
+      return { keyCode: 32 }; // Execute
+    }
+  }
+  
+  if (gameState.shopOpen) {
+    // Random shop behavior
+    const actions = [37, 39, 32, 90];
+    return { keyCode: actions[Math.floor(Math.random() * actions.length)] };
+  }
+  
+  return null;
+}
+
+function getDeckTestAction(gameState) {
+  // TEST_3: Test deck building
+  
+  if (gameState.shopOpen) {
+    // Buy cards systematically
+    if (gameState.availableCards.length > 0 && gameState.gold >= gameState.availableCards[gameState.selectedShopIndex].cost) {
+      return { keyCode: 32 }; // Buy current card
+    } else if (gameState.selectedShopIndex < gameState.availableCards.length - 1) {
+      return { keyCode: 39 }; // Try next card
+    } else {
+      return { keyCode: 90 }; // Close shop
+    }
+  }
+  
+  // During combat, play cards quickly
+  if (gameState.turnPhase === "SELECT_CARDS") {
+    if (gameState.selectedCards.length < 3 && gameState.selectedHandIndex < gameState.hand.length) {
+      const card = gameState.hand[gameState.selectedHandIndex];
+      if (!gameState.selectedCards.includes(card)) {
+        return { keyCode: 32 }; // Select
+      } else {
+        return { keyCode: 39 }; // Next card
+      }
+    } else if (gameState.selectedCards.length === 3) {
+      return { keyCode: 32 }; // Execute
+    } else {
+      return { keyCode: 37 }; // Go back
+    }
+  }
+  
+  return null;
+}
+
+function getRandomAction(gameState) {
+  const actions = [37, 39, 32, 90]; // Arrow keys, space, Z
+  return { keyCode: actions[Math.floor(Math.random() * actions.length)] };
+}
+
+export function get_automated_testing_action(gameState) {
+  // Don't act during non-gameplay phases
+  if (gameState.gamePhase !== GAME_PHASES.PLAYING) {
+    return null;
+  }
+  
+  switch (gameState.controlMode) {
+    case "TEST_1":
+      return getBasicTestAction(gameState);
+    case "TEST_2":
+      return getTestWinAction(gameState);
+    case "TEST_3":
+      return getDeckTestAction(gameState);
+    default:
+      return getRandomAction(gameState);
+  }
+}
+
+window.get_automated_testing_action = get_automated_testing_action;
+export default get_automated_testing_action;
+</file>
+
+<file name="cards.js">
+// cards.js - Card definitions and management
+import { CARD_TYPES, HERO_CLASSES } from './globals.js';
+
+export class Card {
+  constructor(id, name, type, heroClass, cost, damage, defense, special, description) {
+    this.id = id;
+    this.name = name;
+    this.type = type;
+    this.heroClass = heroClass;
+    this.cost = cost; // Gold cost to purchase
+    this.damage = damage || 0;
+    this.defense = defense || 0;
+    this.special = special || null;
+    this.description = description;
+    this.level = 1;
+  }
+  
+  upgrade() {
+    this.level++;
+    this.damage = Math.floor(this.damage * 1.3);
+    this.defense = Math.floor(this.defense * 1.3);
+  }
+  
+  getDisplayDamage() {
+    return this.damage * this.level;
+  }
+  
+  getDisplayDefense() {
+    return this.defense * this.level;
+  }
+}
+
+// Card database
+export function createCardDatabase() {
+  const cards = [
+    // Warrior cards
+    new Card(1, "Heavy Strike", CARD_TYPES.ATTACK, HERO_CLASSES.WARRIOR, 20, 15, 0, null, "Deal heavy damage"),
+    new Card(2, "Shield Bash", CARD_TYPES.ATTACK, HERO_CLASSES.WARRIOR, 25, 10, 5, null, "Attack and defend"),
+    new Card(3, "Iron Wall", CARD_TYPES.DEFEND, HERO_CLASSES.WARRIOR, 20, 0, 20, null, "Block damage"),
+    new Card(4, "Cleave", CARD_TYPES.ATTACK, HERO_CLASSES.WARRIOR, 35, 12, 0, "AOE", "Hit all enemies"),
+    new Card(5, "Fortify", CARD_TYPES.DEFEND, HERO_CLASSES.WARRIOR, 30, 0, 15, "HEAL", "Defend and heal 10"),
+    
+    // Mage cards
+    new Card(6, "Fireball", CARD_TYPES.ATTACK, HERO_CLASSES.MAGE, 25, 18, 0, null, "Blast of fire"),
+    new Card(7, "Ice Shard", CARD_TYPES.ATTACK, HERO_CLASSES.MAGE, 20, 12, 0, "SLOW", "Damage enemy"),
+    new Card(8, "Magic Shield", CARD_TYPES.DEFEND, HERO_CLASSES.MAGE, 25, 0, 18, null, "Magical barrier"),
+    new Card(9, "Lightning", CARD_TYPES.ATTACK, HERO_CLASSES.MAGE, 40, 25, 0, null, "Huge damage"),
+    new Card(10, "Arcane Blast", CARD_TYPES.SPECIAL, HERO_CLASSES.MAGE, 35, 10, 5, "DRAW", "Attack, defend, draw"),
+    
+    // Rogue cards
+    new Card(11, "Quick Strike", CARD_TYPES.ATTACK, HERO_CLASSES.ROGUE, 15, 10, 0, null, "Fast attack"),
+    new Card(12, "Backstab", CARD_TYPES.ATTACK, HERO_CLASSES.ROGUE, 30, 20, 0, "CRIT", "Critical hit"),
+    new Card(13, "Dodge", CARD_TYPES.DEFEND, HERO_CLASSES.ROGUE, 20, 0, 15, null, "Evade attack"),
+    new Card(14, "Poison Dagger", CARD_TYPES.ATTACK, HERO_CLASSES.ROGUE, 35, 8, 0, "POISON", "Damage over time"),
+    new Card(15, "Smoke Bomb", CARD_TYPES.DEFEND, HERO_CLASSES.ROGUE, 30, 0, 25, null, "High defense"),
+    
+    // Universal cards
+    new Card(16, "Basic Attack", CARD_TYPES.ATTACK, null, 10, 8, 0, null, "Simple attack"),
+    new Card(17, "Defend", CARD_TYPES.DEFEND, null, 10, 0, 12, null, "Basic defense"),
+    new Card(18, "Power Strike", CARD_TYPES.ATTACK, null, 30, 16, 0, null, "Strong attack"),
+    new Card(19, "Heal", CARD_TYPES.SPECIAL, null, 25, 0, 0, "HEAL", "Restore 15 health"),
+    new Card(20, "Counter", CARD_TYPES.DEFEND, null, 35, 5, 10, "COUNTER", "Defend and counter"),
+  ];
+  
+  return cards;
+}
+
+export function getStarterDeck() {
+  const db = createCardDatabase();
+  // Start with basic cards from each hero
+  return [
+    Object.assign({}, db[0]),  // Heavy Strike
+    Object.assign({}, db[0]),  // Heavy Strike
+    Object.assign({}, db[2]),  // Iron Wall
+    Object.assign({}, db[5]),  // Fireball
+    Object.assign({}, db[6]),  // Ice Shard
+    Object.assign({}, db[7]),  // Magic Shield
+    Object.assign({}, db[10]), // Quick Strike
+    Object.assign({}, db[10]), // Quick Strike
+    Object.assign({}, db[12]), // Dodge
+    Object.assign({}, db[15]), // Basic Attack
+    Object.assign({}, db[15]), // Basic Attack
+    Object.assign({}, db[16]), // Defend
+  ];
+}
+
+export function drawCards(deck, hand, discardPile, count) {
+  const drawn = [];
+  for (let i = 0; i < count; i++) {
+    if (deck.length === 0) {
+      // Reshuffle discard pile into deck
+      deck.push(...discardPile);
+      discardPile.length = 0;
+      shuffleDeck(deck);
+    }
+    if (deck.length > 0) {
+      const card = deck.pop();
+      hand.push(card);
+      drawn.push(card);
+    }
+  }
+  return drawn;
+}
+
+export function shuffleDeck(deck) {
+  // Fisher-Yates shuffle
+  for (let i = deck.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [deck[i], deck[j]] = [deck[j], deck[i]];
+  }
+}
+</file>
+
+<file name="globals.js">
+// globals.js - Global game state and constants
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+export const GAME_PHASES = {
+  START: "START",
+  PLAYING: "PLAYING",
+  PAUSED: "PAUSED",
+  GAME_OVER_WIN: "GAME_OVER_WIN",
+  GAME_OVER_LOSE: "GAME_OVER_LOSE"
+};
+
+export const gameState = {
+  gamePhase: GAME_PHASES.START,
+  controlMode: "HUMAN",
+  
+  // Party
+  heroes: [],
+  
+  // Combat
+  enemies: [],
+  currentEncounter: 0,
+  totalEncounters: 5,
+  turnPhase: "SELECT_CARDS", // SELECT_CARDS, EXECUTING, ENEMY_TURN
+  
+  // Deck and hand
+  deck: [],
+  hand: [],
+  selectedCards: [],
+  discardPile: [],
+  
+  // Shop
+  availableCards: [],
+  gold: 100,
+  
+  // UI state
+  selectedHandIndex: 0,
+  shopOpen: false,
+  selectedShopIndex: 0,
+  detailCardIndex: -1,
+  
+  // Progression
+  experience: 0,
+  level: 1,
+  battlesWon: 0,
+  
+  // Animation
+  animationQueue: [],
+  
+  // Player reference for testing
+  player: null
+};
+
+// Card types
+export const CARD_TYPES = {
+  ATTACK: "ATTACK",
+  DEFEND: "DEFEND",
+  SPECIAL: "SPECIAL"
+};
+
+// Hero classes
+export const HERO_CLASSES = {
+  WARRIOR: "WARRIOR",
+  MAGE: "MAGE",
+  ROGUE: "ROGUE"
+};
+</file>
+
+<file name="combat.js">
+// combat.js - Combat logic and execution
+import { gameState, CARD_TYPES } from './globals.js';
+import { Enemy } from './entities.js';
+
+export function startNewEncounter(p) {
+  gameState.enemies = [];
+  gameState.currentEncounter++;
+  
+  const numEnemies = Math.min(2 + Math.floor(gameState.currentEncounter / 2), 3);
+  const enemyTypes = ["GOBLIN", "ROBOT", "DEMON"];
+  
+  for (let i = 0; i < numEnemies; i++) {
+    const type = enemyTypes[Math.floor(p.random() * enemyTypes.length)];
+    const x = 400 + i * 70;
+    const y = 150 + (i % 2) * 40;
+    const enemy = new Enemy(`${type} ${i + 1}`, type, x, y, gameState.currentEncounter);
+    gameState.enemies.push(enemy);
+    enemy.decideIntent(p);
+  }
+  
+  gameState.turnPhase = "SELECT_CARDS";
+  gameState.selectedCards = [];
+  gameState.selectedHandIndex = 0;
+}
+
+export function executePlayerTurn(p) {
+  gameState.turnPhase = "EXECUTING";
+  
+  // Execute selected cards
+  for (const card of gameState.selectedCards) {
+    executeCard(card, p);
+  }
+  
+  // Discard played cards
+  gameState.discardPile.push(...gameState.selectedCards);
+  gameState.hand = gameState.hand.filter(c => !gameState.selectedCards.includes(c));
+  gameState.selectedCards = [];
+  
+  // Check if enemies defeated
+  gameState.enemies = gameState.enemies.filter(e => e.isAlive());
+  
+  if (gameState.enemies.length === 0) {
+    // Battle won
+    endBattle(true, p);
+    return;
+  }
+  
+  // Enemy turn
+  setTimeout(() => executeEnemyTurn(p), 500);
+}
+
+function executeCard(card, p) {
+  if (card.type === CARD_TYPES.ATTACK || card.damage > 0) {
+    // Find target (weakest enemy)
+    let target = null;
+    let minHealth = Infinity;
+    for (const enemy of gameState.enemies) {
+      if (enemy.health < minHealth) {
+        minHealth = enemy.health;
+        target = enemy;
+      }
+    }
+    
+    if (target) {
+      const damage = card.getDisplayDamage();
+      if (card.special === "AOE") {
+        // Hit all enemies
+        for (const enemy of gameState.enemies) {
+          enemy.takeDamage(damage);
+          enemy.animOffsetX = -15;
+        }
+      } else {
+        target.takeDamage(damage);
+        target.animOffsetX = -15;
+      }
+    }
+  }
+  
+  if (card.type === CARD_TYPES.DEFEND || card.defense > 0) {
+    // Apply defense to weakest hero
+    let weakestHero = null;
+    let minHealth = Infinity;
+    for (const hero of gameState.heroes) {
+      if (hero.isAlive() && hero.health < minHealth) {
+        minHealth = hero.health;
+        weakestHero = hero;
+      }
+    }
+    if (weakestHero) {
+      weakestHero.animOffsetY = -10;
+    }
+  }
+  
+  if (card.special === "HEAL") {
+    // Heal weakest hero
+    let weakestHero = null;
+    let minHealth = Infinity;
+    for (const hero of gameState.heroes) {
+      if (hero.isAlive() && hero.health < minHealth) {
+        minHealth = hero.health;
+        weakestHero = hero;
+      }
+    }
+    if (weakestHero) {
+      weakestHero.heal(15);
+    }
+  }
+  
+  if (card.special === "DRAW") {
+    // Draw extra card
+    const { drawCards } = require('./cards.js');
+    drawCards(gameState.deck, gameState.hand, gameState.discardPile, 1);
+  }
+}
+
+export function executeEnemyTurn(p) {
+  gameState.turnPhase = "ENEMY_TURN";
+  
+  for (const enemy of gameState.enemies) {
+    if (!enemy.isAlive()) continue;
+    
+    if (enemy.intentDefend) {
+      // Enemy defends (no action needed for visual)
+      enemy.animOffsetY = -10;
+    } else {
+      // Enemy attacks random alive hero
+      const aliveHeroes = gameState.heroes.filter(h => h.isAlive());
+      if (aliveHeroes.length > 0) {
+        const target = aliveHeroes[Math.floor(p.random() * aliveHeroes.length)];
+        target.takeDamage(enemy.intentDamage);
+        target.animOffsetX = 15;
+        enemy.animOffsetX = 10;
+      }
+    }
+    
+    // Set new intent
+    enemy.decideIntent(p);
+  }
+  
+  // Check if all heroes dead
+  const aliveHeroes = gameState.heroes.filter(h => h.isAlive());
+  if (aliveHeroes.length === 0) {
+    endBattle(false, p);
+    return;
+  }
+  
+  // Draw new cards and start new turn
+  setTimeout(() => {
+    const { drawCards } = require('./cards.js');
+    drawCards(gameState.deck, gameState.hand, gameState.discardPile, 3);
+    gameState.turnPhase = "SELECT_CARDS";
+    gameState.selectedHandIndex = 0;
+  }, 800);
+}
+
+function endBattle(won, p) {
+  if (won) {
+    // Reward experience and gold
+    const expGain = 50 + gameState.currentEncounter * 20;
+    const goldGain = 40 + gameState.currentEncounter * 10;
+    
+    for (const hero of gameState.heroes) {
+      if (hero.isAlive()) {
+        hero.gainExperience(expGain);
+      }
+    }
+    
+    gameState.gold += goldGain;
+    gameState.battlesWon++;
+    gameState.experience += expGain;
+    
+    // Check if game won
+    if (gameState.currentEncounter >= gameState.totalEncounters) {
+      gameState.gamePhase = "GAME_OVER_WIN";
+      return;
+    }
+    
+    // Open shop
+    gameState.shopOpen = true;
+    gameState.selectedShopIndex = 0;
+  } else {
+    gameState.gamePhase = "GAME_OVER_LOSE";
+  }
+}
+</file>
+
+<file name="game.js">
+// game.js - Main game file
+import { gameState, GAME_PHASES, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { renderStartScreen, renderGameplay, renderGameOver } from './rendering.js';
+import { handleKeyPressed, handleKeyReleased } from './input.js';
+import { get_automated_testing_action } from './automated_testing_controller.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+  // Initialize logs
+  p.logs = {
+    game_info: [],
+    inputs: [],
+    player_info: []
+  };
+  
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(60);
+    p.randomSeed(42);
+    
+    p.logs.game_info.push({
+      data: { gamePhase: gameState.gamePhase, message: "Game initialized" },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  };
+  
+  p.draw = function() {
+    // Handle automated testing
+    if (gameState.controlMode !== "HUMAN" && gameState.gamePhase === GAME_PHASES.PLAYING) {
+      const action = get_automated_testing_action(gameState);
+      if (action && action.keyCode) {
+        handleKeyPressed(p, String.fromCharCode(action.keyCode), action.keyCode);
+      }
+    }
+    
+    // Update entities
+    if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+      for (const hero of gameState.heroes) {
+        hero.update();
+      }
+      for (const enemy of gameState.enemies) {
+        enemy.update();
+      }
+      
+      // Log player info periodically
+      if (p.frameCount % 30 === 0 && gameState.player) {
+        p.logs.player_info.push({
+          screen_x: gameState.player.x,
+          screen_y: gameState.player.y,
+          game_x: gameState.player.x,
+          game_y: gameState.player.y,
+          framecount: p.frameCount
+        });
+      }
+    }
+    
+    // Render based on game phase
+    switch (gameState.gamePhase) {
+      case GAME_PHASES.START:
+        renderStartScreen(p);
+        break;
+      case GAME_PHASES.PLAYING:
+      case GAME_PHASES.PAUSED:
+        renderGameplay(p);
+        break;
+      case GAME_PHASES.GAME_OVER_WIN:
+      case GAME_PHASES.GAME_OVER_LOSE:
+        renderGameOver(p);
+        break;
+    }
+  };
+  
+  p.keyPressed = function() {
+    if (gameState.controlMode === "HUMAN") {
+      handleKeyPressed(p, p.key, p.keyCode);
+    }
+    return false; // Prevent default
+  };
+  
+  p.keyReleased = function() {
+    if (gameState.controlMode === "HUMAN") {
+      handleKeyReleased(p, p.key, p.keyCode);
+    }
+    return false;
+  };
+});
+
+// Expose game instance globally
+window.gameInstance = gameInstance;
+
+// Expose getGameState function
+window.getGameState = function() {
+  return gameState;
+};
+
+// Control mode switching
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  
+  // Update button states
+  const buttons = ["humanModeBtn", "test_1_ModeBtn", "test_2_ModeBtn", "test_3_ModeBtn"];
+  buttons.forEach(btnId => {
+    const btn = document.getElementById(btnId);
+    if (btn) {
+      btn.classList.remove("active");
+    }
+  });
+  
+  const modeMap = {
+    "HUMAN": "humanModeBtn",
+    "TEST_1": "test_1_ModeBtn",
+    "TEST_2": "test_2_ModeBtn",
+    "TEST_3": "test_3_ModeBtn"
+  };
+  
+  const activeBtn = document.getElementById(modeMap[mode]);
+  if (activeBtn) {
+    activeBtn.classList.add("active");
+  }
+};
+</file>
+
+<file name="rendering.js">
+// rendering.js - Rendering functions
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, CARD_TYPES } from './globals.js';
+
+export function renderStartScreen(p) {
+  p.background(20, 25, 35);
+  
+  // Title
+  p.fill(220, 180, 100);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text("STEAMWORLD QUEST", CANVAS_WIDTH / 2, 80);
+  
+  // Subtitle
+  p.fill(180, 160, 120);
+  p.textSize(20);
+  p.text("Card Combat Adventure", CANVAS_WIDTH / 2, 120);
+  
+  // Description
+  p.fill(200, 200, 200);
+  p.textSize(14);
+  p.textAlign(p.CENTER, p.TOP);
+  const desc = [
+    "Command a party of steampunk heroes in turn-based card battles!",
+    "Build your deck, play 3 cards per turn, and defeat 5 encounters.",
+    "",
+    "Defeat all enemies to progress. Lose if all heroes fall.",
+    "Earn gold to buy new cards and level up your heroes!"
+  ];
+  for (let i = 0; i < desc.length; i++) {
+    p.text(desc[i], CANVAS_WIDTH / 2, 160 + i * 20);
+  }
+  
+  // Controls
+  p.fill(255, 220, 150);
+  p.textSize(13);
+  p.textAlign(p.LEFT, p.TOP);
+  const controls = [
+    "Arrow Keys: Navigate",
+    "Space: Confirm / Execute turn",
+    "Shift: View card details",
+    "Z: Cancel selection",
+    "ESC: Pause",
+    "R: Restart"
+  ];
+  for (let i = 0; i < controls.length; i++) {
+    p.text(controls[i], 50, 270 + i * 18);
+  }
+  
+  // Start prompt
+  p.fill(255, 255, 100);
+  p.textSize(20);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.text("PRESS ENTER TO START", CANVAS_WIDTH / 2, 370);
+}
+
+export function renderGameplay(p) {
+  p.background(30, 35, 45);
+  
+  // Render heroes
+  for (const hero of gameState.heroes) {
+    renderHero(p, hero);
+  }
+  
+  // Render enemies
+  for (const enemy of gameState.enemies) {
+    renderEnemy(p, enemy);
+  }
+  
+  // Render hand
+  renderHand(p);
+  
+  // Render UI
+  renderUI(p);
+  
+  // Shop overlay
+  if (gameState.shopOpen) {
+    renderShop(p);
+  }
+  
+  // Detail view
+  if (gameState.detailCardIndex >= 0 && gameState.detailCardIndex < gameState.hand.length) {
+    renderCardDetail(p, gameState.hand[gameState.detailCardIndex]);
+  }
+  
+  // Paused indicator
+  if (gameState.gamePhase === "PAUSED") {
+    p.fill(255, 255, 255);
+    p.textSize(16);
+    p.textAlign(p.RIGHT, p.TOP);
+    p.text("PAUSED", CANVAS_WIDTH - 10, 10);
+  }
+}
+
+function renderHero(p, hero) {
+  p.push();
+  p.translate(hero.x + hero.animOffsetX, hero.y + hero.animOffsetY);
+  
+  // Body
+  const fillColor = hero.flashTimer > 0 ? [255, 255, 255] : hero.color;
+  p.fill(...fillColor);
+  p.stroke(0);
+  p.strokeWeight(2);
+  p.rect(-hero.width / 2, -hero.height / 2, hero.width, hero.height, 5);
+  
+  // Health bar
+  p.fill(40, 40, 40);
+  p.noStroke();
+  p.rect(-hero.width / 2, -hero.height / 2 - 15, hero.width, 8);
+  
+  const healthPercent = hero.health / hero.maxHealth;
+  p.fill(healthPercent > 0.5 ? 100 : 200, healthPercent > 0.5 ? 200 : 100, 50);
+  p.rect(-hero.width / 2, -hero.height / 2 - 15, hero.width * healthPercent, 8);
+  
+  // Health text
+  p.fill(255);
+  p.textSize(10);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.text(`${Math.ceil(hero.health)}/${hero.maxHealth}`, 0, -hero.height / 2 - 11);
+  
+  // Name
+  p.textSize(9);
+  p.text(hero.name, 0, hero.height / 2 + 10);
+  
+  // Level indicator
+  p.fill(255, 220, 100);
+  p.textSize(8);
+  p.text(`Lv${hero.level}`, 0, hero.height / 2 + 20);
+  
+  p.pop();
+}
+
+function renderEnemy(p, enemy) {
+  p.push();
+  p.translate(enemy.x + enemy.animOffsetX, enemy.y + enemy.animOffsetY);
+  
+  // Body
+  const fillColor = enemy.flashTimer > 0 ? [255, 255, 255] : enemy.color;
+  p.fill(...fillColor);
+  p.stroke(0);
+  p.strokeWeight(2);
+  
+  // Different shapes for variety
+  if (enemy.type === "GOBLIN") {
+    p.ellipse(0, 0, enemy.width, enemy.height);
+  } else if (enemy.type === "ROBOT") {
+    p.rect(-enemy.width / 2, -enemy.height / 2, enemy.width, enemy.height);
+  } else {
+    p.triangle(-enemy.width / 2, enemy.height / 2, 
+               enemy.width / 2, enemy.height / 2,
+               0, -enemy.height / 2);
+  }
+  
+  // Health bar
+  p.fill(40, 40, 40);
+  p.noStroke();
+  p.rect(-enemy.width / 2, -enemy.height / 2 - 15, enemy.width, 8);
+  
+  const healthPercent = enemy.health / enemy.maxHealth;
+  p.fill(200, 50, 50);
+  p.rect(-enemy.width / 2, -enemy.height / 2 - 15, enemy.width * healthPercent, 8);
+  
+  // Health text
+  p.fill(255);
+  p.textSize(10);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.text(`${Math.ceil(enemy.health)}`, 0, -enemy.height / 2 - 11);
+  
+  // Intent indicator
+  p.textSize(12);
+  if (enemy.intentDefend) {
+    p.fill(100, 150, 255);
+    p.text("🛡", 0, -enemy.height / 2 - 30);
+  } else {
+    p.fill(255, 100, 100);
+    p.text(`⚔${enemy.intentDamage}`, 0, -enemy.height / 2 - 30);
+  }
+  
+  p.pop();
+}
+
+function renderHand(p) {
+  const cardWidth = 70;
+  const cardHeight = 90;
+  const cardSpacing = 5;
+  const startX = 20;
+  const startY = CANVAS_HEIGHT - cardHeight - 10;
+  
+  for (let i = 0; i < gameState.hand.length; i++) {
+    const card = gameState.hand[i];
+    const x = startX + i * (cardWidth + cardSpacing);
+    const y = startY;
+    
+    const isSelected = gameState.selectedCards.includes(card);
+    const isHighlighted = i === gameState.selectedHandIndex && gameState.turnPhase === "SELECT_CARDS";
+    
+    renderCard(p, card, x, y, cardWidth, cardHeight, isSelected, isHighlighted);
+  }
+  
+  // Selected cards count
+  if (gameState.turnPhase === "SELECT_CARDS") {
+    p.fill(255, 255, 100);
+    p.textSize(14);
+    p.textAlign(p.RIGHT, p.BOTTOM);
+    p.text(`Selected: ${gameState.selectedCards.length}/3`, CANVAS_WIDTH - 20, CANVAS_HEIGHT - 10);
+    
+    if (gameState.selectedCards.length === 3) {
+      p.fill(100, 255, 100);
+      p.text("Press SPACE to execute!", CANVAS_WIDTH - 20, CANVAS_HEIGHT - 30);
+    }
+  }
+}
+
+function renderCard(p, card, x, y, w, h, isSelected, isHighlighted) {
+  p.push();
+  
+  // Card background
+  if (isSelected) {
+    p.fill(255, 255, 150, 200);
+  } else if (isHighlighted) {
+    p.fill(200, 220, 255, 230);
+  } else {
+    p.fill(60, 70, 90, 220);
+  }
+  p.stroke(isHighlighted ? 255 : 150);
+  p.strokeWeight(isHighlighted ? 3 : 2);
+  p.rect(x, y, w, h, 5);
+  
+  // Card type color bar
+  let typeColor;
+  if (card.type === CARD_TYPES.ATTACK) {
+    typeColor = [220, 80, 80];
+  } else if (card.type === CARD_TYPES.DEFEND) {
+    typeColor = [80, 120, 220];
+  } else {
+    typeColor = [180, 120, 220];
+  }
+  p.fill(...typeColor);
+  p.noStroke();
+  p.rect(x, y, w, 15, 5, 5, 0, 0);
+  
+  // Card name
+  p.fill(255);
+  p.textSize(10);
+  p.textAlign(p.CENTER, p.TOP);
+  p.text(card.name, x + w / 2, y + 2);
+  
+  // Stats
+  p.textSize(16);
+  p.textAlign(p.CENTER, p.CENTER);
+  
+  if (card.damage > 0) {
+    p.fill(255, 100, 100);
+    p.text(`⚔${card.getDisplayDamage()}`, x + w / 2, y + h / 2 - 10);
+  }
+  
+  if (card.defense > 0) {
+    p.fill(100, 150, 255);
+    p.text(`🛡${card.getDisplayDefense()}`, x + w / 2, y + h / 2 + 10);
+  }
+  
+  if (card.special) {
+    p.fill(220, 180, 255);
+    p.textSize(9);
+    p.text(card.special, x + w / 2, y + h - 15);
+  }
+  
+  p.pop();
+}
+
+function renderUI(p) {
+  // Top bar
+  p.fill(20, 25, 35, 220);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, 35);
+  
+  // Encounter
+  p.fill(255, 220, 150);
+  p.textSize(14);
+  p.textAlign(p.LEFT, p.CENTER);
+  p.text(`Encounter: ${gameState.currentEncounter}/${gameState.totalEncounters}`, 10, 17);
+  
+  // Gold
+  p.fill(255, 215, 0);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.text(`Gold: ${gameState.gold}`, CANVAS_WIDTH / 2, 17);
+  
+  // Experience
+  p.fill(150, 255, 150);
+  p.textAlign(p.RIGHT, p.CENTER);
+  p.text(`Level: ${gameState.level}`, CANVAS_WIDTH - 10, 17);
+}
+
+function renderShop(p) {
+  // Overlay
+  p.fill(0, 0, 0, 180);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  // Shop panel
+  const panelW = 500;
+  const panelH = 350;
+  const panelX = (CANVAS_WIDTH - panelW) / 2;
+  const panelY = (CANVAS_HEIGHT - panelH) / 2;
+  
+  p.fill(40, 45, 60);
+  p.stroke(200, 180, 100);
+  p.strokeWeight(3);
+  p.rect(panelX, panelY, panelW, panelH, 10);
+  
+  // Title
+  p.fill(255, 220, 150);
+  p.textSize(24);
+  p.textAlign(p.CENTER, p.TOP);
+  p.text("CARD SHOP", CANVAS_WIDTH / 2, panelY + 15);
+  
+  p.textSize(14);
+  p.fill(200, 200, 200);
+  p.text("Select cards to purchase with gold", CANVAS_WIDTH / 2, panelY + 45);
+  
+  // Available cards
+  const cardW = 80;
+  const cardH = 100;
+  const spacing = 10;
+  const startX = panelX + 20;
+  const startY = panelY + 80;
+  
+  for (let i = 0; i < Math.min(gameState.availableCards.length, 5); i++) {
+    const card = gameState.availableCards[i];
+    const x = startX + i * (cardW + spacing);
+    const isHighlighted = i === gameState.selectedShopIndex;
+    
+    renderShopCard(p, card, x, startY, cardW, cardH, isHighlighted);
+  }
+  
+  // Instructions
+  p.fill(255, 255, 100);
+  p.textSize(13);
+  p.textAlign(p.CENTER, p.TOP);
+  p.text("Arrow Keys: Navigate | Space: Buy | Z: Close Shop", CANVAS_WIDTH / 2, panelY + panelH - 40);
+  
+  // Gold display
+  p.fill(255, 215, 0);
+  p.textSize(16);
+  p.text(`Your Gold: ${gameState.gold}`, CANVAS_WIDTH / 2, panelY + panelH - 20);
+}
+
+function renderShopCard(p, card, x, y, w, h, isHighlighted) {
+  p.push();
+  
+  // Card background
+  p.fill(isHighlighted ? 100 : 60, isHighlighted ? 110 : 70, isHighlighted ? 130 : 90);
+  p.stroke(isHighlighted ? 255 : 150);
+  p.strokeWeight(isHighlighted ? 3 : 2);
+  p.rect(x, y, w, h, 5);
+  
+  // Card name
+  p.fill(255);
+  p.textSize(11);
+  p.textAlign(p.CENTER, p.TOP);
+  p.text(card.name, x + w / 2, y + 5);
+  
+  // Stats
+  p.textSize(14);
+  p.textAlign(p.CENTER, p.CENTER);
+  
+  if (card.damage > 0) {
+    p.fill(255, 100, 100);
+    p.text(`⚔${card.damage}`, x + w / 2, y + h / 2 - 15);
+  }
+  
+  if (card.defense > 0) {
+    p.fill(100, 150, 255);
+    p.text(`🛡${card.defense}`, x + w / 2, y + h / 2);
+  }
+  
+  if (card.special) {
+    p.fill(220, 180, 255);
+    p.textSize(9);
+    p.text(card.special, x + w / 2, y + h / 2 + 15);
+  }
+  
+  // Cost
+  p.fill(255, 215, 0);
+  p.textSize(12);
+  p.textAlign(p.CENTER, p.BOTTOM);
+  p.text(`${card.cost}G`, x + w / 2, y + h - 5);
+  
+  p.pop();
+}
+
+function renderCardDetail(p, card) {
+  // Detail panel
+  const panelW = 250;
+  const panelH = 200;
+  const panelX = CANVAS_WIDTH - panelW - 20;
+  const panelY = 50;
+  
+  p.fill(30, 35, 45, 240);
+  p.stroke(200, 200, 200);
+  p.strokeWeight(2);
+  p.rect(panelX, panelY, panelW, panelH, 5);
+  
+  // Card name
+  p.fill(255, 220, 150);
+  p.textSize(16);
+  p.textAlign(p.CENTER, p.TOP);
+  p.text(card.name, panelX + panelW / 2, panelY + 10);
+  
+  // Type
+  p.fill(200, 200, 200);
+  p.textSize(12);
+  p.text(card.type, panelX + panelW / 2, panelY + 30);
+  
+  // Stats
+  p.textSize(14);
+  p.textAlign(p.LEFT, p.TOP);
+  let yOffset = 55;
+  
+  if (card.damage > 0) {
+    p.fill(255, 100, 100);
+    p.text(`Damage: ${card.getDisplayDamage()}`, panelX + 15, panelY + yOffset);
+    yOffset += 20;
+  }
+  
+  if (card.defense > 0) {
+    p.fill(100, 150, 255);
+    p.text(`Defense: ${card.getDisplayDefense()}`, panelX + 15, panelY + yOffset);
+    yOffset += 20;
+  }
+  
+  if (card.special) {
+    p.fill(220, 180, 255);
+    p.text(`Special: ${card.special}`, panelX + 15, panelY + yOffset);
+    yOffset += 20;
+  }
+  
+  // Description
+  p.fill(200, 200, 200);
+  p.textSize(11);
+  p.text(card.description, panelX + 15, panelY + yOffset);
+  
+  // Level
+  p.fill(255, 220, 100);
+  p.textSize(12);
+  p.textAlign(p.CENTER, p.BOTTOM);
+  p.text(`Level ${card.level}`, panelX + panelW / 2, panelY + panelH - 10);
+}
+
+export function renderGameOver(p) {
+  p.background(20, 25, 35);
+  
+  const isWin = gameState.gamePhase === "GAME_OVER_WIN";
+  
+  // Title
+  p.fill(isWin ? 100 : 200, isWin ? 255 : 100, 100);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text(isWin ? "VICTORY!" : "DEFEAT", CANVAS_WIDTH / 2, 100);
+  
+  // Stats
+  p.fill(255, 255, 255);
+  p.textSize(18);
+  p.text(`Encounters Won: ${gameState.battlesWon}`, CANVAS_WIDTH / 2, 160);
+  p.text(`Final Level: ${gameState.level}`, CANVAS_WIDTH / 2, 190);
+  p.text(`Gold Earned: ${gameState.gold}`, CANVAS_WIDTH / 2, 220);
+  
+  // Message
+  p.fill(200, 200, 200);
+  p.textSize(14);
+  if (isWin) {
+    p.text("You have mastered the art of card combat!", CANVAS_WIDTH / 2, 270);
+    p.text("The realm is safe thanks to your heroic party!", CANVAS_WIDTH / 2, 290);
+  } else {
+    p.text("Your heroes have fallen in battle.", CANVAS_WIDTH / 2, 270);
+    p.text("Try again with better strategy and deck building!", CANVAS_WIDTH / 2, 290);
+  }
+  
+  // Restart
+  p.fill(255, 255, 100);
+  p.textSize(20);
+  p.text("PRESS R TO RESTART", CANVAS_WIDTH / 2, 350);
+}
+</file>
+
+<file name="entities.js">
+// entities.js - Hero and Enemy classes
+import { HERO_CLASSES } from './globals.js';
+
+export class Hero {
+  constructor(name, heroClass, x, y) {
+    this.name = name;
+    this.heroClass = heroClass;
+    this.x = x;
+    this.y = y;
+    
+    // Stats
+    this.maxHealth = 100;
+    this.health = 100;
+    this.level = 1;
+    this.experience = 0;
+    
+    // Visual
+    this.width = 60;
+    this.height = 80;
+    this.color = this.getClassColor();
+    
+    // Animation
+    this.animOffsetX = 0;
+    this.animOffsetY = 0;
+    this.flashTimer = 0;
+  }
+  
+  getClassColor() {
+    switch (this.heroClass) {
+      case HERO_CLASSES.WARRIOR: return [200, 60, 60];
+      case HERO_CLASSES.MAGE: return [60, 100, 200];
+      case HERO_CLASSES.ROGUE: return [100, 200, 100];
+      default: return [150, 150, 150];
+    }
+  }
+  
+  takeDamage(amount) {
+    this.health = Math.max(0, this.health - amount);
+    this.flashTimer = 10;
+  }
+  
+  heal(amount) {
+    this.health = Math.min(this.maxHealth, this.health + amount);
+  }
+  
+  gainExperience(amount) {
+    this.experience += amount;
+    while (this.experience >= this.getExpToNextLevel()) {
+      this.levelUp();
+    }
+  }
+  
+  getExpToNextLevel() {
+    return this.level * 50;
+  }
+  
+  levelUp() {
+    this.experience -= this.getExpToNextLevel();
+    this.level++;
+    this.maxHealth += 20;
+    this.health = this.maxHealth;
+  }
+  
+  isAlive() {
+    return this.health > 0;
+  }
+  
+  update() {
+    // Update animations
+    this.animOffsetX *= 0.8;
+    this.animOffsetY *= 0.8;
+    if (this.flashTimer > 0) this.flashTimer--;
+  }
+}
+
+export class Enemy {
+  constructor(name, type, x, y, encounterLevel) {
+    this.name = name;
+    this.type = type;
+    this.x = x;
+    this.y = y;
+    
+    // Stats scale with encounter
+    const scaling = 1 + encounterLevel * 0.4;
+    this.maxHealth = Math.floor(60 * scaling);
+    this.health = this.maxHealth;
+    this.damage = Math.floor(8 * scaling);
+    
+    // Visual
+    this.width = 55;
+    this.height = 70;
+    this.color = this.getTypeColor();
+    
+    // Animation
+    this.animOffsetX = 0;
+    this.animOffsetY = 0;
+    this.flashTimer = 0;
+    this.intentDamage = 0;
+    this.intentDefend = false;
+  }
+  
+  getTypeColor() {
+    switch (this.type) {
+      case "GOBLIN": return [120, 180, 80];
+      case "ROBOT": return [150, 150, 180];
+      case "DEMON": return [180, 80, 120];
+      default: return [130, 130, 130];
+    }
+  }
+  
+  takeDamage(amount) {
+    this.health = Math.max(0, this.health - amount);
+    this.flashTimer = 10;
+  }
+  
+  isAlive() {
+    return this.health > 0;
+  }
+  
+  decideIntent(p) {
+    // Simple AI: attack with varying damage
+    if (p.random() < 0.3) {
+      this.intentDefend = true;
+      this.intentDamage = 0;
+    } else {
+      this.intentDefend = false;
+      this.intentDamage = this.damage + Math.floor(p.random(-2, 3));
+    }
+  }
+  
+  update() {
+    this.animOffsetX *= 0.8;
+    this.animOffsetY *= 0.8;
+    if (this.flashTimer > 0) this.flashTimer--;
+  }
+}
+</file>
+
+<file name="input.js">
+// input.js - Input handling
+import { gameState, GAME_PHASES } from './globals.js';
+import { drawCards } from './cards.js';
+import { executePlayerTurn } from './combat.js';
+
+export function handleKeyPressed(p, key, keyCode) {
+  // Log input
+  p.logs.inputs.push({
+    input_type: "keyPressed",
+    data: { key, keyCode },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+  
+  // Game phase transitions
+  if (keyCode === 13 && gameState.gamePhase === GAME_PHASES.START) { // ENTER
+    startGame(p);
+    return;
+  }
+  
+  if (keyCode === 82) { // R - Restart
+    restartGame(p);
+    return;
+  }
+  
+  if (keyCode === 27 && gameState.gamePhase === GAME_PHASES.PLAYING) { // ESC - Pause
+    gameState.gamePhase = GAME_PHASES.PAUSED;
+    p.logs.game_info.push({
+      data: { gamePhase: gameState.gamePhase },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+    return;
+  }
+  
+  if (keyCode === 27 && gameState.gamePhase === GAME_PHASES.PAUSED) { // ESC - Unpause
+    gameState.gamePhase = GAME_PHASES.PLAYING;
+    p.logs.game_info.push({
+      data: { gamePhase: gameState.gamePhase },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+    return;
+  }
+  
+  // Gameplay input
+  if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+    handleGameplayInput(p, keyCode);
+  }
+}
+
+function handleGameplayInput(p, keyCode) {
+  // Shop navigation
+  if (gameState.shopOpen) {
+    if (keyCode === 37) { // Left arrow
+      gameState.selectedShopIndex = Math.max(0, gameState.selectedShopIndex - 1);
+    } else if (keyCode === 39) { // Right arrow
+      gameState.selectedShopIndex = Math.min(gameState.availableCards.length - 1, gameState.selectedShopIndex + 1);
+    } else if (keyCode === 32) { // Space - Buy
+      purchaseCard(p);
+    } else if (keyCode === 90) { // Z - Close shop
+      gameState.shopOpen = false;
+      prepareNextEncounter(p);
+    }
+    return;
+  }
+  
+  // Card selection
+  if (gameState.turnPhase === "SELECT_CARDS") {
+    if (keyCode === 37) { // Left arrow
+      gameState.selectedHandIndex = Math.max(0, gameState.selectedHandIndex - 1);
+    } else if (keyCode === 39) { // Right arrow
+      gameState.selectedHandIndex = Math.min(gameState.hand.length - 1, gameState.selectedHandIndex + 1);
+    } else if (keyCode === 32) { // Space
+      if (gameState.selectedCards.length === 3) {
+        // Execute turn
+        executePlayerTurn(p);
+      } else if (gameState.selectedHandIndex >= 0 && gameState.selectedHandIndex < gameState.hand.length) {
+        // Select card
+        const card = gameState.hand[gameState.selectedHandIndex];
+        if (!gameState.selectedCards.includes(card) && gameState.selectedCards.length < 3) {
+          gameState.selectedCards.push(card);
+        }
+      }
+    } else if (keyCode === 90) { // Z - Cancel
+      if (gameState.selectedCards.length > 0) {
+        gameState.selectedCards.pop();
+      }
+    } else if (keyCode === 16) { // Shift - Details
+      gameState.detailCardIndex = gameState.selectedHandIndex;
+    }
+  }
+}
+
+export function handleKeyReleased(p, key, keyCode) {
+  if (keyCode === 16) { // Shift released
+    gameState.detailCardIndex = -1;
+  }
+}
+
+function startGame(p) {
+  const { Hero } = require('./entities.js');
+  const { getStarterDeck, createCardDatabase, shuffleDeck } = require('./cards.js');
+  const { startNewEncounter } = require('./combat.js');
+  const { HERO_CLASSES } = require('./globals.js');
+  
+  gameState.gamePhase = GAME_PHASES.PLAYING;
+  
+  // Initialize heroes
+  gameState.heroes = [
+    new Hero("Armilly", HERO_CLASSES.WARRIOR, 100, 150),
+    new Hero("Copernica", HERO_CLASSES.MAGE, 100, 240),
+    new Hero("Galleo", HERO_CLASSES.ROGUE, 100, 330)
+  ];
+  
+  gameState.player = gameState.heroes[0]; // For testing compatibility
+  
+  // Initialize deck
+  gameState.deck = getStarterDeck();
+  shuffleDeck(gameState.deck);
+  gameState.hand = [];
+  gameState.selectedCards = [];
+  gameState.discardPile = [];
+  
+  // Initialize shop cards
+  const allCards = createCardDatabase();
+  gameState.availableCards = allCards.slice(0, 10).map(c => Object.assign({}, c));
+  
+  // Reset state
+  gameState.currentEncounter = 0;
+  gameState.gold = 100;
+  gameState.battlesWon = 0;
+  gameState.level = 1;
+  gameState.experience = 0;
+  gameState.shopOpen = false;
+  
+  // Start first encounter
+  startNewEncounter(p);
+  drawCards(gameState.deck, gameState.hand, gameState.discardPile, 5);
+  
+  p.logs.game_info.push({
+    data: { gamePhase: gameState.gamePhase, message: "Game started" },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function restartGame(p) {
+  gameState.gamePhase = GAME_PHASES.START;
+  gameState.heroes = [];
+  gameState.enemies = [];
+  gameState.deck = [];
+  gameState.hand = [];
+  gameState.selectedCards = [];
+  gameState.discardPile = [];
+  gameState.availableCards = [];
+  
+  p.logs.game_info.push({
+    data: { gamePhase: gameState.gamePhase, message: "Game restarted" },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function purchaseCard(p) {
+  if (gameState.selectedShopIndex >= 0 && gameState.selectedShopIndex < gameState.availableCards.length) {
+    const card = gameState.availableCards[gameState.selectedShopIndex];
+    if (gameState.gold >= card.cost) {
+      gameState.gold -= card.cost;
+      const newCard = Object.assign({}, card);
+      gameState.deck.push(newCard);
+      gameState.availableCards.splice(gameState.selectedShopIndex, 1);
+      gameState.selectedShopIndex = Math.min(gameState.selectedShopIndex, gameState.availableCards.length - 1);
+    }
+  }
+}
+
+function prepareNextEncounter(p) {
+  const { startNewEncounter } = require('./combat.js');
+  const { shuffleDeck } = require('./cards.js');
+  
+  // Heal heroes partially
+  for (const hero of gameState.heroes) {
+    if (hero.isAlive()) {
+      hero.heal(30);
+    }
+  }
+  
+  // Reset deck
+  gameState.deck.push(...gameState.discardPile);
+  gameState.discardPile = [];
+  shuffleDeck(gameState.deck);
+  gameState.hand = [];
+  
+  // Start next encounter
+  startNewEncounter(p);
+  drawCards(gameState.deck, gameState.hand, gameState.discardPile, 5);
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

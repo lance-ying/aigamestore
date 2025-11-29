@@ -1,0 +1,281 @@
+<analysis>
+- Issue identified: Missing constant definitions and uninitialized gameState properties causing the game to crash on load. Specifically:
+  1. PLAYER_SIZE, THROW_FORCE constants not defined in globals.js
+  2. player.js references PLAYER_SIZE, MOVE_SPEED, JUMP_FORCE instead of the actual defined constants
+  3. gameState missing critical properties: health, cameraX, movableObjects, exitPortal, levelWidth
+  4. Constants imported in player.js don't match what's actually exported from globals.js
+
+- Files affected: globals.js, player.js
+
+- Changes needed: 
+  1. Add missing constants to globals.js (PLAYER_SIZE, THROW_FORCE)
+  2. Initialize missing gameState properties
+  3. Fix player.js to use correct constant names that match globals.js exports
+</analysis>
+
+<code filename="globals.js">
+// globals.js - Global constants and game state
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+export const GAME_PHASES = {
+  START: "START",
+  PLAYING: "PLAYING",
+  PAUSED: "PAUSED",
+  GAME_OVER_WIN: "GAME_OVER_WIN",
+  GAME_OVER_LOSE: "GAME_OVER_LOSE"
+};
+
+export const CONTROL_MODES = {
+  HUMAN: "HUMAN",
+  TEST_1: "TEST_1",
+  TEST_2: "TEST_2",
+  TEST_3: "TEST_3"
+};
+
+// Physics constants
+export const GRAVITY = 0.6;
+export const PLAYER_SPEED = 4;
+export const PLAYER_JUMP_FORCE = -12;
+export const MAX_FALL_SPEED = 15;
+export const FRICTION = 0.8;
+export const PLAYER_SIZE = 30;
+
+// Gravity gun constants
+export const GRAVITY_GUN_RANGE = 150;
+export const GRAVITY_GUN_FORCE = 0.8;
+export const MAX_ENERGY = 100;
+export const ENERGY_DRAIN_RATE = 0.5;
+export const ENERGY_RECHARGE_RATE = 0.3;
+export const THROW_FORCE = 12;
+
+// Game state object
+export const gameState = {
+  player: null,
+  entities: [],
+  blocks: [],
+  enemies: [],
+  platforms: [],
+  hazards: [],
+  movableObjects: [],
+  exitPortal: null,
+  goal: null,
+  score: 0,
+  health: 100,
+  gamePhase: GAME_PHASES.START,
+  controlMode: CONTROL_MODES.HUMAN,
+  energy: MAX_ENERGY,
+  gravityGunMode: "ATTRACT", // "ATTRACT" or "REPEL"
+  gravityGunActive: false,
+  grabbedObject: null,
+  pullMode: true,
+  level: 1,
+  cameraX: 0,
+  levelWidth: 2500,
+  targetedObject: null,
+  keys: {
+    left: false,
+    right: false,
+    up: false,
+    down: false,
+    space: false,
+    shift: false
+  }
+};
+
+// Expose globally
+if (typeof window !== 'undefined') {
+  window.getGameState = () => gameState;
+}
+</code>
+
+<code filename="player.js">
+// player.js - Player entity
+import { gameState, PLAYER_SIZE, PLAYER_SPEED, PLAYER_JUMP_FORCE, GRAVITY, CANVAS_HEIGHT } from './globals.js';
+
+export class Player {
+  constructor(p, x, y) {
+    this.p = p;
+    this.x = x;
+    this.y = y;
+    this.vx = 0;
+    this.vy = 0;
+    this.width = PLAYER_SIZE;
+    this.height = PLAYER_SIZE;
+    this.grounded = false;
+    this.facingRight = true;
+    this.jumpCount = 0;
+    this.maxJumps = 1;
+    this.animationFrame = 0;
+  }
+
+  update(keys) {
+    const p = this.p;
+    
+    // Horizontal movement
+    if (keys.left) {
+      this.vx = -PLAYER_SPEED;
+      this.facingRight = false;
+    } else if (keys.right) {
+      this.vx = PLAYER_SPEED;
+      this.facingRight = true;
+    } else {
+      this.vx *= 0.8; // Friction
+    }
+
+    // Jumping
+    if (keys.up && this.jumpCount < this.maxJumps) {
+      this.vy = PLAYER_JUMP_FORCE;
+      this.jumpCount++;
+      this.grounded = false;
+    }
+
+    // Gravity
+    this.vy += GRAVITY;
+    if (this.vy > 15) this.vy = 15; // Terminal velocity
+
+    // Update position
+    this.x += this.vx;
+    this.y += this.vy;
+
+    // Check ground collision
+    this.grounded = false;
+    for (let platform of gameState.platforms) {
+      if (this.checkPlatformCollision(platform)) {
+        this.grounded = true;
+        this.jumpCount = 0;
+        break;
+      }
+    }
+
+    // Check movable object collisions
+    for (let obj of gameState.movableObjects) {
+      if (obj !== gameState.grabbedObject) {
+        this.checkMovableCollision(obj);
+      }
+    }
+
+    // Boundary checks
+    if (this.x < this.width / 2) this.x = this.width / 2;
+    if (this.x > gameState.levelWidth - this.width / 2) {
+      this.x = gameState.levelWidth - this.width / 2;
+    }
+
+    // Death by falling
+    if (this.y > CANVAS_HEIGHT + 50) {
+      gameState.health = 0;
+    }
+
+    // Animation
+    this.animationFrame += 0.1;
+  }
+
+  checkPlatformCollision(platform) {
+    const p = this.p;
+    // Check if falling onto platform
+    if (this.vy >= 0 &&
+        this.x + this.width / 2 > platform.x &&
+        this.x - this.width / 2 < platform.x + platform.width &&
+        this.y + this.height / 2 >= platform.y &&
+        this.y + this.height / 2 <= platform.y + 15) {
+      this.y = platform.y - this.height / 2;
+      this.vy = 0;
+      return true;
+    }
+
+    // Check horizontal collisions
+    if (this.x + this.width / 2 > platform.x &&
+        this.x - this.width / 2 < platform.x + platform.width &&
+        this.y + this.height / 2 > platform.y &&
+        this.y - this.height / 2 < platform.y + platform.height) {
+      
+      // Left side collision
+      if (this.vx > 0 && this.x < platform.x + platform.width / 2) {
+        this.x = platform.x - this.width / 2;
+        this.vx = 0;
+      }
+      // Right side collision
+      else if (this.vx < 0 && this.x > platform.x + platform.width / 2) {
+        this.x = platform.x + platform.width + this.width / 2;
+        this.vx = 0;
+      }
+    }
+
+    // Check ceiling collision
+    if (this.vy < 0 &&
+        this.x + this.width / 2 > platform.x &&
+        this.x - this.width / 2 < platform.x + platform.width &&
+        this.y - this.height / 2 <= platform.y + platform.height &&
+        this.y - this.height / 2 >= platform.y) {
+      this.y = platform.y + platform.height + this.height / 2;
+      this.vy = 0;
+    }
+
+    return false;
+  }
+
+  checkMovableCollision(obj) {
+    const p = this.p;
+    const dist = p.dist(this.x, this.y + this.height / 2, obj.x, obj.y);
+    
+    if (dist < this.width / 2 + obj.radius) {
+      // Stand on top of object
+      if (this.vy >= 0 && this.y < obj.y) {
+        const angle = p.atan2(this.y - obj.y, this.x - obj.x);
+        this.y = obj.y - obj.radius - this.height / 2;
+        this.vy = 0;
+        this.grounded = true;
+        this.jumpCount = 0;
+      } else {
+        // Push away
+        const angle = p.atan2(this.y - obj.y, this.x - obj.x);
+        const overlap = (this.width / 2 + obj.radius) - dist;
+        this.x += p.cos(angle) * overlap;
+        this.y += p.sin(angle) * overlap;
+      }
+    }
+  }
+
+  draw(cameraX) {
+    const p = this.p;
+    const screenX = this.x - cameraX;
+    
+    p.push();
+    p.translate(screenX, this.y);
+    
+    // Body (robot body)
+    p.fill(100, 200, 255);
+    p.stroke(50, 100, 200);
+    p.strokeWeight(2);
+    p.rect(-this.width / 2, -this.height / 2, this.width, this.height, 3);
+    
+    // Eye
+    const eyeX = this.facingRight ? 3 : -3;
+    p.fill(255, 255, 100);
+    p.noStroke();
+    p.circle(eyeX, -3, 6);
+    
+    // Antenna
+    p.stroke(50, 100, 200);
+    p.strokeWeight(2);
+    p.line(0, -this.height / 2, 0, -this.height / 2 - 5);
+    p.fill(255, 100, 100);
+    p.noStroke();
+    p.circle(0, -this.height / 2 - 5, 4);
+    
+    // Legs (animated)
+    const legOffset = Math.sin(this.animationFrame) * 3;
+    p.stroke(50, 100, 200);
+    p.strokeWeight(2);
+    p.line(-5, this.height / 2, -5, this.height / 2 + 4 + legOffset);
+    p.line(5, this.height / 2, 5, this.height / 2 + 4 - legOffset);
+    
+    p.pop();
+  }
+
+  getScreenX(cameraX) {
+    return this.x - cameraX;
+  }
+}
+</code>

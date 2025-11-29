@@ -2,6 +2,7 @@
 
 import { gameState } from './globals.js';
 import { shuffleArray, drawCard, canClaimRoute, claimRoute, checkDestinationCompletion, calculateLongestPath, setMessage } from './utils.js';
+import { createTrainCardDeck, createDestinationTickets } from './game_data.js';
 
 let p5Instance = null;
 
@@ -102,9 +103,6 @@ function resetGame(p) {
   });
   
   // Recreate decks
-  const createTrainCardDeck = (await import('./game_data.js')).createTrainCardDeck;
-  const createDestinationTickets = (await import('./game_data.js')).createDestinationTickets;
-  
   gameState.trainCards = shuffleArray(createTrainCardDeck(), p);
   gameState.destinationTickets = shuffleArray(createDestinationTickets(), p);
   

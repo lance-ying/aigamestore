@@ -1,44 +1,49 @@
 // automation.js - Automated testing functions
-
 import { gameState, CONTROL_MODES, GAME_PHASES } from './globals.js';
 
-export function updateAutomation(p) {
+export function updateAutomation() {
   if (gameState.controlMode === CONTROL_MODES.HUMAN) return;
   
   gameState.testFrameCount++;
   
   switch (gameState.controlMode) {
     case CONTROL_MODES.TEST_1:
-      runTest1(p);
+      runTest1();
       break;
     case CONTROL_MODES.TEST_2:
-      runTest2(p);
+      runTest2();
       break;
     case CONTROL_MODES.TEST_3:
-      runTest3(p);
+      runTest3();
       break;
     case CONTROL_MODES.TEST_4:
-      runTest4(p);
+      runTest4();
       break;
     case CONTROL_MODES.TEST_5:
-      runTest5(p);
+      runTest5();
       break;
     case CONTROL_MODES.TEST_6:
-      runTest6(p);
+      runTest6();
       break;
     case CONTROL_MODES.TEST_7:
-      runTest7(p);
+      runTest7();
       break;
   }
 }
 
+function simulateKeyPress(keyCode) {
+  gameState.keys[keyCode] = true;
+  setTimeout(() => {
+    gameState.keys[keyCode] = false;
+  }, 100);
+}
+
 // TEST_1: Basic flight controls test
-function runTest1(p) {
+function runTest1() {
   if (gameState.gamePhase === GAME_PHASES.START) {
-    if (gameState.testFrameCount > 60) {
-      p.keyCode = 13;
-      p.key = 'Enter';
-      p.keyPressed();
+    if (gameState.testFrameCount === 60) {
+      gameState.keys[13] = true; // Enter
+      setTimeout(() => gameState.keys[13] = false, 100);
     }
     return;
   }
@@ -46,6 +51,9 @@ function runTest1(p) {
   if (gameState.gamePhase !== GAME_PHASES.PLAYING) return;
   
   const frame = gameState.testFrameCount;
+  
+  // Reset all inputs first
+  Object.keys(gameState.keys).forEach(key => gameState.keys[key] = false);
   
   // Test pitch control
   if (frame > 120 && frame < 180) {
@@ -70,24 +78,17 @@ function runTest1(p) {
   
   // Test throttle
   if (frame > 480 && frame < 540) {
-    gameState.keys[38] = true; // Up arrow - increase
+    gameState.keys[38] = true; // Up arrow
   } else if (frame > 540 && frame < 600) {
-    gameState.keys[40] = true; // Down arrow - decrease
-  }
-  
-  // Maintain stable flight
-  if (frame > 600) {
-    gameState.throttle = 0.6;
+    gameState.keys[40] = true; // Down arrow
   }
 }
 
 // TEST_2: Successful landing test
-function runTest2(p) {
+function runTest2() {
   if (gameState.gamePhase === GAME_PHASES.START) {
-    if (gameState.testFrameCount > 60) {
-      p.keyCode = 13;
-      p.key = 'Enter';
-      p.keyPressed();
+    if (gameState.testFrameCount === 60) {
+      simulateKeyPress(13); // Enter
     }
     return;
   }
@@ -98,54 +99,49 @@ function runTest2(p) {
   
   // Deploy gear early
   if (frame === 120) {
-    gameState.keys[32] = true; // Space
-    setTimeout(() => gameState.keys[32] = false, 100);
+    simulateKeyPress(32); // Space
   }
   
   // Deploy flaps
   if (frame === 150 || frame === 180 || frame === 210) {
-    gameState.keys[16] = true; // Shift
-    setTimeout(() => gameState.keys[16] = false, 100);
+    simulateKeyPress(16); // Shift
   }
   
   // Guide toward runway
-  const aircraft = gameState.player;
-  if (aircraft) {
-    const targetX = gameState.runway.body.position.x;
-    const deltaX = targetX - aircraft.body.position.x;
+  if (gameState.player) {
+    const aircraft = gameState.player;
     
-    // Roll to align
-    if (Math.abs(deltaX) > 10) {
-      if (deltaX > 0) {
-        gameState.keys[68] = true; // Roll right
-      } else {
+    // Align with runway
+    if (Math.abs(aircraft.mesh.position.x) > 2) {
+      if (aircraft.mesh.position.x > 0) {
         gameState.keys[65] = true; // Roll left
+      } else {
+        gameState.keys[68] = true; // Roll right
       }
     }
     
     // Descend gradually
-    if (gameState.altitude > 100) {
-      gameState.keys[83] = true; // Pitch down slightly
-    } else if (gameState.altitude < 50) {
+    if (gameState.altitude > 30) {
+      gameState.keys[83] = true; // Pitch down
+    } else if (gameState.altitude < 10) {
       gameState.keys[87] = true; // Pitch up to flare
     }
     
     // Manage throttle
-    if (gameState.speed > 150) {
+    const speedKnots = gameState.speed * 1.944;
+    if (speedKnots > 150) {
       gameState.keys[40] = true; // Reduce throttle
-    } else if (gameState.speed < 130) {
+    } else if (speedKnots < 130) {
       gameState.keys[38] = true; // Increase throttle
     }
   }
 }
 
 // TEST_3: Emergency scenarios test
-function runTest3(p) {
+function runTest3() {
   if (gameState.gamePhase === GAME_PHASES.START) {
-    if (gameState.testFrameCount > 60) {
-      p.keyCode = 13;
-      p.key = 'Enter';
-      p.keyPressed();
+    if (gameState.testFrameCount === 60) {
+      simulateKeyPress(13);
     }
     return;
   }
@@ -162,109 +158,90 @@ function runTest3(p) {
   
   // Compensate with remaining engine
   if (frame > 200) {
-    gameState.throttle = 0.8;
+    gameState.throttle = 0.9;
   }
 }
 
 // TEST_4: Fuel management test
-function runTest4(p) {
+function runTest4() {
   if (gameState.gamePhase === GAME_PHASES.START) {
-    if (gameState.testFrameCount > 60) {
-      p.keyCode = 13;
-      p.key = 'Enter';
-      p.keyPressed();
+    if (gameState.testFrameCount === 60) {
+      simulateKeyPress(13);
     }
     return;
   }
   
   if (gameState.gamePhase !== GAME_PHASES.PLAYING) return;
   
-  const frame = gameState.testFrameCount;
-  
   // Run at high throttle to burn fuel
-  if (frame < 300) {
+  if (gameState.testFrameCount < 300) {
     gameState.keys[38] = true; // Full throttle
   }
-  
-  // Monitor fuel levels
-  // Test verifies fuel decreases over time
 }
 
 // TEST_5: Crash detection test
-function runTest5(p) {
+function runTest5() {
   if (gameState.gamePhase === GAME_PHASES.START) {
-    if (gameState.testFrameCount > 60) {
-      p.keyCode = 13;
-      p.key = 'Enter';
-      p.keyPressed();
+    if (gameState.testFrameCount === 60) {
+      simulateKeyPress(13);
     }
     return;
   }
   
   if (gameState.gamePhase !== GAME_PHASES.PLAYING) return;
   
-  const frame = gameState.testFrameCount;
-  
   // Intentionally crash by diving
-  if (frame > 120) {
+  if (gameState.testFrameCount > 120) {
     gameState.keys[83] = true; // Pitch down hard
     gameState.keys[38] = true; // Full throttle
   }
 }
 
 // TEST_6: Instrument display test
-function runTest6(p) {
+function runTest6() {
   if (gameState.gamePhase === GAME_PHASES.START) {
-    if (gameState.testFrameCount > 60) {
-      p.keyCode = 13;
-      p.key = 'Enter';
-      p.keyPressed();
+    if (gameState.testFrameCount === 60) {
+      simulateKeyPress(13);
     }
     return;
   }
   
   if (gameState.gamePhase !== GAME_PHASES.PLAYING) return;
   
-  // Perform various maneuvers to test instruments
   const frame = gameState.testFrameCount;
   
+  // Perform various maneuvers
   if (frame > 120 && frame < 240) {
-    gameState.keys[87] = true; // Pitch up - test altitude/VS
+    gameState.keys[87] = true; // Pitch up
   } else if (frame > 240 && frame < 360) {
-    gameState.keys[38] = true; // Throttle up - test speed
+    gameState.keys[38] = true; // Throttle up
   } else if (frame > 360 && frame < 480) {
-    gameState.keys[68] = true; // Roll - test heading
+    gameState.keys[68] = true; // Roll
   }
 }
 
 // TEST_7: Pause and restart test
-function runTest7(p) {
+function runTest7() {
   if (gameState.gamePhase === GAME_PHASES.START) {
-    if (gameState.testFrameCount > 60) {
-      p.keyCode = 13;
-      p.key = 'Enter';
-      p.keyPressed();
+    if (gameState.testFrameCount === 60) {
+      simulateKeyPress(13);
     }
     return;
   }
   
   if (gameState.gamePhase === GAME_PHASES.PLAYING) {
     if (gameState.testFrameCount === 200) {
-      p.keyCode = 27;
-      p.key = 'Escape';
-      p.keyPressed(); // Pause
+      simulateKeyPress(27); // Pause
     }
   }
   
   if (gameState.gamePhase === GAME_PHASES.PAUSED) {
     if (gameState.testFrameCount === 300) {
-      p.keyCode = 27;
-      p.key = 'Escape';
-      p.keyPressed(); // Unpause
+      simulateKeyPress(27); // Unpause
     }
   }
   
-  // Crash intentionally to test restart
+  // Crash intentionally
   if (gameState.gamePhase === GAME_PHASES.PLAYING && gameState.testFrameCount > 400) {
     gameState.keys[83] = true; // Dive
     gameState.keys[38] = true; // Full throttle
@@ -272,9 +249,7 @@ function runTest7(p) {
   
   if (gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE) {
     if (gameState.testFrameCount > 500) {
-      p.keyCode = 82;
-      p.key = 'r';
-      p.keyPressed(); // Restart
+      simulateKeyPress(82); // Restart
     }
   }
 }

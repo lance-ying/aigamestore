@@ -1,0 +1,1373 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+I can't move properly in this game, can you fix that? I just get stuck when I press left or right
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">HELLTAKER</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Basic Movement)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Win)</button>
+        <button id="test_3_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_3')">TEST (Lose)</button>
+        <button id="test_4_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_4')">TEST (Push)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">You've descended into Hell with one goal: assemble a harem of demon girls. Navigate through puzzle levels by pushing blocks and skeletons to reach the demon girl at the end of each stage. You have limited moves per level, so plan carefully! Solve increasingly difficult puzzles across multiple levels. Be efficient or face game over!</p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;"><strong>Controls:</strong> Arrow Keys: Move | Space: Push/Kick | Enter: Start | ESC: Pause | R: Restart</p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="automated_testing_controller.js">
+// automated_testing_controller.js
+import { DIRECTIONS } from './globals.js';
+
+// Pathfinding using BFS
+function findPath(grid, startX, startY, goalX, goalY, entities) {
+  const queue = [{ x: startX, y: startY, path: [] }];
+  const visited = new Set();
+  visited.add(`${startX},${startY}`);
+  
+  while (queue.length > 0) {
+    const current = queue.shift();
+    
+    if (current.x === goalX && current.y === goalY) {
+      return current.path;
+    }
+    
+    const moves = [
+      { dir: DIRECTIONS.UP, x: current.x, y: current.y - 1 },
+      { dir: DIRECTIONS.DOWN, x: current.x, y: current.y + 1 },
+      { dir: DIRECTIONS.LEFT, x: current.x - 1, y: current.y },
+      { dir: DIRECTIONS.RIGHT, x: current.x + 1, y: current.y }
+    ];
+    
+    for (const move of moves) {
+      const key = `${move.x},${move.y}`;
+      if (visited.has(key)) continue;
+      
+      // Check if position is walkable
+      if (move.y < 0 || move.y >= grid.length || move.x < 0 || move.x >= grid[0].length) continue;
+      if (grid[move.y][move.x] === 1) continue; // Wall
+      
+      // Check for blocking entities
+      const entity = entities.find(e => e.gridX === move.x && e.gridY === move.y);
+      if (entity && entity.type !== 5 && entity.type !== 4) continue; // Block/Skeleton
+      
+      visited.add(key);
+      queue.push({
+        x: move.x,
+        y: move.y,
+        path: [...current.path, move.dir]
+      });
+    }
+  }
+  
+  return null;
+}
+
+function getTestWinAction(gameState) {
+  if (!gameState.player || gameState.gamePhase !== "PLAYING") {
+    return null;
+  }
+  
+  // Find demon girl
+  const demonGirl = gameState.entities.find(e => e.type === 5);
+  if (!demonGirl) return null;
+  
+  // Check if we need to push something
+  const blockers = gameState.entities.filter(e => 
+    (e.type === 2 || e.type === 3) && 
+    Math.abs(e.gridX - gameState.player.gridX) + Math.abs(e.gridY - gameState.player.gridY) <= 3
+  );
+  
+  // Try to find direct path to goal
+  let path = findPath(
+    gameState.grid,
+    gameState.player.gridX,
+    gameState.player.gridY,
+    demonGirl.gridX,
+    demonGirl.gridY,
+    gameState.entities
+  );
+  
+  if (path && path.length > 0) {
+    return directionToKeyCode(path[0]);
+  }
+  
+  // If blocked, try to push something out of the way
+  if (blockers.length > 0) {
+    for (const blocker of blockers) {
+      // Try to get next to the blocker
+      const adjacentPositions = [
+        { x: blocker.gridX, y: blocker.gridY - 1, dir: DIRECTIONS.DOWN },
+        { x: blocker.gridX, y: blocker.gridY + 1, dir: DIRECTIONS.UP },
+        { x: blocker.gridX - 1, y: blocker.gridY, dir: DIRECTIONS.RIGHT },
+        { x: blocker.gridX + 1, y: blocker.gridY, dir: DIRECTIONS.LEFT }
+      ];
+      
+      for (const pos of adjacentPositions) {
+        const pathToBlocker = findPath(
+          gameState.grid,
+          gameState.player.gridX,
+          gameState.player.gridY,
+          pos.x,
+          pos.y,
+          gameState.entities
+        );
+        
+        if (pathToBlocker && pathToBlocker.length > 0) {
+          // If already adjacent, push
+          if (pathToBlocker.length === 1) {
+            return 32; // SPACE to push
+          }
+          return directionToKeyCode(pathToBlocker[0]);
+        }
+      }
+    }
+  }
+  
+  // Random move as fallback
+  const moves = [38, 40, 37, 39];
+  return moves[Math.floor(Math.random() * moves.length)];
+}
+
+function getTestBasicAction(gameState) {
+  if (!gameState.player || gameState.gamePhase !== "PLAYING") {
+    return null;
+  }
+  
+  // Just test movement in all directions
+  const frame = gameState.player.gridX + gameState.player.gridY;
+  const moves = [38, 40, 37, 39]; // UP, DOWN, LEFT, RIGHT
+  return moves[frame % moves.length];
+}
+
+function getTestLoseAction(gameState) {
+  if (!gameState.player || gameState.gamePhase !== "PLAYING") {
+    return null;
+  }
+  
+  // Make inefficient moves to run out
+  const frame = Math.floor(Date.now() / 500);
+  return frame % 2 === 0 ? 37 : 39; // Move left and right
+}
+
+function getTestPushAction(gameState) {
+  if (!gameState.player || gameState.gamePhase !== "PLAYING") {
+    return null;
+  }
+  
+  // Find nearest pushable object
+  const pushables = gameState.entities.filter(e => e.type === 2 || e.type === 3);
+  if (pushables.length === 0) return getTestWinAction(gameState);
+  
+  const nearest = pushables.reduce((prev, curr) => {
+    const prevDist = Math.abs(prev.gridX - gameState.player.gridX) + Math.abs(prev.gridY - gameState.player.gridY);
+    const currDist = Math.abs(curr.gridX - gameState.player.gridX) + Math.abs(curr.gridY - gameState.player.gridY);
+    return currDist < prevDist ? curr : prev;
+  });
+  
+  // Navigate to be adjacent to it
+  const adjacentPositions = [
+    { x: nearest.gridX, y: nearest.gridY - 1 },
+    { x: nearest.gridX, y: nearest.gridY + 1 },
+    { x: nearest.gridX - 1, y: nearest.gridY },
+    { x: nearest.gridX + 1, y: nearest.gridY }
+  ];
+  
+  for (const pos of adjacentPositions) {
+    const path = findPath(
+      gameState.grid,
+      gameState.player.gridX,
+      gameState.player.gridY,
+      pos.x,
+      pos.y,
+      gameState.entities
+    );
+    
+    if (path && path.length > 0) {
+      if (path.length === 1) {
+        return 32; // Push
+      }
+      return directionToKeyCode(path[0]);
+    }
+  }
+  
+  return null;
+}
+
+function directionToKeyCode(direction) {
+  if (direction === DIRECTIONS.UP) return 38;
+  if (direction === DIRECTIONS.DOWN) return 40;
+  if (direction === DIRECTIONS.LEFT) return 37;
+  if (direction === DIRECTIONS.RIGHT) return 39;
+  return null;
+}
+
+function getRandomAction(gameState) {
+  if (gameState.gamePhase !== "PLAYING") return null;
+  const actions = [38, 40, 37, 39, 32];
+  return actions[Math.floor(Math.random() * actions.length)];
+}
+
+export function get_automated_testing_action(gameState) {
+  switch (gameState.controlMode) {
+    case "TEST_1":
+      return getTestBasicAction(gameState);
+    case "TEST_2":
+      return getTestWinAction(gameState);
+    case "TEST_3":
+      return getTestLoseAction(gameState);
+    case "TEST_4":
+      return getTestPushAction(gameState);
+    default:
+      return getRandomAction(gameState);
+  }
+}
+
+window.get_automated_testing_action = get_automated_testing_action;
+export default get_automated_testing_action;
+</file>
+
+<file name="globals.js">
+// globals.js
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const TILE_SIZE = 40;
+export const GRID_WIDTH = 9;
+export const GRID_HEIGHT = 7;
+export const GRID_OFFSET_X = 60;
+export const GRID_OFFSET_Y = 60;
+
+export const TILE_TYPES = {
+  EMPTY: 0,
+  WALL: 1,
+  BLOCK: 2,
+  SKELETON: 3,
+  SPIKE: 4,
+  GOAL: 5
+};
+
+export const DIRECTIONS = {
+  UP: { x: 0, y: -1 },
+  DOWN: { x: 0, y: 1 },
+  LEFT: { x: -1, y: 0 },
+  RIGHT: { x: 1, y: 0 }
+};
+
+export const gameState = {
+  player: null,
+  entities: [],
+  score: 0,
+  gamePhase: "START",
+  controlMode: "HUMAN",
+  currentLevel: 0,
+  movesRemaining: 0,
+  maxMoves: 0,
+  grid: [],
+  playerDir: DIRECTIONS.DOWN,
+  levelComplete: false,
+  demonsCollected: 0
+};
+
+export function getGameState() {
+  return gameState;
+}
+
+window.getGameState = getGameState;
+</file>
+
+<file name="game.js">
+// game.js
+import { gameState, getGameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { Player } from './player.js';
+import { initializeGrid } from './grid.js';
+import { LEVELS } from './levels.js';
+import { renderStartScreen, renderPlaying, renderGameOver } from './rendering.js';
+import { handleKeyPressed } from './input_handler.js';
+import { get_automated_testing_action } from './automated_testing_controller.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+  // Initialize logs
+  p.logs = {
+    "game_info": [],
+    "inputs": [],
+    "player_info": []
+  };
+
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(60);
+    p.randomSeed(42);
+    
+    // Initialize game state
+    gameState.gamePhase = "START";
+    gameState.currentLevel = 0;
+    gameState.score = 0;
+    gameState.demonsCollected = 0;
+    gameState.levelComplete = false;
+    
+    // Log initial state
+    p.logs.game_info.push({
+      data: { phase: "START", action: "init" },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  };
+
+  p.draw = function() {
+    // Handle automated testing
+    if (gameState.controlMode !== "HUMAN" && gameState.gamePhase === "PLAYING") {
+      const action = get_automated_testing_action(gameState);
+      if (action !== null && p.frameCount % 10 === 0) {
+        handleKeyPressed(p, action);
+      }
+    }
+    
+    // Initialize level if needed
+    if (gameState.gamePhase === "PLAYING" && !gameState.player) {
+      const level = LEVELS[gameState.currentLevel];
+      gameState.maxMoves = level.maxMoves;
+      gameState.movesRemaining = level.maxMoves;
+      gameState.player = new Player(level.playerStart.x, level.playerStart.y);
+      gameState.player.health = 3;
+      initializeGrid(level, gameState);
+    }
+    
+    // Reset player for new level
+    if (gameState.gamePhase === "PLAYING" && gameState.levelComplete === false && gameState.currentLevel < LEVELS.length) {
+      const level = LEVELS[gameState.currentLevel];
+      if (gameState.player && (gameState.player.gridX !== level.playerStart.x || gameState.player.gridY !== level.playerStart.y)) {
+        // Check if we just completed a level
+        const demonGirl = gameState.entities.find(e => e.type === 5);
+        if (!demonGirl || (gameState.player.gridX !== demonGirl.gridX || gameState.player.gridY !== demonGirl.gridY)) {
+          gameState.maxMoves = level.maxMoves;
+          gameState.movesRemaining = level.maxMoves;
+          gameState.player = new Player(level.playerStart.x, level.playerStart.y);
+          gameState.player.health = 3;
+          initializeGrid(level, gameState);
+        }
+      }
+    }
+    
+    // Render based on game phase
+    if (gameState.gamePhase === "START") {
+      renderStartScreen(p);
+    } else if (gameState.gamePhase === "PLAYING" || gameState.gamePhase === "PAUSED") {
+      renderPlaying(p);
+    } else if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") {
+      renderGameOver(p);
+    }
+  };
+
+  p.keyPressed = function() {
+    if (gameState.controlMode === "HUMAN") {
+      handleKeyPressed(p, p.keyCode);
+    }
+    return false; // Prevent default
+  };
+}, document.body);
+
+// Expose game instance globally
+window.gameInstance = gameInstance;
+
+// Control mode setter
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  
+  // Update button states
+  const buttons = document.querySelectorAll('.control-button');
+  buttons.forEach(btn => btn.classList.remove('active'));
+  
+  if (mode === "HUMAN") {
+    document.getElementById('humanModeBtn').classList.add('active');
+  } else if (mode === "TEST_1") {
+    document.getElementById('test_1_ModeBtn').classList.add('active');
+  } else if (mode === "TEST_2") {
+    document.getElementById('test_2_ModeBtn').classList.add('active');
+  } else if (mode === "TEST_3") {
+    document.getElementById('test_3_ModeBtn')?.classList.add('active');
+  } else if (mode === "TEST_4") {
+    document.getElementById('test_4_ModeBtn')?.classList.add('active');
+  }
+};
+</file>
+
+<file name="grid.js">
+// grid.js
+import { TILE_SIZE, GRID_WIDTH, GRID_HEIGHT, GRID_OFFSET_X, GRID_OFFSET_Y, TILE_TYPES } from './globals.js';
+import { Block, Skeleton, DemonGirl, Spike } from './entities.js';
+
+export function initializeGrid(level, gameState) {
+  gameState.grid = [];
+  gameState.entities = [];
+  
+  // Copy level grid
+  for (let y = 0; y < GRID_HEIGHT; y++) {
+    gameState.grid[y] = [];
+    for (let x = 0; x < GRID_WIDTH; x++) {
+      gameState.grid[y][x] = level.grid[y][x];
+    }
+  }
+  
+  // Create entities from grid
+  for (let y = 0; y < GRID_HEIGHT; y++) {
+    for (let x = 0; x < GRID_WIDTH; x++) {
+      const tile = gameState.grid[y][x];
+      if (tile === TILE_TYPES.BLOCK) {
+        gameState.entities.push(new Block(x, y));
+        gameState.grid[y][x] = TILE_TYPES.EMPTY;
+      } else if (tile === TILE_TYPES.SKELETON) {
+        gameState.entities.push(new Skeleton(x, y));
+        gameState.grid[y][x] = TILE_TYPES.EMPTY;
+      } else if (tile === TILE_TYPES.GOAL) {
+        gameState.entities.push(new DemonGirl(x, y));
+        gameState.grid[y][x] = TILE_TYPES.EMPTY;
+      } else if (tile === TILE_TYPES.SPIKE) {
+        gameState.entities.push(new Spike(x, y));
+      }
+    }
+  }
+}
+
+export function renderGrid(p, gameState) {
+  for (let y = 0; y < GRID_HEIGHT; y++) {
+    for (let x = 0; x < GRID_WIDTH; x++) {
+      const screenX = GRID_OFFSET_X + x * TILE_SIZE;
+      const screenY = GRID_OFFSET_Y + y * TILE_SIZE;
+      const tile = gameState.grid[y][x];
+      
+      // Background tile
+      p.fill(60, 50, 50);
+      p.stroke(80, 70, 70);
+      p.strokeWeight(1);
+      p.rect(screenX, screenY, TILE_SIZE, TILE_SIZE);
+      
+      // Wall
+      if (tile === TILE_TYPES.WALL) {
+        p.fill(40, 35, 35);
+        p.stroke(20, 15, 15);
+        p.strokeWeight(2);
+        p.rect(screenX, screenY, TILE_SIZE, TILE_SIZE);
+        
+        // Wall texture
+        p.noStroke();
+        p.fill(50, 45, 45);
+        p.rect(screenX + 2, screenY + 2, 8, 8);
+        p.rect(screenX + TILE_SIZE - 10, screenY + 2, 8, 8);
+        p.rect(screenX + 2, screenY + TILE_SIZE - 10, 8, 8);
+        p.rect(screenX + TILE_SIZE - 10, screenY + TILE_SIZE - 10, 8, 8);
+      }
+      // Floor pattern
+      else if (tile === TILE_TYPES.EMPTY) {
+        const shade = ((x + y) % 2 === 0) ? 70 : 60;
+        p.noStroke();
+        p.fill(shade, shade - 10, shade - 10);
+        p.rect(screenX, screenY, TILE_SIZE, TILE_SIZE);
+      }
+    }
+  }
+}
+
+export function getTileAt(grid, x, y) {
+  if (x < 0 || x >= GRID_WIDTH || y < 0 || y >= GRID_HEIGHT) {
+    return TILE_TYPES.WALL;
+  }
+  return grid[y][x];
+}
+
+export function getEntityAt(entities, x, y) {
+  return entities.find(e => e.gridX === x && e.gridY === y);
+}
+
+export function isPositionFree(gameState, x, y, ignoreEntity = null) {
+  if (getTileAt(gameState.grid, x, y) !== TILE_TYPES.EMPTY) {
+    return false;
+  }
+  
+  const entity = getEntityAt(gameState.entities, x, y);
+  if (entity && entity !== ignoreEntity && entity.type !== TILE_TYPES.GOAL && entity.type !== TILE_TYPES.SPIKE) {
+    return false;
+  }
+  
+  return true;
+}
+</file>
+
+<file name="rendering.js">
+// rendering.js
+import { CANVAS_WIDTH, CANVAS_HEIGHT, GRID_OFFSET_X, GRID_OFFSET_Y, gameState } from './globals.js';
+import { renderGrid } from './grid.js';
+
+export function renderStartScreen(p) {
+  p.background(20, 15, 15);
+  
+  // Title
+  p.textAlign(p.CENTER, p.CENTER);
+  p.fill(255, 50, 80);
+  p.textSize(48);
+  p.text("HELLTAKER", CANVAS_WIDTH / 2, 80);
+  
+  // Subtitle
+  p.fill(200, 200, 200);
+  p.textSize(16);
+  p.text("Puzzle Your Way to a Demon Harem", CANVAS_WIDTH / 2, 130);
+  
+  // Description
+  p.textSize(14);
+  p.fill(180, 180, 180);
+  const desc = [
+    "You've descended into Hell with one goal:",
+    "assemble a harem of demon girls!",
+    "",
+    "Navigate puzzle levels by pushing blocks",
+    "and kicking skeletons to reach the goal.",
+    "Plan carefully - moves are limited!"
+  ];
+  for (let i = 0; i < desc.length; i++) {
+    p.text(desc[i], CANVAS_WIDTH / 2, 170 + i * 20);
+  }
+  
+  // Controls
+  p.textSize(12);
+  p.fill(150, 150, 150);
+  const controls = [
+    "ARROW KEYS - Move",
+    "SPACE - Push/Kick",
+    "ESC - Pause",
+    "R - Restart"
+  ];
+  for (let i = 0; i < controls.length; i++) {
+    p.text(controls[i], CANVAS_WIDTH / 2, 300 + i * 18);
+  }
+  
+  // Start prompt
+  p.fill(255, 100, 100);
+  p.textSize(18);
+  const pulse = p.sin(p.frameCount * 0.1) * 30 + 225;
+  p.fill(pulse, 50, 50);
+  p.text("PRESS ENTER TO START", CANVAS_WIDTH / 2, 370);
+}
+
+export function renderPlaying(p) {
+  p.background(30, 25, 25);
+  
+  // Render grid and tiles
+  renderGrid(p, gameState);
+  
+  // Render entities (except goal, render that first)
+  const demonGirl = gameState.entities.find(e => e.type === 5);
+  if (demonGirl) {
+    demonGirl.render(p);
+  }
+  
+  for (const entity of gameState.entities) {
+    if (entity.type !== 5) {
+      entity.render(p);
+    }
+  }
+  
+  // Render player
+  if (gameState.player) {
+    gameState.player.render(p);
+  }
+  
+  // UI
+  renderUI(p);
+  
+  // Pause indicator
+  if (gameState.gamePhase === "PAUSED") {
+    p.fill(255, 255, 255, 200);
+    p.textSize(16);
+    p.textAlign(p.RIGHT, p.TOP);
+    p.text("PAUSED", CANVAS_WIDTH - 10, 10);
+  }
+  
+  // Level complete message
+  if (gameState.levelComplete) {
+    p.fill(0, 0, 0, 150);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.fill(255, 100, 150);
+    p.textSize(32);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.text("DEMON GIRL ACQUIRED!", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 20);
+    
+    p.fill(255, 255, 255);
+    p.textSize(16);
+    p.text("Moving to next level...", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 20);
+  }
+}
+
+export function renderUI(p) {
+  // HUD background
+  p.fill(20, 15, 15, 200);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, 50);
+  p.rect(0, CANVAS_HEIGHT - 30, CANVAS_WIDTH, 30);
+  
+  // Score
+  p.fill(255, 200, 100);
+  p.textAlign(p.LEFT, p.CENTER);
+  p.textSize(16);
+  p.text(`SCORE: ${gameState.score}`, 10, 25);
+  
+  // Level
+  p.fill(200, 200, 255);
+  p.text(`LEVEL: ${gameState.currentLevel + 1}/${5}`, 200, 25);
+  
+  // Moves
+  const movesColor = gameState.movesRemaining < 5 ? [255, 100, 100] : [100, 255, 100];
+  p.fill(...movesColor);
+  p.text(`MOVES: ${gameState.movesRemaining}`, 380, 25);
+  
+  // Health
+  p.fill(255, 100, 100);
+  p.textAlign(p.LEFT, p.CENTER);
+  p.text("HEALTH: ", 10, CANVAS_HEIGHT - 15);
+  for (let i = 0; i < gameState.player.health; i++) {
+    p.fill(255, 50, 50);
+    p.rect(90 + i * 25, CANVAS_HEIGHT - 23, 20, 16, 2);
+  }
+  
+  // Demons collected
+  p.fill(255, 150, 200);
+  p.textAlign(p.RIGHT, p.CENTER);
+  p.text(`DEMONS: ${gameState.demonsCollected}/${5}`, CANVAS_WIDTH - 10, CANVAS_HEIGHT - 15);
+}
+
+export function renderGameOver(p) {
+  p.background(20, 15, 15);
+  
+  const won = gameState.gamePhase === "GAME_OVER_WIN";
+  
+  // Title
+  p.textAlign(p.CENTER, p.CENTER);
+  if (won) {
+    p.fill(255, 100, 150);
+    p.textSize(48);
+    p.text("HAREM COMPLETE!", CANVAS_WIDTH / 2, 100);
+    
+    p.fill(200, 200, 200);
+    p.textSize(20);
+    p.text("You've won the hearts of all the demon girls!", CANVAS_WIDTH / 2, 160);
+  } else {
+    p.fill(255, 50, 50);
+    p.textSize(48);
+    p.text("GAME OVER", CANVAS_WIDTH / 2, 100);
+    
+    p.fill(200, 200, 200);
+    p.textSize(20);
+    p.text("Hell claims another victim...", CANVAS_WIDTH / 2, 160);
+  }
+  
+  // Stats
+  p.fill(180, 180, 180);
+  p.textSize(16);
+  p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, 220);
+  p.text(`Demons Collected: ${gameState.demonsCollected}/5`, CANVAS_WIDTH / 2, 250);
+  p.text(`Levels Completed: ${gameState.currentLevel}/5`, CANVAS_WIDTH / 2, 280);
+  
+  // Restart prompt
+  p.fill(255, 200, 100);
+  p.textSize(18);
+  const pulse = p.sin(p.frameCount * 0.1) * 30 + 225;
+  p.fill(pulse, pulse * 0.8, 100);
+  p.text("PRESS R TO RESTART", CANVAS_WIDTH / 2, 350);
+}
+</file>
+
+<file name="entities.js">
+// entities.js
+import { TILE_SIZE, GRID_OFFSET_X, GRID_OFFSET_Y, TILE_TYPES } from './globals.js';
+
+export class Block {
+  constructor(gridX, gridY) {
+    this.gridX = gridX;
+    this.gridY = gridY;
+    this.type = TILE_TYPES.BLOCK;
+  }
+
+  getScreenX() {
+    return GRID_OFFSET_X + this.gridX * TILE_SIZE;
+  }
+
+  getScreenY() {
+    return GRID_OFFSET_Y + this.gridY * TILE_SIZE;
+  }
+
+  setGridPosition(x, y) {
+    this.gridX = x;
+    this.gridY = y;
+  }
+
+  render(p) {
+    const x = this.getScreenX();
+    const y = this.getScreenY();
+    
+    p.push();
+    p.translate(x + TILE_SIZE / 2, y + TILE_SIZE / 2);
+    
+    // Stone block
+    p.fill(120, 120, 120);
+    p.stroke(80, 80, 80);
+    p.strokeWeight(2);
+    p.rect(-15, -15, 30, 30, 3);
+    
+    // Highlights and shadows
+    p.noStroke();
+    p.fill(150, 150, 150);
+    p.rect(-15, -15, 8, 8);
+    p.fill(90, 90, 90);
+    p.rect(7, 7, 8, 8);
+    
+    // Cracks
+    p.stroke(70, 70, 70);
+    p.strokeWeight(1);
+    p.line(-5, -10, 5, -5);
+    p.line(-8, 0, 0, 5);
+    
+    p.pop();
+  }
+}
+
+export class Skeleton {
+  constructor(gridX, gridY) {
+    this.gridX = gridX;
+    this.gridY = gridY;
+    this.type = TILE_TYPES.SKELETON;
+    this.animOffset = Math.random() * 100;
+  }
+
+  getScreenX() {
+    return GRID_OFFSET_X + this.gridX * TILE_SIZE;
+  }
+
+  getScreenY() {
+    return GRID_OFFSET_Y + this.gridY * TILE_SIZE;
+  }
+
+  setGridPosition(x, y) {
+    this.gridX = x;
+    this.gridY = y;
+  }
+
+  render(p) {
+    const x = this.getScreenX();
+    const y = this.getScreenY();
+    const wobble = p.sin((p.frameCount + this.animOffset) * 0.1) * 2;
+    
+    p.push();
+    p.translate(x + TILE_SIZE / 2, y + TILE_SIZE / 2 + wobble);
+    
+    // Skull
+    p.fill(240, 240, 230);
+    p.stroke(200, 200, 190);
+    p.strokeWeight(2);
+    p.ellipse(0, -10, 16, 18);
+    
+    // Eye sockets
+    p.fill(0);
+    p.noStroke();
+    p.ellipse(-4, -12, 4, 6);
+    p.ellipse(4, -12, 4, 6);
+    
+    // Nose hole
+    p.triangle(-1, -8, 1, -8, 0, -5);
+    
+    // Jaw
+    p.fill(240, 240, 230);
+    p.stroke(200, 200, 190);
+    p.strokeWeight(2);
+    p.arc(0, -6, 12, 10, 0, p.PI);
+    
+    // Teeth
+    p.noStroke();
+    p.fill(255);
+    for (let i = -4; i <= 4; i += 3) {
+      p.rect(i, -6, 2, 3);
+    }
+    
+    // Spine/body
+    p.stroke(240, 240, 230);
+    p.strokeWeight(3);
+    p.line(0, 0, 0, 12);
+    
+    // Ribs
+    p.strokeWeight(2);
+    p.line(-6, 2, 6, 2);
+    p.line(-5, 6, 5, 6);
+    p.line(-4, 10, 4, 10);
+    
+    p.pop();
+  }
+}
+
+export class DemonGirl {
+  constructor(gridX, gridY) {
+    this.gridX = gridX;
+    this.gridY = gridY;
+    this.type = TILE_TYPES.GOAL;
+    this.animOffset = Math.random() * 100;
+  }
+
+  getScreenX() {
+    return GRID_OFFSET_X + this.gridX * TILE_SIZE;
+  }
+
+  getScreenY() {
+    return GRID_OFFSET_Y + this.gridY * TILE_SIZE;
+  }
+
+  render(p) {
+    const x = this.getScreenX();
+    const y = this.getScreenY();
+    const float = p.sin((p.frameCount + this.animOffset) * 0.05) * 3;
+    
+    p.push();
+    p.translate(x + TILE_SIZE / 2, y + TILE_SIZE / 2 + float);
+    
+    // Demon girl silhouette
+    // Body (dress)
+    p.fill(180, 50, 80);
+    p.stroke(140, 40, 60);
+    p.strokeWeight(2);
+    p.triangle(-12, 15, 12, 15, 0, -5);
+    
+    // Head
+    p.fill(255, 200, 200);
+    p.stroke(200, 150, 150);
+    p.strokeWeight(2);
+    p.ellipse(0, -12, 16, 18);
+    
+    // Horns
+    p.fill(60, 20, 20);
+    p.noStroke();
+    p.triangle(-8, -20, -10, -12, -6, -12);
+    p.triangle(8, -20, 10, -12, 6, -12);
+    
+    // Hair
+    p.fill(100, 30, 30);
+    p.arc(0, -12, 18, 16, p.PI, 0);
+    p.rect(-9, -12, 18, 8);
+    
+    // Eyes (heart-shaped)
+    p.fill(255, 100, 150);
+    p.ellipse(-4, -12, 4, 4);
+    p.ellipse(4, -12, 4, 4);
+    
+    // Smile
+    p.stroke(180, 80, 100);
+    p.strokeWeight(1);
+    p.noFill();
+    p.arc(0, -8, 8, 6, 0, p.PI);
+    
+    // Heart effect
+    p.noStroke();
+    p.fill(255, 100, 150, 150);
+    const heartSize = 4 + p.sin((p.frameCount + this.animOffset) * 0.1) * 2;
+    p.ellipse(-15, -15, heartSize, heartSize);
+    p.ellipse(15, -15, heartSize, heartSize);
+    
+    p.pop();
+  }
+}
+
+export class Spike {
+  constructor(gridX, gridY) {
+    this.gridX = gridX;
+    this.gridY = gridY;
+    this.type = TILE_TYPES.SPIKE;
+  }
+
+  getScreenX() {
+    return GRID_OFFSET_X + this.gridX * TILE_SIZE;
+  }
+
+  getScreenY() {
+    return GRID_OFFSET_Y + this.gridY * TILE_SIZE;
+  }
+
+  render(p) {
+    const x = this.getScreenX();
+    const y = this.getScreenY();
+    
+    p.push();
+    p.translate(x + TILE_SIZE / 2, y + TILE_SIZE / 2);
+    
+    // Spike trap
+    p.fill(80, 80, 90);
+    p.noStroke();
+    p.rect(-18, 10, 36, 8);
+    
+    // Spikes
+    p.fill(140, 140, 150);
+    for (let i = -15; i <= 15; i += 8) {
+      p.triangle(i - 3, 10, i + 3, 10, i, -5);
+    }
+    
+    // Glow effect
+    p.fill(255, 50, 50, 100);
+    for (let i = -15; i <= 15; i += 8) {
+      p.triangle(i - 2, 5, i + 2, 5, i, -3);
+    }
+    
+    p.pop();
+  }
+}
+</file>
+
+<file name="levels.js">
+// levels.js
+import { TILE_TYPES } from './globals.js';
+
+// Level format: 9x7 grid
+// 0 = empty, 1 = wall, 2 = block, 3 = skeleton, 4 = spike, 5 = goal
+export const LEVELS = [
+  {
+    name: "Tutorial",
+    maxMoves: 15,
+    grid: [
+      [1, 1, 1, 1, 1, 1, 1, 1, 1],
+      [1, 0, 0, 0, 0, 0, 0, 0, 1],
+      [1, 0, 0, 2, 0, 0, 0, 0, 1],
+      [1, 0, 0, 0, 0, 0, 5, 0, 1],
+      [1, 0, 0, 0, 0, 0, 0, 0, 1],
+      [1, 0, 0, 0, 0, 0, 0, 0, 1],
+      [1, 1, 1, 1, 1, 1, 1, 1, 1]
+    ],
+    playerStart: { x: 1, y: 3 }
+  },
+  {
+    name: "Push Through",
+    maxMoves: 20,
+    grid: [
+      [1, 1, 1, 1, 1, 1, 1, 1, 1],
+      [1, 0, 0, 0, 1, 0, 0, 0, 1],
+      [1, 0, 2, 0, 1, 0, 3, 0, 1],
+      [1, 0, 0, 0, 0, 0, 0, 0, 1],
+      [1, 0, 2, 0, 1, 0, 5, 0, 1],
+      [1, 0, 0, 0, 1, 0, 0, 0, 1],
+      [1, 1, 1, 1, 1, 1, 1, 1, 1]
+    ],
+    playerStart: { x: 1, y: 3 }
+  },
+  {
+    name: "Skeleton Dance",
+    maxMoves: 25,
+    grid: [
+      [1, 1, 1, 1, 1, 1, 1, 1, 1],
+      [1, 0, 0, 0, 0, 0, 0, 0, 1],
+      [1, 0, 3, 0, 3, 0, 3, 0, 1],
+      [1, 0, 0, 0, 0, 0, 0, 0, 1],
+      [1, 0, 2, 0, 2, 0, 2, 0, 1],
+      [1, 0, 0, 0, 0, 0, 5, 0, 1],
+      [1, 1, 1, 1, 1, 1, 1, 1, 1]
+    ],
+    playerStart: { x: 1, y: 1 }
+  },
+  {
+    name: "Spike Trap",
+    maxMoves: 30,
+    grid: [
+      [1, 1, 1, 1, 1, 1, 1, 1, 1],
+      [1, 0, 0, 0, 4, 0, 0, 0, 1],
+      [1, 0, 2, 0, 4, 0, 3, 0, 1],
+      [1, 0, 0, 0, 4, 0, 0, 0, 1],
+      [1, 0, 0, 0, 0, 0, 2, 0, 1],
+      [1, 0, 0, 0, 0, 0, 5, 0, 1],
+      [1, 1, 1, 1, 1, 1, 1, 1, 1]
+    ],
+    playerStart: { x: 1, y: 2 }
+  },
+  {
+    name: "Final Challenge",
+    maxMoves: 35,
+    grid: [
+      [1, 1, 1, 1, 1, 1, 1, 1, 1],
+      [1, 0, 2, 0, 0, 0, 3, 0, 1],
+      [1, 0, 0, 4, 1, 4, 0, 0, 1],
+      [1, 0, 3, 0, 0, 0, 2, 0, 1],
+      [1, 0, 0, 4, 1, 4, 0, 0, 1],
+      [1, 0, 2, 0, 0, 0, 5, 0, 1],
+      [1, 1, 1, 1, 1, 1, 1, 1, 1]
+    ],
+    playerStart: { x: 4, y: 3 }
+  }
+];
+</file>
+
+<file name="input_handler.js">
+// input_handler.js
+import { gameState, DIRECTIONS } from './globals.js';
+import { tryMove, tryPush } from './game_logic.js';
+
+export function handleKeyPressed(p, keyCode) {
+  // Log input
+  p.logs.inputs.push({
+    input_type: "keyPressed",
+    data: { key: p.key, keyCode: keyCode },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+  
+  if (gameState.gamePhase === "START") {
+    if (keyCode === 13) { // ENTER
+      startGame(p);
+    }
+  } else if (gameState.gamePhase === "PLAYING") {
+    if (keyCode === 27) { // ESC
+      pauseGame(p);
+    } else if (keyCode === 38) { // UP
+      tryMove(DIRECTIONS.UP);
+    } else if (keyCode === 40) { // DOWN
+      tryMove(DIRECTIONS.DOWN);
+    } else if (keyCode === 37) { // LEFT
+      tryMove(DIRECTIONS.LEFT);
+    } else if (keyCode === 39) { // RIGHT
+      tryMove(DIRECTIONS.RIGHT);
+    } else if (keyCode === 32) { // SPACE
+      tryPush();
+    }
+  } else if (gameState.gamePhase === "PAUSED") {
+    if (keyCode === 27) { // ESC
+      unpauseGame(p);
+    }
+  } else if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") {
+    if (keyCode === 82) { // R
+      restartGame(p);
+    }
+  }
+  
+  // Log player info after input
+  if (gameState.player && gameState.gamePhase === "PLAYING") {
+    logPlayerInfo(p);
+  }
+}
+
+function startGame(p) {
+  gameState.gamePhase = "PLAYING";
+  p.logs.game_info.push({
+    data: { phase: "PLAYING", action: "start" },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function pauseGame(p) {
+  gameState.gamePhase = "PAUSED";
+  p.logs.game_info.push({
+    data: { phase: "PAUSED" },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function unpauseGame(p) {
+  gameState.gamePhase = "PLAYING";
+  p.logs.game_info.push({
+    data: { phase: "PLAYING", action: "unpause" },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function restartGame(p) {
+  // Reset to start screen
+  gameState.gamePhase = "START";
+  gameState.currentLevel = 0;
+  gameState.score = 0;
+  gameState.demonsCollected = 0;
+  gameState.levelComplete = false;
+  
+  p.logs.game_info.push({
+    data: { phase: "START", action: "restart" },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function logPlayerInfo(p) {
+  p.logs.player_info.push({
+    screen_x: gameState.player.getScreenX(),
+    screen_y: gameState.player.getScreenY(),
+    game_x: gameState.player.gridX,
+    game_y: gameState.player.gridY,
+    framecount: p.frameCount
+  });
+}
+</file>
+
+<file name="player.js">
+// player.js
+import { TILE_SIZE, GRID_OFFSET_X, GRID_OFFSET_Y, DIRECTIONS } from './globals.js';
+
+export class Player {
+  constructor(gridX, gridY) {
+    this.gridX = gridX;
+    this.gridY = gridY;
+    this.screenX = GRID_OFFSET_X + gridX * TILE_SIZE;
+    this.screenY = GRID_OFFSET_Y + gridY * TILE_SIZE;
+    this.direction = DIRECTIONS.DOWN;
+    this.animFrame = 0;
+    this.health = 3;
+  }
+
+  getScreenX() {
+    return GRID_OFFSET_X + this.gridX * TILE_SIZE;
+  }
+
+  getScreenY() {
+    return GRID_OFFSET_Y + this.gridY * TILE_SIZE;
+  }
+
+  setGridPosition(x, y) {
+    this.gridX = x;
+    this.gridY = y;
+    this.screenX = this.getScreenX();
+    this.screenY = this.getScreenY();
+  }
+
+  setDirection(dir) {
+    this.direction = dir;
+  }
+
+  render(p) {
+    const x = this.getScreenX();
+    const y = this.getScreenY();
+    
+    // Draw player character (sharply dressed demon hunter)
+    p.push();
+    p.translate(x + TILE_SIZE / 2, y + TILE_SIZE / 2);
+    
+    // Body (suit)
+    p.fill(40, 40, 40);
+    p.rect(-10, -5, 20, 25);
+    
+    // Head
+    p.fill(255, 220, 180);
+    p.ellipse(0, -15, 18, 18);
+    
+    // Hair
+    p.fill(80, 50, 30);
+    p.arc(0, -15, 18, 18, p.PI, 0);
+    
+    // Eyes
+    p.fill(0);
+    p.ellipse(-4, -15, 3, 3);
+    p.ellipse(4, -15, 3, 3);
+    
+    // Tie
+    p.fill(200, 50, 50);
+    p.triangle(-3, -5, 3, -5, 0, 5);
+    
+    // Arms
+    p.stroke(40, 40, 40);
+    p.strokeWeight(4);
+    p.line(-10, 0, -15, 10);
+    p.line(10, 0, 15, 10);
+    p.noStroke();
+    
+    // Legs
+    p.fill(40, 40, 40);
+    p.rect(-8, 20, 6, 10);
+    p.rect(2, 20, 6, 10);
+    
+    // Direction indicator
+    p.fill(255, 100, 100);
+    if (this.direction === DIRECTIONS.UP) {
+      p.triangle(0, -25, -5, -20, 5, -20);
+    } else if (this.direction === DIRECTIONS.DOWN) {
+      p.triangle(0, 35, -5, 30, 5, 30);
+    } else if (this.direction === DIRECTIONS.LEFT) {
+      p.triangle(-18, 10, -13, 5, -13, 15);
+    } else if (this.direction === DIRECTIONS.RIGHT) {
+      p.triangle(18, 10, 13, 5, 13, 15);
+    }
+    
+    p.pop();
+  }
+}
+</file>
+
+<file name="game_logic.js">
+// game_logic.js
+import { gameState, DIRECTIONS, TILE_TYPES } from './globals.js';
+import { getTileAt, getEntityAt, isPositionFree } from './grid.js';
+import { LEVELS } from './levels.js';
+
+export function tryMove(direction) {
+  if (gameState.movesRemaining <= 0) return false;
+  
+  const newX = gameState.player.gridX + direction.x;
+  const newY = gameState.player.gridY + direction.y;
+  
+  gameState.player.setDirection(direction);
+  
+  // Check if move is valid
+  if (getTileAt(gameState.grid, newX, newY) === TILE_TYPES.WALL) {
+    return false;
+  }
+  
+  // Check for entities
+  const entity = getEntityAt(gameState.entities, newX, newY);
+  if (entity) {
+    if (entity.type === TILE_TYPES.GOAL) {
+      // Reached demon girl!
+      gameState.player.setGridPosition(newX, newY);
+      gameState.movesRemaining--;
+      checkLevelComplete();
+      return true;
+    } else if (entity.type === TILE_TYPES.SPIKE) {
+      // Can walk on spikes but take damage
+      gameState.player.setGridPosition(newX, newY);
+      gameState.movesRemaining--;
+      gameState.player.health--;
+      if (gameState.player.health <= 0) {
+        gameOver(false);
+      }
+      return true;
+    } else {
+      // Blocked by block or skeleton
+      return false;
+    }
+  }
+  
+  // Valid move
+  gameState.player.setGridPosition(newX, newY);
+  gameState.movesRemaining--;
+  
+  if (gameState.movesRemaining <= 0) {
+    gameOver(false);
+  }
+  
+  return true;
+}
+
+export function tryPush() {
+  if (gameState.movesRemaining <= 0) return false;
+  
+  const dir = gameState.player.direction;
+  const pushX = gameState.player.gridX + dir.x;
+  const pushY = gameState.player.gridY + dir.y;
+  
+  // Check if there's something to push
+  const entity = getEntityAt(gameState.entities, pushX, pushY);
+  if (!entity || entity.type === TILE_TYPES.GOAL) {
+    return false;
+  }
+  
+  // Check if we can push to the next position
+  const targetX = pushX + dir.x;
+  const targetY = pushY + dir.y;
+  
+  // Spikes can have things pushed onto them
+  if (getTileAt(gameState.grid, targetX, targetY) === TILE_TYPES.SPIKE) {
+    entity.setGridPosition(targetX, targetY);
+    gameState.movesRemaining--;
+    return true;
+  }
+  
+  if (!isPositionFree(gameState, targetX, targetY, entity)) {
+    return false;
+  }
+  
+  // Push the entity
+  entity.setGridPosition(targetX, targetY);
+  gameState.movesRemaining--;
+  
+  if (gameState.movesRemaining <= 0) {
+    gameOver(false);
+  }
+  
+  return true;
+}
+
+export function checkLevelComplete() {
+  // Check if player reached the demon girl
+  const demonGirl = gameState.entities.find(e => e.type === TILE_TYPES.GOAL);
+  if (demonGirl && gameState.player.gridX === demonGirl.gridX && gameState.player.gridY === demonGirl.gridY) {
+    gameState.levelComplete = true;
+    gameState.demonsCollected++;
+    
+    // Bonus points for moves remaining
+    gameState.score += gameState.movesRemaining * 10;
+    gameState.score += 100; // Level completion bonus
+    
+    setTimeout(() => {
+      nextLevel();
+    }, 1000);
+  }
+}
+
+export function nextLevel() {
+  gameState.currentLevel++;
+  
+  if (gameState.currentLevel >= LEVELS.length) {
+    // Won the game!
+    gameOver(true);
+  } else {
+    gameState.levelComplete = false;
+    // Level will be loaded in the next frame
+  }
+}
+
+export function gameOver(won) {
+  if (won) {
+    gameState.gamePhase = "GAME_OVER_WIN";
+  } else {
+    gameState.gamePhase = "GAME_OVER_LOSE";
+  }
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

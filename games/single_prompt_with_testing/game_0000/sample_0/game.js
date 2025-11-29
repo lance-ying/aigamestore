@@ -151,6 +151,24 @@ let gameInstance = new p5(p => {
       ability.update();
     }
     
+    // Update exits
+    for (let exit of gameState.exits) {
+      exit.update();
+      
+      // Check if player touches unlocked exit
+      if (exit.checkPlayerCollision(player)) {
+        const nextRoom = gameState.currentRoom + 1;
+        if (nextRoom < gameState.rooms.length) {
+          gameState.currentRoom = nextRoom;
+          player.x = CANVAS_WIDTH / 2 - player.width / 2;
+          player.y = 50;
+          player.vy = 0;
+          player.vx = 0;
+          gameState.score += 50; // Bonus for completing room
+        }
+      }
+    }
+    
     // Update particles
     for (let particle of gameState.particles) {
       particle.x += particle.vx;
@@ -183,6 +201,13 @@ let gameInstance = new p5(p => {
     for (let platform of gameState.platforms) {
       if (platform.room === gameState.currentRoom) {
         platform.render();
+      }
+    }
+    
+    // Exits
+    for (let exit of gameState.exits) {
+      if (exit.room === gameState.currentRoom) {
+        exit.render();
       }
     }
     
@@ -326,6 +351,7 @@ let gameInstance = new p5(p => {
     gameState.particles = [];
     gameState.platforms = [];
     gameState.abilities = [];
+    gameState.exits = [];
     
     // Reinitialize
     initializeWorld(p);

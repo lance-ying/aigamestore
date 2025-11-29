@@ -1,57 +1,103 @@
 // entities.js - Game entity classes
-
-import Matter from 'https://cdn.jsdelivr.net/npm/matter-js@0.19.0/+esm';
-const { Bodies, Body, World } = Matter;
-
-import { gameState, CANVAS_HEIGHT } from './globals.js';
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
 
 export class Player {
-  constructor(p, x, y) {
-    this.p = p;
-    this.body = Bodies.rectangle(x, y, 30, 40, {
-      label: 'player',
-      friction: 0.3,
-      restitution: 0,
-      density: 0.002,
-      inertia: Infinity
+  constructor(x, y, z) {
+    // Create 3D mesh - SpongeBob style character
+    const geometry = new THREE.BoxGeometry(1, 1.5, 0.8);
+    const material = new THREE.MeshStandardMaterial({ 
+      color: 0xffdc00,
+      roughness: 0.5,
+      metalness: 0.1
     });
-    World.add(gameState.world, this.body);
+    this.mesh = new THREE.Mesh(geometry, material);
+    this.mesh.position.set(x, y, z);
+    this.mesh.castShadow = true;
+    this.mesh.receiveShadow = true;
     
-    this.color = [255, 220, 0]; // SpongeBob yellow
-    this.width = 30;
-    this.height = 40;
+    // Add eyes
+    const eyeGeometry = new THREE.SphereGeometry(0.12, 8, 8);
+    const eyeMaterial = new THREE.MeshStandardMaterial({ color: 0x000000 });
+    
+    this.leftEye = new THREE.Mesh(eyeGeometry, eyeMaterial);
+    this.leftEye.position.set(-0.25, 0.3, 0.41);
+    this.mesh.add(this.leftEye);
+    
+    this.rightEye = new THREE.Mesh(eyeGeometry, eyeMaterial);
+    this.rightEye.position.set(0.25, 0.3, 0.41);
+    this.mesh.add(this.rightEye);
+    
+    // Physics properties - IMPROVED CONTROL
+    this.velocity = new THREE.Vector3(0, 0, 0);
+    this.acceleration = new THREE.Vector3(0, 0, 0);
+    this.speed = 0.05;  // Further reduced for better control
+    this.jumpPower = 0.4;
     this.jumpCount = 0;
     this.maxJumps = 1;
     this.onGround = false;
+    this.mass = 1.0;
+    
+    // Size
+    this.size = new THREE.Vector3(1, 1.5, 0.8);
+    
+    // Game properties
     this.attackCooldown = 0;
     this.lastLoggedX = x;
     this.lastLoggedY = y;
+    
+    // Kick visual effect
+    this.kickEffect = null;
+    this.kickEffectTimer = 0;
+    
+    gameState.scene.add(this.mesh);
   }
   
   update() {
-    // Clamp velocity
-    const maxSpeed = 8;
-    if (Math.abs(this.body.velocity.x) > maxSpeed) {
-      Body.setVelocity(this.body, {
-        x: Math.sign(this.body.velocity.x) * maxSpeed,
-        y: this.body.velocity.y
-      });
+    // Apply gravity
+    if (!this.onGround) {
+      this.acceleration.add(gameState.gravity);
     }
     
-    // Check if on ground
-    this.checkGroundStatus();
+    // Update velocity
+    this.velocity.add(this.acceleration);
     
-    // Update max jumps based on abilities
-    this.maxJumps = gameState.abilities.doubleJump ? 2 : 1;
-    
-    // Reset jump count when on ground
+    // Apply stronger friction/damping for better control
     if (this.onGround) {
-      this.jumpCount = 0;
+      this.velocity.x *= 0.75;  // Increased friction
+      this.velocity.z *= 0.75;
+    } else {
+      this.velocity.x *= 0.92;  // Air resistance
+      this.velocity.z *= 0.92;
     }
+    
+    // Clamp velocity - reduced max speed
+    const maxSpeed = 0.15;  // Further reduced
+    if (Math.abs(this.velocity.x) > maxSpeed) {
+      this.velocity.x = Math.sign(this.velocity.x) * maxSpeed;
+    }
+    if (Math.abs(this.velocity.z) > maxSpeed) {
+      this.velocity.z = Math.sign(this.velocity.z) * maxSpeed;
+    }
+    
+    // Update position
+    this.mesh.position.add(this.velocity);
+    
+    // Update max jumps
+    this.maxJumps = gameState.abilities.doubleJump ? 2 : 1;
     
     // Update attack cooldown
     if (this.attackCooldown > 0) {
       this.attackCooldown--;
+    }
+    
+    // Update kick effect
+    if (this.kickEffectTimer > 0) {
+      this.kickEffectTimer--;
+      if (this.kickEffectTimer <= 0 && this.kickEffect) {
+        gameState.scene.remove(this.kickEffect);
+        this.kickEffect = null;
+      }
     }
     
     // Update invincibility
@@ -60,86 +106,113 @@ export class Player {
       if (gameState.invincibilityTimer <= 0) {
         gameState.invincible = false;
       }
+      
+      // Flash effect
+      if (gameState.invincibilityTimer % 10 < 5) {
+        this.mesh.visible = false;
+      } else {
+        this.mesh.visible = true;
+      }
+    } else {
+      this.mesh.visible = true;
     }
     
-    // Check for hazard death (fall off screen)
-    if (this.body.position.y > CANVAS_HEIGHT + 50) {
+    // Check ground collision
+    this.checkGroundCollision();
+    
+    // Reset acceleration
+    this.acceleration.set(0, 0, 0);
+    
+    // Check for hazard death
+    if (this.mesh.position.y < -10) {
       this.respawnAtCheckpoint();
     }
     
-    // Log player position if changed significantly
-    const dx = Math.abs(this.body.position.x - this.lastLoggedX);
-    const dy = Math.abs(this.body.position.y - this.lastLoggedY);
-    if (dx > 50 || dy > 50) {
-      this.p.logs.player_info.push({
-        screen_x: this.body.position.x,
-        screen_y: this.body.position.y,
-        game_x: this.body.position.x,
-        game_y: this.body.position.y,
-        framecount: this.p.frameCount,
-        timestamp: Date.now()
-      });
-      this.lastLoggedX = this.body.position.x;
-      this.lastLoggedY = this.body.position.y;
+    // Log position changes
+    const dx = Math.abs(this.mesh.position.x - this.lastLoggedX);
+    const dy = Math.abs(this.mesh.position.y - this.lastLoggedY);
+    if (dx > 2 || dy > 2) {
+      if (window.logs && window.logs.player_info) {
+        window.logs.player_info.push({
+          screen_x: this.mesh.position.x * 20,
+          screen_y: 300 - this.mesh.position.y * 20,
+          game_x: this.mesh.position.x,
+          game_y: this.mesh.position.y,
+          game_z: this.mesh.position.z,
+          framecount: gameState.frameCount,
+          timestamp: Date.now()
+        });
+      }
+      this.lastLoggedX = this.mesh.position.x;
+      this.lastLoggedY = this.mesh.position.y;
     }
   }
   
-  checkGroundStatus() {
-    // Simple ground detection - check if velocity.y is near zero and not moving up
-    this.onGround = Math.abs(this.body.velocity.y) < 0.5;
+  checkGroundCollision() {
+    this.onGround = false;
+    const playerBottom = this.mesh.position.y - this.size.y / 2;
+    
+    // Check collision with platforms
+    for (const platform of gameState.platforms) {
+      if (this.checkPlatformCollision(platform)) {
+        this.onGround = true;
+        this.jumpCount = 0;
+        break;
+      }
+    }
   }
   
-  render() {
-    this.p.push();
-    this.p.translate(this.body.position.x, this.body.position.y);
-    this.p.rotate(this.body.angle);
+  checkPlatformCollision(platform) {
+    const px = this.mesh.position.x;
+    const py = this.mesh.position.y;
+    const pz = this.mesh.position.z;
     
-    // Flash if invincible
-    if (gameState.invincible && this.p.frameCount % 10 < 5) {
-      this.p.noFill();
-    } else {
-      this.p.fill(this.color[0], this.color[1], this.color[2]);
+    const platX = platform.mesh.position.x;
+    const platY = platform.mesh.position.y;
+    const platZ = platform.mesh.position.z;
+    
+    const playerBottom = py - this.size.y / 2;
+    const platTop = platY + platform.size.y / 2;
+    
+    // Check if player is above platform
+    if (Math.abs(playerBottom - platTop) < 0.2 &&
+        px > platX - platform.size.x / 2 && px < platX + platform.size.x / 2 &&
+        pz > platZ - platform.size.z / 2 && pz < platZ + platform.size.z / 2) {
+      
+      // Snap to platform
+      this.mesh.position.y = platTop + this.size.y / 2;
+      this.velocity.y = 0;
+      return true;
     }
     
-    this.p.noStroke();
-    this.p.rectMode(this.p.CENTER);
-    this.p.rect(0, 0, this.width, this.height);
-    
-    // Draw face
-    this.p.fill(0);
-    this.p.circle(-6, -5, 6); // Left eye
-    this.p.circle(6, -5, 6);  // Right eye
-    this.p.fill(255, 200, 200);
-    this.p.arc(0, 5, 15, 10, 0, this.p.PI); // Smile
-    
-    this.p.pop();
-    
-    // Draw attack effect if attacking
-    if (this.attackCooldown > 20) {
-      this.p.push();
-      this.p.translate(this.body.position.x, this.body.position.y);
-      this.p.fill(255, 255, 0, 150);
-      this.p.noStroke();
-      this.p.circle(25, 0, 30);
-      this.p.pop();
-    }
+    return false;
   }
   
   moveLeft() {
-    Body.applyForce(this.body, this.body.position, { x: -0.003, y: 0 });
+    // Direct velocity control instead of acceleration
+    this.velocity.x = Math.max(this.velocity.x - this.speed, -0.15);
   }
   
   moveRight() {
-    Body.applyForce(this.body, this.body.position, { x: 0.003, y: 0 });
+    // Direct velocity control instead of acceleration
+    this.velocity.x = Math.min(this.velocity.x + this.speed, 0.15);
+  }
+  
+  moveForward() {
+    // Direct velocity control instead of acceleration (positive Z is forward now)
+    this.velocity.z = Math.min(this.velocity.z + this.speed, 0.15);
+  }
+  
+  moveBackward() {
+    // Direct velocity control instead of acceleration (negative Z is backward now)
+    this.velocity.z = Math.max(this.velocity.z - this.speed, -0.15);
   }
   
   jump() {
     if (this.jumpCount < this.maxJumps) {
-      Body.setVelocity(this.body, { 
-        x: this.body.velocity.x, 
-        y: -10 
-      });
+      this.velocity.y = this.jumpPower;
       this.jumpCount++;
+      this.onGround = false;
     }
   }
   
@@ -148,23 +221,48 @@ export class Player {
     
     this.attackCooldown = 30;
     
+    // Create visual kick effect
+    const kickGeometry = new THREE.SphereGeometry(1.5, 16, 16);
+    const kickMaterial = new THREE.MeshBasicMaterial({ 
+      color: 0xffff00,
+      transparent: true,
+      opacity: 0.6
+    });
+    this.kickEffect = new THREE.Mesh(kickGeometry, kickMaterial);
+    this.kickEffect.position.copy(this.mesh.position);
+    this.kickEffect.position.z += 1; // In front of player (forward direction)
+    gameState.scene.add(this.kickEffect);
+    this.kickEffectTimer = 15; // Show for 15 frames
+    
     // Check for barriers in range
-    gameState.barriers.forEach((barrier, index) => {
-      if (!barrier.body) return;
+    gameState.barriers = gameState.barriers.filter(barrier => {
+      const dx = barrier.mesh.position.x - this.mesh.position.x;
+      const dz = barrier.mesh.position.z - this.mesh.position.z;
+      const dist = Math.sqrt(dx * dx + dz * dz);
       
-      const dx = barrier.body.position.x - this.body.position.x;
-      const dy = barrier.body.position.y - this.body.position.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      
-      if (dist < 60) {
-        // Destroy barrier
-        World.remove(gameState.world, barrier.body);
-        barrier.destroyed = true;
+      if (dist < 3) {
+        gameState.scene.remove(barrier.mesh);
+        return false;
       }
+      return true;
     });
     
-    // Remove destroyed barriers
-    gameState.barriers = gameState.barriers.filter(b => !b.destroyed);
+    // Check for enemies in range and damage them
+    gameState.enemies = gameState.enemies.filter(enemy => {
+      const dx = enemy.mesh.position.x - this.mesh.position.x;
+      const dy = enemy.mesh.position.y - this.mesh.position.y;
+      const dz = enemy.mesh.position.z - this.mesh.position.z;
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      
+      if (dist < 2.5) {
+        // Remove enemy (defeat it)
+        gameState.scene.remove(enemy.mesh);
+        // Award points
+        gameState.score += 5;
+        return false;
+      }
+      return true;
+    });
   }
   
   hookSwing() {
@@ -172,16 +270,15 @@ export class Player {
     
     // Check for swing points in range
     for (let swing of gameState.swingPoints) {
-      const dx = swing.x - this.body.position.x;
-      const dy = swing.y - this.body.position.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
+      const dx = swing.mesh.position.x - this.mesh.position.x;
+      const dy = swing.mesh.position.y - this.mesh.position.y;
+      const dz = swing.mesh.position.z - this.mesh.position.z;
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
       
-      if (dist < 80) {
-        // Apply swing force
-        Body.setVelocity(this.body, { 
-          x: 12, 
-          y: -6 
-        });
+      if (dist < 4) {
+        // Apply swing force forward
+        this.velocity.z = 0.4;
+        this.velocity.y = 0.3;
         return;
       }
     }
@@ -192,21 +289,23 @@ export class Player {
     
     if (gameState.health <= 0) {
       gameState.gamePhase = "GAME_OVER_LOSE";
-      this.p.logs.game_info.push({
-        data: { gamePhase: "GAME_OVER_LOSE", reason: "health_depleted" },
-        framecount: this.p.frameCount,
-        timestamp: Date.now()
-      });
+      if (window.logs && window.logs.game_info) {
+        window.logs.game_info.push({
+          data: { gamePhase: "GAME_OVER_LOSE", reason: "health_depleted" },
+          framecount: gameState.frameCount,
+          timestamp: Date.now()
+        });
+      }
       return;
     }
     
     // Respawn at checkpoint
-    Body.setPosition(this.body, {
-      x: gameState.lastCheckpoint.x,
-      y: gameState.lastCheckpoint.y
-    });
-    Body.setVelocity(this.body, { x: 0, y: 0 });
-    Body.setAngle(this.body, 0);
+    this.mesh.position.set(
+      gameState.lastCheckpoint.x,
+      gameState.lastCheckpoint.y,
+      gameState.lastCheckpoint.z
+    );
+    this.velocity.set(0, 0, 0);
     
     gameState.invincible = true;
     gameState.invincibilityTimer = 120;
@@ -219,126 +318,131 @@ export class Player {
     gameState.invincible = true;
     gameState.invincibilityTimer = 120;
     
+    // Knockback
+    this.velocity.y = 0.3;
+    
     if (gameState.health <= 0) {
       gameState.gamePhase = "GAME_OVER_LOSE";
-      this.p.logs.game_info.push({
-        data: { gamePhase: "GAME_OVER_LOSE", reason: "health_depleted" },
-        framecount: this.p.frameCount,
-        timestamp: Date.now()
-      });
+      if (window.logs && window.logs.game_info) {
+        window.logs.game_info.push({
+          data: { gamePhase: "GAME_OVER_LOSE", reason: "health_depleted" },
+          framecount: gameState.frameCount,
+          timestamp: Date.now()
+        });
+      }
     }
   }
 }
 
 export class Platform {
-  constructor(p, x, y, width, height, isStatic = true) {
-    this.p = p;
-    this.body = Bodies.rectangle(x, y, width, height, {
-      label: 'platform',
-      isStatic: isStatic,
-      friction: 1,
-      restitution: 0
+  constructor(x, y, z, width, height, depth, color = 0x64c864) {
+    const geometry = new THREE.BoxGeometry(width, height, depth);
+    const material = new THREE.MeshStandardMaterial({ 
+      color: color,
+      roughness: 0.8
     });
-    World.add(gameState.world, this.body);
+    this.mesh = new THREE.Mesh(geometry, material);
+    this.mesh.position.set(x, y, z);
+    this.mesh.receiveShadow = true;
+    this.mesh.castShadow = true;
     
-    this.color = [100, 200, 100];
-    this.width = width;
-    this.height = height;
-  }
-  
-  render() {
-    this.p.push();
-    this.p.translate(this.body.position.x, this.body.position.y);
-    this.p.rotate(this.body.angle);
+    this.size = new THREE.Vector3(width, height, depth);
     
-    this.p.fill(this.color[0], this.color[1], this.color[2]);
-    this.p.noStroke();
-    this.p.rectMode(this.p.CENTER);
-    this.p.rect(0, 0, this.width, this.height);
-    
-    // Add texture
-    this.p.stroke(80, 160, 80);
-    for (let i = -this.width/2; i < this.width/2; i += 20) {
-      this.p.line(i, -this.height/2, i, this.height/2);
-    }
-    
-    this.p.pop();
+    gameState.scene.add(this.mesh);
   }
 }
 
 export class Enemy {
-  constructor(p, x, y, type = 'basic') {
-    this.p = p;
-    this.type = type;
-    this.body = Bodies.circle(x, y, 15, {
-      label: 'enemy',
-      friction: 0.5,
-      restitution: 0.3,
-      density: 0.001
-    });
-    World.add(gameState.world, this.body);
+  constructor(x, y, z) {
+    const geometry = new THREE.SphereGeometry(0.5, 16, 16);
+    const material = new THREE.MeshStandardMaterial({ color: 0xc83232 });
+    this.mesh = new THREE.Mesh(geometry, material);
+    this.mesh.position.set(x, y, z);
+    this.mesh.castShadow = true;
     
-    this.color = [200, 50, 50];
-    this.radius = 15;
-    this.patrolSpeed = 2;
+    // Add angry eyes
+    const eyeGeometry = new THREE.SphereGeometry(0.08, 8, 8);
+    const eyeMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+    
+    const leftEye = new THREE.Mesh(eyeGeometry, eyeMaterial);
+    leftEye.position.set(-0.2, 0.1, 0.45);
+    this.mesh.add(leftEye);
+    
+    const rightEye = new THREE.Mesh(eyeGeometry, eyeMaterial);
+    rightEye.position.set(0.2, 0.1, 0.45);
+    this.mesh.add(rightEye);
+    
+    this.velocity = new THREE.Vector3(0, 0, 0);
+    this.speed = 0.05;
+    this.patrolSpeed = 0.05;
     this.direction = 1;
-    this.patrolRange = 100;
+    this.patrolRange = 3;
     this.startX = x;
+    this.radius = 0.5;
+    
+    gameState.scene.add(this.mesh);
   }
   
   update() {
     // Simple patrol AI
-    if (this.body.position.x > this.startX + this.patrolRange) {
+    if (this.mesh.position.x > this.startX + this.patrolRange) {
       this.direction = -1;
-    } else if (this.body.position.x < this.startX - this.patrolRange) {
+    } else if (this.mesh.position.x < this.startX - this.patrolRange) {
       this.direction = 1;
     }
     
-    Body.setVelocity(this.body, {
-      x: this.patrolSpeed * this.direction,
-      y: this.body.velocity.y
-    });
-  }
-  
-  render() {
-    this.p.push();
-    this.p.translate(this.body.position.x, this.body.position.y);
+    this.mesh.position.x += this.patrolSpeed * this.direction;
     
-    this.p.fill(this.color[0], this.color[1], this.color[2]);
-    this.p.noStroke();
-    this.p.circle(0, 0, this.radius * 2);
-    
-    // Draw angry eyes
-    this.p.fill(255, 0, 0);
-    this.p.circle(-5, -3, 5);
-    this.p.circle(5, -3, 5);
-    
-    this.p.pop();
+    // Check collision with player
+    if (gameState.player) {
+      const dx = this.mesh.position.x - gameState.player.mesh.position.x;
+      const dy = this.mesh.position.y - gameState.player.mesh.position.y;
+      const dz = this.mesh.position.z - gameState.player.mesh.position.z;
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      
+      if (dist < 1) {
+        gameState.player.takeDamage();
+      }
+    }
   }
 }
 
 export class Coin {
-  constructor(p, x, y) {
-    this.p = p;
-    this.x = x;
-    this.y = y;
-    this.radius = 8;
+  constructor(x, y, z) {
+    const geometry = new THREE.TorusGeometry(0.3, 0.1, 16, 32);
+    const material = new THREE.MeshStandardMaterial({ 
+      color: 0xffd700,
+      emissive: 0xffd700,
+      emissiveIntensity: 0.3
+    });
+    this.mesh = new THREE.Mesh(geometry, material);
+    this.mesh.position.set(x, y, z);
+    this.mesh.castShadow = true;
+    
     this.collected = false;
     this.rotation = 0;
+    this.bobOffset = 0;
+    
+    gameState.scene.add(this.mesh);
   }
   
   update() {
     if (this.collected) return;
     
-    this.rotation += 0.1;
+    this.rotation += 0.05;
+    this.mesh.rotation.y = this.rotation;
+    
+    this.bobOffset += 0.05;
+    this.mesh.position.y += Math.sin(this.bobOffset) * 0.01;
     
     // Check collision with player
     if (gameState.player) {
-      const dx = this.x - gameState.player.body.position.x;
-      const dy = this.y - gameState.player.body.position.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
+      const dx = this.mesh.position.x - gameState.player.mesh.position.x;
+      const dy = this.mesh.position.y - gameState.player.mesh.position.y;
+      const dz = this.mesh.position.z - gameState.player.mesh.position.z;
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
       
-      if (dist < this.radius + 20) {
+      if (dist < 1) {
         this.collect();
       }
     }
@@ -346,115 +450,99 @@ export class Coin {
   
   collect() {
     this.collected = true;
+    gameState.scene.remove(this.mesh);
     gameState.score += 10;
     
     // Check for ability unlocks
     if (!gameState.abilities.karateKick && gameState.score >= gameState.abilityThresholds.karateKick) {
       gameState.abilities.karateKick = true;
-      this.p.logs.game_info.push({
-        data: { event: "ability_unlocked", ability: "karateKick" },
-        framecount: this.p.frameCount,
-        timestamp: Date.now()
-      });
+      if (window.logs && window.logs.game_info) {
+        window.logs.game_info.push({
+          data: { event: "ability_unlocked", ability: "karateKick" },
+          framecount: gameState.frameCount,
+          timestamp: Date.now()
+        });
+      }
     }
     
     if (!gameState.abilities.doubleJump && gameState.score >= gameState.abilityThresholds.doubleJump) {
       gameState.abilities.doubleJump = true;
-      this.p.logs.game_info.push({
-        data: { event: "ability_unlocked", ability: "doubleJump" },
-        framecount: this.p.frameCount,
-        timestamp: Date.now()
-      });
+      if (window.logs && window.logs.game_info) {
+        window.logs.game_info.push({
+          data: { event: "ability_unlocked", ability: "doubleJump" },
+          framecount: gameState.frameCount,
+          timestamp: Date.now()
+        });
+      }
     }
     
     if (!gameState.abilities.hookSwing && gameState.score >= gameState.abilityThresholds.hookSwing) {
       gameState.abilities.hookSwing = true;
-      this.p.logs.game_info.push({
-        data: { event: "ability_unlocked", ability: "hookSwing" },
-        framecount: this.p.frameCount,
-        timestamp: Date.now()
-      });
+      if (window.logs && window.logs.game_info) {
+        window.logs.game_info.push({
+          data: { event: "ability_unlocked", ability: "hookSwing" },
+          framecount: gameState.frameCount,
+          timestamp: Date.now()
+        });
+      }
     }
-  }
-  
-  render() {
-    if (this.collected) return;
-    
-    this.p.push();
-    this.p.translate(this.x, this.y);
-    this.p.rotate(this.rotation);
-    
-    this.p.fill(255, 215, 0);
-    this.p.stroke(180, 140, 0);
-    this.p.strokeWeight(2);
-    this.p.circle(0, 0, this.radius * 2);
-    
-    this.p.fill(180, 140, 0);
-    this.p.noStroke();
-    this.p.textAlign(this.p.CENTER, this.p.CENTER);
-    this.p.textSize(10);
-    this.p.text('$', 0, 0);
-    
-    this.p.pop();
   }
 }
 
 export class Barrier {
-  constructor(p, x, y, width, height) {
-    this.p = p;
-    this.body = Bodies.rectangle(x, y, width, height, {
-      label: 'barrier',
-      isStatic: true,
-      friction: 0
+  constructor(x, y, z, width, height, depth) {
+    const geometry = new THREE.BoxGeometry(width, height, depth);
+    const material = new THREE.MeshStandardMaterial({ 
+      color: 0x9664c8,
+      transparent: true,
+      opacity: 0.8
     });
-    World.add(gameState.world, this.body);
+    this.mesh = new THREE.Mesh(geometry, material);
+    this.mesh.position.set(x, y, z);
+    this.mesh.castShadow = true;
+    this.mesh.receiveShadow = true;
     
-    this.color = [150, 100, 200];
-    this.width = width;
-    this.height = height;
-    this.destroyed = false;
-  }
-  
-  render() {
-    if (this.destroyed) return;
+    this.size = new THREE.Vector3(width, height, depth);
     
-    this.p.push();
-    this.p.translate(this.body.position.x, this.body.position.y);
-    
-    this.p.fill(this.color[0], this.color[1], this.color[2]);
-    this.p.stroke(100, 60, 150);
-    this.p.strokeWeight(2);
-    this.p.rectMode(this.p.CENTER);
-    this.p.rect(0, 0, this.width, this.height);
-    
-    // Draw X pattern
-    this.p.stroke(180, 150, 220);
-    this.p.line(-this.width/2, -this.height/2, this.width/2, this.height/2);
-    this.p.line(this.width/2, -this.height/2, -this.width/2, this.height/2);
-    
-    this.p.pop();
+    gameState.scene.add(this.mesh);
   }
 }
 
 export class Checkpoint {
-  constructor(p, x, y) {
-    this.p = p;
-    this.x = x;
-    this.y = y;
+  constructor(x, y, z) {
+    const geometry = new THREE.CylinderGeometry(0.3, 0.3, 2, 16);
+    const material = new THREE.MeshStandardMaterial({ 
+      color: 0x646464
+    });
+    this.mesh = new THREE.Mesh(geometry, material);
+    this.mesh.position.set(x, y, z);
+    this.mesh.castShadow = true;
+    
+    // Add flag
+    const flagGeometry = new THREE.PlaneGeometry(1, 0.6);
+    const flagMaterial = new THREE.MeshStandardMaterial({ 
+      color: 0xffff00,
+      side: THREE.DoubleSide
+    });
+    this.flag = new THREE.Mesh(flagGeometry, flagMaterial);
+    this.flag.position.set(0.5, 0.7, 0);
+    this.mesh.add(this.flag);
+    
     this.activated = false;
-    this.width = 30;
-    this.height = 60;
+    
+    gameState.scene.add(this.mesh);
   }
   
   update() {
     if (this.activated) return;
     
     if (gameState.player) {
-      const dx = this.x - gameState.player.body.position.x;
-      const dy = this.y - gameState.player.body.position.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
+      const dx = this.mesh.position.x - gameState.player.mesh.position.x;
+      const dy = this.mesh.position.y - gameState.player.mesh.position.y;
+      const dz = this.mesh.position.z - gameState.player.mesh.position.z;
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
       
-      if (dist < 40) {
+      if (dist < 2) {
         this.activate();
       }
     }
@@ -462,57 +550,64 @@ export class Checkpoint {
   
   activate() {
     this.activated = true;
-    gameState.lastCheckpoint = { x: this.x, y: this.y };
+    this.flag.material.color.setHex(0x00ff00);
+    gameState.lastCheckpoint = {
+      x: this.mesh.position.x,
+      y: this.mesh.position.y + 2,
+      z: this.mesh.position.z
+    };
     
-    this.p.logs.game_info.push({
-      data: { event: "checkpoint_activated", x: this.x, y: this.y },
-      framecount: this.p.frameCount,
-      timestamp: Date.now()
-    });
-  }
-  
-  render() {
-    this.p.push();
-    this.p.translate(this.x, this.y);
-    
-    if (this.activated) {
-      this.p.fill(0, 255, 0);
-    } else {
-      this.p.fill(100, 100, 100);
+    if (window.logs && window.logs.game_info) {
+      window.logs.game_info.push({
+        data: { event: "checkpoint_activated", x: this.mesh.position.x, y: this.mesh.position.y, z: this.mesh.position.z },
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+      });
     }
-    
-    this.p.noStroke();
-    this.p.rectMode(this.p.CENTER);
-    this.p.rect(0, 0, this.width, this.height);
-    
-    // Flag
-    this.p.fill(255, 255, 0);
-    this.p.triangle(0, -30, 0, -10, 20, -20);
-    
-    this.p.pop();
   }
 }
 
 export class Portal {
-  constructor(p, x, y) {
-    this.p = p;
-    this.x = x;
-    this.y = y;
-    this.radius = 40;
+  constructor(x, y, z) {
+    const geometry = new THREE.TorusGeometry(1.5, 0.3, 16, 32);
+    const material = new THREE.MeshStandardMaterial({ 
+      color: 0x6496ff,
+      emissive: 0x6496ff,
+      emissiveIntensity: 0.5
+    });
+    this.mesh = new THREE.Mesh(geometry, material);
+    this.mesh.position.set(x, y, z);
+    this.mesh.rotation.x = Math.PI / 2;
+    
+    // Add inner glow
+    const innerGeometry = new THREE.CircleGeometry(1.2, 32);
+    const innerMaterial = new THREE.MeshBasicMaterial({ 
+      color: 0x3264c8,
+      transparent: true,
+      opacity: 0.5
+    });
+    this.inner = new THREE.Mesh(innerGeometry, innerMaterial);
+    this.inner.rotation.x = -Math.PI / 2;
+    this.mesh.add(this.inner);
+    
     this.rotation = 0;
+    
+    gameState.scene.add(this.mesh);
   }
   
   update() {
-    this.rotation += 0.05;
+    this.rotation += 0.02;
+    this.mesh.rotation.z = this.rotation;
     
-    // Check if player reached portal with all abilities
+    // Check if player reached portal
     if (gameState.player) {
-      const dx = this.x - gameState.player.body.position.x;
-      const dy = this.y - gameState.player.body.position.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
+      const dx = this.mesh.position.x - gameState.player.mesh.position.x;
+      const dy = this.mesh.position.y - gameState.player.mesh.position.y;
+      const dz = this.mesh.position.z - gameState.player.mesh.position.z;
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
       
-      if (dist < this.radius + 20) {
-        // Check if player has collected enough and has abilities
+      if (dist < 2) {
+        // Check if all abilities unlocked
         if (gameState.abilities.doubleJump && 
             gameState.abilities.hookSwing && 
             gameState.abilities.karateKick) {
@@ -524,73 +619,45 @@ export class Portal {
   
   triggerWin() {
     gameState.gamePhase = "GAME_OVER_WIN";
-    this.p.logs.game_info.push({
-      data: { 
-        gamePhase: "GAME_OVER_WIN", 
-        score: gameState.score,
-        abilities: gameState.abilities 
-      },
-      framecount: this.p.frameCount,
-      timestamp: Date.now()
-    });
-  }
-  
-  render() {
-    this.p.push();
-    this.p.translate(this.x, this.y);
-    this.p.rotate(this.rotation);
-    
-    // Swirling portal effect
-    for (let i = 0; i < 3; i++) {
-      this.p.noFill();
-      this.p.stroke(100 + i * 50, 150 + i * 30, 255);
-      this.p.strokeWeight(3);
-      this.p.circle(0, 0, this.radius - i * 10);
+    if (window.logs && window.logs.game_info) {
+      window.logs.game_info.push({
+        data: { 
+          gamePhase: "GAME_OVER_WIN", 
+          score: gameState.score,
+          abilities: gameState.abilities 
+        },
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+      });
     }
-    
-    this.p.fill(50, 100, 200, 150);
-    this.p.noStroke();
-    this.p.circle(0, 0, this.radius - 20);
-    
-    this.p.pop();
   }
 }
 
 export class SwingPoint {
-  constructor(p, x, y) {
-    this.p = p;
-    this.x = x;
-    this.y = y;
+  constructor(x, y, z) {
+    const geometry = new THREE.SphereGeometry(0.3, 16, 16);
+    const material = new THREE.MeshStandardMaterial({ 
+      color: 0x646464
+    });
+    this.mesh = new THREE.Mesh(geometry, material);
+    this.mesh.position.set(x, y, z);
+    this.mesh.castShadow = true;
+    
+    // Add hook
+    const hookGeometry = new THREE.TorusGeometry(0.4, 0.08, 8, 16, Math.PI);
+    const hookMaterial = new THREE.MeshStandardMaterial({ color: 0xb4b4b4 });
+    this.hook = new THREE.Mesh(hookGeometry, hookMaterial);
+    this.hook.position.y = -0.5;
+    this.hook.rotation.x = Math.PI;
+    this.mesh.add(this.hook);
+    
     this.rotation = 0;
+    
+    gameState.scene.add(this.mesh);
   }
   
   update() {
     this.rotation += 0.02;
-  }
-  
-  render() {
-    this.p.push();
-    this.p.translate(this.x, this.y);
-    
-    // Hook attachment
-    this.p.fill(100, 100, 100);
-    this.p.noStroke();
-    this.p.circle(0, 0, 10);
-    
-    // Rope indicator
-    this.p.stroke(150, 100, 50);
-    this.p.strokeWeight(2);
-    this.p.line(0, 0, 0, 20);
-    
-    // Hook
-    this.p.push();
-    this.p.translate(0, 20);
-    this.p.rotate(this.rotation);
-    this.p.fill(180, 180, 180);
-    this.p.noStroke();
-    this.p.arc(0, 0, 20, 20, 0, this.p.PI);
-    this.p.pop();
-    
-    this.p.pop();
+    this.hook.rotation.z = Math.sin(this.rotation) * 0.3;
   }
 }

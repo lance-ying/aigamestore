@@ -1,0 +1,1373 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+the game still crashes after a few seconds, I think its when maybe the zombies begin attacking? 
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Garden Defenders: Pixel Patch</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; transition: background 0.2s; }
+      .control-button:hover { background: #555; }
+      .control-button.active { background: #46cc71; color: #000; font-weight: bold; }
+      
+      .game-container {
+        position: relative;
+        text-align: center;
+      }
+      
+      .info-panel {
+        color: #ccc; 
+        font-family: 'Courier New', monospace; 
+        max-width: 600px; 
+        margin: 0 auto; 
+        text-align: left;
+        background: rgba(0,0,0,0.3);
+        padding: 10px;
+        border-radius: 4px;
+        margin-top: 10px;
+        font-size: 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="game-container">
+      <h1 style="color: #46cc71; font-family: 'Courier New', monospace; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 2px;">Garden Defenders</h1>
+      
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="setMode('HUMAN', this)">Human Mode</button>
+        <button id="test1ModeBtn" class="control-button" onclick="setMode('TEST_1', this)">TEST: Auto-Win</button>
+        <button id="test2ModeBtn" class="control-button" onclick="setMode('TEST_2', this)">TEST: Idle/Lose</button>
+        <button id="test3ModeBtn" class="control-button" onclick="setMode('TEST_3', this)">TEST: Physics</button>
+      </div>
+
+      <!-- Canvas will be inserted here by p5 -->
+      
+      <div class="info-panel">
+        <p><strong>MISSION:</strong> Defend the garden! Plant flowers to gather sun, shooters to attack, and nuts to block.</p>
+        <p><strong>CONTROLS:</strong><br>
+        [ARROWS] Move Cursor &nbsp; [SPACE] Plant/Collect Sun<br>
+        [Z] Change Plant &nbsp; [SHIFT+SPACE] Shovel Plant<br>
+        [ENTER] Start &nbsp; [R] Restart &nbsp; [ESC] Pause</p>
+      </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.7.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script type="module" src="game.js"></script>
+    
+    <script>
+      function setMode(mode, btn) {
+        if (window.setControlMode) {
+          window.setControlMode(mode);
+          // Update UI
+          document.querySelectorAll('.control-button').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+        }
+      }
+    </script>
+  </body>
+</html>
+</file>
+
+<file name="automated_testing_controller.js">
+// automated_testing_controller.js
+import { gameState, PLANT_TYPES, GRID_COLS, GRID_ROWS } from './globals.js';
+
+// State machine for the test bot
+let botState = {
+    actionQueue: [],
+    lastCheck: 0,
+    targetSun: null,
+    targetLane: null
+};
+
+function getGridContent(col, row) {
+    if (col < 0 || col >= GRID_COLS || row < 0 || row >= GRID_ROWS) return null;
+    return gameState.grid[col][row];
+}
+
+// Simple pathfinding to a target (col, row)
+function moveTowards(targetCol, targetRow) {
+    const dCol = targetCol - gameState.cursor.col;
+    const dRow = targetRow - gameState.cursor.row;
+    
+    if (dCol > 0) return 39; // Right
+    if (dCol < 0) return 37; // Left
+    if (dRow > 0) return 40; // Down
+    if (dRow < 0) return 38; // Up
+    return null;
+}
+
+function getTest1Action() {
+    // 1. Collect Sun (Priority)
+    if (gameState.suns.length > 0) {
+        // Find uncollected sun
+        const sun = gameState.suns.find(s => !s.collected);
+        if (sun) {
+            // Map sun pixel to grid
+            const gridCol = Math.floor((sun.x - 20) / ((600-40)/9));
+            const gridRow = Math.floor((sun.y - 60) / ((400-70)/5));
+            
+            // Clamp
+            const safeCol = Math.max(0, Math.min(GRID_COLS-1, gridCol));
+            const safeRow = Math.max(0, Math.min(GRID_ROWS-1, gridRow));
+            
+            // Check if we are there
+            if (gameState.cursor.col === safeCol && gameState.cursor.row === safeRow) {
+                return 32; // Space to "collect" (though proximity handles it, space is good)
+            }
+            const move = moveTowards(safeCol, safeRow);
+            if (move) return move;
+        }
+    }
+
+    // 2. Select Plant Logic
+    // Desired: Sunflower in Col 0, Peashooter in Col 1+
+    
+    // Check Col 0 for empty spots
+    for(let r=0; r<GRID_ROWS; r++) {
+        if (!getGridContent(0, r)) {
+            // Need sunflower
+            if (gameState.selectedPlantIndex !== 0) return 90; // Cycle 'Z' to Sunflower (index 0)
+            
+            // If we have sun, go there
+            if (gameState.sun >= 50) {
+                if (gameState.cursor.col === 0 && gameState.cursor.row === r) {
+                    return 32; // Plant
+                }
+                const move = moveTowards(0, r);
+                if (move) return move;
+            }
+        }
+    }
+    
+    // Check lanes with zombies for Peashooters
+    // Simple strategy: fill Col 1, then Col 2
+    for(let c=1; c<3; c++) {
+        for(let r=0; r<GRID_ROWS; r++) {
+            if (!getGridContent(c, r)) {
+                 // Need peashooter
+                if (gameState.selectedPlantIndex !== 1) return 90; // Cycle 'Z' to Peashooter (index 1)
+                
+                 if (gameState.sun >= 100) {
+                    if (gameState.cursor.col === c && gameState.cursor.row === r) {
+                        return 32; // Plant
+                    }
+                    const move = moveTowards(c, r);
+                    if (move) return move;
+                }
+            }
+        }
+    }
+    
+    return null;
+}
+
+export function get_automated_testing_action(gs) {
+    if (gs.gamePhase !== "PLAYING") return null;
+
+    if (gs.controlMode === "TEST_1") {
+        const keyCode = getTest1Action();
+        if (keyCode) return { keyCode };
+    }
+    
+    if (gs.controlMode === "TEST_3") {
+         // Plant Wallnut in front of zombie
+         if (gs.zombies.length > 0) {
+             const zombie = gs.zombies[0];
+             const targetRow = zombie.row;
+             const targetCol = 7; // front-ish
+             
+             if (gs.selectedPlantIndex !== 2) return { keyCode: 90 }; // Cycle to Wallnut
+             
+             if (gs.sun >= 50 && !getGridContent(targetCol, targetRow)) {
+                  if (gs.cursor.col === targetCol && gs.cursor.row === targetRow) {
+                      return { keyCode: 32 };
+                  }
+                  const move = moveTowards(targetCol, targetRow);
+                  if (move) return { keyCode: move };
+             }
+         }
+    }
+
+    return null;
+}
+</file>
+
+<file name="globals.js">
+// globals.js
+// Constants and Global Game State
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const FPS = 60;
+
+// Grid Configuration
+export const GRID_OFFSET_X = 20;
+export const GRID_OFFSET_Y = 60; // Space for HUD
+export const GRID_COLS = 9;
+export const GRID_ROWS = 5;
+export const CELL_WIDTH = (CANVAS_WIDTH - GRID_OFFSET_X * 2) / GRID_COLS; // ~62px
+export const CELL_HEIGHT = (CANVAS_HEIGHT - GRID_OFFSET_Y - 10) / GRID_ROWS; // ~66px
+
+// Game Colors
+export const COLORS = {
+    BG: [34, 34, 34],
+    LAWN_LIGHT: [46, 204, 113],
+    LAWN_DARK: [39, 174, 96],
+    HUD_BG: [50, 50, 50],
+    HUD_BORDER: [100, 100, 100],
+    TEXT: [255, 255, 255],
+    ACCENT: [241, 196, 15], // Gold
+    DANGER: [231, 76, 60]
+};
+
+// Plant Types Definition
+export const PLANT_TYPES = {
+    SUNFLOWER: {
+        id: 'SUNFLOWER',
+        name: 'Sunflower',
+        cost: 50,
+        hp: 100,
+        cooldown: 300, // Frames
+        color: [241, 196, 15],
+        icon: '🌻'
+    },
+    PEASHOOTER: {
+        id: 'PEASHOOTER',
+        name: 'Peashooter',
+        cost: 100,
+        hp: 150,
+        cooldown: 300,
+        color: [46, 204, 113],
+        icon: '🔫'
+    },
+    WALLNUT: {
+        id: 'WALLNUT',
+        name: 'Wall-Nut',
+        cost: 50,
+        hp: 1000,
+        cooldown: 600,
+        color: [160, 82, 45],
+        icon: '🌰'
+    }
+};
+
+export const PLANT_KEYS = Object.keys(PLANT_TYPES);
+
+// Global State
+export const gameState = {
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    controlMode: "HUMAN", // HUMAN, TEST_1, TEST_2, etc.
+    
+    // Performance
+    frameCount: 0,
+    deltaTime: 0,
+    lastFrameTime: 0,
+    
+    // Grid State
+    grid: [], // 2D array [col][row] containing entities
+    
+    // Player State
+    sun: 150, // Starting sun
+    score: 0,
+    cursor: { col: 2, row: 2 }, // Grid position
+    selectedPlantIndex: 0,
+    
+    // Timers
+    plantCooldowns: {}, // Map of plant ID to frames remaining
+    waveTimer: 0,
+    currentWave: 0,
+    totalWaves: 5,
+    
+    // Entities
+    entities: [], // All active entities for update/draw
+    plants: [],
+    zombies: [],
+    projectiles: [],
+    suns: [], // Collectible sun
+    particles: [],
+    
+    // Mouse tracking (fallback/debug)
+    mouseX: 0,
+    mouseY: 0
+};
+
+// Initialize logs structure (Write-only)
+if (typeof window !== 'undefined') {
+    window.gameState = gameState; // Expose for debugging if needed
+    
+    // Helper to get state
+    window.getGameState = function() {
+        return gameState;
+    };
+}
+</file>
+
+<file name="game.js">
+// game.js
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { handleInput } from './input.js';
+import { initGame, updateGame } from './logic.js';
+import { renderBackground, renderHUD, renderCursor, renderStartScreen, renderGameOver, renderPauseScreen } from './ui.js';
+import { get_automated_testing_action } from './automated_testing_controller.js';
+
+const p5 = window.p5;
+
+// Maximum log entries to prevent memory issues
+const MAX_LOG_ENTRIES = 100;
+
+let gameInstance = new p5(p => {
+    
+    p.logs = {
+        "game_info": [],
+        "inputs": [],
+        "player_info": []
+    };
+
+    // Helper to add log with size limit
+    p.addLog = function(category, entry) {
+        if (!p.logs[category]) return;
+        p.logs[category].push(entry);
+        // Keep only last MAX_LOG_ENTRIES
+        if (p.logs[category].length > MAX_LOG_ENTRIES) {
+            p.logs[category].shift(); // Remove oldest entry
+        }
+    };
+
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(60);
+        p.randomSeed(42);
+        
+        gameState.gamePhase = "START";
+        
+        p.addLog("game_info", {
+            data: { gamePhase: gameState.gamePhase },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+        
+        // Expose handleInput for test buttons if needed (via window wrapper usually, but here handled via key listeners)
+    };
+
+    p.draw = function() {
+        // Time management
+        gameState.frameCount = p.frameCount;
+        const currentTime = p.millis();
+        gameState.deltaTime = (currentTime - gameState.lastFrameTime) / 1000;
+        gameState.lastFrameTime = currentTime;
+        
+        // --- Automated Testing Inputs ---
+        if (gameState.controlMode !== "HUMAN" && gameState.gamePhase === "PLAYING") {
+            // Throttle AI inputs to be "human-like" or every few frames to prevent glitching
+            if (p.frameCount % 5 === 0) {
+                const action = get_automated_testing_action(gameState);
+                if (action) {
+                    handleInput(p, action.keyCode, true);
+                }
+            }
+        }
+
+        // --- Render Loop ---
+        switch (gameState.gamePhase) {
+            case "START":
+                renderBackground(p);
+                renderStartScreen(p);
+                break;
+                
+            case "PLAYING":
+                updateGame(p);
+                
+                renderBackground(p);
+                
+                // Draw Entities sorted by Y mostly (though plants are in grid)
+                // We'll draw Grid Contents first
+                gameState.plants.forEach(e => e.render(p));
+                gameState.zombies.forEach(e => e.render(p));
+                gameState.projectiles.forEach(e => e.render(p));
+                gameState.suns.forEach(e => e.render(p));
+                gameState.particles.forEach(e => e.render(p));
+                
+                renderCursor(p);
+                renderHUD(p);
+                break;
+                
+            case "PAUSED":
+                renderBackground(p);
+                // Draw static game state
+                gameState.plants.forEach(e => e.render(p));
+                gameState.zombies.forEach(e => e.render(p));
+                renderHUD(p);
+                renderPauseScreen(p);
+                break;
+                
+            case "GAME_OVER_WIN":
+            case "GAME_OVER_LOSE":
+                renderBackground(p);
+                gameState.plants.forEach(e => e.render(p));
+                gameState.zombies.forEach(e => e.render(p));
+                renderHUD(p);
+                renderGameOver(p, gameState.gamePhase === "GAME_OVER_WIN");
+                break;
+        }
+    };
+
+    p.keyPressed = function() {
+        // Global State Controls
+        if (p.keyCode === 13) { // ENTER
+            if (gameState.gamePhase === "START" || gameState.gamePhase.includes("GAME_OVER")) {
+                initGame();
+                p.addLog("game_info", {
+                    data: { gamePhase: "PLAYING" },
+                    framecount: p.frameCount,
+                    timestamp: Date.now()
+                });
+            }
+        }
+        
+        if (p.keyCode === 27) { // ESC / P (Use 27 for ESC, maybe 80 for P)
+            if (gameState.gamePhase === "PLAYING") {
+                gameState.gamePhase = "PAUSED";
+            } else if (gameState.gamePhase === "PAUSED") {
+                gameState.gamePhase = "PLAYING";
+            }
+        }
+        
+        if (p.keyCode === 82) { // R
+            if (gameState.gamePhase === "PAUSED" || gameState.gamePhase.includes("GAME_OVER")) {
+                 initGame();
+            }
+        }
+
+        // Gameplay Controls
+        handleInput(p, p.keyCode, false);
+    };
+
+});
+
+// Global Helpers
+window.gameInstance = gameInstance;
+window.setControlMode = function(mode) {
+    gameState.controlMode = mode;
+    console.log("Control Mode set to:", mode);
+    // If switching to test mode mid-game, ensure phase is correct or restart
+    if (mode !== "HUMAN" && gameState.gamePhase !== "PLAYING") {
+        initGame(); // Auto start for tests
+    }
+};
+</file>
+
+<file name="ui.js">
+// ui.js
+import { 
+    gameState, PLANT_TYPES, PLANT_KEYS, 
+    CANVAS_WIDTH, CANVAS_HEIGHT, 
+    GRID_OFFSET_X, GRID_OFFSET_Y, 
+    CELL_WIDTH, CELL_HEIGHT, GRID_COLS, GRID_ROWS, COLORS 
+} from './globals.js';
+
+export function renderBackground(p) {
+    p.background(COLORS.BG);
+    
+    // Draw Lawn Grid
+    for (let c = 0; c < GRID_COLS; c++) {
+        for (let r = 0; r < GRID_ROWS; r++) {
+            const x = GRID_OFFSET_X + c * CELL_WIDTH;
+            const y = GRID_OFFSET_Y + r * CELL_HEIGHT;
+            
+            // Checkerboard pattern
+            if ((c + r) % 2 === 0) {
+                p.fill(COLORS.LAWN_LIGHT);
+            } else {
+                p.fill(COLORS.LAWN_DARK);
+            }
+            p.noStroke();
+            p.rect(x, y, CELL_WIDTH, CELL_HEIGHT);
+        }
+    }
+    
+    // Lane lines (subtle)
+    p.stroke(0, 30);
+    p.strokeWeight(2);
+    for (let r = 0; r <= GRID_ROWS; r++) {
+        const y = GRID_OFFSET_Y + r * CELL_HEIGHT;
+        p.line(GRID_OFFSET_X, y, GRID_OFFSET_X + GRID_COLS * CELL_WIDTH, y);
+    }
+}
+
+export function renderHUD(p) {
+    // Top Bar Background
+    p.fill(COLORS.HUD_BG);
+    p.noStroke();
+    p.rect(0, 0, CANVAS_WIDTH, GRID_OFFSET_Y - 10);
+    
+    // Sun Counter
+    p.fill(COLORS.HUD_BORDER);
+    p.rect(10, 5, 80, 40, 5);
+    p.fill(COLORS.ACCENT);
+    p.noStroke();
+    p.circle(30, 25, 25); // Sun Icon
+    p.fill(0);
+    p.textAlign(p.LEFT, p.CENTER);
+    p.textSize(16);
+    p.text(Math.floor(gameState.sun), 50, 25);
+    
+    // Plant Cards
+    const cardWidth = 60;
+    const cardHeight = 45;
+    const startX = 110;
+    
+    PLANT_KEYS.forEach((key, index) => {
+        const type = PLANT_TYPES[key];
+        const x = startX + index * (cardWidth + 10);
+        const y = 5;
+        
+        // Selection highlight
+        if (index === gameState.selectedPlantIndex) {
+            p.stroke(255); // White border for selected
+            p.strokeWeight(3);
+        } else {
+            p.stroke(0);
+            p.strokeWeight(1);
+        }
+        
+        // Card BG
+        // Check affordability
+        if (gameState.sun >= type.cost) {
+            p.fill(200); 
+        } else {
+            p.fill(150, 100, 100); // Reddish tint if expensive
+        }
+        p.rect(x, y, cardWidth, cardHeight, 4);
+        
+        // Plant Icon (Simple text or shape)
+        p.textAlign(p.CENTER, p.CENTER);
+        p.textSize(20);
+        p.noStroke();
+        p.text(type.icon, x + cardWidth/2, y + cardHeight/2 - 5);
+        
+        // Cost
+        p.textSize(10);
+        p.fill(0);
+        p.text(type.cost, x + cardWidth/2, y + cardHeight - 8);
+        
+        // Cooldown Overlay
+        const cd = gameState.plantCooldowns[key];
+        if (cd > 0) {
+            const maxCd = type.cooldown;
+            const ratio = cd / maxCd;
+            p.fill(0, 0, 0, 150);
+            p.rect(x, y + cardHeight * (1-ratio), cardWidth, cardHeight * ratio);
+        }
+    });
+    
+    // Wave Progress
+    p.fill(255);
+    p.noStroke();
+    p.textAlign(p.RIGHT, p.CENTER);
+    p.textSize(14);
+    p.text(`Wave: ${gameState.currentWave}/${gameState.totalWaves}`, CANVAS_WIDTH - 20, 25);
+}
+
+export function renderCursor(p) {
+    if (gameState.gamePhase !== "PLAYING") return;
+    
+    const { col, row } = gameState.cursor;
+    const x = GRID_OFFSET_X + col * CELL_WIDTH;
+    const y = GRID_OFFSET_Y + row * CELL_HEIGHT;
+    
+    // Pulsing alpha
+    const alpha = 100 + p.sin(p.frameCount * 0.1) * 50;
+    
+    p.noFill();
+    p.stroke(255, alpha);
+    p.strokeWeight(4);
+    p.rect(x, y, CELL_WIDTH, CELL_HEIGHT);
+    
+    // Crosshair markers
+    p.line(x + CELL_WIDTH/2 - 5, y + CELL_HEIGHT/2, x + CELL_WIDTH/2 + 5, y + CELL_HEIGHT/2);
+    p.line(x + CELL_WIDTH/2, y + CELL_HEIGHT/2 - 5, x + CELL_WIDTH/2, y + CELL_HEIGHT/2 + 5);
+}
+
+export function renderStartScreen(p) {
+    p.background(0, 0, 0, 200);
+    p.fill(COLORS.LAWN_LIGHT);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(48);
+    p.text("GARDEN DEFENDERS", CANVAS_WIDTH/2, 100);
+    p.textSize(24);
+    p.fill(255);
+    p.text("Pixel Patch", CANVAS_WIDTH/2, 140);
+    
+    p.textSize(18);
+    p.text("Press ENTER to Start", CANVAS_WIDTH/2, 250);
+    
+    p.textSize(14);
+    p.fill(200);
+    p.text("ARROWS to Move | SPACE to Plant/Collect", CANVAS_WIDTH/2, 300);
+    p.text("Z to Switch Plants | SHIFT+SPACE to Dig", CANVAS_WIDTH/2, 320);
+}
+
+export function renderGameOver(p, win) {
+    p.background(0, 0, 0, 220);
+    p.textAlign(p.CENTER, p.CENTER);
+    
+    if (win) {
+        p.fill(COLORS.ACCENT);
+        p.textSize(48);
+        p.text("VICTORY!", CANVAS_WIDTH/2, 150);
+        p.textSize(24);
+        p.fill(255);
+        p.text("The lawn is safe... for now.", CANVAS_WIDTH/2, 200);
+    } else {
+        p.fill(COLORS.DANGER);
+        p.textSize(48);
+        p.text("GAME OVER", CANVAS_WIDTH/2, 150);
+        p.textSize(24);
+        p.fill(255);
+        p.text("The zombies ate your brains!", CANVAS_WIDTH/2, 200);
+    }
+    
+    p.textSize(18);
+    p.fill(200);
+    p.text("Press R to Restart", CANVAS_WIDTH/2, 300);
+}
+
+export function renderPauseScreen(p) {
+    p.fill(0, 0, 0, 150);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.fill(255);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(40);
+    p.text("PAUSED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+    p.textSize(16);
+    p.text("Press ESC to Resume", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 40);
+}
+</file>
+
+<file name="logic.js">
+// logic.js
+import { 
+    gameState, PLANT_TYPES, PLANT_KEYS,
+    GRID_COLS, GRID_ROWS, 
+    CELL_WIDTH, CELL_HEIGHT, 
+    GRID_OFFSET_X, GRID_OFFSET_Y,
+    CANVAS_WIDTH 
+} from './globals.js';
+import { Plant, Zombie, spawnSun } from './entities.js';
+
+export function initGame() {
+    gameState.gamePhase = "PLAYING";
+    gameState.sun = 150;
+    gameState.score = 0;
+    gameState.grid = Array(GRID_COLS).fill(null).map(() => Array(GRID_ROWS).fill(null));
+    gameState.entities = [];
+    gameState.plants = [];
+    gameState.zombies = [];
+    gameState.projectiles = [];
+    gameState.suns = [];
+    gameState.particles = [];
+    
+    // Reset Cooldowns
+    PLANT_KEYS.forEach(key => {
+        gameState.plantCooldowns[key] = 0;
+    });
+
+    gameState.currentWave = 1;
+    gameState.waveTimer = 0;
+}
+
+export function updateGame(p) {
+    if (gameState.gamePhase !== "PLAYING") return;
+
+    // --- Cooldowns ---
+    PLANT_KEYS.forEach(key => {
+        if (gameState.plantCooldowns[key] > 0) {
+            gameState.plantCooldowns[key]--;
+        }
+    });
+
+    // --- Wave Management ---
+    gameState.waveTimer++;
+    
+    // Simple wave logic
+    // Wave 1: slow spawn. Wave 5: fast spawn.
+    const spawnInterval = Math.max(100, 600 - (gameState.currentWave * 80)); 
+    
+    if (gameState.waveTimer > spawnInterval) {
+        gameState.waveTimer = 0;
+        spawnZombie();
+        
+        // Progress wave
+        if (gameState.score > gameState.currentWave * 200) {
+            gameState.currentWave++;
+            if (gameState.currentWave > gameState.totalWaves) {
+                 // Check if all zombies are dead
+                 if (gameState.zombies.length === 0) {
+                     gameState.gamePhase = "GAME_OVER_WIN";
+                 }
+            }
+        }
+    }
+    
+    // Win condition check (Alternate: survive time)
+    if (gameState.currentWave > gameState.totalWaves && gameState.zombies.length === 0) {
+        gameState.gamePhase = "GAME_OVER_WIN";
+    }
+
+    // --- Ambient Sun Spawning ---
+    // Spawn sun from sky every ~8 seconds
+    if (gameState.frameCount % 480 === 0) {
+        const x = Math.random() * (CANVAS_WIDTH - 40) + 20;
+        spawnSun(x, -20, true);
+    }
+
+    // --- Update Entities ---
+    // Combined array for update, but keep separate lists for logic
+    // We update specific lists to keep management easy
+    
+    // Helper to filter dead
+    const filterDead = (list) => list.filter(e => !e.markedForDeletion);
+    
+    gameState.plants.forEach(e => e.update(p));
+    gameState.plants = filterDead(gameState.plants);
+    
+    gameState.zombies.forEach(e => e.update(p));
+    gameState.zombies = filterDead(gameState.zombies);
+    
+    gameState.projectiles.forEach(e => e.update(p));
+    gameState.projectiles = filterDead(gameState.projectiles);
+    
+    gameState.suns.forEach(e => e.update(p));
+    gameState.suns = filterDead(gameState.suns);
+    
+    gameState.particles.forEach(e => e.update(p));
+    gameState.particles = filterDead(gameState.particles);
+    
+    // Clean up master entities array to prevent memory leak
+    gameState.entities = filterDead(gameState.entities);
+}
+
+export function spawnZombie() {
+    const row = Math.floor(Math.random() * GRID_ROWS);
+    const z = new Zombie(row);
+    gameState.zombies.push(z);
+    gameState.entities.push(z);
+}
+
+export function handlePlanting() {
+    const { col, row } = gameState.cursor;
+    
+    // Check if slot empty
+    if (gameState.grid[col][row]) return; // Occupied
+
+    const plantKey = PLANT_KEYS[gameState.selectedPlantIndex];
+    const plantType = PLANT_TYPES[plantKey];
+
+    // Check cost
+    if (gameState.sun < plantType.cost) return; // Not enough sun
+
+    // Check cooldown
+    if (gameState.plantCooldowns[plantKey] > 0) return; // On cooldown
+
+    // Plant it!
+    gameState.sun -= plantType.cost;
+    gameState.plantCooldowns[plantKey] = plantType.cooldown;
+    
+    const plant = new Plant(col, row, plantType);
+    gameState.grid[col][row] = plant;
+    gameState.plants.push(plant);
+    gameState.entities.push(plant);
+    
+    // Particle effect
+    for(let i=0; i<10; i++) {
+        gameState.particles.push({
+            x: plant.x, y: plant.y,
+            vx: (Math.random()-0.5)*5, vy: (Math.random()-0.5)*5,
+            life: 20, color: [100, 255, 100],
+            markedForDeletion: false,
+            update: function() { this.x+=this.vx; this.y+=this.vy; this.life--; if(this.life<=0) this.markedForDeletion=true; },
+            render: function(p) { p.fill(this.color); p.circle(this.x,this.y,3); }
+        });
+    }
+}
+
+export function handleShovel() {
+    const { col, row } = gameState.cursor;
+    const plant = gameState.grid[col][row];
+    if (plant) {
+        plant.die(); // Remove plant
+        gameState.grid[col][row] = null;
+        // Partial refund? No, standard mechanics usually don't refund full.
+        // Maybe small refund for gameplay feel? Let's give 25 sun back.
+        gameState.sun += 25;
+    }
+}
+</file>
+
+<file name="entities.js">
+// entities.js
+import { 
+    CANVAS_WIDTH, CELL_WIDTH, CELL_HEIGHT, 
+    GRID_OFFSET_X, GRID_OFFSET_Y, 
+    gameState, PLANT_TYPES 
+} from './globals.js';
+
+// --- Base Entity ---
+export class Entity {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.width = 0;
+        this.height = 0;
+        this.markedForDeletion = false;
+        this.age = 0;
+    }
+
+    update(p) {
+        this.age++;
+    }
+
+    render(p) {
+        // Override
+    }
+}
+
+// --- Plants ---
+export class Plant extends Entity {
+    constructor(col, row, type) {
+        const x = GRID_OFFSET_X + col * CELL_WIDTH + CELL_WIDTH / 2;
+        const y = GRID_OFFSET_Y + row * CELL_HEIGHT + CELL_HEIGHT / 2;
+        super(x, y);
+        
+        this.col = col;
+        this.row = row;
+        this.type = type;
+        this.maxHp = type.hp;
+        this.hp = type.hp;
+        
+        this.actionTimer = 0;
+        this.flashTimer = 0; // For hit effect
+    }
+
+    takeDamage(amount) {
+        this.hp -= amount;
+        this.flashTimer = 10;
+        if (this.hp <= 0) {
+            this.hp = 0;
+            this.die();
+        }
+    }
+
+    die() {
+        this.markedForDeletion = true;
+        // Free up grid slot
+        if (gameState.grid[this.col] && gameState.grid[this.col][this.row] === this) {
+            gameState.grid[this.col][this.row] = null;
+        }
+        
+        // Spawn debris particles
+        for(let i=0; i<5; i++) {
+            gameState.particles.push(new Particle(this.x, this.y, this.type.color));
+        }
+    }
+
+    update(p) {
+        super.update(p);
+        if (this.flashTimer > 0) this.flashTimer--;
+        
+        // Specific logic per type
+        if (this.type.id === 'SUNFLOWER') {
+            this.actionTimer++;
+            // Generate sun every ~10 seconds (600 frames)
+            if (this.actionTimer >= 600) {
+                this.actionTimer = 0;
+                spawnSun(this.x, this.y - 20, false); // false = not from sky
+            }
+        } else if (this.type.id === 'PEASHOOTER') {
+            this.actionTimer++;
+            // Shoot every ~1.5 seconds (90 frames) if zombies in lane
+            if (this.actionTimer >= 90) {
+                // Check if zombie in lane
+                const zombieInLane = gameState.zombies.some(z => 
+                    z.row === this.row && z.x > this.x && z.x < CANVAS_WIDTH + 50
+                );
+                
+                if (zombieInLane) {
+                    this.actionTimer = 0;
+                    gameState.projectiles.push(new Projectile(this.x + 20, this.y - 10, this.row));
+                } else {
+                    // Clamp timer so it shoots immediately when zombie appears
+                    this.actionTimer = 90;
+                }
+            }
+        }
+    }
+
+    render(p) {
+        p.push();
+        p.translate(this.x, this.y);
+        
+        // Hit flash
+        if (this.flashTimer > 0) {
+            p.tint(255, 200); // Only works with images, for shapes we change fill
+            p.fill(255);
+        } else {
+            p.fill(this.type.color);
+        }
+
+        // Bobbing animation
+        const bob = p.sin(this.age * 0.1) * 2;
+
+        if (this.type.id === 'SUNFLOWER') {
+            // Petals
+            p.push();
+            p.rotate(this.age * 0.02);
+            p.fill(243, 156, 18);
+            for(let i=0; i<8; i++) {
+                p.triangle(0, -15, -6, -25, 6, -25);
+                p.rotate(p.PI/4);
+            }
+            p.pop();
+            // Face
+            p.fill(this.flashTimer > 0 ? 255 : this.type.color);
+            p.circle(0, bob, 30);
+            p.fill(100, 50, 0);
+            p.circle(-7, bob-5, 4); // eyes
+            p.circle(7, bob-5, 4);
+            p.arc(0, bob+5, 10, 8, 0, p.PI); // smile
+            
+        } else if (this.type.id === 'PEASHOOTER') {
+            // Head
+            p.circle(0, -10 + bob, 30);
+            // Snout
+            p.rectMode(p.CENTER);
+            p.rect(15, -10 + bob, 20, 15);
+            // Base/Stem
+            p.fill(39, 174, 96);
+            p.rect(0, 15, 8, 20);
+            p.fill(0);
+            p.circle(25, -10 + bob, 8); // Hole
+            
+        } else if (this.type.id === 'WALLNUT') {
+            // Body
+            p.ellipse(0, bob, 35, 45);
+            // Cracks based on HP
+            p.stroke(60, 30, 10);
+            p.noFill();
+            if (this.hp < this.maxHp * 0.7) {
+                p.line(-10, -10, 0, 0);
+            }
+            if (this.hp < this.maxHp * 0.4) {
+                p.line(10, -5, 0, 5);
+                p.line(0, 0, -5, 10);
+            }
+            // Face
+            p.noStroke();
+            p.fill(0);
+            p.circle(-8, -5 + bob, 4);
+            p.circle(8, -5 + bob, 4);
+            // Worried mouth
+            p.noFill();
+            p.stroke(0);
+            p.strokeWeight(1);
+            p.arc(0, 8 + bob, 10, 5, p.PI, 0);
+        }
+
+        // Health bar if damaged
+        if (this.hp < this.maxHp) {
+            p.noStroke();
+            p.fill(255, 0, 0);
+            p.rectMode(p.CORNER);
+            p.rect(-20, 25, 40, 4);
+            p.fill(0, 255, 0);
+            p.rect(-20, 25, 40 * (this.hp / this.maxHp), 4);
+        }
+
+        p.pop();
+    }
+}
+
+// --- Zombies ---
+export class Zombie extends Entity {
+    constructor(row) {
+        const x = CANVAS_WIDTH + 20;
+        const y = GRID_OFFSET_Y + row * CELL_HEIGHT + CELL_HEIGHT / 2 - 20; // Offset up slightly
+        super(x, y);
+        
+        this.row = row;
+        this.width = 30;
+        this.height = 50;
+        this.speed = 0.3 + Math.random() * 0.2; // Variable speed
+        this.maxHp = 200;
+        this.hp = this.maxHp;
+        this.damage = 1; // DPS essentially (applied per frame)
+        this.isEating = false;
+        
+        this.walkCycle = 0;
+    }
+
+    takeDamage(amount) {
+        this.hp -= amount;
+        if (this.hp <= 0) {
+            this.die();
+        }
+    }
+
+    die() {
+        this.markedForDeletion = true;
+        gameState.score += 20;
+        // Particles
+        for(let i=0; i<8; i++) {
+            gameState.particles.push(new Particle(this.x, this.y, [100, 100, 200]));
+        }
+    }
+
+    update(p) {
+        super.update(p);
+        
+        // Find plant to eat
+        // Map current x to col
+        const col = Math.floor((this.x - GRID_OFFSET_X) / CELL_WIDTH);
+        let plant = null;
+        
+        if (col >= 0 && col < GRID_COLS) {
+            plant = gameState.grid[col][this.row];
+        }
+
+        // Interaction range
+        const eatingRange = 30;
+        if (plant && Math.abs(plant.x - this.x) < eatingRange) {
+            this.isEating = true;
+            plant.takeDamage(this.damage);
+        } else {
+            this.isEating = false;
+            this.x -= this.speed;
+        }
+
+        // Check lose condition
+        if (this.x < 0) {
+            gameState.gamePhase = "GAME_OVER_LOSE";
+        }
+        
+        this.walkCycle += 0.2;
+    }
+
+    render(p) {
+        p.push();
+        p.translate(this.x, this.y);
+        
+        const sway = p.sin(this.walkCycle) * 5;
+        const bounce = Math.abs(p.cos(this.walkCycle)) * 3;
+        
+        // Shadow
+        p.fill(0, 100);
+        p.noStroke();
+        p.ellipse(0, 50, 40, 10);
+        
+        // Body (lean forward)
+        p.rotate(-0.1); 
+        
+        // Legs
+        p.stroke(50);
+        p.strokeWeight(6);
+        p.line(-5, 20, -10 + sway, 50); // Back leg
+        p.line(5, 20, 10 - sway, 50);   // Front leg
+        
+        // Torso
+        p.noStroke();
+        p.fill(60, 80, 100); // Jacket color
+        p.rectMode(p.CENTER);
+        p.rect(0, 10 - bounce, 25, 35);
+        
+        // Head
+        p.fill(150, 170, 150); // Zombie skin
+        p.circle(0 + sway*0.2, -15 - bounce, 25);
+        
+        // Eyes
+        p.fill(255);
+        p.circle(5 + sway*0.2, -18 - bounce, 8);
+        p.fill(0);
+        p.circle(5 + sway*0.2, -18 - bounce, 3);
+        
+        // Arm (eating animation or walking)
+        p.stroke(150, 170, 150);
+        p.strokeWeight(6);
+        if (this.isEating) {
+            const bite = p.sin(this.age * 0.5) * 10;
+            p.line(10, 0, 25 + bite, -5);
+        } else {
+            p.line(10, 0, 20, 10 + sway);
+        }
+
+        p.pop();
+    }
+}
+
+// --- Projectile ---
+export class Projectile extends Entity {
+    constructor(x, y, row) {
+        super(x, y);
+        this.row = row;
+        this.speed = 6;
+        this.radius = 6;
+        this.damage = 25;
+    }
+
+    update(p) {
+        super.update(p);
+        this.x += this.speed;
+        
+        // Bounds check
+        if (this.x > CANVAS_WIDTH) {
+            this.markedForDeletion = true;
+        }
+        
+        // Collision with zombies
+        for (const zombie of gameState.zombies) {
+            if (zombie.row === this.row && !zombie.markedForDeletion) {
+                const dist = Math.abs(zombie.x - this.x);
+                if (dist < zombie.width) {
+                    zombie.takeDamage(this.damage);
+                    this.markedForDeletion = true;
+                    // Impact poof
+                    gameState.particles.push(new Particle(this.x, this.y, [46, 204, 113]));
+                    break;
+                }
+            }
+        }
+    }
+
+    render(p) {
+        p.fill(46, 204, 113); // Pea green
+        p.noStroke();
+        p.circle(this.x, this.y, this.radius * 2);
+        // Trail
+        p.fill(46, 204, 113, 100);
+        p.circle(this.x - 5, this.y, this.radius * 1.5);
+    }
+}
+
+// --- Sun ---
+export class Sun extends Entity {
+    constructor(x, y, isFromSky = true) {
+        super(x, y);
+        this.targetY = isFromSky ? y + 200 + Math.random() * 100 : y;
+        if (this.targetY > CANVAS_HEIGHT - 50) this.targetY = CANVAS_HEIGHT - 50;
+        
+        this.isFromSky = isFromSky;
+        this.dy = isFromSky ? 2 : 0;
+        this.radius = 20;
+        this.value = 25;
+        this.collected = false;
+        
+        this.lifeTime = 600; // 10 seconds before disappearing
+        this.fadeAlpha = 255;
+    }
+
+    collect() {
+        if (this.collected) return;
+        this.collected = true;
+        gameState.sun += this.value;
+        // Log collection
+        if (typeof window !== 'undefined' && window.p5 && window.p5.prototype.logs) {
+            // Note: direct log access via p not easily avail here, we assume core loop handles it or global exposure
+        }
+    }
+
+    update(p) {
+        super.update(p);
+        
+        // Fall if from sky
+        if (this.isFromSky && this.y < this.targetY) {
+            this.y += this.dy;
+        }
+        
+        // Lifetime
+        this.lifeTime--;
+        if (this.lifeTime < 60) {
+            this.fadeAlpha = p.map(this.lifeTime, 0, 60, 0, 255);
+        }
+        if (this.lifeTime <= 0) {
+            this.markedForDeletion = true;
+        }
+
+        // Animation for collection (fly to top left)
+        if (this.collected) {
+            const destX = 30;
+            const destY = 30;
+            this.x = p.lerp(this.x, destX, 0.1);
+            this.y = p.lerp(this.y, destY, 0.1);
+            this.radius *= 0.9;
+            if (this.radius < 2) {
+                this.markedForDeletion = true;
+            }
+        } else {
+            // Check collision with cursor
+            // Get cursor pixel pos
+            const curCol = gameState.cursor.col;
+            const curRow = gameState.cursor.row;
+            const curX = GRID_OFFSET_X + curCol * CELL_WIDTH + CELL_WIDTH/2;
+            const curY = GRID_OFFSET_Y + curRow * CELL_HEIGHT + CELL_HEIGHT/2;
+            
+            // Simple distance check to cursor center
+            // OR checks if sun is inside the grid cell of cursor
+            // Let's use distance
+            const d = p.dist(this.x, this.y, curX, curY);
+            if (d < 40) { // generous radius
+                this.collect();
+            }
+        }
+    }
+
+    render(p) {
+        p.push();
+        p.translate(this.x, this.y);
+        p.rotate(this.age * 0.05);
+        
+        const alpha = this.collected ? 255 : this.fadeAlpha;
+        p.fill(241, 196, 15, alpha);
+        p.stroke(243, 156, 18, alpha);
+        p.strokeWeight(2);
+        
+        // Sun body
+        p.circle(0, 0, this.radius * 2);
+        
+        // Rays
+        if (!this.collected) {
+            for(let i=0; i<8; i++) {
+                p.line(15, 0, 22, 0);
+                p.rotate(p.PI/4);
+            }
+        }
+        
+        p.pop();
+    }
+}
+
+// --- Particle ---
+export class Particle extends Entity {
+    constructor(x, y, color) {
+        super(x, y);
+        this.vx = (Math.random() - 0.5) * 4;
+        this.vy = (Math.random() - 0.5) * 4;
+        this.color = color;
+        this.life = 30;
+        this.size = Math.random() * 5 + 2;
+    }
+    
+    update(p) {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.life--;
+        if (this.life <= 0) this.markedForDeletion = true;
+    }
+    
+    render(p) {
+        p.noStroke();
+        p.fill(this.color[0], this.color[1], this.color[2], p.map(this.life, 0, 30, 0, 255));
+        p.circle(this.x, this.y, this.size);
+    }
+}
+
+// Helper to spawn sun
+export function spawnSun(x, y, fromSky) {
+    const s = new Sun(x, y, fromSky);
+    gameState.suns.push(s);
+    gameState.entities.push(s);
+}
+</file>
+
+<file name="input.js">
+// input.js
+import { gameState, PLANT_KEYS, GRID_COLS, GRID_ROWS } from './globals.js';
+import { handlePlanting, handleShovel } from './logic.js';
+
+export function handleInput(p, keyCode, simulated = false) {
+    if (gameState.gamePhase !== "PLAYING") return;
+    
+    // Log input with size limit
+    if (p.addLog && !simulated) {
+        p.addLog("inputs", {
+            input_type: 'keyCode',
+            data: { keyCode: keyCode },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+    }
+
+    // Cursor Movement
+    if (keyCode === p.LEFT_ARROW || keyCode === 37) {
+        gameState.cursor.col = Math.max(0, gameState.cursor.col - 1);
+    } else if (keyCode === p.RIGHT_ARROW || keyCode === 39) {
+        gameState.cursor.col = Math.min(GRID_COLS - 1, gameState.cursor.col + 1);
+    } else if (keyCode === p.UP_ARROW || keyCode === 38) {
+        gameState.cursor.row = Math.max(0, gameState.cursor.row - 1);
+    } else if (keyCode === p.DOWN_ARROW || keyCode === 40) {
+        gameState.cursor.row = Math.min(GRID_ROWS - 1, gameState.cursor.row + 1);
+    }
+
+    // Cycle Plants (Z)
+    if (keyCode === 90) { // Z
+        gameState.selectedPlantIndex = (gameState.selectedPlantIndex + 1) % PLANT_KEYS.length;
+    }
+
+    // Action (Space)
+    if (keyCode === 32) { // SPACE
+        // Check for SHIFT key for Shovel mode
+        // p5 keyIsDown(16) checks Shift
+        if (p.keyIsDown && p.keyIsDown(16)) {
+            handleShovel();
+        } else {
+            handlePlanting();
+        }
+        
+        // Also check if we can collect any sun at current cursor (manual collect override)
+        // This logic is also in Sun.update, but pressing Space ensures collection feels responsive
+        // We'll iterate suns
+        /* 
+        NOTE: Sun collection logic is proximity based in update loop, 
+        but explicit action can trigger it too if we wanted. 
+        For now, let's keep it proximity based on cursor pos.
+        */
+    }
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

@@ -1,0 +1,1836 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+can you make the movement not as fast, , and I want it to be a true 3d platformer, right now its just a 2d platformer with 3d graphics, cna you fix that, also make sure I move at a reasonable speed
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>SpongeBob: The Cosmic Shake</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        html, body {
+            width: 600px;
+            height: 400px;
+            overflow: hidden;
+            margin: 0;
+            padding: 0;
+            background: #000;
+        }
+        
+        #game-container {
+            width: 600px;
+            height: 400px;
+            position: relative;
+            overflow: hidden;
+            margin: 0;
+            padding: 0;
+        }
+        
+        canvas {
+            display: block;
+            margin: 0;
+            padding: 0;
+        }
+        
+        .control-buttons {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+            flex-wrap: wrap;
+            justify-content: center;
+            position: absolute;
+            top: -100px;
+            left: 0;
+            right: 0;
+        }
+        
+        .control-button {
+            padding: 8px 16px;
+            cursor: pointer;
+            background: #444;
+            color: #fff;
+            border: none;
+            border-radius: 4px;
+        }
+        
+        .control-button.active {
+            background: #007bff;
+        }
+        
+        #game-info {
+            position: absolute;
+            top: -200px;
+            left: 0;
+            right: 0;
+            text-align: center;
+            color: #fff;
+            font-family: Arial, sans-serif;
+            padding: 10px;
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/seedrandom@3.0.5/seedrandom.min.js"></script>
+</head>
+<body>
+    <div id="game-info">
+        <h2 style="margin-bottom: 10px;">SpongeBob: The Cosmic Shake</h2>
+        <p style="font-size: 12px; line-height: 1.4; max-width: 600px; margin: 0 auto;">
+            Navigate cosmic platforms, defeat enemies, and collect coins! Unlock abilities: Karate Kick (25 coins), Double Jump (50 coins), Hook-Swing (100 coins). Reach the portal to win!
+        </p>
+        <div class="control-buttons">
+            <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+            <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST_1 (Movement)</button>
+            <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST_2 (Win)</button>
+        </div>
+    </div>
+    <script type="module" src="game.js"></script>
+</body>
+</html>
+</file>
+
+<file name="globals.js">
+// globals.js - Global constants and game state
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+export const GAME_PHASES = {
+  START: "START",
+  PLAYING: "PLAYING",
+  PAUSED: "PAUSED",
+  GAME_OVER_WIN: "GAME_OVER_WIN",
+  GAME_OVER_LOSE: "GAME_OVER_LOSE"
+};
+
+export const CONTROL_MODES = {
+  HUMAN: "HUMAN",
+  TEST_1: "TEST_1",
+  TEST_2: "TEST_2"
+};
+
+// Game state object
+export const gameState = {
+  player: null,
+  entities: [],
+  enemies: [],
+  coins: [],
+  barriers: [],
+  swingPoints: [],
+  checkpoints: [],
+  portal: null,
+  platforms: [],
+  
+  score: 0,
+  health: 3,
+  maxHealth: 3,
+  
+  abilities: {
+    doubleJump: false,
+    karateKick: false,
+    hookSwing: false
+  },
+  
+  lastCheckpoint: { x: 5, y: 2, z: 0 },
+  
+  invincible: false,
+  invincibilityTimer: 0,
+  
+  gamePhase: GAME_PHASES.START,
+  controlMode: CONTROL_MODES.HUMAN,
+  
+  // Three.js core objects
+  scene: null,
+  camera: null,
+  renderer: null,
+  gameContainer: null,
+  
+  // Lighting
+  lights: [],
+  ambientLight: null,
+  directionalLight: null,
+  
+  // Physics
+  gravity: new THREE.Vector3(0, -0.025, 0),
+  
+  // Camera state
+  cameraOffset: new THREE.Vector3(0, 8, 15),
+  
+  // Performance tracking
+  frameCount: 0,
+  lastFrameTime: 0,
+  deltaTime: 0,
+  
+  // Testing state
+  testFrameCount: 0,
+  testPhase: 0,
+  
+  // Ability unlock thresholds
+  abilityThresholds: {
+    doubleJump: 50,
+    hookSwing: 100,
+    karateKick: 25
+  }
+};
+
+export function getGameState() {
+  return gameState;
+}
+
+// Expose globally
+if (typeof window !== 'undefined') {
+  window.getGameState = getGameState;
+}
+</file>
+
+<file name="game.js">
+// game.js - Main game loop with three.js
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+import { 
+  gameState, 
+  CANVAS_WIDTH, 
+  CANVAS_HEIGHT,
+  GAME_PHASES,
+  CONTROL_MODES,
+  getGameState 
+} from './globals.js';
+
+import { Player } from './entities.js';
+import { setupRenderer } from './renderer.js';
+import { setupCamera, updateCamera } from './camera.js';
+import { setupLighting } from './lighting.js';
+import { handleInput, setupInputHandlers, isKeyPressed } from './input.js';
+import { createLevel } from './level.js';
+
+// Initialize logs
+window.logs = {
+  game_info: [],
+  player_info: [],
+  inputs: []
+};
+
+// Setup scene
+function setupScene() {
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x87ceeb);
+  scene.fog = new THREE.Fog(0x87ceeb, 20, 80);
+  gameState.scene = scene;
+}
+
+// Initialize game
+function init() {
+  // Seed random
+  Math.seedrandom(42);
+  
+  // Setup three.js
+  setupScene();
+  setupRenderer();
+  setupCamera();
+  setupLighting();
+  
+  // Create UI canvas
+  createUICanvas();
+  
+  // Setup input handlers
+  setupInputHandlers();
+  
+  // Initialize game
+  createLevel();
+  gameState.player = new Player(5, 2, 0);
+  
+  // Log initial state
+  window.logs.game_info.push({
+    data: { gamePhase: gameState.gamePhase },
+    framecount: 0,
+    timestamp: Date.now()
+  });
+  
+  // Log initial player position
+  window.logs.player_info.push({
+    screen_x: 100,
+    screen_y: 300,
+    game_x: 5,
+    game_y: 2,
+    game_z: 0,
+    framecount: 0,
+    timestamp: Date.now()
+  });
+}
+
+// Create 2D UI canvas overlay
+let uiCanvas, uiContext;
+function createUICanvas() {
+  uiCanvas = document.createElement('canvas');
+  uiCanvas.width = CANVAS_WIDTH;
+  uiCanvas.height = CANVAS_HEIGHT;
+  uiCanvas.style.position = 'absolute';
+  uiCanvas.style.top = '0';
+  uiCanvas.style.left = '0';
+  uiCanvas.style.pointerEvents = 'none';
+  uiCanvas.style.zIndex = '1000';
+  uiCanvas.style.margin = '0';
+  uiCanvas.style.padding = '0';
+  
+  gameState.gameContainer.appendChild(uiCanvas);
+  uiContext = uiCanvas.getContext('2d');
+}
+
+// Handle phase control keys
+document.addEventListener('keydown', (event) => {
+  if (event.keyCode === 13 && gameState.gamePhase === GAME_PHASES.START) { // ENTER
+    startGame();
+  }
+  
+  if (event.keyCode === 27) { // ESC
+    if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+      gameState.gamePhase = GAME_PHASES.PAUSED;
+      window.logs.game_info.push({
+        data: { gamePhase: GAME_PHASES.PAUSED },
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+      });
+    } else if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+      gameState.gamePhase = GAME_PHASES.PLAYING;
+      window.logs.game_info.push({
+        data: { gamePhase: GAME_PHASES.PLAYING },
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  }
+  
+  if (event.keyCode === 82) { // R
+    if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN ||
+        gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE) {
+      resetGame();
+    }
+  }
+  
+  // Gameplay keys
+  if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+    if (event.keyCode === 32) { // SPACE
+      if (gameState.player) {
+        gameState.player.jump();
+      }
+    }
+    
+    if (event.keyCode === 90) { // Z
+      if (gameState.player) {
+        gameState.player.karateKick();
+      }
+    }
+  }
+});
+
+function startGame() {
+  gameState.gamePhase = GAME_PHASES.PLAYING;
+  gameState.testFrameCount = 0;
+  gameState.testPhase = 0;
+  
+  window.logs.game_info.push({
+    data: { gamePhase: GAME_PHASES.PLAYING },
+    framecount: gameState.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+// Update game
+function updateGame() {
+  gameState.frameCount++;
+  
+  // Handle input
+  handleInput();
+  
+  // Update player
+  if (gameState.player) {
+    gameState.player.update();
+  }
+  
+  // Update enemies
+  gameState.enemies.forEach(enemy => {
+    enemy.update();
+  });
+  
+  // Update coins
+  gameState.coins.forEach(coin => {
+    coin.update();
+  });
+  
+  // Update checkpoints
+  gameState.checkpoints.forEach(checkpoint => {
+    checkpoint.update();
+  });
+  
+  // Update swing points
+  gameState.swingPoints.forEach(swing => {
+    swing.update();
+  });
+  
+  // Update portal
+  if (gameState.portal) {
+    gameState.portal.update();
+  }
+  
+  // Update camera
+  updateCamera();
+}
+
+// Render UI
+function renderUI() {
+  uiContext.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  if (gameState.gamePhase === GAME_PHASES.START) {
+    renderStartScreen();
+  } else if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+    renderHUD();
+  } else if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+    renderHUD();
+    renderPausedOverlay();
+  } else if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN || 
+             gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE) {
+    renderGameOver();
+  }
+}
+
+function renderStartScreen() {
+  uiContext.fillStyle = 'rgba(0, 0, 0, 0.7)';
+  uiContext.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  uiContext.fillStyle = 'white';
+  uiContext.font = 'bold 32px Arial';
+  uiContext.textAlign = 'center';
+  uiContext.fillText('SpongeBob:', CANVAS_WIDTH / 2, 100);
+  uiContext.fillText('The Cosmic Shake', CANVAS_WIDTH / 2, 140);
+  
+  uiContext.font = '14px Arial';
+  uiContext.fillText('Navigate cosmic platforms and collect coins!', CANVAS_WIDTH / 2, 180);
+  uiContext.fillText('Unlock abilities to reach new areas', CANVAS_WIDTH / 2, 200);
+  
+  uiContext.font = '12px Arial';
+  uiContext.textAlign = 'left';
+  uiContext.fillText('Controls:', 200, 240);
+  uiContext.fillText('Arrow Keys/WASD - Move', 200, 260);
+  uiContext.fillText('Space - Jump', 200, 280);
+  uiContext.fillText('Z - Karate Kick (unlock at 25 coins)', 200, 300);
+  uiContext.fillText('Shift - Hook-Swing (unlock at 100 coins)', 200, 320);
+  
+  uiContext.fillStyle = 'yellow';
+  uiContext.textAlign = 'center';
+  uiContext.font = '20px Arial';
+  if (gameState.frameCount % 60 < 30) {
+    uiContext.fillText('PRESS ENTER TO START', CANVAS_WIDTH / 2, 370);
+  }
+}
+
+function renderHUD() {
+  // Health hearts
+  uiContext.fillStyle = 'red';
+  for (let i = 0; i < gameState.health; i++) {
+    uiContext.beginPath();
+    const x = 20 + i * 30;
+    const y = 20;
+    uiContext.moveTo(x, y + 5);
+    uiContext.bezierCurveTo(x - 5, y, x - 10, y + 5, x, y + 15);
+    uiContext.bezierCurveTo(x + 10, y + 5, x + 5, y, x, y + 5);
+    uiContext.fill();
+  }
+  
+  // Score
+  uiContext.fillStyle = 'white';
+  uiContext.textAlign = 'left';
+  uiContext.font = '16px Arial';
+  uiContext.fillText(`Coins: ${Math.floor(gameState.score / 10)}`, 20, 60);
+  
+  // Abilities
+  uiContext.font = '12px Arial';
+  let yOffset = 80;
+  
+  if (gameState.abilities.karateKick) {
+    uiContext.fillStyle = 'yellow';
+    uiContext.fillText('✓ Karate Kick (Z)', 20, yOffset);
+    yOffset += 20;
+  }
+  
+  if (gameState.abilities.doubleJump) {
+    uiContext.fillStyle = 'yellow';
+    uiContext.fillText('✓ Double Jump', 20, yOffset);
+    yOffset += 20;
+  }
+  
+  if (gameState.abilities.hookSwing) {
+    uiContext.fillStyle = 'yellow';
+    uiContext.fillText('✓ Hook-Swing (Shift)', 20, yOffset);
+    yOffset += 20;
+  }
+  
+  // Next unlock
+  if (!gameState.abilities.karateKick) {
+    uiContext.fillStyle = 'rgba(255, 255, 255, 0.7)';
+    uiContext.fillText(`Next: Karate Kick (${gameState.abilityThresholds.karateKick / 10} coins)`, 20, yOffset);
+  } else if (!gameState.abilities.doubleJump) {
+    uiContext.fillStyle = 'rgba(255, 255, 255, 0.7)';
+    uiContext.fillText(`Next: Double Jump (${gameState.abilityThresholds.doubleJump / 10} coins)`, 20, yOffset);
+  } else if (!gameState.abilities.hookSwing) {
+    uiContext.fillStyle = 'rgba(255, 255, 255, 0.7)';
+    uiContext.fillText(`Next: Hook-Swing (${gameState.abilityThresholds.hookSwing / 10} coins)`, 20, yOffset);
+  }
+}
+
+function renderPausedOverlay() {
+  uiContext.fillStyle = 'rgba(0, 0, 0, 0.6)';
+  uiContext.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  uiContext.fillStyle = 'white';
+  uiContext.textAlign = 'center';
+  uiContext.font = 'bold 40px Arial';
+  uiContext.fillText('PAUSED', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 20);
+  
+  uiContext.font = '16px Arial';
+  uiContext.fillText('Press ESC to resume', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 30);
+}
+
+function renderGameOver() {
+  uiContext.fillStyle = 'rgba(0, 0, 0, 0.8)';
+  uiContext.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  uiContext.textAlign = 'center';
+  
+  if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN) {
+    uiContext.fillStyle = '#00ff00';
+    uiContext.font = 'bold 48px Arial';
+    uiContext.fillText('YOU WIN!', CANVAS_WIDTH / 2, 120);
+    
+    uiContext.fillStyle = 'white';
+    uiContext.font = '20px Arial';
+    uiContext.fillText('All abilities unlocked!', CANVAS_WIDTH / 2, 180);
+    uiContext.fillText(`Final Score: ${Math.floor(gameState.score / 10)} coins`, CANVAS_WIDTH / 2, 220);
+  } else {
+    uiContext.fillStyle = '#ff6464';
+    uiContext.font = 'bold 48px Arial';
+    uiContext.fillText('GAME OVER', CANVAS_WIDTH / 2, 120);
+    
+    uiContext.fillStyle = 'white';
+    uiContext.font = '20px Arial';
+    uiContext.fillText(`You collected: ${Math.floor(gameState.score / 10)} coins`, CANVAS_WIDTH / 2, 180);
+  }
+  
+  uiContext.fillStyle = 'white';
+  uiContext.font = '18px Arial';
+  uiContext.fillText('Press R to restart', CANVAS_WIDTH / 2, 280);
+  
+  // Show abilities
+  uiContext.font = '14px Arial';
+  let yPos = 320;
+  uiContext.fillText('Abilities Unlocked:', CANVAS_WIDTH / 2, yPos);
+  yPos += 25;
+  
+  if (gameState.abilities.karateKick) {
+    uiContext.fillStyle = 'yellow';
+    uiContext.fillText('✓ Karate Kick', CANVAS_WIDTH / 2, yPos);
+    yPos += 20;
+  }
+  if (gameState.abilities.doubleJump) {
+    uiContext.fillStyle = 'yellow';
+    uiContext.fillText('✓ Double Jump', CANVAS_WIDTH / 2, yPos);
+    yPos += 20;
+  }
+  if (gameState.abilities.hookSwing) {
+    uiContext.fillStyle = 'yellow';
+    uiContext.fillText('✓ Hook-Swing', CANVAS_WIDTH / 2, yPos);
+  }
+}
+
+function resetGame() {
+  // Clear scene
+  while(gameState.scene.children.length > 0) { 
+    gameState.scene.remove(gameState.scene.children[0]); 
+  }
+  
+  // Reset game state
+  gameState.score = 0;
+  gameState.health = gameState.maxHealth;
+  gameState.abilities = {
+    doubleJump: false,
+    karateKick: false,
+    hookSwing: false
+  };
+  gameState.lastCheckpoint = { x: 5, y: 2, z: 0 };
+  gameState.invincible = false;
+  gameState.invincibilityTimer = 0;
+  gameState.testFrameCount = 0;
+  gameState.testPhase = 0;
+  
+  // Recreate lighting
+  setupLighting();
+  
+  // Recreate level and player
+  createLevel();
+  gameState.player = new Player(5, 2, 0);
+  
+  // Return to start screen
+  gameState.gamePhase = GAME_PHASES.START;
+  
+  window.logs.game_info.push({
+    data: { gamePhase: GAME_PHASES.START, event: "reset" },
+    framecount: gameState.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+// Main game loop
+function gameLoop() {
+  requestAnimationFrame(gameLoop);
+  
+  if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+    updateGame();
+  }
+  
+  // Render 3D scene
+  if (gameState.renderer && gameState.scene && gameState.camera) {
+    gameState.renderer.render(gameState.scene, gameState.camera);
+  }
+  
+  // Render UI
+  renderUI();
+}
+
+// Control mode switching
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  gameState.testFrameCount = 0;
+  gameState.testPhase = 0;
+  
+  const buttons = document.querySelectorAll('.control-button');
+  buttons.forEach(btn => btn.classList.remove('active'));
+  
+  if (mode === CONTROL_MODES.HUMAN) {
+    document.getElementById('humanModeBtn').classList.add('active');
+  } else if (mode === CONTROL_MODES.TEST_1) {
+    document.getElementById('test_1_ModeBtn').classList.add('active');
+  } else if (mode === CONTROL_MODES.TEST_2) {
+    document.getElementById('test_2_ModeBtn').classList.add('active');
+  }
+};
+
+// Start game
+init();
+gameLoop();
+</file>
+
+<file name="renderer.js">
+// renderer.js - Three.js renderer setup
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export function setupRenderer() {
+  // Create container
+  const gameContainer = document.createElement('div');
+  gameContainer.id = 'game-container';
+  gameContainer.style.width = CANVAS_WIDTH + 'px';
+  gameContainer.style.height = CANVAS_HEIGHT + 'px';
+  gameContainer.style.position = 'relative';
+  gameContainer.style.overflow = 'hidden';
+  gameContainer.style.margin = '0';
+  gameContainer.style.padding = '0';
+  gameContainer.style.border = 'none';
+  document.body.appendChild(gameContainer);
+  
+  // Set body styles
+  document.body.style.margin = '0';
+  document.body.style.padding = '0';
+  document.body.style.overflow = 'hidden';
+  document.body.style.width = CANVAS_WIDTH + 'px';
+  document.body.style.height = CANVAS_HEIGHT + 'px';
+  
+  // Create WebGL renderer
+  const renderer = new THREE.WebGLRenderer({ 
+    antialias: true,
+    alpha: false,
+    powerPreference: "high-performance"
+  });
+  
+  renderer.setSize(CANVAS_WIDTH, CANVAS_HEIGHT);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  
+  gameContainer.appendChild(renderer.domElement);
+  
+  gameState.renderer = renderer;
+  gameState.gameContainer = gameContainer;
+}
+</file>
+
+<file name="lighting.js">
+// lighting.js - Lighting setup
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState } from './globals.js';
+
+export function setupLighting() {
+  // Ambient light
+  const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+  gameState.scene.add(ambientLight);
+  gameState.ambientLight = ambientLight;
+  
+  // Directional light (sun)
+  const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+  directionalLight.position.set(10, 20, 10);
+  directionalLight.castShadow = true;
+  
+  directionalLight.shadow.mapSize.width = 2048;
+  directionalLight.shadow.mapSize.height = 2048;
+  directionalLight.shadow.camera.near = 0.5;
+  directionalLight.shadow.camera.far = 100;
+  directionalLight.shadow.camera.left = -30;
+  directionalLight.shadow.camera.right = 30;
+  directionalLight.shadow.camera.top = 30;
+  directionalLight.shadow.camera.bottom = -30;
+  
+  gameState.scene.add(directionalLight);
+  gameState.directionalLight = directionalLight;
+  gameState.lights.push(directionalLight);
+}
+</file>
+
+<file name="rendering.js">
+// rendering.js - Rendering functions
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export function renderStartScreen(p) {
+  p.background(20, 120, 200);
+  
+  // Title
+  p.fill(255, 220, 0);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(40);
+  p.textStyle(p.BOLD);
+  p.text("SpongeBob:", CANVAS_WIDTH / 2, 80);
+  p.text("Cosmic Shake", CANVAS_WIDTH / 2, 120);
+  
+  // Description
+  p.fill(255);
+  p.textSize(14);
+  p.textStyle(p.NORMAL);
+  p.text("Navigate cosmic platforms and collect coins!", CANVAS_WIDTH / 2, 170);
+  p.text("Unlock abilities to reach new areas", CANVAS_WIDTH / 2, 190);
+  
+  // Controls
+  p.textSize(12);
+  p.textAlign(p.LEFT);
+  p.text("Controls:", 150, 230);
+  p.text("Arrow Keys/WASD - Move", 150, 250);
+  p.text("Space - Jump", 150, 270);
+  p.text("Z - Karate Kick (unlock at 25 coins)", 150, 290);
+  p.text("Shift - Hook-Swing (unlock at 100 coins)", 150, 310);
+  
+  // Start prompt
+  p.fill(255, 255, 0);
+  p.textAlign(p.CENTER);
+  p.textSize(20);
+  if (p.frameCount % 60 < 30) {
+    p.text("PRESS ENTER TO START", CANVAS_WIDTH / 2, 360);
+  }
+}
+
+export function renderGame(p) {
+  // Sky background with gradient
+  for (let y = 0; y < CANVAS_HEIGHT; y++) {
+    const inter = p.map(y, 0, CANVAS_HEIGHT, 0, 1);
+    const c = p.lerpColor(p.color(135, 206, 250), p.color(70, 130, 180), inter);
+    p.stroke(c);
+    p.line(0, y, CANVAS_WIDTH, y);
+  }
+  
+  // Render entities
+  gameState.entities.forEach(entity => {
+    if (entity.render) {
+      entity.render();
+    }
+  });
+  
+  // Render coins
+  gameState.coins.forEach(coin => {
+    if (!coin.collected) {
+      coin.render();
+    }
+  });
+  
+  // Render checkpoints
+  gameState.checkpoints.forEach(checkpoint => {
+    checkpoint.render();
+  });
+  
+  // Render swing points
+  gameState.swingPoints.forEach(swing => {
+    swing.render();
+  });
+  
+  // Render portal
+  if (gameState.portal) {
+    gameState.portal.render();
+  }
+  
+  // Render player
+  if (gameState.player) {
+    gameState.player.render();
+  }
+  
+  // UI
+  renderUI(p);
+}
+
+export function renderUI(p) {
+  // Health hearts
+  p.fill(255, 0, 0);
+  p.noStroke();
+  for (let i = 0; i < gameState.health; i++) {
+    p.push();
+    p.translate(20 + i * 30, 20);
+    // Heart shape
+    p.beginShape();
+    p.vertex(0, 5);
+    p.bezierVertex(-5, 0, -10, 5, 0, 15);
+    p.bezierVertex(10, 5, 5, 0, 0, 5);
+    p.endShape(p.CLOSE);
+    p.pop();
+  }
+  
+  // Score
+  p.fill(255);
+  p.textAlign(p.LEFT);
+  p.textSize(16);
+  p.text(`Coins: ${Math.floor(gameState.score / 10)}`, 20, 60);
+  
+  // Abilities
+  p.textSize(12);
+  let yOffset = 80;
+  
+  if (gameState.abilities.karateKick) {
+    p.fill(255, 255, 0);
+    p.text("✓ Karate Kick (Z)", 20, yOffset);
+    yOffset += 20;
+  }
+  
+  if (gameState.abilities.doubleJump) {
+    p.fill(255, 255, 0);
+    p.text("✓ Double Jump", 20, yOffset);
+    yOffset += 20;
+  }
+  
+  if (gameState.abilities.hookSwing) {
+    p.fill(255, 255, 0);
+    p.text("✓ Hook-Swing (Shift)", 20, yOffset);
+    yOffset += 20;
+  }
+  
+  // Show next unlock
+  if (!gameState.abilities.karateKick) {
+    p.fill(180);
+    p.text(`Next: Karate Kick (${gameState.abilityThresholds.karateKick / 10} coins)`, 20, yOffset);
+  } else if (!gameState.abilities.doubleJump) {
+    p.fill(180);
+    p.text(`Next: Double Jump (${gameState.abilityThresholds.doubleJump / 10} coins)`, 20, yOffset);
+  } else if (!gameState.abilities.hookSwing) {
+    p.fill(180);
+    p.text(`Next: Hook-Swing (${gameState.abilityThresholds.hookSwing / 10} coins)`, 20, yOffset);
+  }
+}
+
+export function renderPausedOverlay(p) {
+  p.fill(0, 0, 0, 150);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  p.fill(255);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(40);
+  p.text("PAUSED", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 20);
+  
+  p.textSize(16);
+  p.text("Press ESC to resume", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 30);
+}
+
+export function renderGameOver(p) {
+  p.background(20, 20, 40);
+  
+  p.fill(255);
+  p.textAlign(p.CENTER, p.CENTER);
+  
+  if (gameState.gamePhase === "GAME_OVER_WIN") {
+    p.fill(255, 255, 0);
+    p.textSize(48);
+    p.text("YOU WIN!", CANVAS_WIDTH / 2, 120);
+    
+    p.fill(255);
+    p.textSize(20);
+    p.text("All abilities unlocked!", CANVAS_WIDTH / 2, 180);
+    p.text(`Final Score: ${Math.floor(gameState.score / 10)} coins`, CANVAS_WIDTH / 2, 220);
+  } else {
+    p.fill(255, 100, 100);
+    p.textSize(48);
+    p.text("GAME OVER", CANVAS_WIDTH / 2, 120);
+    
+    p.fill(255);
+    p.textSize(20);
+    p.text(`You collected: ${Math.floor(gameState.score / 10)} coins`, CANVAS_WIDTH / 2, 180);
+  }
+  
+  p.fill(255);
+  p.textSize(18);
+  p.text("Press R to restart", CANVAS_WIDTH / 2, 280);
+  
+  // Show abilities unlocked
+  p.textSize(14);
+  let yPos = 320;
+  p.text("Abilities Unlocked:", CANVAS_WIDTH / 2, yPos);
+  yPos += 25;
+  
+  if (gameState.abilities.karateKick) {
+    p.fill(255, 255, 0);
+    p.text("✓ Karate Kick", CANVAS_WIDTH / 2, yPos);
+    yPos += 20;
+  }
+  if (gameState.abilities.doubleJump) {
+    p.fill(255, 255, 0);
+    p.text("✓ Double Jump", CANVAS_WIDTH / 2, yPos);
+    yPos += 20;
+  }
+  if (gameState.abilities.hookSwing) {
+    p.fill(255, 255, 0);
+    p.text("✓ Hook-Swing", CANVAS_WIDTH / 2, yPos);
+  }
+}
+</file>
+
+<file name="entities.js">
+// entities.js - Game entity classes
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export class Player {
+  constructor(x, y, z) {
+    // Create 3D mesh - SpongeBob style character
+    const geometry = new THREE.BoxGeometry(1, 1.5, 0.8);
+    const material = new THREE.MeshStandardMaterial({ 
+      color: 0xffdc00,
+      roughness: 0.5,
+      metalness: 0.1
+    });
+    this.mesh = new THREE.Mesh(geometry, material);
+    this.mesh.position.set(x, y, z);
+    this.mesh.castShadow = true;
+    this.mesh.receiveShadow = true;
+    
+    // Add eyes
+    const eyeGeometry = new THREE.SphereGeometry(0.12, 8, 8);
+    const eyeMaterial = new THREE.MeshStandardMaterial({ color: 0x000000 });
+    
+    this.leftEye = new THREE.Mesh(eyeGeometry, eyeMaterial);
+    this.leftEye.position.set(-0.25, 0.3, 0.41);
+    this.mesh.add(this.leftEye);
+    
+    this.rightEye = new THREE.Mesh(eyeGeometry, eyeMaterial);
+    this.rightEye.position.set(0.25, 0.3, 0.41);
+    this.mesh.add(this.rightEye);
+    
+    // Physics properties
+    this.velocity = new THREE.Vector3(0, 0, 0);
+    this.acceleration = new THREE.Vector3(0, 0, 0);
+    this.speed = 0.15;
+    this.jumpPower = 0.4;
+    this.jumpCount = 0;
+    this.maxJumps = 1;
+    this.onGround = false;
+    this.mass = 1.0;
+    
+    // Size
+    this.size = new THREE.Vector3(1, 1.5, 0.8);
+    
+    // Game properties
+    this.attackCooldown = 0;
+    this.lastLoggedX = x;
+    this.lastLoggedY = y;
+    
+    gameState.scene.add(this.mesh);
+  }
+  
+  update() {
+    // Apply gravity
+    if (!this.onGround) {
+      this.acceleration.add(gameState.gravity);
+    }
+    
+    // Update velocity
+    this.velocity.add(this.acceleration);
+    
+    // Apply friction when on ground
+    if (this.onGround) {
+      this.velocity.x *= 0.85;
+      this.velocity.z *= 0.85;
+    } else {
+      this.velocity.multiplyScalar(0.98);
+    }
+    
+    // Clamp velocity
+    const maxSpeed = 0.3;
+    if (Math.abs(this.velocity.x) > maxSpeed) {
+      this.velocity.x = Math.sign(this.velocity.x) * maxSpeed;
+    }
+    if (Math.abs(this.velocity.z) > maxSpeed) {
+      this.velocity.z = Math.sign(this.velocity.z) * maxSpeed;
+    }
+    
+    // Update position
+    this.mesh.position.add(this.velocity);
+    
+    // Update max jumps
+    this.maxJumps = gameState.abilities.doubleJump ? 2 : 1;
+    
+    // Update attack cooldown
+    if (this.attackCooldown > 0) {
+      this.attackCooldown--;
+    }
+    
+    // Update invincibility
+    if (gameState.invincible) {
+      gameState.invincibilityTimer--;
+      if (gameState.invincibilityTimer <= 0) {
+        gameState.invincible = false;
+      }
+      
+      // Flash effect
+      if (gameState.invincibilityTimer % 10 < 5) {
+        this.mesh.visible = false;
+      } else {
+        this.mesh.visible = true;
+      }
+    } else {
+      this.mesh.visible = true;
+    }
+    
+    // Check ground collision
+    this.checkGroundCollision();
+    
+    // Reset acceleration
+    this.acceleration.set(0, 0, 0);
+    
+    // Check for hazard death
+    if (this.mesh.position.y < -10) {
+      this.respawnAtCheckpoint();
+    }
+    
+    // Log position changes
+    const dx = Math.abs(this.mesh.position.x - this.lastLoggedX);
+    const dy = Math.abs(this.mesh.position.y - this.lastLoggedY);
+    if (dx > 2 || dy > 2) {
+      if (window.logs && window.logs.player_info) {
+        window.logs.player_info.push({
+          screen_x: this.mesh.position.x * 20,
+          screen_y: 300 - this.mesh.position.y * 20,
+          game_x: this.mesh.position.x,
+          game_y: this.mesh.position.y,
+          game_z: this.mesh.position.z,
+          framecount: gameState.frameCount,
+          timestamp: Date.now()
+        });
+      }
+      this.lastLoggedX = this.mesh.position.x;
+      this.lastLoggedY = this.mesh.position.y;
+    }
+  }
+  
+  checkGroundCollision() {
+    this.onGround = false;
+    const playerBottom = this.mesh.position.y - this.size.y / 2;
+    
+    // Check collision with platforms
+    for (const platform of gameState.platforms) {
+      if (this.checkPlatformCollision(platform)) {
+        this.onGround = true;
+        this.jumpCount = 0;
+        break;
+      }
+    }
+  }
+  
+  checkPlatformCollision(platform) {
+    const px = this.mesh.position.x;
+    const py = this.mesh.position.y;
+    const pz = this.mesh.position.z;
+    
+    const platX = platform.mesh.position.x;
+    const platY = platform.mesh.position.y;
+    const platZ = platform.mesh.position.z;
+    
+    const playerBottom = py - this.size.y / 2;
+    const platTop = platY + platform.size.y / 2;
+    
+    // Check if player is above platform
+    if (Math.abs(playerBottom - platTop) < 0.2 &&
+        px > platX - platform.size.x / 2 && px < platX + platform.size.x / 2 &&
+        pz > platZ - platform.size.z / 2 && pz < platZ + platform.size.z / 2) {
+      
+      // Snap to platform
+      this.mesh.position.y = platTop + this.size.y / 2;
+      this.velocity.y = 0;
+      return true;
+    }
+    
+    return false;
+  }
+  
+  moveLeft() {
+    this.acceleration.x -= this.speed;
+  }
+  
+  moveRight() {
+    this.acceleration.x += this.speed;
+  }
+  
+  jump() {
+    if (this.jumpCount < this.maxJumps) {
+      this.velocity.y = this.jumpPower;
+      this.jumpCount++;
+      this.onGround = false;
+    }
+  }
+  
+  karateKick() {
+    if (!gameState.abilities.karateKick || this.attackCooldown > 0) return;
+    
+    this.attackCooldown = 30;
+    
+    // Check for barriers in range
+    gameState.barriers = gameState.barriers.filter(barrier => {
+      const dx = barrier.mesh.position.x - this.mesh.position.x;
+      const dz = barrier.mesh.position.z - this.mesh.position.z;
+      const dist = Math.sqrt(dx * dx + dz * dz);
+      
+      if (dist < 3) {
+        gameState.scene.remove(barrier.mesh);
+        return false;
+      }
+      return true;
+    });
+  }
+  
+  hookSwing() {
+    if (!gameState.abilities.hookSwing) return;
+    
+    // Check for swing points in range
+    for (let swing of gameState.swingPoints) {
+      const dx = swing.mesh.position.x - this.mesh.position.x;
+      const dy = swing.mesh.position.y - this.mesh.position.y;
+      const dz = swing.mesh.position.z - this.mesh.position.z;
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      
+      if (dist < 4) {
+        // Apply swing force
+        this.velocity.x = 0.4;
+        this.velocity.y = 0.3;
+        return;
+      }
+    }
+  }
+  
+  respawnAtCheckpoint() {
+    gameState.health--;
+    
+    if (gameState.health <= 0) {
+      gameState.gamePhase = "GAME_OVER_LOSE";
+      if (window.logs && window.logs.game_info) {
+        window.logs.game_info.push({
+          data: { gamePhase: "GAME_OVER_LOSE", reason: "health_depleted" },
+          framecount: gameState.frameCount,
+          timestamp: Date.now()
+        });
+      }
+      return;
+    }
+    
+    // Respawn at checkpoint
+    this.mesh.position.set(
+      gameState.lastCheckpoint.x,
+      gameState.lastCheckpoint.y,
+      gameState.lastCheckpoint.z
+    );
+    this.velocity.set(0, 0, 0);
+    
+    gameState.invincible = true;
+    gameState.invincibilityTimer = 120;
+  }
+  
+  takeDamage() {
+    if (gameState.invincible) return;
+    
+    gameState.health--;
+    gameState.invincible = true;
+    gameState.invincibilityTimer = 120;
+    
+    // Knockback
+    this.velocity.y = 0.3;
+    
+    if (gameState.health <= 0) {
+      gameState.gamePhase = "GAME_OVER_LOSE";
+      if (window.logs && window.logs.game_info) {
+        window.logs.game_info.push({
+          data: { gamePhase: "GAME_OVER_LOSE", reason: "health_depleted" },
+          framecount: gameState.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    }
+  }
+}
+
+export class Platform {
+  constructor(x, y, z, width, height, depth, color = 0x64c864) {
+    const geometry = new THREE.BoxGeometry(width, height, depth);
+    const material = new THREE.MeshStandardMaterial({ 
+      color: color,
+      roughness: 0.8
+    });
+    this.mesh = new THREE.Mesh(geometry, material);
+    this.mesh.position.set(x, y, z);
+    this.mesh.receiveShadow = true;
+    this.mesh.castShadow = true;
+    
+    this.size = new THREE.Vector3(width, height, depth);
+    
+    gameState.scene.add(this.mesh);
+  }
+}
+
+export class Enemy {
+  constructor(x, y, z) {
+    const geometry = new THREE.SphereGeometry(0.5, 16, 16);
+    const material = new THREE.MeshStandardMaterial({ color: 0xc83232 });
+    this.mesh = new THREE.Mesh(geometry, material);
+    this.mesh.position.set(x, y, z);
+    this.mesh.castShadow = true;
+    
+    // Add angry eyes
+    const eyeGeometry = new THREE.SphereGeometry(0.08, 8, 8);
+    const eyeMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+    
+    const leftEye = new THREE.Mesh(eyeGeometry, eyeMaterial);
+    leftEye.position.set(-0.2, 0.1, 0.45);
+    this.mesh.add(leftEye);
+    
+    const rightEye = new THREE.Mesh(eyeGeometry, eyeMaterial);
+    rightEye.position.set(0.2, 0.1, 0.45);
+    this.mesh.add(rightEye);
+    
+    this.velocity = new THREE.Vector3(0, 0, 0);
+    this.speed = 0.05;
+    this.patrolSpeed = 0.05;
+    this.direction = 1;
+    this.patrolRange = 3;
+    this.startX = x;
+    this.radius = 0.5;
+    
+    gameState.scene.add(this.mesh);
+  }
+  
+  update() {
+    // Simple patrol AI
+    if (this.mesh.position.x > this.startX + this.patrolRange) {
+      this.direction = -1;
+    } else if (this.mesh.position.x < this.startX - this.patrolRange) {
+      this.direction = 1;
+    }
+    
+    this.mesh.position.x += this.patrolSpeed * this.direction;
+    
+    // Check collision with player
+    if (gameState.player) {
+      const dx = this.mesh.position.x - gameState.player.mesh.position.x;
+      const dy = this.mesh.position.y - gameState.player.mesh.position.y;
+      const dz = this.mesh.position.z - gameState.player.mesh.position.z;
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      
+      if (dist < 1) {
+        gameState.player.takeDamage();
+      }
+    }
+  }
+}
+
+export class Coin {
+  constructor(x, y, z) {
+    const geometry = new THREE.TorusGeometry(0.3, 0.1, 16, 32);
+    const material = new THREE.MeshStandardMaterial({ 
+      color: 0xffd700,
+      emissive: 0xffd700,
+      emissiveIntensity: 0.3
+    });
+    this.mesh = new THREE.Mesh(geometry, material);
+    this.mesh.position.set(x, y, z);
+    this.mesh.castShadow = true;
+    
+    this.collected = false;
+    this.rotation = 0;
+    this.bobOffset = 0;
+    
+    gameState.scene.add(this.mesh);
+  }
+  
+  update() {
+    if (this.collected) return;
+    
+    this.rotation += 0.05;
+    this.mesh.rotation.y = this.rotation;
+    
+    this.bobOffset += 0.05;
+    this.mesh.position.y += Math.sin(this.bobOffset) * 0.01;
+    
+    // Check collision with player
+    if (gameState.player) {
+      const dx = this.mesh.position.x - gameState.player.mesh.position.x;
+      const dy = this.mesh.position.y - gameState.player.mesh.position.y;
+      const dz = this.mesh.position.z - gameState.player.mesh.position.z;
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      
+      if (dist < 1) {
+        this.collect();
+      }
+    }
+  }
+  
+  collect() {
+    this.collected = true;
+    gameState.scene.remove(this.mesh);
+    gameState.score += 10;
+    
+    // Check for ability unlocks
+    if (!gameState.abilities.karateKick && gameState.score >= gameState.abilityThresholds.karateKick) {
+      gameState.abilities.karateKick = true;
+      if (window.logs && window.logs.game_info) {
+        window.logs.game_info.push({
+          data: { event: "ability_unlocked", ability: "karateKick" },
+          framecount: gameState.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    }
+    
+    if (!gameState.abilities.doubleJump && gameState.score >= gameState.abilityThresholds.doubleJump) {
+      gameState.abilities.doubleJump = true;
+      if (window.logs && window.logs.game_info) {
+        window.logs.game_info.push({
+          data: { event: "ability_unlocked", ability: "doubleJump" },
+          framecount: gameState.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    }
+    
+    if (!gameState.abilities.hookSwing && gameState.score >= gameState.abilityThresholds.hookSwing) {
+      gameState.abilities.hookSwing = true;
+      if (window.logs && window.logs.game_info) {
+        window.logs.game_info.push({
+          data: { event: "ability_unlocked", ability: "hookSwing" },
+          framecount: gameState.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    }
+  }
+}
+
+export class Barrier {
+  constructor(x, y, z, width, height, depth) {
+    const geometry = new THREE.BoxGeometry(width, height, depth);
+    const material = new THREE.MeshStandardMaterial({ 
+      color: 0x9664c8,
+      transparent: true,
+      opacity: 0.8
+    });
+    this.mesh = new THREE.Mesh(geometry, material);
+    this.mesh.position.set(x, y, z);
+    this.mesh.castShadow = true;
+    this.mesh.receiveShadow = true;
+    
+    this.size = new THREE.Vector3(width, height, depth);
+    
+    gameState.scene.add(this.mesh);
+  }
+}
+
+export class Checkpoint {
+  constructor(x, y, z) {
+    const geometry = new THREE.CylinderGeometry(0.3, 0.3, 2, 16);
+    const material = new THREE.MeshStandardMaterial({ 
+      color: 0x646464
+    });
+    this.mesh = new THREE.Mesh(geometry, material);
+    this.mesh.position.set(x, y, z);
+    this.mesh.castShadow = true;
+    
+    // Add flag
+    const flagGeometry = new THREE.PlaneGeometry(1, 0.6);
+    const flagMaterial = new THREE.MeshStandardMaterial({ 
+      color: 0xffff00,
+      side: THREE.DoubleSide
+    });
+    this.flag = new THREE.Mesh(flagGeometry, flagMaterial);
+    this.flag.position.set(0.5, 0.7, 0);
+    this.mesh.add(this.flag);
+    
+    this.activated = false;
+    
+    gameState.scene.add(this.mesh);
+  }
+  
+  update() {
+    if (this.activated) return;
+    
+    if (gameState.player) {
+      const dx = this.mesh.position.x - gameState.player.mesh.position.x;
+      const dy = this.mesh.position.y - gameState.player.mesh.position.y;
+      const dz = this.mesh.position.z - gameState.player.mesh.position.z;
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      
+      if (dist < 2) {
+        this.activate();
+      }
+    }
+  }
+  
+  activate() {
+    this.activated = true;
+    this.flag.material.color.setHex(0x00ff00);
+    gameState.lastCheckpoint = {
+      x: this.mesh.position.x,
+      y: this.mesh.position.y + 2,
+      z: this.mesh.position.z
+    };
+    
+    if (window.logs && window.logs.game_info) {
+      window.logs.game_info.push({
+        data: { event: "checkpoint_activated", x: this.mesh.position.x, y: this.mesh.position.y, z: this.mesh.position.z },
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  }
+}
+
+export class Portal {
+  constructor(x, y, z) {
+    const geometry = new THREE.TorusGeometry(1.5, 0.3, 16, 32);
+    const material = new THREE.MeshStandardMaterial({ 
+      color: 0x6496ff,
+      emissive: 0x6496ff,
+      emissiveIntensity: 0.5
+    });
+    this.mesh = new THREE.Mesh(geometry, material);
+    this.mesh.position.set(x, y, z);
+    this.mesh.rotation.x = Math.PI / 2;
+    
+    // Add inner glow
+    const innerGeometry = new THREE.CircleGeometry(1.2, 32);
+    const innerMaterial = new THREE.MeshBasicMaterial({ 
+      color: 0x3264c8,
+      transparent: true,
+      opacity: 0.5
+    });
+    this.inner = new THREE.Mesh(innerGeometry, innerMaterial);
+    this.inner.rotation.x = -Math.PI / 2;
+    this.mesh.add(this.inner);
+    
+    this.rotation = 0;
+    
+    gameState.scene.add(this.mesh);
+  }
+  
+  update() {
+    this.rotation += 0.02;
+    this.mesh.rotation.z = this.rotation;
+    
+    // Check if player reached portal
+    if (gameState.player) {
+      const dx = this.mesh.position.x - gameState.player.mesh.position.x;
+      const dy = this.mesh.position.y - gameState.player.mesh.position.y;
+      const dz = this.mesh.position.z - gameState.player.mesh.position.z;
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      
+      if (dist < 2) {
+        // Check if all abilities unlocked
+        if (gameState.abilities.doubleJump && 
+            gameState.abilities.hookSwing && 
+            gameState.abilities.karateKick) {
+          this.triggerWin();
+        }
+      }
+    }
+  }
+  
+  triggerWin() {
+    gameState.gamePhase = "GAME_OVER_WIN";
+    if (window.logs && window.logs.game_info) {
+      window.logs.game_info.push({
+        data: { 
+          gamePhase: "GAME_OVER_WIN", 
+          score: gameState.score,
+          abilities: gameState.abilities 
+        },
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  }
+}
+
+export class SwingPoint {
+  constructor(x, y, z) {
+    const geometry = new THREE.SphereGeometry(0.3, 16, 16);
+    const material = new THREE.MeshStandardMaterial({ 
+      color: 0x646464
+    });
+    this.mesh = new THREE.Mesh(geometry, material);
+    this.mesh.position.set(x, y, z);
+    this.mesh.castShadow = true;
+    
+    // Add hook
+    const hookGeometry = new THREE.TorusGeometry(0.4, 0.08, 8, 16, Math.PI);
+    const hookMaterial = new THREE.MeshStandardMaterial({ color: 0xb4b4b4 });
+    this.hook = new THREE.Mesh(hookGeometry, hookMaterial);
+    this.hook.position.y = -0.5;
+    this.hook.rotation.x = Math.PI;
+    this.mesh.add(this.hook);
+    
+    this.rotation = 0;
+    
+    gameState.scene.add(this.mesh);
+  }
+  
+  update() {
+    this.rotation += 0.02;
+    this.hook.rotation.z = Math.sin(this.rotation) * 0.3;
+  }
+}
+</file>
+
+<file name="camera.js">
+// camera.js - Camera setup and control
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export function setupCamera() {
+  const camera = new THREE.PerspectiveCamera(
+    60,
+    CANVAS_WIDTH / CANVAS_HEIGHT,
+    0.1,
+    1000
+  );
+  
+  camera.position.set(0, 8, 15);
+  camera.lookAt(0, 0, 0);
+  
+  gameState.camera = camera;
+}
+
+export function updateCamera() {
+  if (!gameState.player || !gameState.camera) return;
+  
+  const targetPosition = new THREE.Vector3()
+    .copy(gameState.player.mesh.position)
+    .add(gameState.cameraOffset);
+  
+  // Smooth camera movement
+  gameState.camera.position.lerp(targetPosition, 0.1);
+  
+  // Look at player
+  const lookAtTarget = gameState.player.mesh.position.clone();
+  lookAtTarget.y += 1;
+  gameState.camera.lookAt(lookAtTarget);
+}
+</file>
+
+<file name="physics.js">
+// physics.js - Manual physics implementation
+import { gameState } from './globals.js';
+
+export function updatePhysics() {
+  // Physics is handled in individual entity update methods
+  // This file can be used for collision detection optimization
+}
+
+export function checkCollision(box1, box2) {
+  const b1Min = {
+    x: box1.position.x - box1.size.x / 2,
+    y: box1.position.y - box1.size.y / 2,
+    z: box1.position.z - box1.size.z / 2
+  };
+  const b1Max = {
+    x: box1.position.x + box1.size.x / 2,
+    y: box1.position.y + box1.size.y / 2,
+    z: box1.position.z + box1.size.z / 2
+  };
+  
+  const b2Min = {
+    x: box2.position.x - box2.size.x / 2,
+    y: box2.position.y - box2.size.y / 2,
+    z: box2.position.z - box2.size.z / 2
+  };
+  const b2Max = {
+    x: box2.position.x + box2.size.x / 2,
+    y: box2.position.y + box2.size.y / 2,
+    z: box2.position.z + box2.size.z / 2
+  };
+  
+  return (
+    b1Min.x <= b2Max.x && b1Max.x >= b2Min.x &&
+    b1Min.y <= b2Max.y && b1Max.y >= b2Min.y &&
+    b1Min.z <= b2Max.z && b1Max.z >= b2Min.z
+  );
+}
+</file>
+
+<file name="input.js">
+// input.js - Input handling for different control modes
+import { gameState, CONTROL_MODES } from './globals.js';
+
+const keys = {};
+
+export function setupInputHandlers() {
+  document.addEventListener('keydown', (event) => {
+    keys[event.keyCode] = true;
+    
+    if (window.logs && window.logs.inputs) {
+      window.logs.inputs.push({
+        input_type: "keydown",
+        data: { key: event.key, keyCode: event.keyCode },
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  });
+  
+  document.addEventListener('keyup', (event) => {
+    keys[event.keyCode] = false;
+    
+    if (window.logs && window.logs.inputs) {
+      window.logs.inputs.push({
+        input_type: "keyup",
+        data: { key: event.key, keyCode: event.keyCode },
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  });
+}
+
+export function handleInput() {
+  if (!gameState.player) return;
+  
+  switch (gameState.controlMode) {
+    case CONTROL_MODES.HUMAN:
+      handleHumanInput();
+      break;
+    case CONTROL_MODES.TEST_1:
+      handleTest1Input();
+      break;
+    case CONTROL_MODES.TEST_2:
+      handleTest2Input();
+      break;
+  }
+}
+
+function handleHumanInput() {
+  // Left/Right movement
+  if (keys[37] || keys[65]) { // LEFT or A
+    gameState.player.moveLeft();
+  }
+  if (keys[39] || keys[68]) { // RIGHT or D
+    gameState.player.moveRight();
+  }
+  
+  // Hook-swing
+  if (keys[16]) { // SHIFT
+    gameState.player.hookSwing();
+  }
+}
+
+function handleTest1Input() {
+  // TEST_1: Basic movement and jump testing
+  gameState.testFrameCount++;
+  
+  const phase = Math.floor(gameState.testFrameCount / 180) % 3;
+  
+  if (phase === 0) {
+    gameState.player.moveLeft();
+  } else if (phase === 1) {
+    gameState.player.moveRight();
+  } else {
+    if (gameState.testFrameCount % 30 === 0) {
+      gameState.player.jump();
+    }
+  }
+}
+
+function handleTest2Input() {
+  // TEST_2: Win condition test
+  gameState.testFrameCount++;
+  
+  gameState.player.moveRight();
+  
+  if (gameState.testFrameCount % 60 === 30) {
+    gameState.player.jump();
+  }
+  
+  if (gameState.abilities.karateKick && gameState.testFrameCount % 90 === 0) {
+    gameState.player.karateKick();
+  }
+  
+  if (gameState.abilities.hookSwing && gameState.player.mesh.position.x > 15) {
+    gameState.player.hookSwing();
+  }
+}
+
+export function isKeyPressed(keyCode) {
+  return keys[keyCode] || false;
+}
+</file>
+
+<file name="level.js">
+// level.js - Level creation
+import { gameState } from './globals.js';
+import { 
+  Platform, 
+  Enemy, 
+  Coin, 
+  Barrier, 
+  Checkpoint, 
+  Portal,
+  SwingPoint 
+} from './entities.js';
+
+export function createLevel() {
+  gameState.entities = [];
+  gameState.enemies = [];
+  gameState.coins = [];
+  gameState.barriers = [];
+  gameState.checkpoints = [];
+  gameState.swingPoints = [];
+  gameState.platforms = [];
+  
+  // Ground platforms
+  const ground = new Platform(0, -1, 0, 30, 1, 5, 0x64c864);
+  gameState.platforms.push(ground);
+  gameState.entities.push(ground);
+  
+  // Starting platforms
+  const plat1 = new Platform(5, 1, 0, 6, 0.5, 4, 0x64c864);
+  gameState.platforms.push(plat1);
+  gameState.entities.push(plat1);
+  
+  const plat2 = new Platform(12, 3, 0, 4, 0.5, 4, 0x64c864);
+  gameState.platforms.push(plat2);
+  gameState.entities.push(plat2);
+  
+  // Middle platforms
+  const plat3 = new Platform(18, 4, 0, 3, 0.5, 4, 0x64c864);
+  gameState.platforms.push(plat3);
+  gameState.entities.push(plat3);
+  
+  const plat4 = new Platform(23, 6, 0, 4, 0.5, 4, 0x64c864);
+  gameState.platforms.push(plat4);
+  gameState.entities.push(plat4);
+  
+  // Upper platforms
+  const plat5 = new Platform(10, 7, 0, 3, 0.5, 4, 0x64c864);
+  gameState.platforms.push(plat5);
+  gameState.entities.push(plat5);
+  
+  const plat6 = new Platform(20, 9, 0, 5, 0.5, 4, 0x64c864);
+  gameState.platforms.push(plat6);
+  gameState.entities.push(plat6);
+  
+  // Add coins
+  const coinPositions = [
+    [5, 2.5, 0], [12, 4.5, 0], [18, 5.5, 0], [23, 7.5, 0],
+    [10, 8.5, 0], [20, 10.5, 0], [7, 2, 0], [15, 5, 0],
+    [21, 7, 0], [11, 8, 0], [19, 10, 0], [6, 3, 0]
+  ];
+  
+  coinPositions.forEach(pos => {
+    const coin = new Coin(pos[0], pos[1], pos[2]);
+    gameState.coins.push(coin);
+  });
+  
+  // Add enemies
+  const enemy1 = new Enemy(12, 4, 0);
+  gameState.enemies.push(enemy1);
+  gameState.entities.push(enemy1);
+  
+  const enemy2 = new Enemy(18, 5, 0);
+  gameState.enemies.push(enemy2);
+  gameState.entities.push(enemy2);
+  
+  const enemy3 = new Enemy(23, 7, 0);
+  gameState.enemies.push(enemy3);
+  gameState.entities.push(enemy3);
+  
+  // Add barriers (require Karate Kick)
+  const barrier1 = new Barrier(8, 1.5, 0, 0.5, 2, 2);
+  gameState.barriers.push(barrier1);
+  gameState.entities.push(barrier1);
+  
+  const barrier2 = new Barrier(20, 5, 0, 0.5, 2, 2);
+  gameState.barriers.push(barrier2);
+  gameState.entities.push(barrier2);
+  
+  // Add checkpoints
+  const checkpoint1 = new Checkpoint(12, 4, 0);
+  gameState.checkpoints.push(checkpoint1);
+  
+  const checkpoint2 = new Checkpoint(20, 10, 0);
+  gameState.checkpoints.push(checkpoint2);
+  
+  // Add swing point
+  const swing1 = new SwingPoint(16, 7, 0);
+  gameState.swingPoints.push(swing1);
+  
+  // Add portal at the end
+  gameState.portal = new Portal(25, 11, 0);
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

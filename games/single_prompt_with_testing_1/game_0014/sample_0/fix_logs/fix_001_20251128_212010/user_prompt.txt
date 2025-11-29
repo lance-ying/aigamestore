@@ -1,0 +1,1714 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+this game does not load can you fix that
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #1a1d28; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 2px solid #ff9900; width: 600px !important; height: 400px !important; box-shadow: 0 0 20px rgba(255, 153, 0, 0.3); }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #2d3142; color: #fff; border: 1px solid #444; border-radius: 4px; font-family: Arial, sans-serif; transition: all 0.3s; }
+      .control-button:hover { background: #3d4152; border-color: #666; }
+      .control-button.active { background: #ff9900; border-color: #ff9900; color: #1a1d28; font-weight: bold; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #ff9900; font-family: 'Courier New', monospace; margin-bottom: 10px; text-shadow: 0 0 10px rgba(255, 153, 0, 0.5);">DEUS EX GO</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Basic Movement)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Win)</button>
+        <button id="test_3_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_3')">TEST (Hacking)</button>
+        <button id="test_4_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_4')">TEST (Invisibility)</button>
+        <button id="test_5_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_5')">TEST (Detection)</button>
+      </div>
+      <p id="gameDescription" style="color: #b0b0c0; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Guide Adam Jensen through a dangerous grid-based facility to reach the exit. This is a turn-based stealth puzzle game where every move you make triggers enemy movement. Avoid enemy line-of-sight, hack terminals to disable turrets, and use augmentations like temporary invisibility to survive. Plan your moves carefully - enemies patrol in patterns, and getting caught means game over. Complete increasingly challenging levels with new enemy types and obstacles.</p>
+      <p id="gameControls" style="color: #b0b0c0; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Arrow Keys: Move Adam Jensen one grid space | Space: Activate temporary invisibility augmentation (1 turn, limited uses) | Z: Hack adjacent terminal to toggle turrets on/off | Shift: Wait (skip turn without moving) | Enter: Start game | Esc: Pause/Unpause | R: Restart and return to START screen</p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="automated_testing_controller.js">
+// automated_testing_controller.js - Automated testing
+
+import { gameState, PHASE, ENTITY_TYPE, DIRECTION } from './globals.js';
+import { isWalkable, getEntityAt } from './grid.js';
+
+function getRandomAction(gameState) {
+  const actions = [37, 38, 39, 40, 16]; // arrows + shift
+  return actions[Math.floor(Math.random() * actions.length)];
+}
+
+function findPath(start, goal, grid, entities) {
+  // Simple A* pathfinding
+  const openSet = [{ x: start.x, y: start.y, g: 0, h: manhattanDistance(start, goal), parent: null }];
+  const closedSet = new Set();
+  
+  while (openSet.length > 0) {
+    // Find node with lowest f score
+    openSet.sort((a, b) => (a.g + a.h) - (b.g + b.h));
+    const current = openSet.shift();
+    
+    if (current.x === goal.x && current.y === goal.y) {
+      // Reconstruct path
+      const path = [];
+      let node = current;
+      while (node.parent) {
+        path.unshift({ x: node.x, y: node.y });
+        node = node.parent;
+      }
+      return path;
+    }
+    
+    closedSet.add(`${current.x},${current.y}`);
+    
+    // Check neighbors
+    const neighbors = [
+      { x: current.x - 1, y: current.y },
+      { x: current.x + 1, y: current.y },
+      { x: current.x, y: current.y - 1 },
+      { x: current.x, y: current.y + 1 }
+    ];
+    
+    for (const neighbor of neighbors) {
+      if (!isWalkable(grid, neighbor.x, neighbor.y)) continue;
+      if (closedSet.has(`${neighbor.x},${neighbor.y}`)) continue;
+      
+      const entity = getEntityAt(entities, neighbor.x, neighbor.y, true);
+      if (entity && entity.type !== ENTITY_TYPE.EXIT && entity.type !== ENTITY_TYPE.TERMINAL) continue;
+      
+      const g = current.g + 1;
+      const h = manhattanDistance(neighbor, goal);
+      
+      const existing = openSet.find(n => n.x === neighbor.x && n.y === neighbor.y);
+      if (!existing || g < existing.g) {
+        if (existing) {
+          existing.g = g;
+          existing.parent = current;
+        } else {
+          openSet.push({ x: neighbor.x, y: neighbor.y, g, h, parent: current });
+        }
+      }
+    }
+  }
+  
+  return null;
+}
+
+function manhattanDistance(a, b) {
+  return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+}
+
+function isSafePosition(x, y, gameState) {
+  // Check if position is safe from enemies
+  for (const entity of gameState.entities) {
+    if (entity.type === ENTITY_TYPE.GUARD) {
+      const dx = entity.direction.x;
+      const dy = entity.direction.y;
+      for (let i = 1; i <= entity.viewDistance; i++) {
+        const checkX = entity.gridX + dx * i;
+        const checkY = entity.gridY + dy * i;
+        if (checkX === x && checkY === y) {
+          // Check for walls blocking view
+          let blocked = false;
+          for (let j = 1; j < i; j++) {
+            const wallX = entity.gridX + dx * j;
+            const wallY = entity.gridY + dy * j;
+            if (gameState.grid[wallY] && gameState.grid[wallY][wallX] === 1) {
+              blocked = true;
+              break;
+            }
+          }
+          if (!blocked) return false;
+        }
+      }
+    } else if (entity.type === ENTITY_TYPE.TURRET && entity.active) {
+      if (entity.canSeePlayer({ gridX: x, gridY: y }, gameState.grid)) {
+        return false;
+      }
+    } else if (entity.type === ENTITY_TYPE.DRONE) {
+      const dist = Math.abs(entity.gridX - x) + Math.abs(entity.gridY - y);
+      if (dist <= entity.viewDistance) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+function getTestBasicAction(gameState) {
+  // Test basic movement in all directions
+  if (!gameState.player) return 16;
+  
+  const actions = [
+    { key: 37, dir: { x: -1, y: 0 } }, // LEFT
+    { key: 38, dir: { x: 0, y: -1 } }, // UP
+    { key: 39, dir: { x: 1, y: 0 } },  // RIGHT
+    { key: 40, dir: { x: 0, y: 1 } }   // DOWN
+  ];
+  
+  // Try each direction
+  for (const action of actions) {
+    const newX = gameState.player.gridX + action.dir.x;
+    const newY = gameState.player.gridY + action.dir.y;
+    
+    if (isWalkable(gameState.grid, newX, newY)) {
+      const entity = getEntityAt(gameState.entities, newX, newY, true);
+      if (!entity || entity.type === ENTITY_TYPE.EXIT || entity.type === ENTITY_TYPE.TERMINAL) {
+        return action.key;
+      }
+    }
+  }
+  
+  return 16; // Wait if no valid move
+}
+
+function getTestWinAction(gameState) {
+  if (!gameState.player) return 16;
+  
+  // Find exit
+  const exit = gameState.entities.find(e => e.type === ENTITY_TYPE.EXIT);
+  if (!exit) return getRandomAction(gameState);
+  
+  // Check if we need to hack terminals first
+  const activeTurrets = gameState.entities.filter(e => 
+    e.type === ENTITY_TYPE.TURRET && e.active
+  );
+  
+  if (activeTurrets.length > 0) {
+    // Try to find and hack a terminal
+    const terminal = gameState.entities.find(e => e.type === ENTITY_TYPE.TERMINAL && !e.hacked);
+    if (terminal) {
+      // Check if adjacent
+      const dist = Math.abs(gameState.player.gridX - terminal.gridX) + 
+                   Math.abs(gameState.player.gridY - terminal.gridY);
+      if (dist === 1) {
+        return 90; // Z key to hack
+      }
+      
+      // Move toward terminal
+      const path = findPath(
+        { x: gameState.player.gridX, y: gameState.player.gridY },
+        { x: terminal.gridX, y: terminal.gridY },
+        gameState.grid,
+        gameState.entities
+      );
+      
+      if (path && path.length > 0) {
+        const next = path[0];
+        const dx = next.x - gameState.player.gridX;
+        const dy = next.y - gameState.player.gridY;
+        
+        if (dx < 0) return 37; // LEFT
+        if (dx > 0) return 39; // RIGHT
+        if (dy < 0) return 38; // UP
+        if (dy > 0) return 40; // DOWN
+      }
+    }
+  }
+  
+  // Find path to exit
+  const path = findPath(
+    { x: gameState.player.gridX, y: gameState.player.gridY },
+    { x: exit.gridX, y: exit.gridY },
+    gameState.grid,
+    gameState.entities
+  );
+  
+  if (!path || path.length === 0) {
+    return 16; // Wait
+  }
+  
+  const next = path[0];
+  
+  // Check if next position is safe
+  if (!isSafePosition(next.x, next.y, gameState)) {
+    // Use invisibility if available
+    if (gameState.invisibilityCharges > 0 && !gameState.isInvisible) {
+      return 32; // SPACE
+    }
+    // Otherwise wait for enemies to move
+    return 16; // SHIFT
+  }
+  
+  // Move toward next position
+  const dx = next.x - gameState.player.gridX;
+  const dy = next.y - gameState.player.gridY;
+  
+  if (dx < 0) return 37; // LEFT
+  if (dx > 0) return 39; // RIGHT
+  if (dy < 0) return 38; // UP
+  if (dy > 0) return 40; // DOWN
+  
+  return 16; // Wait if no valid move
+}
+
+function getTestHackAction(gameState) {
+  if (!gameState.player) return 16;
+  
+  // Find nearest terminal
+  const terminal = gameState.entities.find(e => e.type === ENTITY_TYPE.TERMINAL);
+  if (!terminal) return getRandomAction(gameState);
+  
+  // Check if adjacent
+  const dist = Math.abs(gameState.player.gridX - terminal.gridX) + 
+               Math.abs(gameState.player.gridY - terminal.gridY);
+  
+  if (dist === 1) {
+    return 90; // Z key to hack
+  }
+  
+  // Move toward terminal
+  const path = findPath(
+    { x: gameState.player.gridX, y: gameState.player.gridY },
+    { x: terminal.gridX, y: terminal.gridY },
+    gameState.grid,
+    gameState.entities
+  );
+  
+  if (path && path.length > 0) {
+    const next = path[0];
+    const dx = next.x - gameState.player.gridX;
+    const dy = next.y - gameState.player.gridY;
+    
+    if (dx < 0) return 37;
+    if (dx > 0) return 39;
+    if (dy < 0) return 38;
+    if (dy > 0) return 40;
+  }
+  
+  return 16;
+}
+
+function getTestInvisibilityAction(gameState) {
+  if (!gameState.player) return 16;
+  
+  // Find a dangerous position and test invisibility
+  const guards = gameState.entities.filter(e => e.type === ENTITY_TYPE.GUARD);
+  if (guards.length === 0) return getRandomAction(gameState);
+  
+  const guard = guards[0];
+  
+  // Move into line of sight
+  const targetX = guard.gridX + guard.direction.x;
+  const targetY = guard.gridY + guard.direction.y;
+  
+  if (!isWalkable(gameState.grid, targetX, targetY)) {
+    return getRandomAction(gameState);
+  }
+  
+  // Activate invisibility before moving
+  if (!gameState.isInvisible && gameState.invisibilityCharges > 0) {
+    return 32; // SPACE
+  }
+  
+  // Move toward danger
+  const dx = targetX - gameState.player.gridX;
+  const dy = targetY - gameState.player.gridY;
+  
+  if (Math.abs(dx) > Math.abs(dy)) {
+    return dx < 0 ? 37 : 39;
+  } else {
+    return dy < 0 ? 38 : 40;
+  }
+}
+
+function getTestLoseAction(gameState) {
+  if (!gameState.player) return 16;
+  
+  // Find a guard and deliberately move into line of sight
+  const guard = gameState.entities.find(e => e.type === ENTITY_TYPE.GUARD);
+  if (!guard) return getRandomAction(gameState);
+  
+  const targetX = guard.gridX + guard.direction.x;
+  const targetY = guard.gridY + guard.direction.y;
+  
+  if (!isWalkable(gameState.grid, targetX, targetY)) {
+    return getRandomAction(gameState);
+  }
+  
+  const dx = targetX - gameState.player.gridX;
+  const dy = targetY - gameState.player.gridY;
+  
+  if (Math.abs(dx) > 0) {
+    return dx < 0 ? 37 : 39;
+  } else if (Math.abs(dy) > 0) {
+    return dy < 0 ? 38 : 40;
+  }
+  
+  return 16;
+}
+
+export function get_automated_testing_action(gameState) {
+  if (gameState.gamePhase !== PHASE.PLAYING) {
+    return null;
+  }
+  
+  switch (gameState.controlMode) {
+    case "TEST_1":
+      return getTestBasicAction(gameState);
+    case "TEST_2":
+      return getTestWinAction(gameState);
+    case "TEST_3":
+      return getTestHackAction(gameState);
+    case "TEST_4":
+      return getTestInvisibilityAction(gameState);
+    case "TEST_5":
+      return getTestLoseAction(gameState);
+    default:
+      return getRandomAction(gameState);
+  }
+}
+
+// Expose globally
+if (typeof window !== 'undefined') {
+  window.get_automated_testing_action = get_automated_testing_action;
+}
+
+export default get_automated_testing_action;
+</file>
+
+<file name="globals.js">
+// globals.js - Global constants and game state
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const GRID_SIZE = 40;
+export const GRID_COLS = 12;
+export const GRID_ROWS = 8;
+export const OFFSET_X = (CANVAS_WIDTH - GRID_COLS * GRID_SIZE) / 2;
+export const OFFSET_Y = (CANVAS_HEIGHT - GRID_ROWS * GRID_SIZE) / 2;
+
+export const PHASE = {
+  START: "START",
+  PLAYING: "PLAYING",
+  PAUSED: "PAUSED",
+  GAME_OVER_WIN: "GAME_OVER_WIN",
+  GAME_OVER_LOSE: "GAME_OVER_LOSE"
+};
+
+export const ENTITY_TYPE = {
+  PLAYER: "PLAYER",
+  GUARD: "GUARD",
+  TURRET: "TURRET",
+  DRONE: "DRONE",
+  TERMINAL: "TERMINAL",
+  EXIT: "EXIT",
+  WALL: "WALL"
+};
+
+export const DIRECTION = {
+  UP: { x: 0, y: -1 },
+  DOWN: { x: 0, y: 1 },
+  LEFT: { x: -1, y: 0 },
+  RIGHT: { x: 1, y: 0 },
+  NONE: { x: 0, y: 0 }
+};
+
+export const gameState = {
+  player: null,
+  entities: [],
+  grid: [],
+  score: 0,
+  turnCount: 0,
+  level: 1,
+  gamePhase: PHASE.START,
+  controlMode: "HUMAN",
+  invisibilityCharges: 3,
+  isInvisible: false,
+  invisibilityTurnsLeft: 0,
+  detectedBy: null,
+  exitReached: false,
+  lastPlayerMove: null,
+  moveHistory: []
+};
+
+// Helper function to get gameState
+export function getGameState() {
+  return gameState;
+}
+
+// Attach to window
+if (typeof window !== 'undefined') {
+  window.getGameState = getGameState;
+}
+</file>
+
+<file name="game.js">
+// game.js - Main game file
+
+import { gameState, getGameState, CANVAS_WIDTH, CANVAS_HEIGHT, PHASE } from './globals.js';
+import { handleKeyPressed } from './input.js';
+import { renderGame } from './rendering.js';
+import { initializeGameState } from './game_logic.js';
+import { get_automated_testing_action } from './automated_testing_controller.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+  // Setup function
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(60);
+    p.randomSeed(42);
+    
+    // Initialize logs (write-only!)
+    p.logs = {
+      game_info: [],
+      inputs: [],
+      player_info: []
+    };
+    
+    // Initialize game state
+    initializeGameState(p);
+    
+    // Log initial game state
+    p.logs.game_info.push({
+      data: { event: "game_initialized", phase: gameState.gamePhase },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  };
+  
+  // Draw function
+  p.draw = function() {
+    // Handle automated testing
+    if (gameState.controlMode !== "HUMAN" && gameState.gamePhase === PHASE.PLAYING) {
+      const action = get_automated_testing_action(gameState);
+      if (action !== null) {
+        handleKeyPressed(p, action);
+      }
+    }
+    
+    // Render
+    renderGame(p);
+  };
+  
+  // Key pressed handler
+  p.keyPressed = function() {
+    if (gameState.controlMode === "HUMAN") {
+      handleKeyPressed(p, p.keyCode);
+    }
+    return false; // Prevent default
+  };
+});
+
+// Expose game instance globally
+window.gameInstance = gameInstance;
+
+// Control mode setter
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  
+  // Update button states
+  const buttons = ['humanModeBtn', 'test_1_ModeBtn', 'test_2_ModeBtn', 'test_3_ModeBtn', 'test_4_ModeBtn', 'test_5_ModeBtn'];
+  buttons.forEach(btnId => {
+    const btn = document.getElementById(btnId);
+    if (btn) {
+      btn.classList.remove('active');
+    }
+  });
+  
+  const modeMap = {
+    'HUMAN': 'humanModeBtn',
+    'TEST_1': 'test_1_ModeBtn',
+    'TEST_2': 'test_2_ModeBtn',
+    'TEST_3': 'test_3_ModeBtn',
+    'TEST_4': 'test_4_ModeBtn',
+    'TEST_5': 'test_5_ModeBtn'
+  };
+  
+  const activeBtn = document.getElementById(modeMap[mode]);
+  if (activeBtn) {
+    activeBtn.classList.add('active');
+  }
+};
+</file>
+
+<file name="grid.js">
+// grid.js - Grid and level management
+
+import { GRID_COLS, GRID_ROWS, ENTITY_TYPE } from './globals.js';
+import { Player, Guard, Turret, Drone, Terminal, Exit } from './entities.js';
+
+export function createEmptyGrid() {
+  const grid = [];
+  for (let y = 0; y < GRID_ROWS; y++) {
+    grid[y] = [];
+    for (let x = 0; x < GRID_COLS; x++) {
+      grid[y][x] = 0; // 0 = empty, 1 = wall
+    }
+  }
+  return grid;
+}
+
+export function createLevel1(p) {
+  const grid = createEmptyGrid();
+  const entities = [];
+
+  // Create walls around perimeter
+  for (let x = 0; x < GRID_COLS; x++) {
+    grid[0][x] = 1;
+    grid[GRID_ROWS - 1][x] = 1;
+  }
+  for (let y = 0; y < GRID_ROWS; y++) {
+    grid[y][0] = 1;
+    grid[y][GRID_COLS - 1] = 1;
+  }
+
+  // Add some interior walls
+  for (let y = 2; y < 6; y++) {
+    grid[y][5] = 1;
+  }
+  
+  grid[3][7] = 1;
+  grid[3][8] = 1;
+  grid[4][7] = 1;
+  grid[4][8] = 1;
+
+  // Create player
+  const player = new Player(2, 2);
+  entities.push(player);
+
+  // Create guards
+  const guard1 = new Guard(8, 3, { x: 1, y: 0 }, [
+    { x: 8, y: 3 },
+    { x: 9, y: 3 },
+    { x: 9, y: 4 },
+    { x: 8, y: 4 }
+  ]);
+  entities.push(guard1);
+
+  // Create turret
+  const turret = new Turret(6, 2);
+  entities.push(turret);
+
+  // Create terminal
+  const terminal = new Terminal(6, 5);
+  entities.push(terminal);
+
+  // Create exit
+  const exit = new Exit(10, 6);
+  entities.push(exit);
+
+  return { grid, entities, player };
+}
+
+export function createLevel2(p) {
+  const grid = createEmptyGrid();
+  const entities = [];
+
+  // Create walls
+  for (let x = 0; x < GRID_COLS; x++) {
+    grid[0][x] = 1;
+    grid[GRID_ROWS - 1][x] = 1;
+  }
+  for (let y = 0; y < GRID_ROWS; y++) {
+    grid[y][0] = 1;
+    grid[y][GRID_COLS - 1] = 1;
+  }
+
+  // Central corridor
+  for (let x = 3; x < 9; x++) {
+    grid[3][x] = 1;
+    grid[5][x] = 1;
+  }
+
+  // Player
+  const player = new Player(1, 1);
+  entities.push(player);
+
+  // Multiple guards
+  const guard1 = new Guard(6, 4, { x: 0, y: 1 }, [
+    { x: 6, y: 4 },
+    { x: 7, y: 4 },
+    { x: 7, y: 4 },
+    { x: 6, y: 4 }
+  ]);
+  entities.push(guard1);
+
+  const guard2 = new Guard(2, 6, { x: 1, y: 0 }, [
+    { x: 2, y: 6 },
+    { x: 4, y: 6 },
+    { x: 4, y: 6 },
+    { x: 2, y: 6 }
+  ]);
+  entities.push(guard2);
+
+  // Drone
+  const drone = new Drone(8, 1, [
+    { x: 8, y: 1 },
+    { x: 9, y: 1 },
+    { x: 9, y: 2 },
+    { x: 8, y: 2 }
+  ]);
+  entities.push(drone);
+
+  // Turrets
+  const turret1 = new Turret(4, 4);
+  const turret2 = new Turret(7, 6);
+  entities.push(turret1, turret2);
+
+  // Terminals
+  const terminal1 = new Terminal(2, 4);
+  entities.push(terminal1);
+
+  // Exit
+  const exit = new Exit(10, 6);
+  entities.push(exit);
+
+  return { grid, entities, player };
+}
+
+export function createLevel3(p) {
+  const grid = createEmptyGrid();
+  const entities = [];
+
+  // Create maze-like walls
+  for (let x = 0; x < GRID_COLS; x++) {
+    grid[0][x] = 1;
+    grid[GRID_ROWS - 1][x] = 1;
+  }
+  for (let y = 0; y < GRID_ROWS; y++) {
+    grid[y][0] = 1;
+    grid[y][GRID_COLS - 1] = 1;
+  }
+
+  // Complex interior
+  grid[2][3] = 1;
+  grid[2][4] = 1;
+  grid[2][5] = 1;
+  grid[4][7] = 1;
+  grid[5][7] = 1;
+  grid[6][7] = 1;
+  grid[4][3] = 1;
+  grid[4][4] = 1;
+
+  // Player
+  const player = new Player(1, 6);
+  entities.push(player);
+
+  // Multiple guards with complex patrols
+  const guard1 = new Guard(3, 1, { x: 1, y: 0 }, [
+    { x: 3, y: 1 },
+    { x: 6, y: 1 },
+    { x: 6, y: 3 },
+    { x: 3, y: 3 }
+  ]);
+  entities.push(guard1);
+
+  const guard2 = new Guard(8, 5, { x: 0, y: 1 }, [
+    { x: 8, y: 5 },
+    { x: 8, y: 3 },
+    { x: 9, y: 3 },
+    { x: 9, y: 5 }
+  ]);
+  entities.push(guard2);
+
+  // Drones
+  const drone1 = new Drone(2, 5, [
+    { x: 2, y: 5 },
+    { x: 3, y: 5 },
+    { x: 3, y: 6 },
+    { x: 2, y: 6 }
+  ]);
+  entities.push(drone1);
+
+  // Turrets
+  const turret1 = new Turret(6, 4);
+  const turret2 = new Turret(5, 2);
+  entities.push(turret1, turret2);
+
+  // Terminals
+  const terminal1 = new Terminal(5, 5);
+  const terminal2 = new Terminal(8, 1);
+  entities.push(terminal1, terminal2);
+
+  // Exit
+  const exit = new Exit(10, 1);
+  entities.push(exit);
+
+  return { grid, entities, player };
+}
+
+export function loadLevel(level, p) {
+  switch (level) {
+    case 1:
+      return createLevel1(p);
+    case 2:
+      return createLevel2(p);
+    case 3:
+      return createLevel3(p);
+    default:
+      return createLevel1(p);
+  }
+}
+
+export function isWalkable(grid, x, y) {
+  if (y < 0 || y >= GRID_ROWS || x < 0 || x >= GRID_COLS) {
+    return false;
+  }
+  return grid[y][x] === 0;
+}
+
+export function getEntityAt(entities, x, y, excludePlayer = false) {
+  return entities.find(e => 
+    !e.removed && 
+    e.isAt(x, y) && 
+    (!excludePlayer || e.type !== ENTITY_TYPE.PLAYER)
+  );
+}
+</file>
+
+<file name="rendering.js">
+// rendering.js - Rendering functions
+
+import { gameState, PHASE, CANVAS_WIDTH, CANVAS_HEIGHT, GRID_SIZE, OFFSET_X, OFFSET_Y, GRID_COLS, GRID_ROWS, ENTITY_TYPE } from './globals.js';
+
+export function renderGame(p) {
+  p.background(20, 25, 35);
+
+  if (gameState.gamePhase === PHASE.START) {
+    renderStartScreen(p);
+  } else if (gameState.gamePhase === PHASE.PLAYING || gameState.gamePhase === PHASE.PAUSED) {
+    renderGameplay(p);
+    if (gameState.gamePhase === PHASE.PAUSED) {
+      renderPausedIndicator(p);
+    }
+  } else if (gameState.gamePhase === PHASE.GAME_OVER_WIN || gameState.gamePhase === PHASE.GAME_OVER_LOSE) {
+    renderGameplay(p);
+    renderGameOverScreen(p);
+  }
+}
+
+function renderStartScreen(p) {
+  // Title
+  p.fill(255, 200, 0);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(42);
+  p.text("DEUS EX GO", CANVAS_WIDTH / 2, 80);
+  
+  // Subtitle with augmentation style
+  p.fill(200, 180, 100);
+  p.textSize(16);
+  p.text("STEALTH TACTICS GRID", CANVAS_WIDTH / 2, 120);
+  
+  // Description
+  p.fill(180, 180, 200);
+  p.textSize(14);
+  p.textAlign(p.CENTER, p.TOP);
+  const desc = [
+    "Navigate Adam Jensen through enemy territory",
+    "to reach the exit. Every move triggers",
+    "enemy movement. Use stealth and tactics!"
+  ];
+  desc.forEach((line, i) => {
+    p.text(line, CANVAS_WIDTH / 2, 160 + i * 20);
+  });
+
+  // Instructions
+  p.fill(200, 200, 220);
+  p.textSize(12);
+  p.textAlign(p.LEFT, p.TOP);
+  const instructions = [
+    "ARROW KEYS - Move one grid space",
+    "SPACE - Invisibility augmentation (1 turn)",
+    "Z - Hack adjacent terminal",
+    "SHIFT - Wait (skip turn)",
+    "",
+    "Avoid enemy line-of-sight!",
+    "Hack terminals to disable turrets."
+  ];
+  instructions.forEach((line, i) => {
+    p.text(line, 100, 240 + i * 16);
+  });
+
+  // Start prompt
+  p.fill(255, 200, 0);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(18);
+  const pulse = 200 + Math.sin(p.frameCount * 0.1) * 55;
+  p.fill(pulse, pulse * 0.8, 0);
+  p.text("PRESS ENTER TO START", CANVAS_WIDTH / 2, 360);
+}
+
+function renderGameplay(p) {
+  // Render grid background
+  renderGrid(p);
+  
+  // Render entities (order matters for layering)
+  renderEntities(p);
+  
+  // Render invisibility effect on player
+  if (gameState.isInvisible && gameState.player) {
+    renderInvisibilityEffect(p);
+  }
+  
+  // Render UI
+  renderUI(p);
+}
+
+function renderGrid(p) {
+  // Draw grid cells
+  for (let y = 0; y < GRID_ROWS; y++) {
+    for (let x = 0; x < GRID_COLS; x++) {
+      const screenX = OFFSET_X + x * GRID_SIZE;
+      const screenY = OFFSET_Y + y * GRID_SIZE;
+      
+      if (gameState.grid[y][x] === 1) {
+        // Wall
+        p.fill(40, 50, 70);
+        p.stroke(30, 40, 60);
+        p.strokeWeight(1);
+        p.rect(screenX, screenY, GRID_SIZE, GRID_SIZE);
+      } else {
+        // Floor
+        const shade = ((x + y) % 2) === 0 ? 30 : 25;
+        p.fill(shade, shade + 5, shade + 10);
+        p.noStroke();
+        p.rect(screenX, screenY, GRID_SIZE, GRID_SIZE);
+        
+        // Grid lines
+        p.stroke(40, 45, 55, 100);
+        p.strokeWeight(1);
+        p.noFill();
+        p.rect(screenX, screenY, GRID_SIZE, GRID_SIZE);
+      }
+    }
+  }
+}
+
+function renderEntities(p) {
+  // Sort entities by type for proper rendering order
+  const sorted = [...gameState.entities].sort((a, b) => {
+    const order = {
+      [ENTITY_TYPE.EXIT]: 0,
+      [ENTITY_TYPE.TERMINAL]: 1,
+      [ENTITY_TYPE.TURRET]: 2,
+      [ENTITY_TYPE.DRONE]: 3,
+      [ENTITY_TYPE.GUARD]: 4,
+      [ENTITY_TYPE.PLAYER]: 5
+    };
+    return (order[a.type] || 0) - (order[b.type] || 0);
+  });
+
+  sorted.forEach(entity => {
+    if (!entity.removed) {
+      // Update entity if it has update method
+      if (entity.update) {
+        entity.update(p.frameCount);
+      }
+      entity.render(p);
+    }
+  });
+}
+
+function renderInvisibilityEffect(p) {
+  const x = gameState.player.getScreenX();
+  const y = gameState.player.getScreenY();
+  
+  p.push();
+  p.noFill();
+  p.stroke(100, 200, 255, 150);
+  p.strokeWeight(2);
+  const size = GRID_SIZE * (0.8 + Math.sin(p.frameCount * 0.2) * 0.2);
+  p.circle(x, y, size);
+  p.pop();
+}
+
+function renderUI(p) {
+  // Dark overlay for UI
+  p.fill(0, 0, 0, 180);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, 25);
+  p.rect(0, CANVAS_HEIGHT - 25, CANVAS_WIDTH, 25);
+  
+  // Top UI
+  p.fill(255, 200, 0);
+  p.textAlign(p.LEFT, p.CENTER);
+  p.textSize(14);
+  p.text(`LEVEL ${gameState.level}`, 10, 12);
+  
+  p.textAlign(p.CENTER, p.CENTER);
+  p.text(`TURN: ${gameState.turnCount}`, CANVAS_WIDTH / 2, 12);
+  
+  p.textAlign(p.RIGHT, p.CENTER);
+  p.text(`SCORE: ${gameState.score}`, CANVAS_WIDTH - 10, 12);
+  
+  // Bottom UI - Augmentations
+  p.fill(180, 180, 200);
+  p.textAlign(p.LEFT, p.CENTER);
+  p.textSize(12);
+  p.text(`INVISIBILITY: ${gameState.invisibilityCharges}`, 10, CANVAS_HEIGHT - 12);
+  
+  if (gameState.isInvisible) {
+    p.fill(100, 200, 255);
+    p.textAlign(p.RIGHT, p.CENTER);
+    p.text(`[INVISIBLE: ${gameState.invisibilityTurnsLeft} TURN]`, CANVAS_WIDTH - 10, CANVAS_HEIGHT - 12);
+  }
+}
+
+function renderPausedIndicator(p) {
+  p.fill(255, 200, 0);
+  p.textAlign(p.RIGHT, p.TOP);
+  p.textSize(14);
+  p.text("PAUSED", CANVAS_WIDTH - 10, 30);
+}
+
+function renderGameOverScreen(p) {
+  // Semi-transparent overlay
+  p.fill(0, 0, 0, 200);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  // Result message
+  const isWin = gameState.gamePhase === PHASE.GAME_OVER_WIN;
+  p.fill(isWin ? 100 : 255, isWin ? 255 : 100, 100);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text(isWin ? "MISSION COMPLETE" : "DETECTED", CANVAS_WIDTH / 2, 120);
+  
+  // Details
+  p.fill(200, 200, 220);
+  p.textSize(20);
+  if (isWin) {
+    p.text(`Completed in ${gameState.turnCount} turns`, CANVAS_WIDTH / 2, 180);
+  } else {
+    p.text("Mission Failed", CANVAS_WIDTH / 2, 180);
+  }
+  
+  p.textSize(24);
+  p.fill(255, 200, 0);
+  p.text(`SCORE: ${gameState.score}`, CANVAS_WIDTH / 2, 220);
+  
+  // Restart prompt
+  p.fill(180, 180, 200);
+  p.textSize(16);
+  p.text("PRESS R TO RESTART", CANVAS_WIDTH / 2, 280);
+}
+</file>
+
+<file name="entities.js">
+// entities.js - Game entity classes
+
+import { GRID_SIZE, OFFSET_X, OFFSET_Y, ENTITY_TYPE, DIRECTION } from './globals.js';
+
+export class Entity {
+  constructor(gridX, gridY, type) {
+    this.gridX = gridX;
+    this.gridY = gridY;
+    this.type = type;
+    this.removed = false;
+  }
+
+  getScreenX() {
+    return OFFSET_X + this.gridX * GRID_SIZE + GRID_SIZE / 2;
+  }
+
+  getScreenY() {
+    return OFFSET_Y + this.gridY * GRID_SIZE + GRID_SIZE / 2;
+  }
+
+  isAt(x, y) {
+    return this.gridX === x && this.gridY === y;
+  }
+
+  render(p) {
+    // Override in subclasses
+  }
+}
+
+export class Player extends Entity {
+  constructor(gridX, gridY) {
+    super(gridX, gridY, ENTITY_TYPE.PLAYER);
+    this.health = 100;
+  }
+
+  render(p) {
+    const x = this.getScreenX();
+    const y = this.getScreenY();
+    const size = GRID_SIZE * 0.7;
+
+    p.push();
+    // Player body (Adam Jensen styled)
+    p.fill(40, 60, 80);
+    p.noStroke();
+    p.rectMode(p.CENTER);
+    p.rect(x, y, size * 0.6, size * 0.8, 5);
+    
+    // Head
+    p.fill(70, 90, 110);
+    p.circle(x, y - size * 0.35, size * 0.4);
+    
+    // Augmentation glow (yellow/orange)
+    p.fill(255, 180, 0, 150);
+    p.circle(x - size * 0.15, y - size * 0.35, size * 0.15);
+    p.circle(x + size * 0.15, y - size * 0.35, size * 0.15);
+    
+    // Arms
+    p.stroke(40, 60, 80);
+    p.strokeWeight(size * 0.15);
+    p.line(x - size * 0.3, y, x - size * 0.45, y + size * 0.2);
+    p.line(x + size * 0.3, y, x + size * 0.45, y + size * 0.2);
+    
+    p.pop();
+  }
+}
+
+export class Guard extends Entity {
+  constructor(gridX, gridY, direction, patrolPath) {
+    super(gridX, gridY, ENTITY_TYPE.GUARD);
+    this.direction = direction;
+    this.patrolPath = patrolPath || [];
+    this.patrolIndex = 0;
+    this.viewDistance = 3;
+  }
+
+  move(grid) {
+    if (this.patrolPath.length > 0) {
+      this.patrolIndex = (this.patrolIndex + 1) % this.patrolPath.length;
+      const target = this.patrolPath[this.patrolIndex];
+      this.gridX = target.x;
+      this.gridY = target.y;
+      this.updateDirection();
+    }
+  }
+
+  updateDirection() {
+    if (this.patrolPath.length > 1) {
+      const current = this.patrolPath[this.patrolIndex];
+      const next = this.patrolPath[(this.patrolIndex + 1) % this.patrolPath.length];
+      const dx = next.x - current.x;
+      const dy = next.y - current.y;
+      
+      if (dx > 0) this.direction = DIRECTION.RIGHT;
+      else if (dx < 0) this.direction = DIRECTION.LEFT;
+      else if (dy > 0) this.direction = DIRECTION.DOWN;
+      else if (dy < 0) this.direction = DIRECTION.UP;
+    }
+  }
+
+  canSeePlayer(player, grid) {
+    const dx = this.direction.x;
+    const dy = this.direction.y;
+    
+    for (let i = 1; i <= this.viewDistance; i++) {
+      const checkX = this.gridX + dx * i;
+      const checkY = this.gridY + dy * i;
+      
+      // Check for walls blocking view
+      if (grid[checkY] && grid[checkY][checkX] === 1) {
+        return false;
+      }
+      
+      // Check if player is at this position
+      if (player.gridX === checkX && player.gridY === checkY) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  render(p) {
+    const x = this.getScreenX();
+    const y = this.getScreenY();
+    const size = GRID_SIZE * 0.6;
+
+    p.push();
+    // Guard body
+    p.fill(150, 50, 50);
+    p.noStroke();
+    p.rectMode(p.CENTER);
+    p.rect(x, y, size * 0.6, size * 0.8, 3);
+    
+    // Head
+    p.fill(180, 70, 70);
+    p.circle(x, y - size * 0.35, size * 0.35);
+    
+    // Vision cone
+    p.fill(255, 100, 100, 80);
+    p.noStroke();
+    const visionLength = this.viewDistance * GRID_SIZE;
+    const angle = Math.atan2(this.direction.y, this.direction.x);
+    
+    p.push();
+    p.translate(x, y);
+    p.rotate(angle);
+    p.triangle(0, -10, visionLength, -15, visionLength, 15);
+    p.triangle(0, 10, visionLength, -15, visionLength, 15);
+    p.pop();
+    
+    p.pop();
+  }
+}
+
+export class Turret extends Entity {
+  constructor(gridX, gridY, active = true) {
+    super(gridX, gridY, ENTITY_TYPE.TURRET);
+    this.active = active;
+    this.viewDistance = 4;
+    this.rotationAngle = 0;
+  }
+
+  canSeePlayer(player, grid) {
+    if (!this.active) return false;
+    
+    // Turret can see in all directions
+    const dx = player.gridX - this.gridX;
+    const dy = player.gridY - this.gridY;
+    const dist = Math.abs(dx) + Math.abs(dy);
+    
+    if (dist > this.viewDistance) return false;
+    
+    // Check for walls blocking view
+    const steps = Math.max(Math.abs(dx), Math.abs(dy));
+    for (let i = 1; i <= steps; i++) {
+      const checkX = Math.round(this.gridX + (dx / steps) * i);
+      const checkY = Math.round(this.gridY + (dy / steps) * i);
+      
+      if (grid[checkY] && grid[checkY][checkX] === 1) {
+        return false;
+      }
+    }
+    
+    return true;
+  }
+
+  update(frameCount) {
+    if (this.active) {
+      this.rotationAngle = (frameCount * 2) % 360;
+    }
+  }
+
+  toggle() {
+    this.active = !this.active;
+  }
+
+  render(p) {
+    const x = this.getScreenX();
+    const y = this.getScreenY();
+    const size = GRID_SIZE * 0.5;
+
+    p.push();
+    // Base
+    p.fill(this.active ? 200 : 100, this.active ? 50 : 50, this.active ? 50 : 100);
+    p.noStroke();
+    p.circle(x, y, size);
+    
+    // Rotating turret
+    p.push();
+    p.translate(x, y);
+    p.rotate(p.radians(this.rotationAngle));
+    p.fill(this.active ? 150 : 80, this.active ? 30 : 30, this.active ? 30 : 80);
+    p.rect(-size * 0.1, -size * 0.1, size * 0.6, size * 0.2);
+    p.fill(this.active ? 255 : 100, this.active ? 100 : 100, this.active ? 100 : 150);
+    p.circle(size * 0.4, 0, size * 0.15);
+    p.pop();
+    
+    // Status indicator
+    p.fill(this.active ? 255 : 100, this.active ? 0 : 255, 0);
+    p.circle(x, y - size * 0.6, size * 0.15);
+    
+    p.pop();
+  }
+}
+
+export class Drone extends Entity {
+  constructor(gridX, gridY, patrolPath) {
+    super(gridX, gridY, ENTITY_TYPE.DRONE);
+    this.patrolPath = patrolPath || [];
+    this.patrolIndex = 0;
+    this.viewDistance = 2;
+    this.hoverOffset = 0;
+  }
+
+  move(grid) {
+    if (this.patrolPath.length > 0) {
+      this.patrolIndex = (this.patrolIndex + 1) % this.patrolPath.length;
+      const target = this.patrolPath[this.patrolIndex];
+      this.gridX = target.x;
+      this.gridY = target.y;
+    }
+  }
+
+  canSeePlayer(player, grid) {
+    const dist = Math.abs(player.gridX - this.gridX) + Math.abs(player.gridY - this.gridY);
+    return dist <= this.viewDistance;
+  }
+
+  update(frameCount) {
+    this.hoverOffset = Math.sin(frameCount * 0.1) * 5;
+  }
+
+  render(p) {
+    const x = this.getScreenX();
+    const y = this.getScreenY() + this.hoverOffset;
+    const size = GRID_SIZE * 0.5;
+
+    p.push();
+    // Drone body
+    p.fill(100, 100, 150);
+    p.noStroke();
+    p.circle(x, y, size);
+    
+    // Propellers
+    p.fill(150, 150, 200, 150);
+    p.circle(x - size * 0.4, y - size * 0.4, size * 0.3);
+    p.circle(x + size * 0.4, y - size * 0.4, size * 0.3);
+    p.circle(x - size * 0.4, y + size * 0.4, size * 0.3);
+    p.circle(x + size * 0.4, y + size * 0.4, size * 0.3);
+    
+    // Scanner light
+    p.fill(0, 200, 255);
+    p.circle(x, y, size * 0.3);
+    
+    // Detection range indicator
+    p.noFill();
+    p.stroke(0, 200, 255, 50);
+    p.strokeWeight(1);
+    p.circle(x, y, this.viewDistance * GRID_SIZE);
+    
+    p.pop();
+  }
+}
+
+export class Terminal extends Entity {
+  constructor(gridX, gridY) {
+    super(gridX, gridY, ENTITY_TYPE.TERMINAL);
+    this.hacked = false;
+  }
+
+  hack() {
+    this.hacked = !this.hacked;
+  }
+
+  render(p) {
+    const x = this.getScreenX();
+    const y = this.getScreenY();
+    const size = GRID_SIZE * 0.6;
+
+    p.push();
+    // Terminal base
+    p.fill(60, 60, 80);
+    p.noStroke();
+    p.rectMode(p.CENTER);
+    p.rect(x, y, size * 0.7, size * 0.9, 3);
+    
+    // Screen
+    p.fill(this.hacked ? 100 : 20, this.hacked ? 200 : 150, this.hacked ? 100 : 180);
+    p.rect(x, y - size * 0.15, size * 0.5, size * 0.5, 2);
+    
+    // Status text
+    p.fill(this.hacked ? 0 : 0, this.hacked ? 255 : 200, this.hacked ? 0 : 255);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(8);
+    p.text(this.hacked ? "HACK" : "TERM", x, y - size * 0.15);
+    
+    p.pop();
+  }
+}
+
+export class Exit extends Entity {
+  constructor(gridX, gridY) {
+    super(gridX, gridY, ENTITY_TYPE.EXIT);
+    this.glowPhase = 0;
+  }
+
+  update(frameCount) {
+    this.glowPhase = frameCount;
+  }
+
+  render(p) {
+    const x = this.getScreenX();
+    const y = this.getScreenY();
+    const size = GRID_SIZE * 0.8;
+
+    p.push();
+    // Outer glow
+    const glowAlpha = 100 + Math.sin(this.glowPhase * 0.1) * 50;
+    p.fill(0, 255, 100, glowAlpha);
+    p.noStroke();
+    p.circle(x, y, size * 1.2);
+    
+    // Exit marker
+    p.fill(0, 200, 80);
+    p.rectMode(p.CENTER);
+    p.rect(x, y, size * 0.8, size * 0.8, 5);
+    
+    // Arrow/symbol
+    p.fill(0, 255, 150);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(size * 0.6);
+    p.text("↑", x, y);
+    
+    p.pop();
+  }
+}
+</file>
+
+<file name="game_logic.js">
+// game_logic.js - Core game logic
+
+import { gameState, PHASE, ENTITY_TYPE, DIRECTION } from './globals.js';
+import { isWalkable, getEntityAt } from './grid.js';
+
+export function movePlayer(direction, p) {
+  if (!gameState.player || gameState.gamePhase !== PHASE.PLAYING) {
+    return false;
+  }
+
+  const newX = gameState.player.gridX + direction.x;
+  const newY = gameState.player.gridY + direction.y;
+
+  // Check if move is valid
+  if (!isWalkable(gameState.grid, newX, newY)) {
+    return false;
+  }
+
+  // Check for blocking entities (walls handled above)
+  const blockingEntity = getEntityAt(gameState.entities, newX, newY, true);
+  if (blockingEntity && 
+      (blockingEntity.type === ENTITY_TYPE.WALL || 
+       blockingEntity.type === ENTITY_TYPE.GUARD ||
+       blockingEntity.type === ENTITY_TYPE.TURRET)) {
+    return false;
+  }
+
+  // Move player
+  gameState.player.gridX = newX;
+  gameState.player.gridY = newY;
+  gameState.lastPlayerMove = direction;
+  
+  // Record move history
+  gameState.moveHistory.push({ x: newX, y: newY, turn: gameState.turnCount });
+
+  // Log player position
+  logPlayerPosition(p);
+
+  // Check if reached exit
+  const exitEntity = getEntityAt(gameState.entities, newX, newY);
+  if (exitEntity && exitEntity.type === ENTITY_TYPE.EXIT) {
+    gameState.exitReached = true;
+    winGame(p);
+    return true;
+  }
+
+  // Process turn
+  processTurn(p);
+  
+  return true;
+}
+
+export function waitTurn(p) {
+  if (gameState.gamePhase !== PHASE.PLAYING) return;
+  
+  gameState.lastPlayerMove = DIRECTION.NONE;
+  processTurn(p);
+}
+
+export function activateInvisibility(p) {
+  if (gameState.gamePhase !== PHASE.PLAYING) return;
+  
+  if (gameState.invisibilityCharges > 0 && !gameState.isInvisible) {
+    gameState.invisibilityCharges--;
+    gameState.isInvisible = true;
+    gameState.invisibilityTurnsLeft = 1;
+    
+    p.logs.game_info.push({
+      data: { event: "invisibility_activated", charges_left: gameState.invisibilityCharges },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+}
+
+export function hackNearbyTerminal(p) {
+  if (gameState.gamePhase !== PHASE.PLAYING) return;
+  
+  const player = gameState.player;
+  const adjacent = [
+    { x: player.gridX - 1, y: player.gridY },
+    { x: player.gridX + 1, y: player.gridY },
+    { x: player.gridX, y: player.gridY - 1 },
+    { x: player.gridX, y: player.gridY + 1 }
+  ];
+
+  let hacked = false;
+  for (const pos of adjacent) {
+    const entity = getEntityAt(gameState.entities, pos.x, pos.y);
+    if (entity && entity.type === ENTITY_TYPE.TERMINAL) {
+      entity.hack();
+      hacked = true;
+      
+      // Toggle nearby turrets
+      gameState.entities.forEach(e => {
+        if (e.type === ENTITY_TYPE.TURRET) {
+          const dist = Math.abs(e.gridX - entity.gridX) + Math.abs(e.gridY - entity.gridY);
+          if (dist <= 3) {
+            e.toggle();
+          }
+        }
+      });
+      
+      p.logs.game_info.push({
+        data: { event: "terminal_hacked", terminal_pos: pos },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+      
+      break;
+    }
+  }
+
+  if (hacked) {
+    processTurn(p);
+  }
+}
+
+function processTurn(p) {
+  gameState.turnCount++;
+  
+  // Decrease invisibility
+  if (gameState.isInvisible) {
+    gameState.invisibilityTurnsLeft--;
+    if (gameState.invisibilityTurnsLeft <= 0) {
+      gameState.isInvisible = false;
+    }
+  }
+
+  // Move enemies
+  moveEnemies(p);
+
+  // Check detection
+  checkDetection(p);
+}
+
+function moveEnemies(p) {
+  gameState.entities.forEach(entity => {
+    if (entity.type === ENTITY_TYPE.GUARD || entity.type === ENTITY_TYPE.DRONE) {
+      entity.move(gameState.grid);
+    }
+  });
+}
+
+function checkDetection(p) {
+  if (gameState.isInvisible) {
+    return; // Cannot be detected while invisible
+  }
+
+  const player = gameState.player;
+  
+  for (const entity of gameState.entities) {
+    if (entity.type === ENTITY_TYPE.GUARD || 
+        entity.type === ENTITY_TYPE.TURRET || 
+        entity.type === ENTITY_TYPE.DRONE) {
+      if (entity.canSeePlayer(player, gameState.grid)) {
+        gameState.detectedBy = entity;
+        loseGame(p);
+        return;
+      }
+    }
+  }
+}
+
+function winGame(p) {
+  gameState.gamePhase = PHASE.GAME_OVER_WIN;
+  gameState.score += 1000 + (100 - gameState.turnCount) * 10;
+  
+  p.logs.game_info.push({
+    data: { 
+      event: "game_won", 
+      phase: gameState.gamePhase,
+      turns: gameState.turnCount,
+      score: gameState.score
+    },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function loseGame(p) {
+  gameState.gamePhase = PHASE.GAME_OVER_LOSE;
+  
+  p.logs.game_info.push({
+    data: { 
+      event: "game_lost", 
+      phase: gameState.gamePhase,
+      detected_by: gameState.detectedBy ? gameState.detectedBy.type : "unknown"
+    },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function logPlayerPosition(p) {
+  if (!gameState.player) return;
+  
+  p.logs.player_info.push({
+    screen_x: gameState.player.getScreenX(),
+    screen_y: gameState.player.getScreenY(),
+    game_x: gameState.player.gridX,
+    game_y: gameState.player.gridY,
+    framecount: p.frameCount
+  });
+}
+
+export function initializeGameState(p) {
+  const { loadLevel } = require('./grid.js');
+  const levelData = loadLevel(gameState.level, p);
+  gameState.grid = levelData.grid;
+  gameState.entities = levelData.entities;
+  gameState.player = levelData.player;
+  gameState.score = 0;
+  gameState.turnCount = 0;
+  gameState.invisibilityCharges = 3;
+  gameState.isInvisible = false;
+  gameState.invisibilityTurnsLeft = 0;
+  gameState.detectedBy = null;
+  gameState.exitReached = false;
+  gameState.lastPlayerMove = null;
+  gameState.moveHistory = [];
+}
+</file>
+
+<file name="input.js">
+// input.js - Input handling
+
+import { gameState, PHASE, DIRECTION } from './globals.js';
+import { movePlayer, activateInvisibility, hackNearbyTerminal, waitTurn } from './game_logic.js';
+
+export function handleKeyPressed(p, keyCode) {
+  // Log the input
+  p.logs.inputs.push({
+    input_type: "keyPressed",
+    data: { key: p.key, keyCode: keyCode },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+
+  // Phase transitions
+  if (keyCode === 13) { // ENTER
+    if (gameState.gamePhase === PHASE.START) {
+      startGame(p);
+    }
+    return;
+  }
+
+  if (keyCode === 27) { // ESC
+    if (gameState.gamePhase === PHASE.PLAYING) {
+      gameState.gamePhase = PHASE.PAUSED;
+      p.noLoop();
+    } else if (gameState.gamePhase === PHASE.PAUSED) {
+      gameState.gamePhase = PHASE.PLAYING;
+      p.loop();
+    }
+    return;
+  }
+
+  if (keyCode === 82) { // R
+    if (gameState.gamePhase === PHASE.GAME_OVER_WIN || 
+        gameState.gamePhase === PHASE.GAME_OVER_LOSE) {
+      resetToStart(p);
+    }
+    return;
+  }
+
+  // Gameplay controls
+  if (gameState.gamePhase === PHASE.PLAYING) {
+    let moved = false;
+    
+    // Arrow keys for movement
+    if (keyCode === 37) { // LEFT
+      moved = movePlayer(DIRECTION.LEFT, p);
+    } else if (keyCode === 38) { // UP
+      moved = movePlayer(DIRECTION.UP, p);
+    } else if (keyCode === 39) { // RIGHT
+      moved = movePlayer(DIRECTION.RIGHT, p);
+    } else if (keyCode === 40) { // DOWN
+      moved = movePlayer(DIRECTION.DOWN, p);
+    } else if (keyCode === 32) { // SPACE - invisibility
+      activateInvisibility(p);
+    } else if (keyCode === 90) { // Z - hack
+      hackNearbyTerminal(p);
+    } else if (keyCode === 16) { // SHIFT - wait
+      waitTurn(p);
+    }
+  }
+}
+
+function startGame(p) {
+  gameState.gamePhase = PHASE.PLAYING;
+  p.logs.game_info.push({
+    data: { event: "game_started", phase: gameState.gamePhase },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function resetToStart(p) {
+  // Don't reset p.logs!
+  gameState.gamePhase = PHASE.START;
+  gameState.score = 0;
+  gameState.turnCount = 0;
+  gameState.invisibilityCharges = 3;
+  gameState.isInvisible = false;
+  gameState.invisibilityTurnsLeft = 0;
+  gameState.detectedBy = null;
+  gameState.exitReached = false;
+  gameState.lastPlayerMove = null;
+  gameState.moveHistory = [];
+  
+  // Reload level
+  const { loadLevel } = require('./grid.js');
+  const levelData = loadLevel(gameState.level, p);
+  gameState.grid = levelData.grid;
+  gameState.entities = levelData.entities;
+  gameState.player = levelData.player;
+  
+  p.logs.game_info.push({
+    data: { event: "game_reset", phase: gameState.gamePhase },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

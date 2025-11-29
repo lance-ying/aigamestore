@@ -59,7 +59,22 @@ def _build_url(game_path: str, port: int) -> str:
 async def _setup_event_listeners(page: Page, console_errors: Dict[str, List[str]], page_errors: List[str], request_failures: List[Dict[str, Any]]) -> None:
     page.on("console", lambda msg: console_errors.setdefault(msg.type, []).append(msg.text))
     page.on("pageerror", lambda exc: page_errors.append(str(exc)))
-    page.on("requestfailed", lambda req: request_failures.append({"url": req.url, "method": req.method, "failure": req.failure.error_text if req.failure else "unknown"}))
+    
+    def handle_request_failed(req):
+        # Handle both old (string) and new (method) Playwright API
+        failure_text = "unknown"
+        if req.failure:
+            if callable(req.failure):
+                # New API: req.failure() returns object with errorText
+                failure_obj = req.failure()
+                if failure_obj:
+                    failure_text = getattr(failure_obj, 'errorText', getattr(failure_obj, 'error_text', str(failure_obj)))
+            else:
+                # Old API: req.failure is already a string
+                failure_text = str(req.failure)
+        request_failures.append({"url": req.url, "method": req.method, "failure": failure_text})
+    
+    page.on("requestfailed", handle_request_failed)
     page.on("response", lambda resp: (request_failures.append({"url": resp.url, "status": resp.status, "status_text": resp.status_text}) if resp.status >= 400 else None))
 
 

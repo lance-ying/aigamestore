@@ -1,0 +1,1918 @@
+<analysis>
+- Issue identified: 
+  1. Level 1 is unsolvable because it only has 8 coins (80 points), but the portal requires all 3 abilities unlocked (100 points minimum), making it impossible to win
+  2. The game currently moves left-to-right along the X axis, but needs to be reoriented to move forward/backward along the Z axis (into the screen)
+  
+- Files affected:
+  1. level.js - Need to add more coins to level 1 AND reorient all platform/entity positions from X-axis progression to Z-axis progression
+  2. camera.js - Need to adjust camera offset to position behind player looking forward along Z axis
+  3. globals.js - Need to update default camera offset for forward/backward orientation
+
+- Changes needed:
+  1. Add at least 2 more coins to level 1 to make it solvable (need 10+ coins for 100 points)
+  2. Transform all level coordinates: swap X and Z axes so progression is along Z instead of X
+  3. Update camera offset from (0, 10, 18) to (0, 10, -15) so camera follows from behind
+</analysis>
+
+<code filename="globals.js">
+// globals.js - Global constants and game state
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+export const GAME_PHASES = {
+  START: "START",
+  PLAYING: "PLAYING",
+  PAUSED: "PAUSED",
+  GAME_OVER_WIN: "GAME_OVER_WIN",
+  GAME_OVER_LOSE: "GAME_OVER_LOSE"
+};
+
+export const CONTROL_MODES = {
+  HUMAN: "HUMAN",
+  TEST_1: "TEST_1",
+  TEST_2: "TEST_2"
+};
+
+// Game state object
+export const gameState = {
+  player: null,
+  entities: [],
+  enemies: [],
+  coins: [],
+  barriers: [],
+  swingPoints: [],
+  checkpoints: [],
+  portal: null,
+  platforms: [],
+  
+  score: 0,
+  health: 3,
+  maxHealth: 3,
+  
+  currentLevel: 1,
+  maxLevel: 6,
+  
+  abilities: {
+    doubleJump: false,
+    karateKick: false,
+    hookSwing: false
+  },
+  
+  lastCheckpoint: { x: 0, y: 2, z: 5 },
+  
+  invincible: false,
+  invincibilityTimer: 0,
+  
+  gamePhase: GAME_PHASES.START,
+  controlMode: CONTROL_MODES.HUMAN,
+  
+  // Three.js core objects
+  scene: null,
+  camera: null,
+  renderer: null,
+  gameContainer: null,
+  
+  // Lighting
+  lights: [],
+  ambientLight: null,
+  directionalLight: null,
+  
+  // Physics
+  gravity: new THREE.Vector3(0, -0.025, 0),
+  
+  // Camera state - Updated for forward/backward movement
+  cameraOffset: new THREE.Vector3(0, 8, -15),
+  
+  // Performance tracking
+  frameCount: 0,
+  lastFrameTime: 0,
+  deltaTime: 0,
+  
+  // Testing state
+  testFrameCount: 0,
+  testPhase: 0,
+  
+  // Ability unlock thresholds
+  abilityThresholds: {
+    doubleJump: 50,
+    hookSwing: 100,
+    karateKick: 25
+  }
+};
+
+export function getGameState() {
+  return gameState;
+}
+
+// Expose globally
+if (typeof window !== 'undefined') {
+  window.getGameState = getGameState;
+}
+</code>
+
+<code filename="camera.js">
+// camera.js - Camera setup and control
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export function setupCamera() {
+  const camera = new THREE.PerspectiveCamera(
+    60,
+    CANVAS_WIDTH / CANVAS_HEIGHT,
+    0.1,
+    1000
+  );
+  
+  // Position camera behind and above the starting position for forward/backward view
+  camera.position.set(0, 10, -10);
+  camera.lookAt(0, 0, 10);
+  
+  gameState.camera = camera;
+}
+
+export function updateCamera() {
+  if (!gameState.player || !gameState.camera) return;
+  
+  // Update camera offset to follow player from behind (negative Z)
+  const targetPosition = new THREE.Vector3()
+    .copy(gameState.player.mesh.position)
+    .add(new THREE.Vector3(0, 8, -15));
+  
+  // Smooth camera movement
+  gameState.camera.position.lerp(targetPosition, 0.1);
+  
+  // Look at player with slight upward offset
+  const lookAtTarget = gameState.player.mesh.position.clone();
+  lookAtTarget.y += 1;
+  gameState.camera.lookAt(lookAtTarget);
+}
+</code>
+
+<code filename="level.js">
+// level.js - Level creation
+import { gameState } from './globals.js';
+import { 
+  Platform, 
+  Enemy, 
+  Coin, 
+  Barrier, 
+  Checkpoint, 
+  Portal,
+  SwingPoint 
+} from './entities.js';
+
+export function createLevel() {
+  // Clear existing level
+  gameState.entities = [];
+  gameState.enemies = [];
+  gameState.coins = [];
+  gameState.barriers = [];
+  gameState.checkpoints = [];
+  gameState.swingPoints = [];
+  gameState.platforms = [];
+  
+  // Create level based on current level number
+  switch(gameState.currentLevel) {
+    case 1:
+      createLevel1(); // Easy
+      break;
+    case 2:
+      createLevel2(); // Easy
+      break;
+    case 3:
+      createLevel3(); // Medium
+      break;
+    case 4:
+      createLevel4(); // Medium
+      break;
+    case 5:
+      createLevel5(); // Hard
+      break;
+    case 6:
+      createLevel6(); // Hard
+      break;
+    default:
+      createLevel1();
+  }
+}
+
+// Level 1 - Easy: Simple straight path (FORWARD/BACKWARD)
+function createLevel1() {
+  // Starting platform - BIG SQUARE (reoriented for Z-axis progression)
+  const start = new Platform(0, 0.5, 5, 8, 1, 8, 0x64c864);
+  gameState.platforms.push(start);
+  gameState.entities.push(start);
+  
+  // Simple path forward (along Z axis)
+  const plat1 = new Platform(0, 1, 12, 4, 0.5, 5, 0x64c864);
+  gameState.platforms.push(plat1);
+  gameState.entities.push(plat1);
+  
+  const plat2 = new Platform(0, 1.5, 18, 4, 0.5, 5, 0x64c864);
+  gameState.platforms.push(plat2);
+  gameState.entities.push(plat2);
+  
+  const plat3 = new Platform(0, 2, 24, 4, 0.5, 6, 0x64c864);
+  gameState.platforms.push(plat3);
+  gameState.entities.push(plat3);
+  
+  // Add coins - INCREASED TO 11 to make level solvable (110 points total)
+  const coinPositions = [
+    [0, 2.5, 5],
+    [0, 2.5, 7.5],
+    [0, 2.5, 10],
+    [0, 2.5, 12.5],
+    [0, 2.5, 15],
+    [0, 2.5, 17.5],
+    [0, 2.5, 20],
+    [0, 2.5, 22],
+    [0, 2.5, 24],
+    [0, 2.5, 26],
+    [0, 2.5, 28]
+  ];
+  
+  coinPositions.forEach(pos => {
+    const coin = new Coin(pos[0], pos[1], pos[2]);
+    gameState.coins.push(coin);
+  });
+  
+  // One easy enemy
+  const enemy1 = new Enemy(0, 2, 12);
+  gameState.enemies.push(enemy1);
+  gameState.entities.push(enemy1);
+  
+  // Checkpoint
+  const checkpoint = new Checkpoint(0, 2.5, 18);
+  gameState.checkpoints.push(checkpoint);
+  
+  // Portal at end
+  gameState.portal = new Portal(0, 5, 27);
+}
+
+// Level 2 - Easy: Gentle upward climb (FORWARD/BACKWARD)
+function createLevel2() {
+  // Starting platform - BIG SQUARE
+  const start = new Platform(0, 0.5, 5, 8, 1, 8, 0x78c878);
+  gameState.platforms.push(start);
+  gameState.entities.push(start);
+  
+  // Ascending platforms
+  const plat1 = new Platform(0, 2, 11, 4, 0.5, 4, 0x78c878);
+  gameState.platforms.push(plat1);
+  gameState.entities.push(plat1);
+  
+  const plat2 = new Platform(0, 3.5, 16, 4, 0.5, 4, 0x78c878);
+  gameState.platforms.push(plat2);
+  gameState.entities.push(plat2);
+  
+  const plat3 = new Platform(0, 5, 21, 4, 0.5, 5, 0x78c878);
+  gameState.platforms.push(plat3);
+  gameState.entities.push(plat3);
+  
+  const plat4 = new Platform(0, 6, 26, 4, 0.5, 5, 0x78c878);
+  gameState.platforms.push(plat4);
+  gameState.entities.push(plat4);
+  
+  // Coins on path
+  const coinPositions = [
+    [0, 2.5, 5], [0, 2.5, 8], [0, 3.5, 11], 
+    [0, 5, 16], [0, 6.5, 21], [0, 7.5, 26],
+    [0, 4, 14], [0, 5.5, 19]
+  ];
+  
+  coinPositions.forEach(pos => {
+    const coin = new Coin(pos[0], pos[1], pos[2]);
+    gameState.coins.push(coin);
+  });
+  
+  // Few enemies
+  const enemy1 = new Enemy(0, 4.5, 16);
+  gameState.enemies.push(enemy1);
+  gameState.entities.push(enemy1);
+  
+  // Checkpoint
+  const checkpoint = new Checkpoint(0, 6, 21);
+  gameState.checkpoints.push(checkpoint);
+  
+  // Portal
+  gameState.portal = new Portal(0, 9, 29);
+}
+
+// Level 3 - Medium: More challenging jumps (FORWARD/BACKWARD)
+function createLevel3() {
+  // Starting platform - BIG SQUARE
+  const start = new Platform(0, 0.5, 5, 8, 1, 8, 0x8c8cc8);
+  gameState.platforms.push(start);
+  gameState.entities.push(start);
+  
+  // Spaced platforms requiring jumps
+  const plat1 = new Platform(0, 2, 12, 4, 0.5, 3, 0x8c8cc8);
+  gameState.platforms.push(plat1);
+  gameState.entities.push(plat1);
+  
+  const plat2 = new Platform(0, 4, 17, 4, 0.5, 3, 0x8c8cc8);
+  gameState.platforms.push(plat2);
+  gameState.entities.push(plat2);
+  
+  const plat3 = new Platform(0, 5, 22, 4, 0.5, 4, 0x8c8cc8);
+  gameState.platforms.push(plat3);
+  gameState.entities.push(plat3);
+  
+  const plat4 = new Platform(0, 6, 14, 4, 0.5, 3, 0x8c8cc8);
+  gameState.platforms.push(plat4);
+  gameState.entities.push(plat4);
+  
+  const plat5 = new Platform(0, 8, 20, 4, 0.5, 4, 0x8c8cc8);
+  gameState.platforms.push(plat5);
+  gameState.entities.push(plat5);
+  
+  const plat6 = new Platform(0, 9, 26, 4, 0.5, 5, 0x8c8cc8);
+  gameState.platforms.push(plat6);
+  gameState.entities.push(plat6);
+  
+  // More coins
+  const coinPositions = [
+    [0, 2.5, 5], [0, 3.5, 12], [0, 5.5, 17], 
+    [0, 6.5, 22], [0, 7.5, 14], [0, 9.5, 20],
+    [0, 10.5, 26], [0, 3, 10], [0, 7, 19], [0, 10, 24]
+  ];
+  
+  coinPositions.forEach(pos => {
+    const coin = new Coin(pos[0], pos[1], pos[2]);
+    gameState.coins.push(coin);
+  });
+  
+  // More enemies
+  const enemy1 = new Enemy(0, 3, 12);
+  gameState.enemies.push(enemy1);
+  gameState.entities.push(enemy1);
+  
+  const enemy2 = new Enemy(0, 6, 22);
+  gameState.enemies.push(enemy2);
+  gameState.entities.push(enemy2);
+  
+  // Barrier requiring karate kick
+  const barrier1 = new Barrier(0, 5, 19, 2, 2, 0.5);
+  gameState.barriers.push(barrier1);
+  gameState.entities.push(barrier1);
+  
+  // Checkpoints
+  const checkpoint1 = new Checkpoint(0, 5, 17);
+  gameState.checkpoints.push(checkpoint1);
+  
+  const checkpoint2 = new Checkpoint(0, 10, 26);
+  gameState.checkpoints.push(checkpoint2);
+  
+  // Portal
+  gameState.portal = new Portal(0, 12, 29);
+}
+
+// Level 4 - Medium: Mixed movement (FORWARD/BACKWARD with lateral X variation)
+function createLevel4() {
+  // Starting platform - BIG SQUARE
+  const start = new Platform(0, 0.5, 5, 8, 1, 8, 0x9696c8);
+  gameState.platforms.push(start);
+  gameState.entities.push(start);
+  
+  // Platforms with X variation for lateral movement
+  const plat1 = new Platform(2, 2, 11, 3, 0.5, 3, 0x9696c8);
+  gameState.platforms.push(plat1);
+  gameState.entities.push(plat1);
+  
+  const plat2 = new Platform(-2, 3, 16, 3, 0.5, 3, 0x9696c8);
+  gameState.platforms.push(plat2);
+  gameState.entities.push(plat2);
+  
+  const plat3 = new Platform(0, 5, 21, 4, 0.5, 4, 0x9696c8);
+  gameState.platforms.push(plat3);
+  gameState.entities.push(plat3);
+  
+  const plat4 = new Platform(0, 7, 13, 3, 0.5, 3, 0x9696c8);
+  gameState.platforms.push(plat4);
+  gameState.entities.push(plat4);
+  
+  const plat5 = new Platform(2, 8, 18, 3, 0.5, 3, 0x9696c8);
+  gameState.platforms.push(plat5);
+  gameState.entities.push(plat5);
+  
+  const plat6 = new Platform(0, 10, 24, 4, 0.5, 5, 0x9696c8);
+  gameState.platforms.push(plat6);
+  gameState.entities.push(plat6);
+  
+  // Coins
+  const coinPositions = [
+    [0, 2.5, 5], [2, 3.5, 11], [-2, 4.5, 16], 
+    [0, 6.5, 21], [0, 8.5, 13], [2, 9.5, 18],
+    [0, 11.5, 24], [0, 2, 8], [0, 7, 19], [0, 11, 22]
+  ];
+  
+  coinPositions.forEach(pos => {
+    const coin = new Coin(pos[0], pos[1], pos[2]);
+    gameState.coins.push(coin);
+  });
+  
+  // Enemies
+  const enemy1 = new Enemy(2, 3, 11);
+  gameState.enemies.push(enemy1);
+  gameState.entities.push(enemy1);
+  
+  const enemy2 = new Enemy(0, 6, 21);
+  gameState.enemies.push(enemy2);
+  gameState.entities.push(enemy2);
+  
+  const enemy3 = new Enemy(2, 9, 18);
+  gameState.enemies.push(enemy3);
+  gameState.entities.push(enemy3);
+  
+  // Barriers
+  const barrier1 = new Barrier(0, 4, 15, 2, 2, 0.5);
+  gameState.barriers.push(barrier1);
+  gameState.entities.push(barrier1);
+  
+  // Checkpoint
+  const checkpoint = new Checkpoint(0, 6, 21);
+  gameState.checkpoints.push(checkpoint);
+  
+  // Portal
+  gameState.portal = new Portal(0, 13, 27);
+}
+
+// Level 5 - Hard: Complex platforming (FORWARD/BACKWARD)
+function createLevel5() {
+  // Starting platform - BIG SQUARE
+  const start = new Platform(0, 0.5, 5, 8, 1, 8, 0xc86464);
+  gameState.platforms.push(start);
+  gameState.entities.push(start);
+  
+  // Challenging platform sequence
+  const plat1 = new Platform(0, 3, 11, 3, 0.5, 2.5, 0xc86464);
+  gameState.platforms.push(plat1);
+  gameState.entities.push(plat1);
+  
+  const plat2 = new Platform(0, 5, 15, 3, 0.5, 2.5, 0xc86464);
+  gameState.platforms.push(plat2);
+  gameState.entities.push(plat2);
+  
+  const plat3 = new Platform(0, 6, 19, 3, 0.5, 3, 0xc86464);
+  gameState.platforms.push(plat3);
+  gameState.entities.push(plat3);
+  
+  const plat4 = new Platform(0, 8, 12, 3, 0.5, 2.5, 0xc86464);
+  gameState.platforms.push(plat4);
+  gameState.entities.push(plat4);
+  
+  const plat5 = new Platform(0, 10, 17, 3, 0.5, 3, 0xc86464);
+  gameState.platforms.push(plat5);
+  gameState.entities.push(plat5);
+  
+  const plat6 = new Platform(0, 11, 23, 3, 0.5, 3, 0xc86464);
+  gameState.platforms.push(plat6);
+  gameState.entities.push(plat6);
+  
+  const plat7 = new Platform(0, 13, 28, 4, 0.5, 4, 0xc86464);
+  gameState.platforms.push(plat7);
+  gameState.entities.push(plat7);
+  
+  // Many coins
+  const coinPositions = [
+    [0, 2.5, 5], [0, 2.5, 8], [0, 4.5, 11], 
+    [0, 6.5, 15], [0, 7.5, 19], [0, 9.5, 12],
+    [0, 11.5, 17], [0, 12.5, 23], [0, 14.5, 28],
+    [0, 6, 13], [0, 9, 20], [0, 12, 25]
+  ];
+  
+  coinPositions.forEach(pos => {
+    const coin = new Coin(pos[0], pos[1], pos[2]);
+    gameState.coins.push(coin);
+  });
+  
+  // Many enemies
+  const enemy1 = new Enemy(0, 4, 11);
+  gameState.enemies.push(enemy1);
+  gameState.entities.push(enemy1);
+  
+  const enemy2 = new Enemy(0, 7, 19);
+  gameState.enemies.push(enemy2);
+  gameState.entities.push(enemy2);
+  
+  const enemy3 = new Enemy(0, 9, 12);
+  gameState.enemies.push(enemy3);
+  gameState.entities.push(enemy3);
+  
+  const enemy4 = new Enemy(0, 12, 23);
+  gameState.enemies.push(enemy4);
+  gameState.entities.push(enemy4);
+  
+  // Multiple barriers
+  const barrier1 = new Barrier(0, 5, 13, 2, 2, 0.5);
+  gameState.barriers.push(barrier1);
+  gameState.entities.push(barrier1);
+  
+  const barrier2 = new Barrier(0, 8, 21, 2, 2, 0.5);
+  gameState.barriers.push(barrier2);
+  gameState.entities.push(barrier2);
+  
+  // Checkpoints
+  const checkpoint1 = new Checkpoint(0, 7, 19);
+  gameState.checkpoints.push(checkpoint1);
+  
+  const checkpoint2 = new Checkpoint(0, 14, 28);
+  gameState.checkpoints.push(checkpoint2);
+  
+  // Swing point
+  const swing1 = new SwingPoint(0, 9, 20);
+  gameState.swingPoints.push(swing1);
+  
+  // Portal
+  gameState.portal = new Portal(0, 16, 31);
+}
+
+// Level 6 - Hard: Ultimate challenge (FORWARD/BACKWARD)
+function createLevel6() {
+  // Starting platform - BIG SQUARE
+  const start = new Platform(0, 0.5, 5, 8, 1, 8, 0xc87878);
+  gameState.platforms.push(start);
+  gameState.entities.push(start);
+  
+  // Very challenging sequence
+  const plat1 = new Platform(2, 3, 11, 2, 0.5, 2, 0xc87878);
+  gameState.platforms.push(plat1);
+  gameState.entities.push(plat1);
+  
+  const plat2 = new Platform(-2, 5, 15, 2, 0.5, 2, 0xc87878);
+  gameState.platforms.push(plat2);
+  gameState.entities.push(plat2);
+  
+  const plat3 = new Platform(1, 7, 19, 2.5, 0.5, 2.5, 0xc87878);
+  gameState.platforms.push(plat3);
+  gameState.entities.push(plat3);
+  
+  const plat4 = new Platform(0, 9, 13, 2, 0.5, 2, 0xc87878);
+  gameState.platforms.push(plat4);
+  gameState.entities.push(plat4);
+  
+  const plat5 = new Platform(-1, 11, 18, 2.5, 0.5, 2.5, 0xc87878);
+  gameState.platforms.push(plat5);
+  gameState.entities.push(plat5);
+  
+  const plat6 = new Platform(0, 12, 24, 3, 0.5, 2.5, 0xc87878);
+  gameState.platforms.push(plat6);
+  gameState.entities.push(plat6);
+  
+  const plat7 = new Platform(0, 14, 16, 2.5, 0.5, 2.5, 0xc87878);
+  gameState.platforms.push(plat7);
+  gameState.entities.push(plat7);
+  
+  const plat8 = new Platform(0, 15, 22, 3, 0.5, 3, 0xc87878);
+  gameState.platforms.push(plat8);
+  gameState.entities.push(plat8);
+  
+  const plat9 = new Platform(0, 17, 28, 4, 0.5, 4, 0xc87878);
+  gameState.platforms.push(plat9);
+  gameState.entities.push(plat9);
+  
+  // Maximum coins
+  const coinPositions = [
+    [0, 2.5, 5], [0, 2.5, 8], [2, 4.5, 11], 
+    [-2, 6.5, 15], [1, 8.5, 19], [0, 10.5, 13],
+    [-1, 12.5, 18], [0, 13.5, 24], [0, 15.5, 16],
+    [0, 16.5, 22], [0, 18.5, 28], [0, 4, 10],
+    [0, 8, 14], [0, 13, 20], [0, 16, 26]
+  ];
+  
+  coinPositions.forEach(pos => {
+    const coin = new Coin(pos[0], pos[1], pos[2]);
+    gameState.coins.push(coin);
+  });
+  
+  // Maximum enemies
+  const enemy1 = new Enemy(2, 4, 11);
+  gameState.enemies.push(enemy1);
+  gameState.entities.push(enemy1);
+  
+  const enemy2 = new Enemy(-2, 6, 15);
+  gameState.enemies.push(enemy2);
+  gameState.entities.push(enemy2);
+  
+  const enemy3 = new Enemy(1, 8, 19);
+  gameState.enemies.push(enemy3);
+  gameState.entities.push(enemy3);
+  
+  const enemy4 = new Enemy(0, 10, 13);
+  gameState.enemies.push(enemy4);
+  gameState.entities.push(enemy4);
+  
+  const enemy5 = new Enemy(0, 13, 24);
+  gameState.enemies.push(enemy5);
+  gameState.entities.push(enemy5);
+  
+  // Multiple barriers
+  const barrier1 = new Barrier(0, 6, 17, 2, 2, 0.5);
+  gameState.barriers.push(barrier1);
+  gameState.entities.push(barrier1);
+  
+  const barrier2 = new Barrier(0, 10, 21, 2, 2, 0.5);
+  gameState.barriers.push(barrier2);
+  gameState.entities.push(barrier2);
+  
+  const barrier3 = new Barrier(0, 15, 26, 2, 2, 0.5);
+  gameState.barriers.push(barrier3);
+  gameState.entities.push(barrier3);
+  
+  // Checkpoints
+  const checkpoint1 = new Checkpoint(1, 8, 19);
+  gameState.checkpoints.push(checkpoint1);
+  
+  const checkpoint2 = new Checkpoint(0, 13, 24);
+  gameState.checkpoints.push(checkpoint2);
+  
+  // Multiple swing points
+  const swing1 = new SwingPoint(0, 10, 20);
+  gameState.swingPoints.push(swing1);
+  
+  const swing2 = new SwingPoint(0, 14, 25);
+  gameState.swingPoints.push(swing2);
+  
+  // Portal
+  gameState.portal = new Portal(0, 20, 31);
+}
+</code>
+
+<code filename="entities.js">
+// entities.js - Game entity classes
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export class Player {
+  constructor(x, y, z) {
+    // Create 3D mesh - SpongeBob style character
+    const geometry = new THREE.BoxGeometry(1, 1.5, 0.8);
+    const material = new THREE.MeshStandardMaterial({ 
+      color: 0xffdc00,
+      roughness: 0.5,
+      metalness: 0.1
+    });
+    this.mesh = new THREE.Mesh(geometry, material);
+    this.mesh.position.set(x, y, z);
+    this.mesh.castShadow = true;
+    this.mesh.receiveShadow = true;
+    
+    // Add eyes
+    const eyeGeometry = new THREE.SphereGeometry(0.12, 8, 8);
+    const eyeMaterial = new THREE.MeshStandardMaterial({ color: 0x000000 });
+    
+    this.leftEye = new THREE.Mesh(eyeGeometry, eyeMaterial);
+    this.leftEye.position.set(-0.25, 0.3, 0.41);
+    this.mesh.add(this.leftEye);
+    
+    this.rightEye = new THREE.Mesh(eyeGeometry, eyeMaterial);
+    this.rightEye.position.set(0.25, 0.3, 0.41);
+    this.mesh.add(this.rightEye);
+    
+    // Physics properties - IMPROVED CONTROL
+    this.velocity = new THREE.Vector3(0, 0, 0);
+    this.acceleration = new THREE.Vector3(0, 0, 0);
+    this.speed = 0.05;  // Further reduced for better control
+    this.jumpPower = 0.4;
+    this.jumpCount = 0;
+    this.maxJumps = 1;
+    this.onGround = false;
+    this.mass = 1.0;
+    
+    // Size
+    this.size = new THREE.Vector3(1, 1.5, 0.8);
+    
+    // Game properties
+    this.attackCooldown = 0;
+    this.lastLoggedX = x;
+    this.lastLoggedY = y;
+    
+    // Kick visual effect
+    this.kickEffect = null;
+    this.kickEffectTimer = 0;
+    
+    gameState.scene.add(this.mesh);
+  }
+  
+  update() {
+    // Apply gravity
+    if (!this.onGround) {
+      this.acceleration.add(gameState.gravity);
+    }
+    
+    // Update velocity
+    this.velocity.add(this.acceleration);
+    
+    // Apply stronger friction/damping for better control
+    if (this.onGround) {
+      this.velocity.x *= 0.75;  // Increased friction
+      this.velocity.z *= 0.75;
+    } else {
+      this.velocity.x *= 0.92;  // Air resistance
+      this.velocity.z *= 0.92;
+    }
+    
+    // Clamp velocity - reduced max speed
+    const maxSpeed = 0.15;  // Further reduced
+    if (Math.abs(this.velocity.x) > maxSpeed) {
+      this.velocity.x = Math.sign(this.velocity.x) * maxSpeed;
+    }
+    if (Math.abs(this.velocity.z) > maxSpeed) {
+      this.velocity.z = Math.sign(this.velocity.z) * maxSpeed;
+    }
+    
+    // Update position
+    this.mesh.position.add(this.velocity);
+    
+    // Update max jumps
+    this.maxJumps = gameState.abilities.doubleJump ? 2 : 1;
+    
+    // Update attack cooldown
+    if (this.attackCooldown > 0) {
+      this.attackCooldown--;
+    }
+    
+    // Update kick effect
+    if (this.kickEffectTimer > 0) {
+      this.kickEffectTimer--;
+      if (this.kickEffectTimer <= 0 && this.kickEffect) {
+        gameState.scene.remove(this.kickEffect);
+        this.kickEffect = null;
+      }
+    }
+    
+    // Update invincibility
+    if (gameState.invincible) {
+      gameState.invincibilityTimer--;
+      if (gameState.invincibilityTimer <= 0) {
+        gameState.invincible = false;
+      }
+      
+      // Flash effect
+      if (gameState.invincibilityTimer % 10 < 5) {
+        this.mesh.visible = false;
+      } else {
+        this.mesh.visible = true;
+      }
+    } else {
+      this.mesh.visible = true;
+    }
+    
+    // Check ground collision
+    this.checkGroundCollision();
+    
+    // Reset acceleration
+    this.acceleration.set(0, 0, 0);
+    
+    // Check for hazard death
+    if (this.mesh.position.y < -10) {
+      this.respawnAtCheckpoint();
+    }
+    
+    // Log position changes
+    const dx = Math.abs(this.mesh.position.x - this.lastLoggedX);
+    const dy = Math.abs(this.mesh.position.y - this.lastLoggedY);
+    if (dx > 2 || dy > 2) {
+      if (window.logs && window.logs.player_info) {
+        window.logs.player_info.push({
+          screen_x: this.mesh.position.x * 20,
+          screen_y: 300 - this.mesh.position.y * 20,
+          game_x: this.mesh.position.x,
+          game_y: this.mesh.position.y,
+          game_z: this.mesh.position.z,
+          framecount: gameState.frameCount,
+          timestamp: Date.now()
+        });
+      }
+      this.lastLoggedX = this.mesh.position.x;
+      this.lastLoggedY = this.mesh.position.y;
+    }
+  }
+  
+  checkGroundCollision() {
+    this.onGround = false;
+    const playerBottom = this.mesh.position.y - this.size.y / 2;
+    
+    // Check collision with platforms
+    for (const platform of gameState.platforms) {
+      if (this.checkPlatformCollision(platform)) {
+        this.onGround = true;
+        this.jumpCount = 0;
+        break;
+      }
+    }
+  }
+  
+  checkPlatformCollision(platform) {
+    const px = this.mesh.position.x;
+    const py = this.mesh.position.y;
+    const pz = this.mesh.position.z;
+    
+    const platX = platform.mesh.position.x;
+    const platY = platform.mesh.position.y;
+    const platZ = platform.mesh.position.z;
+    
+    const playerBottom = py - this.size.y / 2;
+    const platTop = platY + platform.size.y / 2;
+    
+    // Check if player is above platform
+    if (Math.abs(playerBottom - platTop) < 0.2 &&
+        px > platX - platform.size.x / 2 && px < platX + platform.size.x / 2 &&
+        pz > platZ - platform.size.z / 2 && pz < platZ + platform.size.z / 2) {
+      
+      // Snap to platform
+      this.mesh.position.y = platTop + this.size.y / 2;
+      this.velocity.y = 0;
+      return true;
+    }
+    
+    return false;
+  }
+  
+  moveLeft() {
+    // Direct velocity control instead of acceleration
+    this.velocity.x = Math.max(this.velocity.x - this.speed, -0.15);
+  }
+  
+  moveRight() {
+    // Direct velocity control instead of acceleration
+    this.velocity.x = Math.min(this.velocity.x + this.speed, 0.15);
+  }
+  
+  moveForward() {
+    // Direct velocity control instead of acceleration (positive Z is forward now)
+    this.velocity.z = Math.min(this.velocity.z + this.speed, 0.15);
+  }
+  
+  moveBackward() {
+    // Direct velocity control instead of acceleration (negative Z is backward now)
+    this.velocity.z = Math.max(this.velocity.z - this.speed, -0.15);
+  }
+  
+  jump() {
+    if (this.jumpCount < this.maxJumps) {
+      this.velocity.y = this.jumpPower;
+      this.jumpCount++;
+      this.onGround = false;
+    }
+  }
+  
+  karateKick() {
+    if (!gameState.abilities.karateKick || this.attackCooldown > 0) return;
+    
+    this.attackCooldown = 30;
+    
+    // Create visual kick effect
+    const kickGeometry = new THREE.SphereGeometry(1.5, 16, 16);
+    const kickMaterial = new THREE.MeshBasicMaterial({ 
+      color: 0xffff00,
+      transparent: true,
+      opacity: 0.6
+    });
+    this.kickEffect = new THREE.Mesh(kickGeometry, kickMaterial);
+    this.kickEffect.position.copy(this.mesh.position);
+    this.kickEffect.position.z += 1; // In front of player (forward direction)
+    gameState.scene.add(this.kickEffect);
+    this.kickEffectTimer = 15; // Show for 15 frames
+    
+    // Check for barriers in range
+    gameState.barriers = gameState.barriers.filter(barrier => {
+      const dx = barrier.mesh.position.x - this.mesh.position.x;
+      const dz = barrier.mesh.position.z - this.mesh.position.z;
+      const dist = Math.sqrt(dx * dx + dz * dz);
+      
+      if (dist < 3) {
+        gameState.scene.remove(barrier.mesh);
+        return false;
+      }
+      return true;
+    });
+    
+    // Check for enemies in range and damage them
+    gameState.enemies = gameState.enemies.filter(enemy => {
+      const dx = enemy.mesh.position.x - this.mesh.position.x;
+      const dy = enemy.mesh.position.y - this.mesh.position.y;
+      const dz = enemy.mesh.position.z - this.mesh.position.z;
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      
+      if (dist < 2.5) {
+        // Remove enemy (defeat it)
+        gameState.scene.remove(enemy.mesh);
+        // Award points
+        gameState.score += 5;
+        return false;
+      }
+      return true;
+    });
+  }
+  
+  hookSwing() {
+    if (!gameState.abilities.hookSwing) return;
+    
+    // Check for swing points in range
+    for (let swing of gameState.swingPoints) {
+      const dx = swing.mesh.position.x - this.mesh.position.x;
+      const dy = swing.mesh.position.y - this.mesh.position.y;
+      const dz = swing.mesh.position.z - this.mesh.position.z;
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      
+      if (dist < 4) {
+        // Apply swing force forward
+        this.velocity.z = 0.4;
+        this.velocity.y = 0.3;
+        return;
+      }
+    }
+  }
+  
+  respawnAtCheckpoint() {
+    gameState.health--;
+    
+    if (gameState.health <= 0) {
+      gameState.gamePhase = "GAME_OVER_LOSE";
+      if (window.logs && window.logs.game_info) {
+        window.logs.game_info.push({
+          data: { gamePhase: "GAME_OVER_LOSE", reason: "health_depleted" },
+          framecount: gameState.frameCount,
+          timestamp: Date.now()
+        });
+      }
+      return;
+    }
+    
+    // Respawn at checkpoint
+    this.mesh.position.set(
+      gameState.lastCheckpoint.x,
+      gameState.lastCheckpoint.y,
+      gameState.lastCheckpoint.z
+    );
+    this.velocity.set(0, 0, 0);
+    
+    gameState.invincible = true;
+    gameState.invincibilityTimer = 120;
+  }
+  
+  takeDamage() {
+    if (gameState.invincible) return;
+    
+    gameState.health--;
+    gameState.invincible = true;
+    gameState.invincibilityTimer = 120;
+    
+    // Knockback
+    this.velocity.y = 0.3;
+    
+    if (gameState.health <= 0) {
+      gameState.gamePhase = "GAME_OVER_LOSE";
+      if (window.logs && window.logs.game_info) {
+        window.logs.game_info.push({
+          data: { gamePhase: "GAME_OVER_LOSE", reason: "health_depleted" },
+          framecount: gameState.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    }
+  }
+}
+
+export class Platform {
+  constructor(x, y, z, width, height, depth, color = 0x64c864) {
+    const geometry = new THREE.BoxGeometry(width, height, depth);
+    const material = new THREE.MeshStandardMaterial({ 
+      color: color,
+      roughness: 0.8
+    });
+    this.mesh = new THREE.Mesh(geometry, material);
+    this.mesh.position.set(x, y, z);
+    this.mesh.receiveShadow = true;
+    this.mesh.castShadow = true;
+    
+    this.size = new THREE.Vector3(width, height, depth);
+    
+    gameState.scene.add(this.mesh);
+  }
+}
+
+export class Enemy {
+  constructor(x, y, z) {
+    const geometry = new THREE.SphereGeometry(0.5, 16, 16);
+    const material = new THREE.MeshStandardMaterial({ color: 0xc83232 });
+    this.mesh = new THREE.Mesh(geometry, material);
+    this.mesh.position.set(x, y, z);
+    this.mesh.castShadow = true;
+    
+    // Add angry eyes
+    const eyeGeometry = new THREE.SphereGeometry(0.08, 8, 8);
+    const eyeMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+    
+    const leftEye = new THREE.Mesh(eyeGeometry, eyeMaterial);
+    leftEye.position.set(-0.2, 0.1, 0.45);
+    this.mesh.add(leftEye);
+    
+    const rightEye = new THREE.Mesh(eyeGeometry, eyeMaterial);
+    rightEye.position.set(0.2, 0.1, 0.45);
+    this.mesh.add(rightEye);
+    
+    this.velocity = new THREE.Vector3(0, 0, 0);
+    this.speed = 0.05;
+    this.patrolSpeed = 0.05;
+    this.direction = 1;
+    this.patrolRange = 3;
+    this.startX = x;
+    this.radius = 0.5;
+    
+    gameState.scene.add(this.mesh);
+  }
+  
+  update() {
+    // Simple patrol AI
+    if (this.mesh.position.x > this.startX + this.patrolRange) {
+      this.direction = -1;
+    } else if (this.mesh.position.x < this.startX - this.patrolRange) {
+      this.direction = 1;
+    }
+    
+    this.mesh.position.x += this.patrolSpeed * this.direction;
+    
+    // Check collision with player
+    if (gameState.player) {
+      const dx = this.mesh.position.x - gameState.player.mesh.position.x;
+      const dy = this.mesh.position.y - gameState.player.mesh.position.y;
+      const dz = this.mesh.position.z - gameState.player.mesh.position.z;
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      
+      if (dist < 1) {
+        gameState.player.takeDamage();
+      }
+    }
+  }
+}
+
+export class Coin {
+  constructor(x, y, z) {
+    const geometry = new THREE.TorusGeometry(0.3, 0.1, 16, 32);
+    const material = new THREE.MeshStandardMaterial({ 
+      color: 0xffd700,
+      emissive: 0xffd700,
+      emissiveIntensity: 0.3
+    });
+    this.mesh = new THREE.Mesh(geometry, material);
+    this.mesh.position.set(x, y, z);
+    this.mesh.castShadow = true;
+    
+    this.collected = false;
+    this.rotation = 0;
+    this.bobOffset = 0;
+    
+    gameState.scene.add(this.mesh);
+  }
+  
+  update() {
+    if (this.collected) return;
+    
+    this.rotation += 0.05;
+    this.mesh.rotation.y = this.rotation;
+    
+    this.bobOffset += 0.05;
+    this.mesh.position.y += Math.sin(this.bobOffset) * 0.01;
+    
+    // Check collision with player
+    if (gameState.player) {
+      const dx = this.mesh.position.x - gameState.player.mesh.position.x;
+      const dy = this.mesh.position.y - gameState.player.mesh.position.y;
+      const dz = this.mesh.position.z - gameState.player.mesh.position.z;
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      
+      if (dist < 1) {
+        this.collect();
+      }
+    }
+  }
+  
+  collect() {
+    this.collected = true;
+    gameState.scene.remove(this.mesh);
+    gameState.score += 10;
+    
+    // Check for ability unlocks
+    if (!gameState.abilities.karateKick && gameState.score >= gameState.abilityThresholds.karateKick) {
+      gameState.abilities.karateKick = true;
+      if (window.logs && window.logs.game_info) {
+        window.logs.game_info.push({
+          data: { event: "ability_unlocked", ability: "karateKick" },
+          framecount: gameState.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    }
+    
+    if (!gameState.abilities.doubleJump && gameState.score >= gameState.abilityThresholds.doubleJump) {
+      gameState.abilities.doubleJump = true;
+      if (window.logs && window.logs.game_info) {
+        window.logs.game_info.push({
+          data: { event: "ability_unlocked", ability: "doubleJump" },
+          framecount: gameState.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    }
+    
+    if (!gameState.abilities.hookSwing && gameState.score >= gameState.abilityThresholds.hookSwing) {
+      gameState.abilities.hookSwing = true;
+      if (window.logs && window.logs.game_info) {
+        window.logs.game_info.push({
+          data: { event: "ability_unlocked", ability: "hookSwing" },
+          framecount: gameState.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    }
+  }
+}
+
+export class Barrier {
+  constructor(x, y, z, width, height, depth) {
+    const geometry = new THREE.BoxGeometry(width, height, depth);
+    const material = new THREE.MeshStandardMaterial({ 
+      color: 0x9664c8,
+      transparent: true,
+      opacity: 0.8
+    });
+    this.mesh = new THREE.Mesh(geometry, material);
+    this.mesh.position.set(x, y, z);
+    this.mesh.castShadow = true;
+    this.mesh.receiveShadow = true;
+    
+    this.size = new THREE.Vector3(width, height, depth);
+    
+    gameState.scene.add(this.mesh);
+  }
+}
+
+export class Checkpoint {
+  constructor(x, y, z) {
+    const geometry = new THREE.CylinderGeometry(0.3, 0.3, 2, 16);
+    const material = new THREE.MeshStandardMaterial({ 
+      color: 0x646464
+    });
+    this.mesh = new THREE.Mesh(geometry, material);
+    this.mesh.position.set(x, y, z);
+    this.mesh.castShadow = true;
+    
+    // Add flag
+    const flagGeometry = new THREE.PlaneGeometry(1, 0.6);
+    const flagMaterial = new THREE.MeshStandardMaterial({ 
+      color: 0xffff00,
+      side: THREE.DoubleSide
+    });
+    this.flag = new THREE.Mesh(flagGeometry, flagMaterial);
+    this.flag.position.set(0.5, 0.7, 0);
+    this.mesh.add(this.flag);
+    
+    this.activated = false;
+    
+    gameState.scene.add(this.mesh);
+  }
+  
+  update() {
+    if (this.activated) return;
+    
+    if (gameState.player) {
+      const dx = this.mesh.position.x - gameState.player.mesh.position.x;
+      const dy = this.mesh.position.y - gameState.player.mesh.position.y;
+      const dz = this.mesh.position.z - gameState.player.mesh.position.z;
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      
+      if (dist < 2) {
+        this.activate();
+      }
+    }
+  }
+  
+  activate() {
+    this.activated = true;
+    this.flag.material.color.setHex(0x00ff00);
+    gameState.lastCheckpoint = {
+      x: this.mesh.position.x,
+      y: this.mesh.position.y + 2,
+      z: this.mesh.position.z
+    };
+    
+    if (window.logs && window.logs.game_info) {
+      window.logs.game_info.push({
+        data: { event: "checkpoint_activated", x: this.mesh.position.x, y: this.mesh.position.y, z: this.mesh.position.z },
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  }
+}
+
+export class Portal {
+  constructor(x, y, z) {
+    const geometry = new THREE.TorusGeometry(1.5, 0.3, 16, 32);
+    const material = new THREE.MeshStandardMaterial({ 
+      color: 0x6496ff,
+      emissive: 0x6496ff,
+      emissiveIntensity: 0.5
+    });
+    this.mesh = new THREE.Mesh(geometry, material);
+    this.mesh.position.set(x, y, z);
+    this.mesh.rotation.x = Math.PI / 2;
+    
+    // Add inner glow
+    const innerGeometry = new THREE.CircleGeometry(1.2, 32);
+    const innerMaterial = new THREE.MeshBasicMaterial({ 
+      color: 0x3264c8,
+      transparent: true,
+      opacity: 0.5
+    });
+    this.inner = new THREE.Mesh(innerGeometry, innerMaterial);
+    this.inner.rotation.x = -Math.PI / 2;
+    this.mesh.add(this.inner);
+    
+    this.rotation = 0;
+    
+    gameState.scene.add(this.mesh);
+  }
+  
+  update() {
+    this.rotation += 0.02;
+    this.mesh.rotation.z = this.rotation;
+    
+    // Check if player reached portal
+    if (gameState.player) {
+      const dx = this.mesh.position.x - gameState.player.mesh.position.x;
+      const dy = this.mesh.position.y - gameState.player.mesh.position.y;
+      const dz = this.mesh.position.z - gameState.player.mesh.position.z;
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      
+      if (dist < 2) {
+        // Check if all abilities unlocked
+        if (gameState.abilities.doubleJump && 
+            gameState.abilities.hookSwing && 
+            gameState.abilities.karateKick) {
+          this.triggerWin();
+        }
+      }
+    }
+  }
+  
+  triggerWin() {
+    gameState.gamePhase = "GAME_OVER_WIN";
+    if (window.logs && window.logs.game_info) {
+      window.logs.game_info.push({
+        data: { 
+          gamePhase: "GAME_OVER_WIN", 
+          score: gameState.score,
+          abilities: gameState.abilities 
+        },
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  }
+}
+
+export class SwingPoint {
+  constructor(x, y, z) {
+    const geometry = new THREE.SphereGeometry(0.3, 16, 16);
+    const material = new THREE.MeshStandardMaterial({ 
+      color: 0x646464
+    });
+    this.mesh = new THREE.Mesh(geometry, material);
+    this.mesh.position.set(x, y, z);
+    this.mesh.castShadow = true;
+    
+    // Add hook
+    const hookGeometry = new THREE.TorusGeometry(0.4, 0.08, 8, 16, Math.PI);
+    const hookMaterial = new THREE.MeshStandardMaterial({ color: 0xb4b4b4 });
+    this.hook = new THREE.Mesh(hookGeometry, hookMaterial);
+    this.hook.position.y = -0.5;
+    this.hook.rotation.x = Math.PI;
+    this.mesh.add(this.hook);
+    
+    this.rotation = 0;
+    
+    gameState.scene.add(this.mesh);
+  }
+  
+  update() {
+    this.rotation += 0.02;
+    this.hook.rotation.z = Math.sin(this.rotation) * 0.3;
+  }
+}
+</code>
+
+<code filename="game.js">
+// game.js - Main game loop with three.js
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+import { 
+  gameState, 
+  CANVAS_WIDTH, 
+  CANVAS_HEIGHT,
+  GAME_PHASES,
+  CONTROL_MODES,
+  getGameState 
+} from './globals.js';
+
+import { Player } from './entities.js';
+import { setupRenderer } from './renderer.js';
+import { setupCamera, updateCamera } from './camera.js';
+import { setupLighting } from './lighting.js';
+import { handleInput, setupInputHandlers, isKeyPressed } from './input.js';
+import { createLevel } from './level.js';
+
+// Initialize logs
+window.logs = {
+  game_info: [],
+  player_info: [],
+  inputs: []
+};
+
+// Setup scene
+function setupScene() {
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x87ceeb);
+  scene.fog = new THREE.Fog(0x87ceeb, 20, 80);
+  gameState.scene = scene;
+}
+
+// Initialize game
+function init() {
+  // Seed random
+  Math.seedrandom(42);
+  
+  // Setup three.js
+  setupScene();
+  setupRenderer();
+  setupCamera();
+  setupLighting();
+  
+  // Create UI canvas
+  createUICanvas();
+  
+  // Setup input handlers
+  setupInputHandlers();
+  
+  // Initialize game
+  gameState.currentLevel = 1;
+  createLevel();
+  gameState.player = new Player(0, 2, 5);
+  
+  // Log initial state
+  window.logs.game_info.push({
+    data: { gamePhase: gameState.gamePhase, level: gameState.currentLevel },
+    framecount: 0,
+    timestamp: Date.now()
+  });
+  
+  // Log initial player position
+  window.logs.player_info.push({
+    screen_x: 100,
+    screen_y: 300,
+    game_x: 0,
+    game_y: 2,
+    game_z: 5,
+    framecount: 0,
+    timestamp: Date.now()
+  });
+}
+
+// Create 2D UI canvas overlay
+let uiCanvas, uiContext;
+function createUICanvas() {
+  uiCanvas = document.createElement('canvas');
+  uiCanvas.width = CANVAS_WIDTH;
+  uiCanvas.height = CANVAS_HEIGHT;
+  uiCanvas.style.position = 'absolute';
+  uiCanvas.style.top = '0';
+  uiCanvas.style.left = '0';
+  uiCanvas.style.pointerEvents = 'none';
+  uiCanvas.style.zIndex = '1000';
+  uiCanvas.style.margin = '0';
+  uiCanvas.style.padding = '0';
+  
+  gameState.gameContainer.appendChild(uiCanvas);
+  uiContext = uiCanvas.getContext('2d');
+}
+
+// Handle phase control keys
+document.addEventListener('keydown', (event) => {
+  if (event.keyCode === 13 && gameState.gamePhase === GAME_PHASES.START) { // ENTER
+    startGame();
+  }
+  
+  if (event.keyCode === 27) { // ESC
+    if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+      gameState.gamePhase = GAME_PHASES.PAUSED;
+      window.logs.game_info.push({
+        data: { gamePhase: GAME_PHASES.PAUSED },
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+      });
+    } else if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+      gameState.gamePhase = GAME_PHASES.PLAYING;
+      window.logs.game_info.push({
+        data: { gamePhase: GAME_PHASES.PLAYING },
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  }
+  
+  if (event.keyCode === 82) { // R
+    if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN ||
+        gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE) {
+      resetGame();
+    }
+  }
+  
+  // Gameplay keys
+  if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+    if (event.keyCode === 32) { // SPACE
+      if (gameState.player) {
+        gameState.player.jump();
+      }
+    }
+    
+    if (event.keyCode === 90) { // Z
+      if (gameState.player) {
+        gameState.player.karateKick();
+      }
+    }
+  }
+});
+
+function startGame() {
+  gameState.gamePhase = GAME_PHASES.PLAYING;
+  gameState.testFrameCount = 0;
+  gameState.testPhase = 0;
+  
+  window.logs.game_info.push({
+    data: { gamePhase: GAME_PHASES.PLAYING, level: gameState.currentLevel },
+    framecount: gameState.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+// Update game
+function updateGame() {
+  gameState.frameCount++;
+  
+  // Handle input
+  handleInput();
+  
+  // Update player
+  if (gameState.player) {
+    gameState.player.update();
+  }
+  
+  // Update enemies
+  gameState.enemies.forEach(enemy => {
+    enemy.update();
+  });
+  
+  // Update coins
+  gameState.coins.forEach(coin => {
+    coin.update();
+  });
+  
+  // Update checkpoints
+  gameState.checkpoints.forEach(checkpoint => {
+    checkpoint.update();
+  });
+  
+  // Update swing points
+  gameState.swingPoints.forEach(swing => {
+    swing.update();
+  });
+  
+  // Update portal
+  if (gameState.portal) {
+    gameState.portal.update();
+  }
+  
+  // Update camera
+  updateCamera();
+}
+
+// Render UI
+function renderUI() {
+  uiContext.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  if (gameState.gamePhase === GAME_PHASES.START) {
+    renderStartScreen();
+  } else if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+    renderHUD();
+  } else if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+    renderHUD();
+    renderPausedOverlay();
+  } else if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN || 
+             gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE) {
+    renderGameOver();
+  }
+}
+
+function renderStartScreen() {
+  uiContext.fillStyle = 'rgba(0, 0, 0, 0.7)';
+  uiContext.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  uiContext.fillStyle = 'white';
+  uiContext.font = 'bold 32px Arial';
+  uiContext.textAlign = 'center';
+  uiContext.fillText('SpongeBob:', CANVAS_WIDTH / 2, 70);
+  uiContext.fillText('The Cosmic Shake', CANVAS_WIDTH / 2, 110);
+  
+  uiContext.font = '14px Arial';
+  uiContext.fillText('Navigate cosmic platforms in 3D and collect coins!', CANVAS_WIDTH / 2, 150);
+  uiContext.fillText('6 levels of increasing difficulty', CANVAS_WIDTH / 2, 170);
+  
+  uiContext.font = '12px Arial';
+  uiContext.textAlign = 'left';
+  uiContext.fillText('Controls:', 200, 205);
+  uiContext.fillText('WASD or Arrow Keys - Move in 3D', 200, 225);
+  uiContext.fillText('Space - Jump', 200, 245);
+  uiContext.fillText('Z - Karate Kick (unlock at 25 coins)', 200, 265);
+  uiContext.fillText('Shift - Hook-Swing (unlock at 100 coins)', 200, 285);
+  
+  uiContext.fillStyle = 'yellow';
+  uiContext.textAlign = 'center';
+  uiContext.font = '20px Arial';
+  if (gameState.frameCount % 60 < 30) {
+    uiContext.fillText('PRESS ENTER TO START', CANVAS_WIDTH / 2, 340);
+  }
+  
+  // Show current level
+  uiContext.fillStyle = 'lightblue';
+  uiContext.font = 'bold 16px Arial';
+  uiContext.fillText(`Level ${gameState.currentLevel} of ${gameState.maxLevel}`, CANVAS_WIDTH / 2, 370);
+  
+  // Show difficulty
+  let difficulty = '';
+  if (gameState.currentLevel <= 2) difficulty = 'EASY';
+  else if (gameState.currentLevel <= 4) difficulty = 'MEDIUM';
+  else difficulty = 'HARD';
+  uiContext.fillStyle = difficulty === 'EASY' ? 'lightgreen' : difficulty === 'MEDIUM' ? 'yellow' : 'orange';
+  uiContext.font = '14px Arial';
+  uiContext.fillText(difficulty, CANVAS_WIDTH / 2, 390);
+}
+
+function renderHUD() {
+  // Level indicator
+  uiContext.fillStyle = 'white';
+  uiContext.textAlign = 'right';
+  uiContext.font = 'bold 18px Arial';
+  uiContext.fillText(`Level ${gameState.currentLevel}/${gameState.maxLevel}`, CANVAS_WIDTH - 20, 25);
+  
+  // Health hearts
+  uiContext.fillStyle = 'red';
+  for (let i = 0; i < gameState.health; i++) {
+    uiContext.beginPath();
+    const x = 20 + i * 30;
+    const y = 20;
+    uiContext.moveTo(x, y + 5);
+    uiContext.bezierCurveTo(x - 5, y, x - 10, y + 5, x, y + 15);
+    uiContext.bezierCurveTo(x + 10, y + 5, x + 5, y, x, y + 5);
+    uiContext.fill();
+  }
+  
+  // Score
+  uiContext.fillStyle = 'white';
+  uiContext.textAlign = 'left';
+  uiContext.font = '16px Arial';
+  uiContext.fillText(`Coins: ${Math.floor(gameState.score / 10)}`, 20, 60);
+  
+  // Objective display for Level 1
+  if (gameState.currentLevel === 1) {
+    uiContext.fillStyle = 'rgba(255, 255, 255, 0.9)';
+    uiContext.textAlign = 'center';
+    uiContext.font = 'bold 14px Arial';
+    uiContext.fillText('OBJECTIVE: Collect coins and reach the portal!', CANVAS_WIDTH / 2, CANVAS_HEIGHT - 30);
+    uiContext.font = '12px Arial';
+    uiContext.fillText('Unlock all abilities (25, 50, 100 coins) to enter the portal', CANVAS_WIDTH / 2, CANVAS_HEIGHT - 10);
+  }
+  
+  // Abilities
+  uiContext.font = '12px Arial';
+  uiContext.textAlign = 'left';
+  let yOffset = 80;
+  
+  if (gameState.abilities.karateKick) {
+    uiContext.fillStyle = 'yellow';
+    uiContext.fillText('✓ Karate Kick (Z)', 20, yOffset);
+    yOffset += 20;
+  }
+  
+  if (gameState.abilities.doubleJump) {
+    uiContext.fillStyle = 'yellow';
+    uiContext.fillText('✓ Double Jump', 20, yOffset);
+    yOffset += 20;
+  }
+  
+  if (gameState.abilities.hookSwing) {
+    uiContext.fillStyle = 'yellow';
+    uiContext.fillText('✓ Hook-Swing (Shift)', 20, yOffset);
+    yOffset += 20;
+  }
+  
+  // Next unlock
+  if (!gameState.abilities.karateKick) {
+    uiContext.fillStyle = 'rgba(255, 255, 255, 0.7)';
+    uiContext.fillText(`Next: Karate Kick (${gameState.abilityThresholds.karateKick / 10} coins)`, 20, yOffset);
+  } else if (!gameState.abilities.doubleJump) {
+    uiContext.fillStyle = 'rgba(255, 255, 255, 0.7)';
+    uiContext.fillText(`Next: Double Jump (${gameState.abilityThresholds.doubleJump / 10} coins)`, 20, yOffset);
+  } else if (!gameState.abilities.hookSwing) {
+    uiContext.fillStyle = 'rgba(255, 255, 255, 0.7)';
+    uiContext.fillText(`Next: Hook-Swing (${gameState.abilityThresholds.hookSwing / 10} coins)`, 20, yOffset);
+  }
+}
+
+function renderPausedOverlay() {
+  uiContext.fillStyle = 'rgba(0, 0, 0, 0.6)';
+  uiContext.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  uiContext.fillStyle = 'white';
+  uiContext.textAlign = 'center';
+  uiContext.font = 'bold 40px Arial';
+  uiContext.fillText('PAUSED', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 20);
+  
+  uiContext.font = '16px Arial';
+  uiContext.fillText('Press ESC to resume', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 30);
+}
+
+function renderGameOver() {
+  uiContext.fillStyle = 'rgba(0, 0, 0, 0.8)';
+  uiContext.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  uiContext.textAlign = 'center';
+  
+  if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN) {
+    uiContext.fillStyle = '#00ff00';
+    uiContext.font = 'bold 48px Arial';
+    
+    if (gameState.currentLevel >= gameState.maxLevel) {
+      uiContext.fillText('GAME COMPLETE!', CANVAS_WIDTH / 2, 100);
+      uiContext.fillStyle = 'white';
+      uiContext.font = '20px Arial';
+      uiContext.fillText('You finished all levels!', CANVAS_WIDTH / 2, 160);
+    } else {
+      uiContext.fillText('LEVEL COMPLETE!', CANVAS_WIDTH / 2, 100);
+      uiContext.fillStyle = 'white';
+      uiContext.font = '20px Arial';
+      uiContext.fillText(`Level ${gameState.currentLevel} finished!`, CANVAS_WIDTH / 2, 160);
+    }
+    
+    uiContext.fillText(`Score: ${Math.floor(gameState.score / 10)} coins`, CANVAS_WIDTH / 2, 200);
+  } else {
+    uiContext.fillStyle = '#ff6464';
+    uiContext.font = 'bold 48px Arial';
+    uiContext.fillText('GAME OVER', CANVAS_WIDTH / 2, 120);
+    
+    uiContext.fillStyle = 'white';
+    uiContext.font = '20px Arial';
+    uiContext.fillText(`You collected: ${Math.floor(gameState.score / 10)} coins`, CANVAS_WIDTH / 2, 180);
+  }
+  
+  uiContext.fillStyle = 'white';
+  uiContext.font = '18px Arial';
+  uiContext.fillText('Press R to restart', CANVAS_WIDTH / 2, 260);
+  
+  // Show abilities
+  uiContext.font = '14px Arial';
+  let yPos = 300;
+  uiContext.fillText('Abilities Unlocked:', CANVAS_WIDTH / 2, yPos);
+  yPos += 25;
+  
+  if (gameState.abilities.karateKick) {
+    uiContext.fillStyle = 'yellow';
+    uiContext.fillText('✓ Karate Kick', CANVAS_WIDTH / 2, yPos);
+    yPos += 20;
+  }
+  if (gameState.abilities.doubleJump) {
+    uiContext.fillStyle = 'yellow';
+    uiContext.fillText('✓ Double Jump', CANVAS_WIDTH / 2, yPos);
+    yPos += 20;
+  }
+  if (gameState.abilities.hookSwing) {
+    uiContext.fillStyle = 'yellow';
+    uiContext.fillText('✓ Hook-Swing', CANVAS_WIDTH / 2, yPos);
+  }
+}
+
+function resetGame() {
+  // Clear scene
+  while(gameState.scene.children.length > 0) { 
+    gameState.scene.remove(gameState.scene.children[0]); 
+  }
+  
+  // If won current level and not at max, advance to next level
+  if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN && gameState.currentLevel < gameState.maxLevel) {
+    gameState.currentLevel++;
+  } else {
+    // Reset to level 1
+    gameState.currentLevel = 1;
+  }
+  
+  // Reset game state
+  gameState.score = 0;
+  gameState.health = gameState.maxHealth;
+  gameState.abilities = {
+    doubleJump: false,
+    karateKick: false,
+    hookSwing: false
+  };
+  gameState.lastCheckpoint = { x: 0, y: 2, z: 5 };
+  gameState.invincible = false;
+  gameState.invincibilityTimer = 0;
+  gameState.testFrameCount = 0;
+  gameState.testPhase = 0;
+  
+  // Recreate lighting
+  setupLighting();
+  
+  // Recreate level and player
+  createLevel();
+  gameState.player = new Player(0, 2, 5);
+  
+  // Return to start screen
+  gameState.gamePhase = GAME_PHASES.START;
+  
+  window.logs.game_info.push({
+    data: { gamePhase: GAME_PHASES.START, event: "reset", level: gameState.currentLevel },
+    framecount: gameState.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+// Main game loop
+function gameLoop() {
+  requestAnimationFrame(gameLoop);
+  
+  if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+    updateGame();
+  }
+  
+  // Render 3D scene
+  if (gameState.renderer && gameState.scene && gameState.camera) {
+    gameState.renderer.render(gameState.scene, gameState.camera);
+  }
+  
+  // Render UI
+  renderUI();
+}
+
+// Control mode switching
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  gameState.testFrameCount = 0;
+  gameState.testPhase = 0;
+  
+  const buttons = document.querySelectorAll('.control-button');
+  buttons.forEach(btn => btn.classList.remove('active'));
+  
+  if (mode === CONTROL_MODES.HUMAN) {
+    document.getElementById('humanModeBtn').classList.add('active');
+  } else if (mode === CONTROL_MODES.TEST_1) {
+    document.getElementById('test_1_ModeBtn').classList.add('active');
+  } else if (mode === CONTROL_MODES.TEST_2) {
+    document.getElementById('test_2_ModeBtn').classList.add('active');
+  }
+};
+
+// Start game
+init();
+gameLoop();
+</code>
+
+<code filename="input.js">
+// input.js - Input handling for different control modes
+import { gameState, CONTROL_MODES } from './globals.js';
+
+const keys = {};
+
+export function setupInputHandlers() {
+  document.addEventListener('keydown', (event) => {
+    keys[event.keyCode] = true;
+    
+    if (window.logs && window.logs.inputs) {
+      window.logs.inputs.push({
+        input_type: "keydown",
+        data: { key: event.key, keyCode: event.keyCode },
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  });
+  
+  document.addEventListener('keyup', (event) => {
+    keys[event.keyCode] = false;
+    
+    if (window.logs && window.logs.inputs) {
+      window.logs.inputs.push({
+        input_type: "keyup",
+        data: { key: event.key, keyCode: event.keyCode },
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  });
+}
+
+export function handleInput() {
+  if (!gameState.player) return;
+  
+  switch (gameState.controlMode) {
+    case CONTROL_MODES.HUMAN:
+      handleHumanInput();
+      break;
+    case CONTROL_MODES.TEST_1:
+      handleTest1Input();
+      break;
+    case CONTROL_MODES.TEST_2:
+      handleTest2Input();
+      break;
+  }
+}
+
+function handleHumanInput() {
+  // Left/Right movement (A/D keys)
+  if (keys[65]) { // A
+    gameState.player.moveLeft();
+  }
+  if (keys[68]) { // D
+    gameState.player.moveRight();
+  }
+  
+  // Forward/Backward movement (W/S keys) - now moves along Z axis
+  if (keys[87]) { // W
+    gameState.player.moveForward();
+  }
+  if (keys[83]) { // S
+    gameState.player.moveBackward();
+  }
+  
+  // Alternative: Arrow keys
+  if (keys[37]) { // LEFT
+    gameState.player.moveLeft();
+  }
+  if (keys[39]) { // RIGHT
+    gameState.player.moveRight();
+  }
+  if (keys[38]) { // UP - forward
+    gameState.player.moveForward();
+  }
+  if (keys[40]) { // DOWN - backward
+    gameState.player.moveBackward();
+  }
+  
+  // Hook-swing
+  if (keys[16]) { // SHIFT
+    gameState.player.hookSwing();
+  }
+}
+
+function handleTest1Input() {
+  // TEST_1: Basic movement and jump testing
+  gameState.testFrameCount++;
+  
+  const phase = Math.floor(gameState.testFrameCount / 180) % 3;
+  
+  if (phase === 0) {
+    gameState.player.moveForward();
+  } else if (phase === 1) {
+    gameState.player.moveBackward();
+  } else {
+    if (gameState.testFrameCount % 30 === 0) {
+      gameState.player.jump();
+    }
+  }
+}
+
+function handleTest2Input() {
+  // TEST_2: Win condition test
+  gameState.testFrameCount++;
+  
+  gameState.player.moveForward();
+  
+  if (gameState.testFrameCount % 60 === 30) {
+    gameState.player.jump();
+  }
+  
+  if (gameState.abilities.karateKick && gameState.testFrameCount % 90 === 0) {
+    gameState.player.karateKick();
+  }
+  
+  if (gameState.abilities.hookSwing && gameState.player.mesh.position.z > 15) {
+    gameState.player.hookSwing();
+  }
+}
+
+export function isKeyPressed(keyCode) {
+  return keys[keyCode] || false;
+}
+</code>

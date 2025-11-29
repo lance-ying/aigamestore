@@ -1,0 +1,323 @@
+<analysis>
+- Issue identified: 
+  1. Portal placement may not be working due to raycasting or camera angle issues
+  2. Arrow keys are currently used for player movement, but user wants them for camera control
+  3. Camera rotation (yaw/pitch) exists in gameState but is never updated by player input
+  
+- Files affected: 
+  1. input.js - Need to separate WASD (movement) from Arrow keys (camera rotation), add camera rotation logic
+  2. index.html - Update controls description to reflect new control scheme
+  
+- Changes needed:
+  1. Remove arrow key codes (37, 38, 39, 40) from movement input in processInput()
+  2. Add arrow key handling to rotate camera (yaw and pitch adjustments)
+  3. Update HTML controls text to show: "WASD: Move | Arrows: Camera | Space: Jump | Z/Click: Blue Portal | X/Shift: Orange Portal"
+  4. Add camera rotation speed constant
+</analysis>
+
+<code filename="input.js">
+// input.js - Input handling
+import { gameState, logInput } from './globals.js';
+import { getCameraDirection, getCameraRightVector } from './camera.js';
+import { castRayForPortal } from './physics.js';
+import { Portal } from './entities.js';
+
+const CAMERA_ROTATION_SPEED = 0.03;
+
+export function setupInput() {
+    // Keyboard input
+    document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('keyup', handleKeyUp);
+    
+    // Mouse input for portal firing (optional)
+    document.addEventListener('click', handleMouseClick);
+}
+
+function handleKeyDown(event) {
+    logInput('keydown', event.key, event.keyCode);
+    gameState.keys[event.keyCode] = true;
+    
+    // Prevent default for game keys
+    if ([37, 38, 39, 40, 32, 27, 13, 82].includes(event.keyCode)) {
+        event.preventDefault();
+    }
+    
+    // Phase controls
+    if (event.keyCode === 13) { // ENTER
+        if (gameState.gamePhase === "START") {
+            startGame();
+        } else if (gameState.gamePhase === "GAME_OVER_WIN") {
+            if (gameState.currentLevel < gameState.maxLevels) {
+                nextLevel();
+            }
+        }
+    }
+    
+    if (event.keyCode === 27) { // ESC
+        if (gameState.gamePhase === "PLAYING") {
+            pauseGame();
+        } else if (gameState.gamePhase === "PAUSED") {
+            resumeGame();
+        }
+    }
+    
+    if (event.keyCode === 82) { // R
+        if (gameState.gamePhase === "GAME_OVER_WIN" || 
+            gameState.gamePhase === "GAME_OVER_LOSE" ||
+            gameState.gamePhase === "PAUSED") {
+            restartGame();
+        }
+    }
+    
+    // Gameplay controls
+    if (gameState.gamePhase === "PLAYING") {
+        // Portal firing
+        if (event.keyCode === 90) { // Z - Blue portal
+            firePortal(true);
+        }
+        if (event.keyCode === 88 || event.keyCode === 16) { // X or Shift - Orange portal
+            firePortal(false);
+        }
+    }
+}
+
+function handleKeyUp(event) {
+    logInput('keyup', event.key, event.keyCode);
+    gameState.keys[event.keyCode] = false;
+}
+
+function handleMouseClick(event) {
+    if (gameState.gamePhase === "PLAYING") {
+        // Left click = blue portal
+        firePortal(true);
+    }
+}
+
+export function processInput() {
+    if (gameState.gamePhase !== "PLAYING" || !gameState.player) return;
+    
+    const player = gameState.player;
+    const keys = gameState.keys;
+    
+    // Camera rotation with arrow keys
+    if (keys[37]) { // Left arrow - rotate left
+        gameState.cameraRotation.yaw -= CAMERA_ROTATION_SPEED;
+    }
+    if (keys[39]) { // Right arrow - rotate right
+        gameState.cameraRotation.yaw += CAMERA_ROTATION_SPEED;
+    }
+    if (keys[38]) { // Up arrow - look up
+        gameState.cameraRotation.pitch = Math.min(gameState.cameraRotation.pitch + CAMERA_ROTATION_SPEED, Math.PI / 2 - 0.1);
+    }
+    if (keys[40]) { // Down arrow - look down
+        gameState.cameraRotation.pitch = Math.max(gameState.cameraRotation.pitch - CAMERA_ROTATION_SPEED, -Math.PI / 2 + 0.1);
+    }
+    
+    // Movement with WASD only
+    const cameraDir = getCameraDirection();
+    const cameraRight = getCameraRightVector();
+    
+    // Forward/backward (W/S)
+    if (keys[87]) { // W
+        const moveDir = new THREE.Vector3(cameraDir.x, 0, cameraDir.z);
+        player.move(moveDir);
+    }
+    if (keys[83]) { // S
+        const moveDir = new THREE.Vector3(-cameraDir.x, 0, -cameraDir.z);
+        player.move(moveDir);
+    }
+    
+    // Strafe left/right (A/D)
+    if (keys[65]) { // A
+        player.move(cameraRight.clone().negate());
+    }
+    if (keys[68]) { // D
+        player.move(cameraRight);
+    }
+    
+    // Jump (Space)
+    if (keys[32]) {
+        player.jump();
+    }
+}
+
+function firePortal(isBlue) {
+    // Cast ray from camera center
+    const origin = gameState.camera.position.clone();
+    const direction = getCameraDirection();
+    
+    const hit = castRayForPortal(origin, direction);
+    
+    if (hit) {
+        // Create or move portal
+        if (isBlue) {
+            if (!gameState.bluePortal) {
+                gameState.bluePortal = new Portal(true);
+            }
+            gameState.bluePortal.place(hit.position, hit.normal, hit.surface);
+        } else {
+            if (!gameState.orangePortal) {
+                gameState.orangePortal = new Portal(false);
+            }
+            gameState.orangePortal.place(hit.position, hit.normal, hit.surface);
+        }
+    }
+}
+
+function startGame() {
+    gameState.gamePhase = "PLAYING";
+    import('./levels.js').then(module => {
+        module.loadLevel(1);
+    });
+}
+
+function nextLevel() {
+    gameState.currentLevel++;
+    gameState.gamePhase = "PLAYING";
+    import('./levels.js').then(module => {
+        module.loadLevel(gameState.currentLevel);
+    });
+}
+
+function pauseGame() {
+    gameState.gamePhase = "PAUSED";
+}
+
+function resumeGame() {
+    gameState.gamePhase = "PLAYING";
+}
+
+function restartGame() {
+    gameState.gamePhase = "START";
+    gameState.score = 0;
+    gameState.currentLevel = 1;
+    
+    // Reset player
+    if (gameState.player) {
+        gameState.player.mesh.position.set(0, 2, 0);
+        gameState.player.velocity.set(0, 0, 0);
+    }
+}
+</code>
+
+<code filename="index.html">
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Portal Chambers</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        html, body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #000;
+            font-family: Arial, sans-serif;
+        }
+        
+        body {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        #game-container {
+            width: 600px;
+            height: 400px;
+            position: relative;
+            overflow: hidden;
+            margin: 0;
+            padding: 0;
+            border: 2px solid #333;
+        }
+        
+        canvas {
+            display: block;
+            margin: 0;
+            padding: 0;
+        }
+        
+        .game-header {
+            text-align: center;
+            margin-bottom: 20px;
+            color: #fff;
+        }
+        
+        .game-header h1 {
+            font-size: 32px;
+            margin-bottom: 10px;
+            color: #00ccff;
+            text-shadow: 0 0 10px #00ccff;
+        }
+        
+        .control-buttons {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        
+        .control-button {
+            padding: 8px 16px;
+            cursor: pointer;
+            background: #444;
+            color: #fff;
+            border: none;
+            border-radius: 4px;
+            font-size: 14px;
+            transition: background 0.3s;
+        }
+        
+        .control-button:hover {
+            background: #555;
+        }
+        
+        .control-button.active {
+            background: #007bff;
+        }
+        
+        .game-description {
+            color: #ccc;
+            max-width: 600px;
+            margin: 0 auto 15px auto;
+            line-height: 1.6;
+            font-size: 14px;
+        }
+        
+        .game-controls {
+            color: #aaa;
+            max-width: 600px;
+            margin: 0 auto 20px auto;
+            line-height: 1.4;
+            font-size: 13px;
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/seedrandom/3.0.5/seedrandom.min.js"></script>
+</head>
+<body>
+    <div class="game-header">
+        <h1>PORTAL CHAMBERS</h1>
+        <div class="control-buttons">
+            <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+            <button id="test_1ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST 1 (Portal Mechanics)</button>
+            <button id="test_2ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST 2 (Win Condition)</button>
+        </div>
+        <p class="game-description">
+            Navigate through test chambers using your dual portal device. Fire blue and orange portals on white surfaces to create instant teleportation connections. Use portals to reach platforms, cross gaps, and solve physics-based puzzles. Momentum is preserved through portals - enter fast, exit fast! Complete each chamber by reaching the exit door to advance to the next challenge.
+        </p>
+        <p class="game-controls">
+            <strong>Controls:</strong> WASD: Move | Arrow Keys: Camera | Space: Jump | Z/Click: Blue Portal | X/Shift: Orange Portal | ESC: Pause | R: Restart | Enter: Start
+        </p>
+    </div>
+    <script type="module" src="game.js"></script>
+</body>
+</html>
+</code>

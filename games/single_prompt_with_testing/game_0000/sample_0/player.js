@@ -70,35 +70,14 @@ export class Player {
     // Check ground collision
     this.checkPlatformCollisions();
 
-    // Keep in bounds
-    if (this.x < 0) this.x = 0;
-    if (this.x > CANVAS_WIDTH - this.width) this.x = CANVAS_WIDTH - this.width;
-
-    // Room transitions
-    if (this.y < -50) {
-      this.transitionRoom(-1);
-    } else if (this.y > CANVAS_HEIGHT + 50) {
-      this.transitionRoom(1);
-    }
+    // Keep in bounds (left and right)
+    if (this.x < 10) this.x = 10;
+    if (this.x > CANVAS_WIDTH - 10 - this.width) this.x = CANVAS_WIDTH - 10 - this.width;
 
     // Prevent falling into void
-    if (this.y > CANVAS_HEIGHT + 200) {
+    if (this.y > CANVAS_HEIGHT + 100) {
       this.takeDamage(1);
       this.respawn();
-    }
-  }
-
-  transitionRoom(direction) {
-    const newRoom = gameState.currentRoom + direction;
-    if (newRoom >= 0 && newRoom < gameState.rooms.length) {
-      gameState.currentRoom = newRoom;
-      if (direction < 0) {
-        this.y = CANVAS_HEIGHT - 50;
-        this.vy = 0;
-      } else {
-        this.y = 30;
-        this.vy = 0;
-      }
     }
   }
 
@@ -253,7 +232,6 @@ export class Player {
     this.y = 100;
     this.vx = 0;
     this.vy = 0;
-    gameState.currentRoom = 0;
   }
 
   render() {

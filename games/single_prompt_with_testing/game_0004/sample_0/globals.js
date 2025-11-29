@@ -1,6 +1,6 @@
 // globals.js - Global game state and constants
 export const CANVAS_WIDTH = 600;
-export const CANVAS_HEIGHT = 400;
+export const CANVAS_HEIGHT = 450;
 
 export const GAME_PHASES = {
   START: "START",
@@ -39,7 +39,7 @@ export const gameState = {
   currentDialogue: "",
   enemiesDefeated: 0,
   enemiesSpared: 0,
-  totalEnemies: 3,
+  totalEnemies: 9,
   damageFlash: 0
 };
 

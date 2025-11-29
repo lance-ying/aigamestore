@@ -183,7 +183,7 @@ export function drawUI(p) {
 }
 
 export function drawShop(p) {
-  // Shop background
+  // Shop background overlay
   p.fill(0, 0, 0, 230);
   p.rect(50, 50, CANVAS_WIDTH - 100, CANVAS_HEIGHT - 100);
   

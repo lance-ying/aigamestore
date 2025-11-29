@@ -43,6 +43,7 @@ def main() -> int:
     parser.add_argument("--game_index", type=int, required=False, help="Override next game index for output folder")
     parser.add_argument("--concept", type=str, required=False, help="Path to concept file to drive generation (single_prompt)")
     parser.add_argument("--output_folder", type=str, required=False, help="Custom output folder name under games/")
+    parser.add_argument("--model", type=str, required=False, help="Override model from config (e.g., 'google:gemini-3-pro')")
     parser.add_argument("--debug_prompts", action="store_true", help="Only build and print/save prompts; no model call")
     parser.add_argument("--debug_prompts_out", type=str, required=False, help="Optional file path to save built prompts")
     parser.add_argument("--no-testing", action="store_true", help="Skip automated testing code generation")
@@ -50,7 +51,8 @@ def main() -> int:
 
     cfg = load_config(args.config)
     method = cfg.get("method", "concept_and_game")
-    model = cfg.get("model", "openai:o4-mini")
+    # Use --model flag if provided, otherwise use config, otherwise default
+    model = args.model or cfg.get("model", "openai:o4-mini")
     thinking = bool(cfg.get("thinking", False))
     thinking_budget = cfg.get("thinking_budget")
     temperature = cfg.get("temperature", 1.0)

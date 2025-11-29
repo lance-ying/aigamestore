@@ -1,8 +1,8 @@
 import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, getGameState } from './globals.js';
 import { generatePath, generateValidTowerPositions } from './pathGeneration.js';
 import { handleKeyPressed, updatePlacementPreview } from './input.js';
-import { startWave, updateWaveSpawning, checkWaveStart } from './waveManager.js';
-import { renderStartScreen, renderPauseIndicator, renderGameOverScreen, renderUI, renderPath, renderTowerPreview, renderCommandCenter } from './rendering.js';
+import { updateWaveSpawning } from './waveManager.js';
+import { renderStartScreen, renderMapComplete, renderPauseIndicator, renderGameOverScreen, renderUI, renderPath, renderTowerPreview, renderCommandCenter } from './rendering.js';
 import { get_automated_testing_action } from './automated_testing_controller.js';
 
 const p5 = window.p5;
@@ -19,7 +19,8 @@ let gameInstance = new p5(p => {
       player_info: []
     };
     
-    gameState.path = generatePath();
+    gameState.currentMap = "EASY";
+    gameState.path = generatePath(gameState.currentMap);
     gameState.validTowerPositions = generateValidTowerPositions(gameState.path);
     
     p.logs.game_info.push({
@@ -32,6 +33,11 @@ let gameInstance = new p5(p => {
   p.draw = function() {
     if (gameState.gamePhase === "START") {
       renderStartScreen(p);
+      return;
+    }
+    
+    if (gameState.gamePhase === "MAP_COMPLETE") {
+      renderMapComplete(p);
       return;
     }
     
@@ -68,10 +74,6 @@ let gameInstance = new p5(p => {
     gameState.framesSinceLastAction++;
     
     gameState.gameSpeed = p.keyIsDown(16) ? 2 : 1;
-    
-    if (checkWaveStart()) {
-      startWave();
-    }
     
     updateWaveSpawning(p);
     
@@ -116,7 +118,8 @@ let gameInstance = new p5(p => {
   }
   
   function renderGame(p) {
-    p.background(20, 30, 50);
+    const mapData = gameState.currentMap ? window.MAPS[gameState.currentMap] : { bgColor: [20, 30, 50] };
+    p.background(...mapData.bgColor);
     
     renderPath(p);
     renderCommandCenter(p);
@@ -149,12 +152,12 @@ let gameInstance = new p5(p => {
 });
 
 window.gameInstance = gameInstance;
-// Expose level loading for dev mode
+window.MAPS = { EASY: { name: "Desert Outpost", difficulty: "Easy", bgColor: [40, 35, 25], pathColor: [80, 70, 50], maxWaves: 5, startMoney: 250 }, MEDIUM: { name: "Arctic Base", difficulty: "Medium", bgColor: [25, 30, 40], pathColor: [60, 80, 100], maxWaves: 5, startMoney: 200 }, HARD: { name: "Volcanic Ridge", difficulty: "Hard", bgColor: [30, 20, 20], pathColor: [100, 40, 30], maxWaves: 5, startMoney: 150 } };
+
 window.loadLevel = function(levelNum) {
   const state = window.getGameState ? window.getGameState() : (window.gameState || (window.gameInstance && window.gameInstance.gameState));
   if (state) {
     state.currentLevel = levelNum;
-    // Try common reset/start patterns
     if (typeof resetGame === 'function') {
       resetGame();
     }

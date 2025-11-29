@@ -1,0 +1,104 @@
+The user is reporting that they still can't move forward or backward when pressing the up or down arrow keys. Let me analyze the code to understand the issue.
+
+Looking at `input.js`:
+
+```javascript
+export function updatePlayerInput() {
+  if (gameState.gamePhase !== "PLAYING") return;
+  if (!gameState.player) return;
+  
+  // Movement
+  if (isKeyPressed(KEY_UP)) {
+    gameState.player.moveForward();
+  }
+  if (isKeyPressed(KEY_DOWN)) {
+    gameState.player.moveBackward();
+  }
+  if (isKeyPressed(KEY_LEFT)) {
+    gameState.player.turnLeft();
+  }
+  if (isKeyPressed(KEY_RIGHT)) {
+    gameState.player.turnRight();
+  }
+  
+  // Flashlight shake (hold Shift)
+  if (isKeyPressed(KEY_SHIFT)) {
+    shakeFlashlight();
+  }
+  
+  // Interact with Tattletail
+  if (isKeyPressed(KEY_SPACE)) {
+    interactWithTattletail();
+  }
+}
+```
+
+So `updatePlayerInput()` is being called and checks if KEY_UP/KEY_DOWN are pressed. If so, it calls `moveForward()` or `moveBackward()`.
+
+Looking at the `Player` class in `entities.js`:
+
+```javascript
+moveForward() {
+  const direction = new THREE.Vector3();
+  gameState.camera.getWorldDirection(direction);
+  direction.y = 0;
+  direction.normalize();
+  // Add to velocity without deltaTime (velocity is in units per second)
+  this.velocity.add(direction.multiplyScalar(PLAYER_SPEED));
+}
+
+moveBackward() {
+  const direction = new THREE.Vector3();
+  gameState.camera.getWorldDirection(direction);
+  direction.y = 0;
+  direction.normalize();
+  // Add to velocity without deltaTime (velocity is in units per second)
+  this.velocity.sub(direction.multiplyScalar(PLAYER_SPEED * 0.5));
+}
+```
+
+I notice the movement methods are calculating direction correctly and adjusting velocity. The backward movement uses half the speed, which seems intentional. The methods look structurally sound for generating movement input.
+
+The next step is to investigate how the velocity is actually applied to the player's position during the update cycle. I'll need to examine the rest of the update method to see if there are any issues with position translation.
+
+The update method appears to handle movement carefully, checking for wall collisions before actually moving the mesh. It calculates potential new x and z positions based on current velocity and delta time, then validates those positions against wall collision rules before committing the movement.
+
+The method also introduces noise generation when moving and implements a velocity decay mechanism that's frame-rate independent. This suggests a sophisticated movement system that accounts for performance variations across different hardware.
+
+The camera positioning is simple but effective, always tracking the player's mesh position and maintaining a consistent eye-level height.
+
+The periodic position logging provides a debugging mechanism, allowing tracking of the player's location at regular intervals during gameplay.
+
+The velocity decay mechanism seems overly aggressive, continuously reducing the movement vector each frame. Despite this reduction, movement should persist when directional keys are held due to constant velocity additions in the input update method.
+
+Tracing the game loop reveals a potential issue in how velocity is manipulated. The movement methods modify the direction vector in-place before adding, which could cause unexpected velocity accumulation. This means each frame might be adding the full player speed, potentially leading to unintended acceleration beyond the intended movement parameters.
+
+Calculating the frame-by-frame velocity changes shows a complex interaction between speed addition and decay. At 60 FPS, the velocity doesn't stabilize as expected, with continuous key presses potentially overriding the decay mechanism.
+
+The key tracking implementation appears standard, using a boolean state for each key in the game state. However, the reported movement issue suggests something more subtle might be happening with input handling or player control logic.
+
+I'll need to investigate the specific implementation details more closely to understand why forward and backward movement isn't registering correctly.
+
+The SPACE key interaction reveals an interesting pattern of frame-based event handling, which could provide clues about potential input processing differences between various game controls.
+
+I notice an inconsistent approach to key event management. Some actions trigger on single key presses through `handleKeyDown()`, while others continuously activate in `updatePlayerInput()`. This variation might explain unexpected input behaviors.
+
+The automated testing controller's key simulation suggests a potential synchronization issue between input detection methods. The implementation seems to toggle key states globally, which could interact unpredictably with different event handling strategies.
+
+The movement mechanism appears technically correct - checking key states each frame should enable continuous motion. However, the persistent "can't move" problem hints at a deeper interaction between input tracking and player movement logic.
+
+Camera initialization sets position but lacks explicit rotation setup. This default orientation might conflict with player rotation mechanics, potentially disrupting expected movement vectors.
+
+The turn and move methods seem interconnected, suggesting a potential misalignment between camera rotation and velocity calculation that could prevent smooth forward/backward progression.
+
+I'll need to verify how camera direction interfaces with player movement calculations, particularly examining how `getWorldDirection()` interacts with the current rotation state.
+
+The core problem appears to be velocity scaling without proper time normalization. By adding raw speed values each frame without considering delta time, the movement exponentially accelerates. The decay mechanism attempts to compensate, but the initial velocity addition creates unpredictable motion.
+
+The frame-rate dependency means at higher refresh rates, the player moves dramatically faster than intended. Multiplying by raw speed without time normalization leads to uncontrolled acceleration, potentially causing physics simulation instability.
+
+The proposed solution involves scaling velocity additions by delta time, ensuring consistent movement across different frame rates. This approach would align velocity increments with a per-second standard, preventing unintended speed multiplications during rapid input.
+
+The potential root cause emerges from browser default behaviors: arrow keys typically trigger page scrolling. By omitting `event.preventDefault()` in key event handlers, the system allows default browser interactions to interfere with game controls.
+
+A simple fix involves explicitly preventing default arrow key actions in `handleKeyDown()` and `handleKeyUp()` methods, which should restore expected input responsiveness.

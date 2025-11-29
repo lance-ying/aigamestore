@@ -2,6 +2,7 @@
 
 import { gameState, PHASE, DIRECTION } from './globals.js';
 import { movePlayer, activateInvisibility, hackNearbyTerminal, waitTurn } from './game_logic.js';
+import { loadLevel } from './grid.js';
 
 export function handleKeyPressed(p, keyCode) {
   // Log the input
@@ -85,7 +86,6 @@ function resetToStart(p) {
   gameState.moveHistory = [];
   
   // Reload level
-  const { loadLevel } = require('./grid.js');
   const levelData = loadLevel(gameState.level, p);
   gameState.grid = levelData.grid;
   gameState.entities = levelData.entities;

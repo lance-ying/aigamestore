@@ -1,0 +1,1109 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+this game does not load, can you fix that
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">マインスイーパQ プレミアム</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Basic)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Win)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Uncover all safe squares on the grid without hitting any mines! Each revealed number tells you how many mines are adjacent to that square. Use logic and deduction to flag suspected mines and clear the board. Complete the grid as quickly as possible to achieve the best time!</p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Arrow Keys: Move cursor | Space: Reveal square / Quick-open | Z: Place/remove flag | Shift: Toggle Quick Flag mode | Enter: Start game | Esc: Pause/unpause | R: Restart</p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="automated_testing_controller.js">
+import { gameState, GAME_CONFIG } from './globals.js';
+
+function getTestBasicAction(gameState) {
+  // Basic random testing
+  const actions = [];
+  
+  // Random movement
+  const moveRand = Math.random();
+  if (moveRand < 0.25) actions.push(37); // LEFT
+  else if (moveRand < 0.5) actions.push(39); // RIGHT
+  else if (moveRand < 0.75) actions.push(38); // UP
+  else actions.push(40); // DOWN
+  
+  // Random action
+  if (Math.random() < 0.3) {
+    if (Math.random() < 0.7) {
+      actions.push(32); // SPACE - reveal
+    } else {
+      actions.push(90); // Z - flag
+    }
+  }
+  
+  return actions;
+}
+
+function getTestWinAction(gameState) {
+  // Intelligent solver using logical deduction
+  const { grid, cursorX, cursorY, firstClick } = gameState;
+  const { rows, cols } = GAME_CONFIG;
+  
+  if (!grid || grid.length === 0) return [];
+  
+  // First click - start at a corner (statistically safer)
+  if (firstClick) {
+    const targetX = 0;
+    const targetY = 0;
+    
+    if (cursorX !== targetX || cursorY !== targetY) {
+      return moveTowards(cursorX, cursorY, targetX, targetY);
+    }
+    return [32]; // SPACE to reveal
+  }
+  
+  // Analyze the board and find definite safe cells and mines
+  const analysis = analyzeBoard(grid, rows, cols);
+  
+  // First, flag all definite mines
+  if (analysis.definiteMines.length > 0) {
+    for (const mine of analysis.definiteMines) {
+      if (!grid[mine.row][mine.col].flagged) {
+        const actions = moveTowards(cursorX, cursorY, mine.col, mine.row);
+        if (actions.length > 0) return actions;
+        return [90]; // Z to flag
+      }
+    }
+  }
+  
+  // Then, reveal all definite safe cells
+  if (analysis.definiteSafe.length > 0) {
+    for (const safe of analysis.definiteSafe) {
+      if (!grid[safe.row][safe.col].revealed) {
+        const actions = moveTowards(cursorX, cursorY, safe.col, safe.row);
+        if (actions.length > 0) return actions;
+        return [32]; // SPACE to reveal
+      }
+    }
+  }
+  
+  // Check for quick-open opportunities
+  const quickOpenCell = findQuickOpenOpportunity(grid, rows, cols);
+  if (quickOpenCell) {
+    const actions = moveTowards(cursorX, cursorY, quickOpenCell.col, quickOpenCell.row);
+    if (actions.length > 0) return actions;
+    return [32]; // SPACE to quick-open
+  }
+  
+  // If no definite moves, find the safest unrevealed cell
+  const safestCell = findSafestCell(grid, rows, cols);
+  if (safestCell) {
+    const actions = moveTowards(cursorX, cursorY, safestCell.col, safestCell.row);
+    if (actions.length > 0) return actions;
+    return [32]; // SPACE to reveal
+  }
+  
+  // Fallback: random safe-looking move
+  return getTestBasicAction(gameState);
+}
+
+function analyzeBoard(grid, rows, cols) {
+  const definiteSafe = [];
+  const definiteMines = [];
+  
+  for (let row = 0; row < rows; row++) {
+    for (let col = 0; col < cols; col++) {
+      const cell = grid[row][col];
+      
+      if (!cell.revealed || cell.adjacentMines === 0) continue;
+      
+      const neighbors = getNeighbors(row, col, rows, cols);
+      const unrevealed = neighbors.filter(n => !grid[n.row][n.col].revealed);
+      const flagged = neighbors.filter(n => grid[n.row][n.col].flagged);
+      const unflaggedUnrevealed = unrevealed.filter(n => !grid[n.row][n.col].flagged);
+      
+      // All remaining unrevealed neighbors are mines
+      if (unflaggedUnrevealed.length > 0 && 
+          flagged.length + unflaggedUnrevealed.length === cell.adjacentMines) {
+        for (const n of unflaggedUnrevealed) {
+          if (!definiteMines.some(m => m.row === n.row && m.col === n.col)) {
+            definiteMines.push(n);
+          }
+        }
+      }
+      
+      // All mines are flagged, remaining unrevealed are safe
+      if (unflaggedUnrevealed.length > 0 && flagged.length === cell.adjacentMines) {
+        for (const n of unflaggedUnrevealed) {
+          if (!definiteSafe.some(s => s.row === n.row && s.col === n.col)) {
+            definiteSafe.push(n);
+          }
+        }
+      }
+    }
+  }
+  
+  return { definiteSafe, definiteMines };
+}
+
+function findQuickOpenOpportunity(grid, rows, cols) {
+  for (let row = 0; row < rows; row++) {
+    for (let col = 0; col < cols; col++) {
+      const cell = grid[row][col];
+      
+      if (!cell.revealed || cell.adjacentMines === 0) continue;
+      
+      const neighbors = getNeighbors(row, col, rows, cols);
+      const flagged = neighbors.filter(n => grid[n.row][n.col].flagged);
+      const unflaggedUnrevealed = neighbors.filter(n => 
+        !grid[n.row][n.col].revealed && !grid[n.row][n.col].flagged
+      );
+      
+      // Can quick-open if flags match number and there are unrevealed neighbors
+      if (flagged.length === cell.adjacentMines && unflaggedUnrevealed.length > 0) {
+        return { row, col };
+      }
+    }
+  }
+  return null;
+}
+
+function findSafestCell(grid, rows, cols) {
+  // Find unrevealed, unflagged cells adjacent to revealed areas
+  const candidates = [];
+  
+  for (let row = 0; row < rows; row++) {
+    for (let col = 0; col < cols; col++) {
+      const cell = grid[row][col];
+      
+      if (cell.revealed || cell.flagged) continue;
+      
+      const neighbors = getNeighbors(row, col, rows, cols);
+      const revealedNeighbors = neighbors.filter(n => grid[n.row][n.col].revealed);
+      
+      if (revealedNeighbors.length > 0) {
+        // Calculate risk score (lower is better)
+        let riskScore = 0;
+        for (const n of revealedNeighbors) {
+          const nCell = grid[n.row][n.col];
+          if (nCell.adjacentMines > 0) {
+            const nNeighbors = getNeighbors(n.row, n.col, rows, cols);
+            const nUnrevealed = nNeighbors.filter(nn => !grid[nn.row][nn.col].revealed);
+            const nFlagged = nNeighbors.filter(nn => grid[nn.row][nn.col].flagged);
+            const remainingMines = nCell.adjacentMines - nFlagged.length;
+            const remainingCells = nUnrevealed.length - nFlagged.length;
+            if (remainingCells > 0) {
+              riskScore += remainingMines / remainingCells;
+            }
+          }
+        }
+        
+        candidates.push({ row, col, risk: riskScore / revealedNeighbors.length });
+      }
+    }
+  }
+  
+  if (candidates.length === 0) {
+    // No adjacent cells, pick any unrevealed cell
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < cols; col++) {
+        if (!grid[row][col].revealed && !grid[row][col].flagged) {
+          return { row, col };
+        }
+      }
+    }
+    return null;
+  }
+  
+  // Return cell with lowest risk
+  candidates.sort((a, b) => a.risk - b.risk);
+  return candidates[0];
+}
+
+function getNeighbors(row, col, rows, cols) {
+  const neighbors = [];
+  for (let dr = -1; dr <= 1; dr++) {
+    for (let dc = -1; dc <= 1; dc++) {
+      if (dr === 0 && dc === 0) continue;
+      const newRow = row + dr;
+      const newCol = col + dc;
+      if (newRow >= 0 && newRow < rows && newCol >= 0 && newCol < cols) {
+        neighbors.push({ row: newRow, col: newCol });
+      }
+    }
+  }
+  return neighbors;
+}
+
+function moveTowards(currentX, currentY, targetX, targetY) {
+  const actions = [];
+  
+  if (currentX < targetX) actions.push(39); // RIGHT
+  else if (currentX > targetX) actions.push(37); // LEFT
+  else if (currentY < targetY) actions.push(40); // DOWN
+  else if (currentY > targetY) actions.push(38); // UP
+  
+  return actions;
+}
+
+export function get_automated_testing_action(gameState) {
+  if (gameState.gamePhase !== "PLAYING") return [];
+  
+  switch (gameState.controlMode) {
+    case "TEST_1":
+      return getTestBasicAction(gameState);
+    case "TEST_2":
+      return getTestWinAction(gameState);
+    default:
+      return [];
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.get_automated_testing_action = get_automated_testing_action;
+}
+
+export default get_automated_testing_action;
+</file>
+
+<file name="globals.js">
+// Global constants and game state
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const TARGET_FPS = 60;
+
+// Game difficulty presets
+export const DIFFICULTY_PRESETS = {
+  BEGINNER: { rows: 9, cols: 9, mines: 10, name: "Beginner" },
+  INTERMEDIATE: { rows: 13, cols: 15, mines: 40, name: "Intermediate" },
+  EXPERT: { rows: 16, cols: 30, mines: 99, name: "Expert" }
+};
+
+// For 600x400 canvas, we'll use a smaller grid to fit
+export const GAME_CONFIG = {
+  rows: 10,
+  cols: 12,
+  mines: 15,
+  cellSize: 30,
+  gridOffsetX: 90,
+  gridOffsetY: 80
+};
+
+export const gameState = {
+  player: null,
+  entities: [],
+  score: 0,
+  gamePhase: "START", // "START", "PLAYING", "GAME_OVER_WIN", "GAME_OVER_LOSE", "PAUSED"
+  controlMode: "HUMAN", // "HUMAN", "TEST_1", "TEST_2"
+  
+  // Minesweeper specific state
+  grid: [],
+  revealed: [],
+  flagged: [],
+  cursorX: 0,
+  cursorY: 0,
+  mineCount: GAME_CONFIG.mines,
+  flagCount: 0,
+  revealedCount: 0,
+  startTime: 0,
+  elapsedTime: 0,
+  quickFlagMode: false,
+  firstClick: true,
+  gameResult: null, // "WIN" or "LOSE"
+  
+  // Test tracking
+  moveHistory: [],
+  lastActionFrame: 0
+};
+
+// Expose gameState globally
+if (typeof window !== 'undefined') {
+  window.getGameState = () => gameState;
+}
+</file>
+
+<file name="game.js">
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, TARGET_FPS } from './globals.js';
+import { initializeGrid } from './grid.js';
+import { Player } from './player.js';
+import { handleKeyPressed } from './input.js';
+import { renderGame } from './render.js';
+import { get_automated_testing_action } from './automated_testing_controller.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+  // Initialize the logs
+  p.logs = {
+    game_info: [],
+    inputs: [],
+    player_info: []
+  };
+  
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(TARGET_FPS);
+    p.randomSeed(42);
+    
+    // Initialize game state
+    gameState.grid = [];
+    gameState.player = null;
+    gameState.entities = [];
+    
+    // Log initial state
+    p.logs.game_info.push({
+      data: { gamePhase: "START" },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  };
+  
+  p.draw = function() {
+    // Handle automated testing
+    if (gameState.controlMode !== "HUMAN" && gameState.gamePhase === "PLAYING") {
+      const actions = get_automated_testing_action(gameState);
+      for (const keyCode of actions) {
+        simulateKeyPress(keyCode, p);
+      }
+    }
+    
+    // Update game state
+    if (gameState.gamePhase === "PLAYING") {
+      // Update entities
+      for (const entity of gameState.entities) {
+        if (entity.update) {
+          entity.update(p);
+        }
+      }
+    }
+    
+    // Render
+    renderGame(p);
+  };
+  
+  p.keyPressed = function() {
+    if (gameState.controlMode === "HUMAN") {
+      handleKeyPressed(p.key, p.keyCode, p);
+    }
+    return false; // Prevent default behavior
+  };
+  
+  function simulateKeyPress(keyCode, p) {
+    const keyMap = {
+      37: 'ArrowLeft',
+      38: 'ArrowUp',
+      39: 'ArrowRight',
+      40: 'ArrowDown',
+      32: ' ',
+      90: 'z',
+      16: 'Shift'
+    };
+    const key = keyMap[keyCode] || '';
+    handleKeyPressed(key, keyCode, p);
+  }
+});
+
+// Expose the game instance globally
+window.gameInstance = gameInstance;
+
+// Control mode switching
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  
+  // Update button states
+  const buttons = ['humanModeBtn', 'test_1_ModeBtn', 'test_2_ModeBtn'];
+  buttons.forEach(btnId => {
+    const btn = document.getElementById(btnId);
+    if (btn) {
+      btn.classList.remove('active');
+    }
+  });
+  
+  const activeBtnId = mode === 'HUMAN' ? 'humanModeBtn' : 
+                      mode === 'TEST_1' ? 'test_1_ModeBtn' :
+                      mode === 'TEST_2' ? 'test_2_ModeBtn' : null;
+  
+  if (activeBtnId) {
+    const activeBtn = document.getElementById(activeBtnId);
+    if (activeBtn) {
+      activeBtn.classList.add('active');
+    }
+  }
+};
+</file>
+
+<file name="grid.js">
+import { gameState, GAME_CONFIG } from './globals.js';
+
+export class Cell {
+  constructor(row, col) {
+    this.row = row;
+    this.col = col;
+    this.isMine = false;
+    this.adjacentMines = 0;
+    this.revealed = false;
+    this.flagged = false;
+  }
+}
+
+export function initializeGrid() {
+  const { rows, cols } = GAME_CONFIG;
+  const grid = [];
+  
+  for (let row = 0; row < rows; row++) {
+    grid[row] = [];
+    for (let col = 0; col < cols; col++) {
+      grid[row][col] = new Cell(row, col);
+    }
+  }
+  
+  return grid;
+}
+
+export function placeMines(grid, excludeRow, excludeCol, mineCount) {
+  const { rows, cols } = GAME_CONFIG;
+  let minesPlaced = 0;
+  
+  // Get list of valid positions (excluding first click and adjacent)
+  const validPositions = [];
+  for (let row = 0; row < rows; row++) {
+    for (let col = 0; col < cols; col++) {
+      // Exclude the clicked cell and its neighbors
+      const rowDiff = Math.abs(row - excludeRow);
+      const colDiff = Math.abs(col - excludeCol);
+      if (rowDiff <= 1 && colDiff <= 1) continue;
+      validPositions.push({ row, col });
+    }
+  }
+  
+  // Shuffle and place mines
+  while (minesPlaced < mineCount && validPositions.length > 0) {
+    const index = Math.floor(Math.random() * validPositions.length);
+    const pos = validPositions.splice(index, 1)[0];
+    grid[pos.row][pos.col].isMine = true;
+    minesPlaced++;
+  }
+  
+  // Calculate adjacent mine counts
+  for (let row = 0; row < rows; row++) {
+    for (let col = 0; col < cols; col++) {
+      if (!grid[row][col].isMine) {
+        grid[row][col].adjacentMines = countAdjacentMines(grid, row, col);
+      }
+    }
+  }
+}
+
+export function countAdjacentMines(grid, row, col) {
+  const { rows, cols } = GAME_CONFIG;
+  let count = 0;
+  
+  for (let dr = -1; dr <= 1; dr++) {
+    for (let dc = -1; dc <= 1; dc++) {
+      if (dr === 0 && dc === 0) continue;
+      const newRow = row + dr;
+      const newCol = col + dc;
+      if (newRow >= 0 && newRow < rows && newCol >= 0 && newCol < cols) {
+        if (grid[newRow][newCol].isMine) count++;
+      }
+    }
+  }
+  
+  return count;
+}
+
+export function revealCell(grid, row, col, p) {
+  const { rows, cols } = GAME_CONFIG;
+  
+  if (row < 0 || row >= rows || col < 0 || col >= cols) return 0;
+  if (grid[row][col].revealed || grid[row][col].flagged) return 0;
+  
+  grid[row][col].revealed = true;
+  let revealedCount = 1;
+  
+  // If it's a mine, game over
+  if (grid[row][col].isMine) {
+    return -1;
+  }
+  
+  // If no adjacent mines, reveal neighbors recursively
+  if (grid[row][col].adjacentMines === 0) {
+    for (let dr = -1; dr <= 1; dr++) {
+      for (let dc = -1; dc <= 1; dc++) {
+        if (dr === 0 && dc === 0) continue;
+        const result = revealCell(grid, row + dr, col + dc, p);
+        if (result > 0) revealedCount += result;
+      }
+    }
+  }
+  
+  return revealedCount;
+}
+
+export function quickOpen(grid, row, col, p) {
+  const { rows, cols } = GAME_CONFIG;
+  const cell = grid[row][col];
+  
+  if (!cell.revealed || cell.adjacentMines === 0) return 0;
+  
+  // Count adjacent flags
+  let flagCount = 0;
+  const neighbors = [];
+  
+  for (let dr = -1; dr <= 1; dr++) {
+    for (let dc = -1; dc <= 1; dc++) {
+      if (dr === 0 && dc === 0) continue;
+      const newRow = row + dr;
+      const newCol = col + dc;
+      if (newRow >= 0 && newRow < rows && newCol >= 0 && newCol < cols) {
+        neighbors.push({ row: newRow, col: newCol });
+        if (grid[newRow][newCol].flagged) flagCount++;
+      }
+    }
+  }
+  
+  // If flag count matches the number, reveal all unflagged neighbors
+  if (flagCount === cell.adjacentMines) {
+    let totalRevealed = 0;
+    for (const neighbor of neighbors) {
+      if (!grid[neighbor.row][neighbor.col].flagged) {
+        const result = revealCell(grid, neighbor.row, neighbor.col, p);
+        if (result === -1) return -1; // Hit a mine
+        if (result > 0) totalRevealed += result;
+      }
+    }
+    return totalRevealed;
+  }
+  
+  return 0;
+}
+
+export function toggleFlag(grid, row, col) {
+  const { rows, cols } = GAME_CONFIG;
+  
+  if (row < 0 || row >= rows || col < 0 || col >= cols) return 0;
+  if (grid[row][col].revealed) return 0;
+  
+  grid[row][col].flagged = !grid[row][col].flagged;
+  return grid[row][col].flagged ? 1 : -1;
+}
+
+export function checkWinCondition(grid) {
+  const { rows, cols, mines } = GAME_CONFIG;
+  let revealedCount = 0;
+  
+  for (let row = 0; row < rows; row++) {
+    for (let col = 0; col < cols; col++) {
+      if (grid[row][col].revealed && !grid[row][col].isMine) {
+        revealedCount++;
+      }
+    }
+  }
+  
+  const totalCells = rows * cols;
+  return revealedCount === totalCells - mines;
+}
+</file>
+
+<file name="render.js">
+import { gameState, GAME_CONFIG, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export function renderGame(p) {
+  p.background(40, 40, 50);
+  
+  if (gameState.gamePhase === "START") {
+    renderStartScreen(p);
+  } else if (gameState.gamePhase === "PLAYING" || gameState.gamePhase === "PAUSED") {
+    renderPlayingScreen(p);
+    if (gameState.gamePhase === "PAUSED") {
+      renderPauseIndicator(p);
+    }
+  } else if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") {
+    renderGameOverScreen(p);
+  }
+}
+
+function renderStartScreen(p) {
+  p.fill(255, 220, 100);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(36);
+  p.text("マインスイーパQ", CANVAS_WIDTH / 2, 80);
+  
+  p.textSize(18);
+  p.fill(200, 200, 200);
+  p.text("Minesweeper Q Premium", CANVAS_WIDTH / 2, 115);
+  
+  p.textSize(14);
+  p.fill(180, 180, 180);
+  const instructions = [
+    "Uncover all safe squares without hitting mines!",
+    "",
+    "Each number shows how many mines are adjacent.",
+    "Use logic to deduce safe squares and mine locations.",
+    "",
+    "Controls:",
+    "Arrow Keys - Move cursor",
+    "Space - Reveal square / Quick-open",
+    "Z - Place/remove flag",
+    "Shift - Toggle Quick Flag mode",
+    "",
+    "PRESS ENTER TO START"
+  ];
+  
+  let y = 150;
+  for (const line of instructions) {
+    p.text(line, CANVAS_WIDTH / 2, y);
+    y += 18;
+  }
+}
+
+function renderPlayingScreen(p) {
+  renderUI(p);
+  renderGrid(p);
+  renderCursor(p);
+}
+
+function renderUI(p) {
+  // Top bar
+  p.fill(60, 60, 70);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, 60);
+  
+  // Mine counter
+  p.fill(255, 100, 100);
+  p.textAlign(p.LEFT, p.CENTER);
+  p.textSize(16);
+  p.text(`Mines: ${GAME_CONFIG.mines - gameState.flagCount}`, 20, 20);
+  
+  // Timer
+  let displayTime = gameState.elapsedTime;
+  if (gameState.gamePhase === "PLAYING" && !gameState.firstClick) {
+    displayTime = Math.floor((Date.now() - gameState.startTime) / 1000);
+  }
+  p.fill(100, 200, 255);
+  p.textAlign(p.RIGHT, p.CENTER);
+  p.text(`Time: ${displayTime}s`, CANVAS_WIDTH - 20, 20);
+  
+  // Mode indicator
+  p.fill(255, 255, 100);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(14);
+  const mode = gameState.quickFlagMode ? "Quick Flag Mode" : "Standard Mode";
+  p.text(mode, CANVAS_WIDTH / 2, 40);
+}
+
+function renderGrid(p) {
+  const { rows, cols, cellSize, gridOffsetX, gridOffsetY } = GAME_CONFIG;
+  
+  for (let row = 0; row < rows; row++) {
+    for (let col = 0; col < cols; col++) {
+      const cell = gameState.grid[row][col];
+      const x = gridOffsetX + col * cellSize;
+      const y = gridOffsetY + row * cellSize;
+      
+      // Cell background
+      if (cell.revealed) {
+        p.fill(...(cell.isMine ? [200, 50, 50] : [220, 220, 220]));
+      } else {
+        p.fill(100, 100, 120);
+      }
+      p.stroke(60, 60, 70);
+      p.strokeWeight(1);
+      p.rect(x, y, cellSize, cellSize);
+      
+      // Cell content
+      if (cell.revealed) {
+        if (cell.isMine) {
+          // Draw mine
+          p.fill(40, 40, 40);
+          p.noStroke();
+          p.circle(x + cellSize / 2, y + cellSize / 2, cellSize * 0.5);
+          p.fill(255, 0, 0);
+          p.circle(x + cellSize / 2, y + cellSize / 2, cellSize * 0.3);
+        } else if (cell.adjacentMines > 0) {
+          // Draw number
+          const colors = [
+            [0, 0, 0],      // 0 - not used
+            [0, 0, 255],    // 1 - blue
+            [0, 150, 0],    // 2 - green
+            [255, 0, 0],    // 3 - red
+            [0, 0, 150],    // 4 - dark blue
+            [150, 0, 0],    // 5 - dark red
+            [0, 150, 150],  // 6 - cyan
+            [0, 0, 0],      // 7 - black
+            [100, 100, 100] // 8 - gray
+          ];
+          p.fill(...colors[cell.adjacentMines]);
+          p.textAlign(p.CENTER, p.CENTER);
+          p.textSize(18);
+          p.text(cell.adjacentMines, x + cellSize / 2, y + cellSize / 2);
+        }
+      } else if (cell.flagged) {
+        // Draw flag
+        p.fill(255, 200, 0);
+        p.noStroke();
+        p.triangle(
+          x + cellSize * 0.3, y + cellSize * 0.25,
+          x + cellSize * 0.3, y + cellSize * 0.65,
+          x + cellSize * 0.7, y + cellSize * 0.45
+        );
+        p.stroke(255, 200, 0);
+        p.strokeWeight(2);
+        p.line(x + cellSize * 0.3, y + cellSize * 0.25, x + cellSize * 0.3, y + cellSize * 0.75);
+      }
+    }
+  }
+}
+
+function renderCursor(p) {
+  const { cellSize, gridOffsetX, gridOffsetY } = GAME_CONFIG;
+  const x = gridOffsetX + gameState.cursorX * cellSize;
+  const y = gridOffsetY + gameState.cursorY * cellSize;
+  
+  p.noFill();
+  p.stroke(255, 255, 0);
+  p.strokeWeight(3);
+  p.rect(x, y, cellSize, cellSize);
+}
+
+function renderPauseIndicator(p) {
+  p.fill(255, 255, 0);
+  p.textAlign(p.RIGHT, p.TOP);
+  p.textSize(16);
+  p.text("PAUSED", CANVAS_WIDTH - 10, 10);
+}
+
+function renderGameOverScreen(p) {
+  renderPlayingScreen(p);
+  
+  // Semi-transparent overlay
+  p.fill(0, 0, 0, 180);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  // Game over message
+  p.fill(255, 255, 255);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  
+  if (gameState.gamePhase === "GAME_OVER_WIN") {
+    p.fill(100, 255, 100);
+    p.text("YOU WIN!", CANVAS_WIDTH / 2, 150);
+    
+    p.fill(255, 255, 255);
+    p.textSize(24);
+    p.text(`Time: ${gameState.elapsedTime} seconds`, CANVAS_WIDTH / 2, 200);
+  } else {
+    p.fill(255, 100, 100);
+    p.text("GAME OVER", CANVAS_WIDTH / 2, 180);
+  }
+  
+  p.fill(200, 200, 200);
+  p.textSize(20);
+  p.text("PRESS R TO RESTART", CANVAS_WIDTH / 2, 280);
+}
+</file>
+
+<file name="player.js">
+import { gameState, GAME_CONFIG } from './globals.js';
+
+export class Player {
+  constructor(startX, startY) {
+    this.x = startX;
+    this.y = startY;
+    this.cursorRow = 0;
+    this.cursorCol = 0;
+  }
+  
+  moveCursor(dx, dy) {
+    const { rows, cols } = GAME_CONFIG;
+    this.cursorRow = Math.max(0, Math.min(rows - 1, this.cursorRow + dy));
+    this.cursorCol = Math.max(0, Math.min(cols - 1, this.cursorCol + dx));
+    gameState.cursorX = this.cursorCol;
+    gameState.cursorY = this.cursorRow;
+  }
+  
+  update(p) {
+    // Player doesn't need continuous updates in this game
+  }
+  
+  render(p) {
+    // Player is represented by the cursor, rendered in render.js
+  }
+}
+</file>
+
+<file name="input.js">
+import { gameState, GAME_CONFIG } from './globals.js';
+import { revealCell, quickOpen, toggleFlag, placeMines, checkWinCondition } from './grid.js';
+
+export function handleKeyPressed(key, keyCode, p) {
+  // Log the input
+  p.logs.inputs.push({
+    input_type: "keyPressed",
+    data: { key, keyCode },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+  
+  // Game phase transitions
+  if (keyCode === 13) { // ENTER
+    if (gameState.gamePhase === "START") {
+      startGame(p);
+    }
+    return;
+  }
+  
+  if (keyCode === 82) { // R
+    if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") {
+      resetToStart(p);
+    }
+    return;
+  }
+  
+  if (keyCode === 27) { // ESC
+    if (gameState.gamePhase === "PLAYING") {
+      gameState.gamePhase = "PAUSED";
+      p.logs.game_info.push({
+        data: { gamePhase: "PAUSED" },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    } else if (gameState.gamePhase === "PAUSED") {
+      gameState.gamePhase = "PLAYING";
+      p.logs.game_info.push({
+        data: { gamePhase: "PLAYING" },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+    return;
+  }
+  
+  // Gameplay controls
+  if (gameState.gamePhase !== "PLAYING") return;
+  
+  const player = gameState.player;
+  if (!player) return;
+  
+  // Movement
+  if (keyCode === 37) { // LEFT
+    player.moveCursor(-1, 0);
+    logPlayerInfo(p);
+  } else if (keyCode === 39) { // RIGHT
+    player.moveCursor(1, 0);
+    logPlayerInfo(p);
+  } else if (keyCode === 38) { // UP
+    player.moveCursor(0, -1);
+    logPlayerInfo(p);
+  } else if (keyCode === 40) { // DOWN
+    player.moveCursor(0, 1);
+    logPlayerInfo(p);
+  }
+  
+  // Reveal / Quick Open
+  else if (keyCode === 32) { // SPACE
+    handleRevealAction(p);
+  }
+  
+  // Toggle Flag
+  else if (keyCode === 90) { // Z
+    handleFlagAction(p);
+  }
+  
+  // Toggle Quick Flag Mode
+  else if (keyCode === 16) { // SHIFT
+    gameState.quickFlagMode = !gameState.quickFlagMode;
+  }
+}
+
+function handleRevealAction(p) {
+  const row = gameState.player.cursorRow;
+  const col = gameState.player.cursorCol;
+  const cell = gameState.grid[row][col];
+  
+  // First click - place mines
+  if (gameState.firstClick) {
+    placeMines(gameState.grid, row, col, GAME_CONFIG.mines);
+    gameState.firstClick = false;
+    gameState.startTime = Date.now();
+  }
+  
+  // If cell is revealed and has a number, try quick open
+  if (cell.revealed && cell.adjacentMines > 0) {
+    const result = quickOpen(gameState.grid, row, col, p);
+    if (result === -1) {
+      gameOver(false, p);
+    } else if (result > 0) {
+      gameState.revealedCount += result;
+      checkWin(p);
+    }
+  }
+  // Otherwise reveal the cell
+  else if (!cell.revealed && !cell.flagged) {
+    const result = revealCell(gameState.grid, row, col, p);
+    if (result === -1) {
+      gameOver(false, p);
+    } else if (result > 0) {
+      gameState.revealedCount += result;
+      checkWin(p);
+    }
+  }
+  
+  logPlayerInfo(p);
+}
+
+function handleFlagAction(p) {
+  const row = gameState.player.cursorRow;
+  const col = gameState.player.cursorCol;
+  
+  const result = toggleFlag(gameState.grid, row, col);
+  gameState.flagCount += result;
+  
+  logPlayerInfo(p);
+}
+
+function checkWin(p) {
+  if (checkWinCondition(gameState.grid)) {
+    gameOver(true, p);
+  }
+}
+
+function gameOver(won, p) {
+  gameState.gamePhase = won ? "GAME_OVER_WIN" : "GAME_OVER_LOSE";
+  gameState.gameResult = won ? "WIN" : "LOSE";
+  
+  if (won) {
+    gameState.elapsedTime = Math.floor((Date.now() - gameState.startTime) / 1000);
+    gameState.score = gameState.elapsedTime;
+  }
+  
+  // Reveal all mines if lost
+  if (!won) {
+    for (let row = 0; row < GAME_CONFIG.rows; row++) {
+      for (let col = 0; col < GAME_CONFIG.cols; col++) {
+        if (gameState.grid[row][col].isMine) {
+          gameState.grid[row][col].revealed = true;
+        }
+      }
+    }
+  }
+  
+  p.logs.game_info.push({
+    data: { gamePhase: gameState.gamePhase, won },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function startGame(p) {
+  // Import needed
+  const { initializeGrid } = await import('./grid.js');
+  const { Player } = await import('./player.js');
+  
+  gameState.gamePhase = "PLAYING";
+  gameState.grid = initializeGrid();
+  gameState.cursorX = 0;
+  gameState.cursorY = 0;
+  gameState.flagCount = 0;
+  gameState.revealedCount = 0;
+  gameState.firstClick = true;
+  gameState.quickFlagMode = false;
+  gameState.score = 0;
+  gameState.elapsedTime = 0;
+  gameState.startTime = 0;
+  gameState.gameResult = null;
+  
+  gameState.player = new Player(0, 0);
+  gameState.entities = [gameState.player];
+  
+  p.logs.game_info.push({
+    data: { gamePhase: "PLAYING" },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function resetToStart(p) {
+  gameState.gamePhase = "START";
+  gameState.grid = [];
+  gameState.player = null;
+  gameState.entities = [];
+  gameState.cursorX = 0;
+  gameState.cursorY = 0;
+  gameState.flagCount = 0;
+  gameState.revealedCount = 0;
+  gameState.firstClick = true;
+  gameState.score = 0;
+  gameState.elapsedTime = 0;
+  gameState.gameResult = null;
+  
+  p.logs.game_info.push({
+    data: { gamePhase: "START" },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function logPlayerInfo(p) {
+  if (!gameState.player) return;
+  
+  const { gridOffsetX, gridOffsetY, cellSize } = GAME_CONFIG;
+  const screenX = gridOffsetX + gameState.player.cursorCol * cellSize;
+  const screenY = gridOffsetY + gameState.player.cursorRow * cellSize;
+  
+  p.logs.player_info.push({
+    screen_x: screenX,
+    screen_y: screenY,
+    game_x: gameState.player.cursorCol,
+    game_y: gameState.player.cursorRow,
+    framecount: p.frameCount
+  });
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

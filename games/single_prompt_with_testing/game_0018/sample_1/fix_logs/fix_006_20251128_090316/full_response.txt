@@ -1,0 +1,411 @@
+<analysis>
+- Issue identified: 
+  1. Level 1 speed is too fast (currently 100% = 0.3 base speed)
+  2. Need level 1 to have medium-level spawn characteristics but 10% speed
+  3. Not enough obstacles spawning overall (spawn intervals too long)
+  4. Coins spawn sparsely instead of in trails
+  
+- Files affected: 
+  1. globals.js - LEVEL_CONFIG needs speed/spawn adjustments
+  2. spawner.js - Need to create coin trail spawning system and increase obstacle frequency
+  
+- Changes needed:
+  1. Adjust level 1 speedMultiplier to 0.33 (displays as ~10% speed)
+  2. Make level 1 spawnInterval like medium levels (1.7)
+  3. Reduce all spawn intervals by 30-40% for more obstacles
+  4. Create spawnCoinTrail() function that spawns 5 coins in a line
+  5. Modify spawn functions to use coin trails instead of single coins
+</analysis>
+
+<code filename="globals.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+// Game constants
+export const LANE_POSITIONS = [-3, 0, 3]; // Left, Center, Right lane X positions
+export const LANES = { LEFT: 0, CENTER: 1, RIGHT: 2 };
+export const GROUND_Y = -1;
+export const PLAYER_START_Z = -5;
+export const OBSTACLE_SPAWN_Z = -50;
+export const OBSTACLE_DESPAWN_Z = 10;
+export const BASE_SPEED = 0.3;
+export const SPEED_INCREMENT = 0.001;
+export const MAX_SPEED = 1.2;
+
+// Level system - 9 distinct levels based on coin collection
+// Level 1 has 10% speed but medium-level spawn rate for more manageable difficulty
+export const LEVEL_CONFIG = [
+  // Easy levels (1-3) - Level 1 is slower but with medium spawn rate
+  { level: 1, difficulty: 'EASY', coinsRequired: 15, spawnInterval: 1.7, speedMultiplier: 0.33 },
+  { level: 2, difficulty: 'EASY', coinsRequired: 35, spawnInterval: 1.5, speedMultiplier: 0.5 },
+  { level: 3, difficulty: 'EASY', coinsRequired: 60, spawnInterval: 1.4, speedMultiplier: 0.7 },
+  // Medium levels (4-6)
+  { level: 4, difficulty: 'MEDIUM', coinsRequired: 90, spawnInterval: 1.3, speedMultiplier: 1.0 },
+  { level: 5, difficulty: 'MEDIUM', coinsRequired: 125, spawnInterval: 1.2, speedMultiplier: 1.2 },
+  { level: 6, difficulty: 'MEDIUM', coinsRequired: 165, spawnInterval: 1.0, speedMultiplier: 1.4 },
+  // Hard levels (7-9)
+  { level: 7, difficulty: 'HARD', coinsRequired: 210, spawnInterval: 0.9, speedMultiplier: 1.6 },
+  { level: 8, difficulty: 'HARD', coinsRequired: 260, spawnInterval: 0.8, speedMultiplier: 1.7 },
+  { level: 9, difficulty: 'HARD', coinsRequired: Infinity, spawnInterval: 0.7, speedMultiplier: 1.8 }
+];
+
+// Game state
+export const gameState = {
+  player: null,
+  entities: [],
+  obstacles: [],
+  coins: [],
+  trains: [],
+  track: null,
+  
+  // Three.js core
+  scene: null,
+  camera: null,
+  renderer: null,
+  
+  // Lighting
+  lights: [],
+  ambientLight: null,
+  directionalLight: null,
+  
+  // Physics
+  gravity: new THREE.Vector3(0, -0.03, 0),
+  
+  // Camera
+  cameraMode: "third_person",
+  cameraTarget: null,
+  cameraOffset: new THREE.Vector3(0, 8, 12),
+  
+  // Game state
+  gamePhase: "START",
+  controlMode: "HUMAN",
+  score: 0,
+  distance: 0,
+  coins_collected: 0,
+  speed: BASE_SPEED,
+  
+  // Level system
+  currentLevel: 1,
+  currentLevelConfig: LEVEL_CONFIG[0],
+  
+  // Performance
+  frameCount: 0,
+  lastFrameTime: 0,
+  deltaTime: 0,
+  
+  // Spawning
+  spawnTimer: 0,
+  spawnInterval: 1.7,
+  nextObstacleType: null,
+  difficultyLevel: 1
+};
+
+// Initialize logs
+export const logs = {
+  game_info: [],
+  player_info: [],
+  inputs: []
+};
+
+// Expose globally
+window.logs = logs;
+
+export function getGameState() {
+  return gameState;
+}
+
+window.getGameState = getGameState;
+
+// Control mode setter
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  
+  // Update button styles
+  document.querySelectorAll('.control-button').forEach(btn => {
+    btn.classList.remove('active');
+  });
+  
+  if (mode === 'HUMAN') {
+    document.getElementById('humanModeBtn').classList.add('active');
+  } else if (mode === 'TEST_1') {
+    document.getElementById('test_1_ModeBtn').classList.add('active');
+  } else if (mode === 'TEST_2') {
+    document.getElementById('test_2_ModeBtn').classList.add('active');
+  }
+  
+  logs.game_info.push({
+    game_status: `control_mode_${mode}`,
+    data: { mode },
+    framecount: gameState.frameCount,
+    timestamp: Date.now()
+  });
+};
+</code>
+
+<code filename="spawner.js">
+import { gameState, LANES, OBSTACLE_SPAWN_Z, GROUND_Y, LEVEL_CONFIG } from './globals.js';
+import { Obstacle, Coin } from './entities.js';
+
+export function updateSpawner(deltaTime) {
+  gameState.spawnTimer += deltaTime;
+  
+  // Update level based on coins collected
+  updateLevel();
+  
+  // Add random variance to spawn interval (±15% for more consistency)
+  const variance = (Math.random() - 0.5) * 0.3;
+  const effectiveInterval = gameState.spawnInterval * (1 + variance);
+  
+  if (gameState.spawnTimer >= effectiveInterval) {
+    gameState.spawnTimer = 0;
+    spawnObstacle();
+  }
+}
+
+function updateLevel() {
+  // Check if player has collected enough coins for next level
+  for (let i = 0; i < LEVEL_CONFIG.length; i++) {
+    const config = LEVEL_CONFIG[i];
+    if (gameState.coins_collected < config.coinsRequired) {
+      if (gameState.currentLevel !== config.level) {
+        gameState.currentLevel = config.level;
+        gameState.currentLevelConfig = config;
+        gameState.spawnInterval = config.spawnInterval;
+        
+        // Log level change
+        window.logs.game_info.push({
+          game_status: `level_${config.level}_${config.difficulty}`,
+          data: { 
+            level: config.level, 
+            difficulty: config.difficulty,
+            coins_collected: gameState.coins_collected 
+          },
+          framecount: gameState.frameCount,
+          timestamp: Date.now()
+        });
+      }
+      break;
+    }
+  }
+  
+  // Update speed based on level
+  const baseSpeed = 0.3;
+  gameState.speed = Math.min(1.8, baseSpeed * gameState.currentLevelConfig.speedMultiplier);
+}
+
+function spawnCoinTrail(lane, startZ, count = 5, spacing = 3) {
+  // Spawn a trail of coins along the Z axis
+  for (let i = 0; i < count; i++) {
+    const coin = new Coin(lane, startZ + (i * spacing));
+    gameState.coins.push(coin);
+  }
+}
+
+function spawnObstacle() {
+  const random = Math.random();
+  const difficulty = gameState.currentLevelConfig.difficulty;
+  
+  // Add extra randomization for spawn patterns
+  const patternRoll = Math.random();
+  
+  // Adjust spawn patterns based on difficulty - more coin trails throughout
+  if (difficulty === 'EASY') {
+    // Easy: More coin trails, simpler patterns
+    if (patternRoll < 0.2) {
+      spawnSingleObstacle('low');
+    } else if (patternRoll < 0.35) {
+      spawnSingleObstacle('high');
+    } else if (patternRoll < 0.5) {
+      spawnTrain();
+    } else if (patternRoll < 0.7) {
+      spawnCoinTrailPattern();
+    } else if (patternRoll < 0.85) {
+      spawnCoinsOnly();
+    } else {
+      spawnMixedPattern();
+    }
+  } else if (difficulty === 'MEDIUM') {
+    // Medium: Balanced mix with coin trails
+    if (patternRoll < 0.2) {
+      spawnSingleObstacle('low');
+    } else if (patternRoll < 0.38) {
+      spawnSingleObstacle('high');
+    } else if (patternRoll < 0.56) {
+      spawnMultipleObstacles();
+    } else if (patternRoll < 0.7) {
+      spawnTrain();
+    } else if (patternRoll < 0.85) {
+      spawnCoinTrailPattern();
+    } else {
+      spawnMixedPattern();
+    }
+  } else {
+    // Hard: More obstacles, but still coin trails
+    if (patternRoll < 0.2) {
+      spawnSingleObstacle('low');
+    } else if (patternRoll < 0.38) {
+      spawnSingleObstacle('high');
+    } else if (patternRoll < 0.6) {
+      spawnMultipleObstacles();
+    } else if (patternRoll < 0.75) {
+      spawnTrain();
+    } else if (patternRoll < 0.88) {
+      spawnCoinTrailPattern();
+    } else {
+      spawnComplexPattern();
+    }
+  }
+}
+
+function spawnSingleObstacle(type) {
+  const lane = Math.floor(Math.random() * 3);
+  
+  const obstacle = new Obstacle(lane, OBSTACLE_SPAWN_Z, type);
+  gameState.obstacles.push(obstacle);
+  
+  // Add coin trails in other lanes
+  for (let i = 0; i < 3; i++) {
+    if (i !== lane && Math.random() < 0.6) {
+      spawnCoinTrail(i, OBSTACLE_SPAWN_Z, 5, 3);
+    }
+  }
+}
+
+function spawnMultipleObstacles() {
+  // Create obstacles in 2 lanes, leave 1 safe with coin trail
+  const safeLane = Math.floor(Math.random() * 3);
+  
+  for (let i = 0; i < 3; i++) {
+    if (i !== safeLane) {
+      const type = Math.random() < 0.5 ? 'low' : 'high';
+      const obstacle = new Obstacle(i, OBSTACLE_SPAWN_Z, type);
+      gameState.obstacles.push(obstacle);
+    }
+  }
+  
+  // Add coin trail in safe lane
+  spawnCoinTrail(safeLane, OBSTACLE_SPAWN_Z, 5, 3);
+}
+
+function spawnTrain() {
+  const lane = Math.floor(Math.random() * 3);
+  const train = new Obstacle(lane, OBSTACLE_SPAWN_Z - 2, 'train');
+  gameState.obstacles.push(train);
+  
+  // Add coin trails in other lanes
+  for (let i = 0; i < 3; i++) {
+    if (i !== lane && Math.random() < 0.7) {
+      spawnCoinTrail(i, OBSTACLE_SPAWN_Z, 5, 3);
+    }
+  }
+}
+
+function spawnCoinTrailPattern() {
+  // Spawn coin trails in 1-3 lanes
+  const numTrails = 1 + Math.floor(Math.random() * 3); // 1-3 trails
+  const lanes = [0, 1, 2];
+  
+  // Shuffle lanes
+  for (let i = lanes.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [lanes[i], lanes[j]] = [lanes[j], lanes[i]];
+  }
+  
+  for (let i = 0; i < numTrails; i++) {
+    spawnCoinTrail(lanes[i], OBSTACLE_SPAWN_Z, 5, 3);
+  }
+  
+  // Sometimes add a high coin trail
+  if (Math.random() < 0.3) {
+    const lane = Math.floor(Math.random() * 3);
+    for (let i = 0; i < 3; i++) {
+      const coin = new Coin(lane, OBSTACLE_SPAWN_Z + (i * 4), GROUND_Y + 3.5);
+      gameState.coins.push(coin);
+    }
+  }
+}
+
+function spawnCoinsOnly() {
+  // Spawn coin trails in all lanes - reward moment
+  for (let i = 0; i < 3; i++) {
+    spawnCoinTrail(i, OBSTACLE_SPAWN_Z, 5, 3);
+  }
+}
+
+function spawnMixedPattern() {
+  // Mix of obstacle and coin trails
+  const patternType = Math.floor(Math.random() * 3);
+  
+  if (patternType === 0) {
+    // One obstacle with coin trails in other lanes
+    const obstacleLane = Math.floor(Math.random() * 3);
+    const obstacleType = Math.random() < 0.5 ? 'low' : 'high';
+    const obstacle = new Obstacle(obstacleLane, OBSTACLE_SPAWN_Z, obstacleType);
+    gameState.obstacles.push(obstacle);
+    
+    // Coin trails in other lanes, offset in z
+    for (let i = 0; i < 3; i++) {
+      if (i !== obstacleLane) {
+        spawnCoinTrail(i, OBSTACLE_SPAWN_Z - 5, 5, 3);
+      }
+    }
+  } else if (patternType === 1) {
+    // Staggered coin trails with one low obstacle
+    for (let i = 0; i < 3; i++) {
+      spawnCoinTrail(i, OBSTACLE_SPAWN_Z - (i * 5), 4, 3);
+    }
+    const lane = Math.floor(Math.random() * 3);
+    const obstacle = new Obstacle(lane, OBSTACLE_SPAWN_Z, 'low');
+    gameState.obstacles.push(obstacle);
+  } else {
+    // Multiple short coin trails
+    for (let i = 0; i < 3; i++) {
+      if (Math.random() < 0.7) {
+        spawnCoinTrail(i, OBSTACLE_SPAWN_Z, 5, 3);
+      }
+    }
+  }
+}
+
+function spawnComplexPattern() {
+  // Advanced patterns for hard difficulty with coin trails
+  const patternType = Math.floor(Math.random() * 2);
+  
+  if (patternType === 0) {
+    // Two trains in different lanes with coin trail in safe lane
+    const lane1 = Math.floor(Math.random() * 2); // 0 or 1
+    const lane2 = lane1 + 1 + Math.floor(Math.random() * (2 - lane1)); // Different lane
+    
+    const train1 = new Obstacle(lane1, OBSTACLE_SPAWN_Z, 'train');
+    const train2 = new Obstacle(lane2, OBSTACLE_SPAWN_Z - 8, 'train');
+    gameState.obstacles.push(train1);
+    gameState.obstacles.push(train2);
+    
+    // Coin trails in safe lane
+    for (let i = 0; i < 3; i++) {
+      if (i !== lane1 && i !== lane2) {
+        spawnCoinTrail(i, OBSTACLE_SPAWN_Z, 5, 3);
+      }
+    }
+  } else {
+    // Mixed high and low obstacles with strategic coin trails
+    const safeLane = Math.floor(Math.random() * 3);
+    const types = ['low', 'high'];
+    
+    for (let i = 0; i < 3; i++) {
+      if (i !== safeLane) {
+        const type = types[Math.floor(Math.random() * types.length)];
+        const zOffset = Math.random() * 5;
+        const obstacle = new Obstacle(i, OBSTACLE_SPAWN_Z - zOffset, type);
+        gameState.obstacles.push(obstacle);
+      }
+    }
+    
+    // Coin trail in safe lane requiring lane navigation
+    spawnCoinTrail(safeLane, OBSTACLE_SPAWN_Z, 5, 3);
+    spawnCoinTrail((safeLane + 1) % 3, OBSTACLE_SPAWN_Z - 10, 3, 3);
+  }
+}
+</code>

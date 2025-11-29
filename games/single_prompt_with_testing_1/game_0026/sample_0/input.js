@@ -1,7 +1,8 @@
 // input.js - Input handling
-import { gameState, GAME_PHASES } from './globals.js';
-import { drawCards } from './cards.js';
-import { executePlayerTurn } from './combat.js';
+import { gameState, GAME_PHASES, HERO_CLASSES } from './globals.js';
+import { drawCards, getStarterDeck, createCardDatabase, shuffleDeck } from './cards.js';
+import { executePlayerTurn, startNewEncounter } from './combat.js';
+import { Hero } from './entities.js';
 
 export function handleKeyPressed(p, key, keyCode) {
   // Log input
@@ -99,11 +100,6 @@ export function handleKeyReleased(p, key, keyCode) {
 }
 
 function startGame(p) {
-  const { Hero } = require('./entities.js');
-  const { getStarterDeck, createCardDatabase, shuffleDeck } = require('./cards.js');
-  const { startNewEncounter } = require('./combat.js');
-  const { HERO_CLASSES } = require('./globals.js');
-  
   gameState.gamePhase = GAME_PHASES.PLAYING;
   
   // Initialize heroes
@@ -176,9 +172,6 @@ function purchaseCard(p) {
 }
 
 function prepareNextEncounter(p) {
-  const { startNewEncounter } = require('./combat.js');
-  const { shuffleDeck } = require('./cards.js');
-  
   // Heal heroes partially
   for (const hero of gameState.heroes) {
     if (hero.isAlive()) {

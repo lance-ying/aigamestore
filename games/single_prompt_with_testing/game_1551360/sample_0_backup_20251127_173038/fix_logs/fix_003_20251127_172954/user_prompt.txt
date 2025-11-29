@@ -1,0 +1,1951 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+I can't move forward at all when I press up or down, and I am unsure what the controls are, can you fix that
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Horizon Racer: Mexico</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        html, body {
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            margin: 0;
+            padding: 0;
+            background: #000;
+            font-family: Arial, sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        #game-container {
+            width: 600px;
+            height: 400px;
+            position: relative;
+            overflow: hidden;
+            margin: 0;
+            padding: 0;
+        }
+        
+        canvas {
+            display: block;
+            margin: 0;
+            padding: 0;
+        }
+        
+        .control-buttons {
+            display: none;
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/seedrandom@3.0.5/seedrandom.min.js"></script>
+</head>
+<body>
+    <script type="module" src="game.js"></script>
+</body>
+</html>
+</file>
+
+<file name="globals.js">
+// globals.js - Global constants and game state management
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+// Canvas constants
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+// World constants
+export const WORLD_SIZE = 200; // Size of the playable area
+export const BIOME_ZONES = 4; // Number of distinct biome areas
+
+// Game configuration
+export const TARGET_SCORE = 1000;
+export const TARGET_TOKENS = 50;
+export const TOKEN_VALUE = 10;
+export const CHECKPOINT_VALUE = 50;
+export const BOOST_COST = 3; // Tokens needed for one boost
+
+// Initialize game state object
+export const gameState = {
+  // Core game state
+  gamePhase: "START", // "START", "PLAYING", "PAUSED", "GAME_OVER_WIN", "GAME_OVER_LOSE"
+  controlMode: "HUMAN", // "HUMAN", "TEST_1", "TEST_2", etc.
+  
+  // Score and progression
+  score: 0,
+  tokensCollected: 0,
+  checkpointsCompleted: 0,
+  boostsAvailable: 0,
+  
+  // Three.js core objects
+  scene: null,
+  camera: null,
+  renderer: null,
+  gameContainer: null,
+  
+  // Lighting
+  lights: [],
+  ambientLight: null,
+  directionalLight: null,
+  hemisphereLight: null,
+  
+  // Game entities
+  player: null, // The vehicle
+  entities: [],
+  tokens: [],
+  checkpoints: [],
+  obstacles: [],
+  terrain: null,
+  
+  // Physics state
+  gravity: new THREE.Vector3(0, -0.5, 0),
+  
+  // Camera state
+  cameraMode: "third_person",
+  cameraTarget: null,
+  cameraOffset: new THREE.Vector3(0, 8, 15),
+  cameraLookOffset: new THREE.Vector3(0, 2, -5),
+  
+  // Performance tracking
+  frameCount: 0,
+  lastFrameTime: 0,
+  deltaTime: 0,
+  
+  // UI state
+  uiCanvas: null,
+  uiContext: null,
+  
+  // Biome information
+  biomes: [],
+  currentBiome: 0,
+  
+  // Checkpoint system
+  activeCheckpoint: null,
+  checkpointIndex: 0,
+  
+  // Testing state
+  testStartTime: 0,
+  testDuration: 0,
+  testPhase: 0
+};
+
+// Expose getGameState globally
+export function getGameState() {
+  return gameState;
+}
+
+// Initialize logs (write-only)
+export const logs = {
+  game_info: [],
+  player_info: [],
+  inputs: []
+};
+
+// Expose logs globally
+window.logs = logs;
+window.getGameState = getGameState;
+
+// Utility function to log game info
+export function logGameInfo(status, data = {}) {
+  logs.game_info.push({
+    game_status: status,
+    data: data,
+    framecount: gameState.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+// Utility function to log player info
+export function logPlayerInfo(screenX, screenY, gameX, gameY, gameZ, extraData = {}) {
+  logs.player_info.push({
+    screen_x: screenX,
+    screen_y: screenY,
+    game_x: gameX,
+    game_y: gameY,
+    game_z: gameZ,
+    ...extraData,
+    framecount: gameState.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+// Utility function to log inputs
+export function logInput(inputType, key, keyCode) {
+  logs.inputs.push({
+    input_type: inputType,
+    data: { key, keyCode },
+    framecount: gameState.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+// Biome definitions
+export const BIOME_DEFINITIONS = [
+  {
+    name: "Desert",
+    groundColor: 0xD2B48C,
+    skyColor: 0xFFB347,
+    fogColor: 0xFFE4B5,
+    accentColor: 0xFF8C00
+  },
+  {
+    name: "Jungle",
+    groundColor: 0x228B22,
+    skyColor: 0x87CEEB,
+    fogColor: 0x90EE90,
+    accentColor: 0x006400
+  },
+  {
+    name: "Beach",
+    groundColor: 0xF4E7D7,
+    skyColor: 0x00BFFF,
+    fogColor: 0xE0F6FF,
+    accentColor: 0x1E90FF
+  },
+  {
+    name: "Mountain",
+    groundColor: 0x8B7355,
+    skyColor: 0xB0C4DE,
+    fogColor: 0xD3D3D3,
+    accentColor: 0x696969
+  }
+];
+</file>
+
+<file name="game.js">
+// game.js - Main game loop and initialization
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, logGameInfo, TARGET_SCORE, TARGET_TOKENS } from './globals.js';
+import { setupRenderer, setupScene } from './renderer.js';
+import { setupCamera, updateCamera } from './camera.js';
+import { setupLighting, updateLighting } from './lighting.js';
+import { createTerrain, getCurrentBiome } from './terrain.js';
+import { Vehicle, initializeEntities } from './entities.js';
+import { handleCollisions } from './physics.js';
+import { setupUI, renderUI } from './ui.js';
+import { setupInput, handleInput } from './input.js';
+
+// Initialize the game
+function init() {
+  console.log('Initializing Horizon Racer...');
+  
+  // Setup Three.js components
+  setupScene();
+  setupCamera();
+  setupRenderer();
+  setupLighting();
+  
+  // Setup UI overlay
+  setupUI();
+  
+  // Create terrain
+  createTerrain();
+  
+  // Create player vehicle
+  gameState.player = new Vehicle(0, 0.2, 0);
+  gameState.entities.push(gameState.player);
+  
+  // Initialize game entities
+  initializeEntities();
+  
+  // Setup input handling
+  setupInput();
+  
+  // Set random seed for reproducibility
+  Math.seedrandom(42);
+  
+  // Initialize game state
+  gameState.gamePhase = "START";
+  gameState.controlMode = "HUMAN";
+  
+  // Log initial state
+  logGameInfo("START", {
+    targetScore: TARGET_SCORE,
+    targetTokens: TARGET_TOKENS
+  });
+  
+  console.log('Game initialized successfully!');
+}
+
+// Update game logic
+function updateGame(deltaTime) {
+  gameState.deltaTime = deltaTime;
+  gameState.frameCount++;
+  
+  // Handle input
+  handleInput();
+  
+  // Update based on game phase
+  if (gameState.gamePhase === "PLAYING") {
+    // Update player
+    if (gameState.player) {
+      gameState.player.update(deltaTime);
+      
+      // Update biome-based lighting
+      const currentBiome = getCurrentBiome(gameState.player.mesh.position);
+      updateLighting(currentBiome);
+    }
+    
+    // Update all entities
+    gameState.entities.forEach(entity => {
+      if (entity !== gameState.player && entity.update) {
+        entity.update(deltaTime);
+      }
+    });
+    
+    // Handle collisions
+    handleCollisions();
+    
+    // Update camera
+    updateCamera();
+    
+    // Check win/lose conditions
+    checkGameConditions();
+  }
+  
+  // Render UI
+  renderUI();
+}
+
+// Check game conditions
+function checkGameConditions() {
+  // Check win condition
+  if (gameState.score >= TARGET_SCORE && gameState.tokensCollected >= TARGET_TOKENS) {
+    gameState.gamePhase = "GAME_OVER_WIN";
+    logGameInfo("GAME_OVER_WIN", {
+      finalScore: gameState.score,
+      tokensCollected: gameState.tokensCollected,
+      checkpointsCompleted: gameState.checkpointsCompleted
+    });
+  }
+  
+  // No lose condition in this game - it's about exploration and collection
+}
+
+// Main game loop
+let lastTime = performance.now();
+
+function gameLoop(currentTime) {
+  requestAnimationFrame(gameLoop);
+  
+  // Calculate delta time
+  const deltaTime = Math.min((currentTime - lastTime) / 1000, 0.1); // Cap at 100ms
+  lastTime = currentTime;
+  
+  // Update game
+  updateGame(deltaTime);
+  
+  // Render scene
+  if (gameState.renderer && gameState.scene && gameState.camera) {
+    gameState.renderer.render(gameState.scene, gameState.camera);
+  }
+}
+
+// Start the game
+init();
+gameLoop(performance.now());
+
+// Expose game instance
+window.gameInstance = {
+  gameState,
+  init,
+  updateGame,
+  gameLoop
+};
+</file>
+
+<file name="renderer.js">
+// renderer.js - Renderer setup and configuration
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { CANVAS_WIDTH, CANVAS_HEIGHT, gameState } from './globals.js';
+
+export function setupRenderer() {
+  // Create container div to properly contain the game canvas
+  const gameContainer = document.createElement('div');
+  gameContainer.id = 'game-container';
+  gameContainer.style.width = `${CANVAS_WIDTH}px`;
+  gameContainer.style.height = `${CANVAS_HEIGHT}px`;
+  gameContainer.style.position = 'relative';
+  gameContainer.style.overflow = 'hidden';
+  gameContainer.style.margin = '0';
+  gameContainer.style.padding = '0';
+  gameContainer.style.border = 'none';
+  document.body.appendChild(gameContainer);
+  
+  // Set body styles to prevent overflow
+  document.body.style.margin = '0';
+  document.body.style.padding = '0';
+  document.body.style.overflow = 'hidden';
+  document.body.style.width = `${CANVAS_WIDTH}px`;
+  document.body.style.height = `${CANVAS_HEIGHT}px`;
+  
+  // Create WebGL renderer
+  const renderer = new THREE.WebGLRenderer({
+    antialias: true,
+    alpha: false,
+    powerPreference: "high-performance"
+  });
+  
+  renderer.setSize(CANVAS_WIDTH, CANVAS_HEIGHT);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  
+  // Append canvas to container
+  gameContainer.appendChild(renderer.domElement);
+  
+  // Store in gameState
+  gameState.renderer = renderer;
+  gameState.gameContainer = gameContainer;
+  
+  return renderer;
+}
+
+export function setupScene() {
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x87CEEB);
+  scene.fog = new THREE.Fog(0x87CEEB, 50, 150);
+  
+  gameState.scene = scene;
+  return scene;
+}
+</file>
+
+<file name="ui.js">
+// ui.js - UI rendering on canvas overlay
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, TARGET_SCORE, TARGET_TOKENS } from './globals.js';
+
+let uiCanvas = null;
+let uiContext = null;
+
+export function setupUI() {
+  // Create 2D canvas overlay for UI
+  uiCanvas = document.createElement('canvas');
+  uiCanvas.width = CANVAS_WIDTH;
+  uiCanvas.height = CANVAS_HEIGHT;
+  uiCanvas.style.position = 'absolute';
+  uiCanvas.style.top = '0';
+  uiCanvas.style.left = '0';
+  uiCanvas.style.pointerEvents = 'none';
+  uiCanvas.style.zIndex = '1000';
+  uiCanvas.style.margin = '0';
+  uiCanvas.style.padding = '0';
+  
+  // Append to game container
+  if (gameState.gameContainer) {
+    gameState.gameContainer.appendChild(uiCanvas);
+  }
+  
+  uiContext = uiCanvas.getContext('2d');
+  gameState.uiCanvas = uiCanvas;
+  gameState.uiContext = uiContext;
+}
+
+export function renderUI() {
+  if (!uiContext) return;
+  
+  // Clear canvas
+  uiContext.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  switch (gameState.gamePhase) {
+    case "START":
+      renderStartScreen();
+      break;
+    case "PLAYING":
+      renderHUD();
+      break;
+    case "PAUSED":
+      renderHUD();
+      renderPauseOverlay();
+      break;
+    case "GAME_OVER_WIN":
+      renderGameOverScreen(true);
+      break;
+    case "GAME_OVER_LOSE":
+      renderGameOverScreen(false);
+      break;
+  }
+}
+
+function renderStartScreen() {
+  // Semi-transparent background
+  uiContext.fillStyle = 'rgba(0, 0, 0, 0.85)';
+  uiContext.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  // Title with gradient
+  const gradient = uiContext.createLinearGradient(0, 80, 0, 140);
+  gradient.addColorStop(0, '#FFD700');
+  gradient.addColorStop(1, '#FFA500');
+  uiContext.fillStyle = gradient;
+  uiContext.font = 'bold 48px Arial';
+  uiContext.textAlign = 'center';
+  uiContext.fillText('HORIZON RACER', CANVAS_WIDTH / 2, 100);
+  
+  // Subtitle
+  uiContext.fillStyle = '#FF6347';
+  uiContext.font = 'bold 24px Arial';
+  uiContext.fillText('MEXICO EDITION', CANVAS_WIDTH / 2, 130);
+  
+  // Description
+  uiContext.fillStyle = 'white';
+  uiContext.font = '16px Arial';
+  const descLines = [
+    'Explore vibrant Mexican landscapes',
+    'Collect tokens and complete checkpoints',
+    `Goal: ${TARGET_TOKENS} tokens & ${TARGET_SCORE} points`
+  ];
+  descLines.forEach((line, i) => {
+    uiContext.fillText(line, CANVAS_WIDTH / 2, 170 + i * 25);
+  });
+  
+  // Controls
+  uiContext.fillStyle = '#FFD700';
+  uiContext.font = 'bold 14px Arial';
+  uiContext.fillText('CONTROLS', CANVAS_WIDTH / 2, 260);
+  
+  uiContext.fillStyle = '#CCCCCC';
+  uiContext.font = '12px Arial';
+  const controls = [
+    'W/↑: Accelerate  |  S/↓: Brake',
+    'A/←: Turn Left  |  D/→: Turn Right',
+    'SPACE: Handbrake  |  SHIFT: Boost'
+  ];
+  controls.forEach((line, i) => {
+    uiContext.fillText(line, CANVAS_WIDTH / 2, 285 + i * 20);
+  });
+  
+  // Start prompt (pulsing)
+  const pulseAlpha = 0.5 + Math.sin(Date.now() * 0.003) * 0.5;
+  uiContext.fillStyle = `rgba(255, 255, 255, ${pulseAlpha})`;
+  uiContext.font = 'bold 20px Arial';
+  uiContext.fillText('PRESS ENTER TO START', CANVAS_WIDTH / 2, 360);
+}
+
+function renderHUD() {
+  // Top bar background
+  uiContext.fillStyle = 'rgba(0, 0, 0, 0.7)';
+  uiContext.fillRect(0, 0, CANVAS_WIDTH, 80);
+  
+  // Score
+  uiContext.fillStyle = '#FFD700';
+  uiContext.font = 'bold 24px Arial';
+  uiContext.textAlign = 'left';
+  uiContext.fillText(`Score: ${gameState.score}`, 15, 30);
+  
+  // Tokens collected
+  uiContext.fillStyle = '#FFFFFF';
+  uiContext.font = '16px Arial';
+  uiContext.fillText(`Tokens: ${gameState.tokensCollected}/${TARGET_TOKENS}`, 15, 55);
+  
+  // Speed indicator
+  if (gameState.player) {
+    const speedPercent = (gameState.player.currentSpeed / gameState.player.maxSpeed) * 100;
+    uiContext.fillStyle = '#00FF00';
+    uiContext.font = 'bold 20px Arial';
+    uiContext.textAlign = 'right';
+    uiContext.fillText(`Speed: ${Math.round(speedPercent)}%`, CANVAS_WIDTH - 15, 30);
+    
+    // Boost indicator
+    if (gameState.boostsAvailable > 0) {
+      uiContext.fillStyle = gameState.player.isBoosting ? '#FF4500' : '#FFA500';
+      uiContext.font = 'bold 16px Arial';
+      uiContext.fillText(`Boost: ${gameState.boostsAvailable}`, CANVAS_WIDTH - 15, 55);
+      
+      if (gameState.player.isBoosting) {
+        uiContext.fillText('BOOST ACTIVE!', CANVAS_WIDTH - 15, 75);
+      }
+    } else {
+      uiContext.fillStyle = '#888888';
+      uiContext.font = '14px Arial';
+      uiContext.fillText('Collect 3 tokens for boost', CANVAS_WIDTH - 15, 55);
+    }
+  }
+  
+  // Checkpoint indicator
+  if (gameState.activeCheckpoint) {
+    uiContext.fillStyle = 'rgba(0, 255, 0, 0.3)';
+    uiContext.fillRect(CANVAS_WIDTH / 2 - 150, 10, 300, 60);
+    
+    uiContext.fillStyle = '#00FF00';
+    uiContext.font = 'bold 18px Arial';
+    uiContext.textAlign = 'center';
+    uiContext.fillText('Next Checkpoint', CANVAS_WIDTH / 2, 30);
+    
+    // Direction arrow
+    if (gameState.player) {
+      const dx = gameState.activeCheckpoint.mesh.position.x - gameState.player.mesh.position.x;
+      const dz = gameState.activeCheckpoint.mesh.position.z - gameState.player.mesh.position.z;
+      const angle = Math.atan2(dx, -dz);
+      
+      uiContext.save();
+      uiContext.translate(CANVAS_WIDTH / 2, 50);
+      uiContext.rotate(angle);
+      
+      uiContext.fillStyle = '#00FF00';
+      uiContext.beginPath();
+      uiContext.moveTo(0, -15);
+      uiContext.lineTo(-8, 5);
+      uiContext.lineTo(8, 5);
+      uiContext.closePath();
+      uiContext.fill();
+      
+      uiContext.restore();
+    }
+  }
+  
+  // Progress bar
+  const progressWidth = 200;
+  const progressHeight = 20;
+  const progressX = CANVAS_WIDTH / 2 - progressWidth / 2;
+  const progressY = CANVAS_HEIGHT - 40;
+  
+  // Background
+  uiContext.fillStyle = 'rgba(0, 0, 0, 0.7)';
+  uiContext.fillRect(progressX - 5, progressY - 5, progressWidth + 10, progressHeight + 10);
+  
+  // Progress fill
+  const progress = Math.min(gameState.score / TARGET_SCORE, 1);
+  uiContext.fillStyle = progress >= 1 ? '#00FF00' : '#FFD700';
+  uiContext.fillRect(progressX, progressY, progressWidth * progress, progressHeight);
+  
+  // Border
+  uiContext.strokeStyle = '#FFFFFF';
+  uiContext.lineWidth = 2;
+  uiContext.strokeRect(progressX, progressY, progressWidth, progressHeight);
+  
+  // Progress text
+  uiContext.fillStyle = '#FFFFFF';
+  uiContext.font = 'bold 12px Arial';
+  uiContext.textAlign = 'center';
+  uiContext.fillText(`${gameState.score}/${TARGET_SCORE}`, CANVAS_WIDTH / 2, progressY + 15);
+}
+
+function renderPauseOverlay() {
+  // Semi-transparent overlay
+  uiContext.fillStyle = 'rgba(0, 0, 0, 0.7)';
+  uiContext.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  // Paused text
+  uiContext.fillStyle = '#FFD700';
+  uiContext.font = 'bold 48px Arial';
+  uiContext.textAlign = 'center';
+  uiContext.fillText('PAUSED', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 30);
+  
+  // Instructions
+  uiContext.fillStyle = 'white';
+  uiContext.font = '20px Arial';
+  uiContext.fillText('Press ESC to Resume', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 20);
+  uiContext.fillText('Press R to Restart', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 50);
+}
+
+function renderGameOverScreen(won) {
+  // Background
+  uiContext.fillStyle = won ? 'rgba(0, 100, 0, 0.9)' : 'rgba(100, 0, 0, 0.9)';
+  uiContext.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  // Title
+  const gradient = uiContext.createLinearGradient(0, 100, 0, 160);
+  if (won) {
+    gradient.addColorStop(0, '#FFD700');
+    gradient.addColorStop(1, '#00FF00');
+  } else {
+    gradient.addColorStop(0, '#FF6347');
+    gradient.addColorStop(1, '#8B0000');
+  }
+  uiContext.fillStyle = gradient;
+  uiContext.font = 'bold 56px Arial';
+  uiContext.textAlign = 'center';
+  uiContext.fillText(won ? 'VICTORY!' : 'GAME OVER', CANVAS_WIDTH / 2, 130);
+  
+  // Stats
+  uiContext.fillStyle = 'white';
+  uiContext.font = 'bold 24px Arial';
+  uiContext.fillText(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, 190);
+  
+  uiContext.font = '18px Arial';
+  uiContext.fillText(`Tokens Collected: ${gameState.tokensCollected}`, CANVAS_WIDTH / 2, 220);
+  uiContext.fillText(`Checkpoints: ${gameState.checkpointsCompleted}`, CANVAS_WIDTH / 2, 245);
+  
+  if (won) {
+    uiContext.fillStyle = '#FFD700';
+    uiContext.font = 'bold 20px Arial';
+    uiContext.fillText('You conquered Mexico!', CANVAS_WIDTH / 2, 280);
+  }
+  
+  // Restart prompt
+  uiContext.fillStyle = 'white';
+  uiContext.font = 'bold 22px Arial';
+  const pulseAlpha = 0.5 + Math.sin(Date.now() * 0.003) * 0.5;
+  uiContext.fillStyle = `rgba(255, 255, 255, ${pulseAlpha})`;
+  uiContext.fillText('Press R to Restart', CANVAS_WIDTH / 2, 340);
+}
+</file>
+
+<file name="lighting.js">
+// lighting.js - Lighting setup
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState } from './globals.js';
+
+export function setupLighting() {
+  const scene = gameState.scene;
+  
+  // Hemisphere light for sky/ground ambient
+  const hemisphereLight = new THREE.HemisphereLight(
+    0xFFE4B5, // Sky color
+    0xD2691E, // Ground color
+    0.6
+  );
+  scene.add(hemisphereLight);
+  gameState.hemisphereLight = hemisphereLight;
+  
+  // Directional light (sun)
+  const directionalLight = new THREE.DirectionalLight(0xFFFFCC, 0.8);
+  directionalLight.position.set(50, 100, 30);
+  directionalLight.castShadow = true;
+  
+  // Configure shadow properties
+  directionalLight.shadow.mapSize.width = 2048;
+  directionalLight.shadow.mapSize.height = 2048;
+  directionalLight.shadow.camera.near = 0.5;
+  directionalLight.shadow.camera.far = 500;
+  directionalLight.shadow.camera.left = -100;
+  directionalLight.shadow.camera.right = 100;
+  directionalLight.shadow.camera.top = 100;
+  directionalLight.shadow.camera.bottom = -100;
+  directionalLight.shadow.bias = -0.0001;
+  
+  scene.add(directionalLight);
+  gameState.directionalLight = directionalLight;
+  
+  // Ambient light for base illumination
+  const ambientLight = new THREE.AmbientLight(0xFFFFFF, 0.4);
+  scene.add(ambientLight);
+  gameState.ambientLight = ambientLight;
+  
+  gameState.lights.push(hemisphereLight, directionalLight, ambientLight);
+}
+
+export function updateLighting(biome) {
+  if (!gameState.hemisphereLight || !gameState.scene) return;
+  
+  // Update lighting based on biome
+  gameState.hemisphereLight.color.setHex(biome.skyColor);
+  gameState.hemisphereLight.groundColor.setHex(biome.groundColor);
+  
+  // Update fog color
+  if (gameState.scene.fog) {
+    gameState.scene.fog.color.setHex(biome.fogColor);
+  }
+}
+</file>
+
+<file name="terrain.js">
+// terrain.js - Terrain generation and management
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, WORLD_SIZE, BIOME_DEFINITIONS } from './globals.js';
+
+export function createTerrain() {
+  const scene = gameState.scene;
+  
+  // Create ground plane with segments for varied coloring
+  const segments = 40;
+  const geometry = new THREE.PlaneGeometry(WORLD_SIZE * 2, WORLD_SIZE * 2, segments, segments);
+  
+  // Generate height variation and biome-based coloring
+  const colors = [];
+  const positions = geometry.attributes.position.array;
+  
+  for (let i = 0; i < positions.length; i += 3) {
+    const x = positions[i];
+    const z = positions[i + 1];
+    
+    // Add slight height variation
+    const height = Math.sin(x * 0.05) * Math.cos(z * 0.05) * 2;
+    positions[i + 2] = height;
+    
+    // Determine biome based on position
+    const biomeIndex = getBiomeIndex(x, z);
+    const biome = BIOME_DEFINITIONS[biomeIndex];
+    
+    // Add color variation
+    const color = new THREE.Color(biome.groundColor);
+    const variation = 0.85 + Math.random() * 0.3;
+    color.multiplyScalar(variation);
+    
+    colors.push(color.r, color.g, color.b);
+  }
+  
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  geometry.computeVertexNormals();
+  
+  const material = new THREE.MeshStandardMaterial({
+    vertexColors: true,
+    roughness: 0.9,
+    metalness: 0.1
+  });
+  
+  const terrain = new THREE.Mesh(geometry, material);
+  terrain.rotation.x = -Math.PI / 2;
+  terrain.receiveShadow = true;
+  scene.add(terrain);
+  
+  gameState.terrain = terrain;
+  
+  // Create boundary walls (invisible collision)
+  createBoundaryWalls();
+  
+  // Spawn environmental decorations
+  spawnEnvironmentalObjects();
+  
+  return terrain;
+}
+
+function getBiomeIndex(x, z) {
+  // Divide world into quadrants
+  const halfSize = WORLD_SIZE;
+  
+  if (x > 0 && z > 0) return 0; // Desert (NE)
+  if (x < 0 && z > 0) return 1; // Jungle (NW)
+  if (x < 0 && z < 0) return 2; // Beach (SW)
+  return 3; // Mountain (SE)
+}
+
+function createBoundaryWalls() {
+  const wallHeight = 20;
+  const wallThickness = 2;
+  const boundary = WORLD_SIZE + 5;
+  
+  const wallMaterial = new THREE.MeshStandardMaterial({
+    color: 0x8B7355,
+    transparent: true,
+    opacity: 0.3
+  });
+  
+  // Create four walls
+  const walls = [
+    { pos: [0, wallHeight / 2, boundary], size: [boundary * 2, wallHeight, wallThickness] }, // North
+    { pos: [0, wallHeight / 2, -boundary], size: [boundary * 2, wallHeight, wallThickness] }, // South
+    { pos: [boundary, wallHeight / 2, 0], size: [wallThickness, wallHeight, boundary * 2] }, // East
+    { pos: [-boundary, wallHeight / 2, 0], size: [wallThickness, wallHeight, boundary * 2] } // West
+  ];
+  
+  walls.forEach(wall => {
+    const geometry = new THREE.BoxGeometry(...wall.size);
+    const mesh = new THREE.Mesh(geometry, wallMaterial);
+    mesh.position.set(...wall.pos);
+    mesh.receiveShadow = true;
+    gameState.scene.add(mesh);
+    gameState.obstacles.push({
+      mesh: mesh,
+      type: 'boundary',
+      radius: Math.max(...wall.size) / 2,
+      position: new THREE.Vector3(...wall.pos)
+    });
+  });
+}
+
+function spawnEnvironmentalObjects() {
+  // Spawn rocks and trees as obstacles
+  const objectCount = 100;
+  
+  for (let i = 0; i < objectCount; i++) {
+    // Random position within world
+    const x = (Math.random() - 0.5) * WORLD_SIZE * 1.8;
+    const z = (Math.random() - 0.5) * WORLD_SIZE * 1.8;
+    
+    // Determine biome for this position
+    const biomeIndex = getBiomeIndex(x, z);
+    const biome = BIOME_DEFINITIONS[biomeIndex];
+    
+    // Random object type
+    const isTree = Math.random() > 0.5;
+    
+    if (isTree) {
+      createTree(x, z, biome);
+    } else {
+      createRock(x, z, biome);
+    }
+  }
+}
+
+function createTree(x, z, biome) {
+  const group = new THREE.Group();
+  
+  // Trunk
+  const trunkGeometry = new THREE.CylinderGeometry(0.3, 0.4, 3, 8);
+  const trunkMaterial = new THREE.MeshStandardMaterial({
+    color: 0x4A2511,
+    roughness: 0.9
+  });
+  const trunk = new THREE.Mesh(trunkGeometry, trunkMaterial);
+  trunk.position.y = 1.5;
+  trunk.castShadow = true;
+  trunk.receiveShadow = true;
+  group.add(trunk);
+  
+  // Foliage
+  const foliageGeometry = new THREE.SphereGeometry(1.5, 8, 8);
+  const foliageColor = biome.name === "Jungle" ? 0x228B22 : 
+                       biome.name === "Desert" ? 0x6B8E23 : 0x32CD32;
+  const foliageMaterial = new THREE.MeshStandardMaterial({
+    color: foliageColor,
+    roughness: 0.8
+  });
+  const foliage = new THREE.Mesh(foliageGeometry, foliageMaterial);
+  foliage.position.y = 3.5;
+  foliage.castShadow = true;
+  foliage.receiveShadow = true;
+  group.add(foliage);
+  
+  group.position.set(x, 0, z);
+  gameState.scene.add(group);
+  
+  gameState.obstacles.push({
+    mesh: group,
+    type: 'tree',
+    radius: 1.5,
+    position: new THREE.Vector3(x, 0, z)
+  });
+}
+
+function createRock(x, z, biome) {
+  const size = 0.5 + Math.random() * 1.5;
+  const geometry = new THREE.DodecahedronGeometry(size, 0);
+  
+  const rockColor = new THREE.Color(biome.accentColor);
+  rockColor.multiplyScalar(0.6 + Math.random() * 0.4);
+  
+  const material = new THREE.MeshStandardMaterial({
+    color: rockColor,
+    roughness: 0.95,
+    metalness: 0.1
+  });
+  
+  const rock = new THREE.Mesh(geometry, material);
+  rock.position.set(x, size / 2, z);
+  rock.rotation.set(
+    Math.random() * Math.PI,
+    Math.random() * Math.PI,
+    Math.random() * Math.PI
+  );
+  rock.castShadow = true;
+  rock.receiveShadow = true;
+  
+  gameState.scene.add(rock);
+  
+  gameState.obstacles.push({
+    mesh: rock,
+    type: 'rock',
+    radius: size,
+    position: new THREE.Vector3(x, 0, z)
+  });
+}
+
+export function getCurrentBiome(position) {
+  const biomeIndex = getBiomeIndex(position.x, position.z);
+  return BIOME_DEFINITIONS[biomeIndex];
+}
+</file>
+
+<file name="entities.js">
+// entities.js - Game entity classes
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, logPlayerInfo } from './globals.js';
+
+export class Vehicle {
+  constructor(x, y, z) {
+    // Create vehicle mesh (sports car style)
+    const group = new THREE.Group();
+    
+    // Car body
+    const bodyGeometry = new THREE.BoxGeometry(2, 0.8, 4);
+    const bodyMaterial = new THREE.MeshStandardMaterial({
+      color: 0xFF4500,
+      metalness: 0.7,
+      roughness: 0.3
+    });
+    const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
+    body.position.y = 0.6;
+    body.castShadow = true;
+    body.receiveShadow = true;
+    group.add(body);
+    
+    // Car cabin
+    const cabinGeometry = new THREE.BoxGeometry(1.6, 0.7, 2);
+    const cabinMaterial = new THREE.MeshStandardMaterial({
+      color: 0x1A1A1A,
+      metalness: 0.5,
+      roughness: 0.5
+    });
+    const cabin = new THREE.Mesh(cabinGeometry, cabinMaterial);
+    cabin.position.y = 1.2;
+    cabin.position.z = -0.3;
+    cabin.castShadow = true;
+    group.add(cabin);
+    
+    // Wheels
+    const wheelGeometry = new THREE.CylinderGeometry(0.4, 0.4, 0.3, 16);
+    const wheelMaterial = new THREE.MeshStandardMaterial({
+      color: 0x1A1A1A,
+      metalness: 0.3,
+      roughness: 0.7
+    });
+    
+    const wheelPositions = [
+      [-1.1, 0.4, 1.2],  // Front left
+      [1.1, 0.4, 1.2],   // Front right
+      [-1.1, 0.4, -1.2], // Back left
+      [1.1, 0.4, -1.2]   // Back right
+    ];
+    
+    this.wheels = [];
+    wheelPositions.forEach(pos => {
+      const wheel = new THREE.Mesh(wheelGeometry, wheelMaterial);
+      wheel.rotation.z = Math.PI / 2;
+      wheel.position.set(...pos);
+      wheel.castShadow = true;
+      group.add(wheel);
+      this.wheels.push(wheel);
+    });
+    
+    // Headlights
+    const lightGeometry = new THREE.SphereGeometry(0.15, 8, 8);
+    const lightMaterial = new THREE.MeshStandardMaterial({
+      color: 0xFFFFFF,
+      emissive: 0xFFFF00,
+      emissiveIntensity: 0.8
+    });
+    
+    const leftLight = new THREE.Mesh(lightGeometry, lightMaterial);
+    leftLight.position.set(-0.6, 0.5, 2.1);
+    group.add(leftLight);
+    
+    const rightLight = new THREE.Mesh(lightGeometry, lightMaterial);
+    rightLight.position.set(0.6, 0.5, 2.1);
+    group.add(rightLight);
+    
+    this.mesh = group;
+    this.mesh.position.set(x, y, z);
+    gameState.scene.add(this.mesh);
+    
+    // Physics properties
+    this.velocity = new THREE.Vector3(0, 0, 0);
+    this.acceleration = new THREE.Vector3(0, 0, 0);
+    this.angularVelocity = 0;
+    
+    // Vehicle properties
+    this.maxSpeed = 1.2;
+    this.accelerationPower = 0.03;
+    this.brakePower = 0.06;
+    this.turnSpeed = 0.04;
+    this.driftFactor = 0.95;
+    this.friction = 0.98;
+    this.boostMultiplier = 2.0;
+    
+    // State
+    this.currentSpeed = 0;
+    this.isAccelerating = false;
+    this.isBraking = false;
+    this.isDrifting = false;
+    this.isBoosting = false;
+    this.boostTimer = 0;
+    this.boostDuration = 2.0;
+    
+    // Collision
+    this.radius = 2.5;
+    this.lastPosition = new THREE.Vector3().copy(this.mesh.position);
+    
+    // Animation
+    this.wheelRotation = 0;
+  }
+  
+  update(deltaTime) {
+    // Store last position for collision response
+    this.lastPosition.copy(this.mesh.position);
+    
+    // Update boost timer
+    if (this.isBoosting) {
+      this.boostTimer -= deltaTime;
+      if (this.boostTimer <= 0) {
+        this.isBoosting = false;
+      }
+    }
+    
+    // Calculate forward direction
+    const forward = new THREE.Vector3(0, 0, -1);
+    forward.applyQuaternion(this.mesh.quaternion);
+    
+    // Apply acceleration
+    if (this.isAccelerating) {
+      const power = this.isBoosting ? 
+        this.accelerationPower * this.boostMultiplier : 
+        this.accelerationPower;
+      this.acceleration.add(forward.clone().multiplyScalar(power));
+    }
+    
+    // Apply braking
+    if (this.isBraking) {
+      this.velocity.multiplyScalar(1 - this.brakePower);
+    }
+    
+    // Update velocity
+    this.velocity.add(this.acceleration);
+    
+    // Apply friction
+    const frictionAmount = this.isDrifting ? this.driftFactor : this.friction;
+    this.velocity.multiplyScalar(frictionAmount);
+    
+    // Clamp speed
+    const maxSpeed = this.isBoosting ? this.maxSpeed * this.boostMultiplier : this.maxSpeed;
+    this.currentSpeed = this.velocity.length();
+    if (this.currentSpeed > maxSpeed) {
+      this.velocity.normalize().multiplyScalar(maxSpeed);
+      this.currentSpeed = maxSpeed;
+    }
+    
+    // Update position
+    this.mesh.position.add(this.velocity.clone().multiplyScalar(deltaTime * 60));
+    
+    // Update rotation based on angular velocity
+    if (Math.abs(this.angularVelocity) > 0.001 && this.currentSpeed > 0.1) {
+      const turnAmount = this.angularVelocity * (this.currentSpeed / this.maxSpeed);
+      this.mesh.rotateY(turnAmount);
+      
+      // Reduce angular velocity
+      this.angularVelocity *= 0.9;
+    }
+    
+    // Keep vehicle grounded
+    this.mesh.position.y = 0.2;
+    
+    // Animate wheels
+    this.wheelRotation += this.currentSpeed * 0.5;
+    this.wheels.forEach(wheel => {
+      wheel.rotation.x = this.wheelRotation;
+    });
+    
+    // Reset acceleration
+    this.acceleration.set(0, 0, 0);
+    this.isAccelerating = false;
+    this.isBraking = false;
+    
+    // Log position periodically
+    if (gameState.frameCount % 30 === 0) {
+      this.logPosition();
+    }
+  }
+  
+  accelerate() {
+    this.isAccelerating = true;
+  }
+  
+  brake() {
+    this.isBraking = true;
+  }
+  
+  turnLeft() {
+    this.angularVelocity += this.turnSpeed;
+  }
+  
+  turnRight() {
+    this.angularVelocity -= this.turnSpeed;
+  }
+  
+  handbrake() {
+    this.isDrifting = true;
+    this.velocity.multiplyScalar(0.95);
+  }
+  
+  activateBoost() {
+    if (gameState.boostsAvailable > 0 && !this.isBoosting) {
+      this.isBoosting = true;
+      this.boostTimer = this.boostDuration;
+      gameState.boostsAvailable--;
+    }
+  }
+  
+  handleCollision(obstacle) {
+    // Move back to last position
+    this.mesh.position.copy(this.lastPosition);
+    
+    // Reduce velocity significantly
+    this.velocity.multiplyScalar(0.3);
+    
+    // Bounce back slightly
+    const direction = new THREE.Vector3()
+      .subVectors(this.mesh.position, obstacle.position)
+      .normalize();
+    this.velocity.add(direction.multiplyScalar(0.2));
+  }
+  
+  logPosition() {
+    const screenPos = this.mesh.position.clone().project(gameState.camera);
+    logPlayerInfo(
+      (screenPos.x + 1) * 300,
+      (1 - screenPos.y) * 200,
+      this.mesh.position.x,
+      this.mesh.position.y,
+      this.mesh.position.z,
+      {
+        speed: this.currentSpeed,
+        isBoosting: this.isBoosting,
+        tokensCollected: gameState.tokensCollected
+      }
+    );
+  }
+}
+
+export class Token {
+  constructor(x, y, z) {
+    // Create token mesh (glowing ring)
+    const geometry = new THREE.TorusGeometry(0.5, 0.15, 16, 32);
+    const material = new THREE.MeshStandardMaterial({
+      color: 0xFFD700,
+      emissive: 0xFFD700,
+      emissiveIntensity: 0.8,
+      metalness: 0.7,
+      roughness: 0.3
+    });
+    
+    this.mesh = new THREE.Mesh(geometry, material);
+    this.mesh.position.set(x, y, z);
+    this.mesh.castShadow = true;
+    
+    // Outer glow ring
+    const glowGeometry = new THREE.TorusGeometry(0.7, 0.1, 16, 32);
+    const glowMaterial = new THREE.MeshBasicMaterial({
+      color: 0xFFFF00,
+      transparent: true,
+      opacity: 0.3
+    });
+    this.glow = new THREE.Mesh(glowGeometry, glowMaterial);
+    this.glow.position.copy(this.mesh.position);
+    
+    gameState.scene.add(this.mesh);
+    gameState.scene.add(this.glow);
+    
+    this.value = 10;
+    this.rotationSpeed = 0.03;
+    this.bobSpeed = 0.002;
+    this.bobAmount = 0.3;
+    this.initialY = y;
+    this.collected = false;
+  }
+  
+  update(deltaTime) {
+    if (this.collected) return;
+    
+    // Rotate
+    this.mesh.rotation.y += this.rotationSpeed;
+    this.glow.rotation.y -= this.rotationSpeed * 0.5;
+    
+    // Bob up and down
+    const bobOffset = Math.sin(gameState.frameCount * this.bobSpeed) * this.bobAmount;
+    this.mesh.position.y = this.initialY + bobOffset;
+    this.glow.position.y = this.mesh.position.y;
+    
+    // Pulse glow
+    this.glow.scale.setScalar(1 + Math.sin(gameState.frameCount * 0.05) * 0.1);
+    
+    // Check collision with player
+    if (gameState.player) {
+      const distance = this.mesh.position.distanceTo(gameState.player.mesh.position);
+      if (distance < 2.0) {
+        this.collect();
+      }
+    }
+  }
+  
+  collect() {
+    this.collected = true;
+    gameState.score += this.value;
+    gameState.tokensCollected++;
+    
+    // Add boost charge every few tokens
+    if (gameState.tokensCollected % 3 === 0) {
+      gameState.boostsAvailable++;
+    }
+    
+    // Remove from scene
+    gameState.scene.remove(this.mesh);
+    gameState.scene.remove(this.glow);
+    
+    // Remove from tokens array
+    const index = gameState.tokens.indexOf(this);
+    if (index > -1) {
+      gameState.tokens.splice(index, 1);
+    }
+    
+    // Spawn new token
+    spawnToken();
+  }
+}
+
+export class Checkpoint {
+  constructor(x, y, z, index) {
+    // Create checkpoint arch
+    const group = new THREE.Group();
+    
+    // Left pillar
+    const pillarGeometry = new THREE.CylinderGeometry(0.5, 0.5, 8, 16);
+    const pillarMaterial = new THREE.MeshStandardMaterial({
+      color: 0x00FF00,
+      emissive: 0x00FF00,
+      emissiveIntensity: 0.5,
+      metalness: 0.5,
+      roughness: 0.5
+    });
+    
+    const leftPillar = new THREE.Mesh(pillarGeometry, pillarMaterial);
+    leftPillar.position.set(-3, 4, 0);
+    leftPillar.castShadow = true;
+    group.add(leftPillar);
+    
+    // Right pillar
+    const rightPillar = new THREE.Mesh(pillarGeometry, pillarMaterial);
+    rightPillar.position.set(3, 4, 0);
+    rightPillar.castShadow = true;
+    group.add(rightPillar);
+    
+    // Top bar
+    const barGeometry = new THREE.BoxGeometry(6.5, 0.5, 0.5);
+    const bar = new THREE.Mesh(barGeometry, pillarMaterial);
+    bar.position.y = 8;
+    bar.castShadow = true;
+    group.add(bar);
+    
+    // Checkpoint plane (collision detection)
+    const planeGeometry = new THREE.PlaneGeometry(6, 8);
+    const planeMaterial = new THREE.MeshBasicMaterial({
+      color: 0x00FF00,
+      transparent: true,
+      opacity: 0.2,
+      side: THREE.DoubleSide
+    });
+    this.plane = new THREE.Mesh(planeGeometry, planeMaterial);
+    this.plane.position.y = 4;
+    group.add(this.plane);
+    
+    this.mesh = group;
+    this.mesh.position.set(x, y, z);
+    gameState.scene.add(this.mesh);
+    
+    this.index = index;
+    this.collected = false;
+    this.value = 50;
+    this.pulsePhase = 0;
+  }
+  
+  update(deltaTime) {
+    if (this.collected) return;
+    
+    // Pulse effect
+    this.pulsePhase += 0.05;
+    const scale = 1 + Math.sin(this.pulsePhase) * 0.1;
+    this.mesh.scale.set(scale, 1, scale);
+    
+    // Update material emissive intensity
+    this.mesh.children.forEach(child => {
+      if (child.material && child.material.emissive) {
+        child.material.emissiveIntensity = 0.3 + Math.sin(this.pulsePhase) * 0.3;
+      }
+    });
+    
+    // Check collision with player
+    if (gameState.player) {
+      const distance = this.mesh.position.distanceTo(gameState.player.mesh.position);
+      if (distance < 4.0) {
+        this.collect();
+      }
+    }
+  }
+  
+  collect() {
+    this.collected = true;
+    gameState.score += this.value;
+    gameState.checkpointsCompleted++;
+    
+    // Remove from scene
+    gameState.scene.remove(this.mesh);
+    
+    // Spawn next checkpoint
+    spawnCheckpoint();
+  }
+}
+
+// Spawn functions
+export function spawnToken() {
+  const x = (Math.random() - 0.5) * 180;
+  const z = (Math.random() - 0.5) * 180;
+  const y = 2;
+  
+  const token = new Token(x, y, z);
+  gameState.tokens.push(token);
+  gameState.entities.push(token);
+}
+
+export function spawnCheckpoint() {
+  // Random position away from player
+  let x, z;
+  let attempts = 0;
+  
+  do {
+    x = (Math.random() - 0.5) * 160;
+    z = (Math.random() - 0.5) * 160;
+    attempts++;
+  } while (
+    gameState.player && 
+    Math.sqrt(x * x + z * z) < 30 && 
+    attempts < 10
+  );
+  
+  const checkpoint = new Checkpoint(x, 0, z, gameState.checkpointIndex++);
+  gameState.checkpoints.push(checkpoint);
+  gameState.entities.push(checkpoint);
+  gameState.activeCheckpoint = checkpoint;
+}
+
+export function initializeEntities() {
+  // Spawn initial tokens
+  for (let i = 0; i < 15; i++) {
+    spawnToken();
+  }
+  
+  // Spawn first checkpoint
+  spawnCheckpoint();
+}
+</file>
+
+<file name="camera.js">
+// camera.js - Camera setup and control
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { CANVAS_WIDTH, CANVAS_HEIGHT, gameState } from './globals.js';
+
+export function setupCamera() {
+  const camera = new THREE.PerspectiveCamera(
+    60,
+    CANVAS_WIDTH / CANVAS_HEIGHT,
+    0.1,
+    500
+  );
+  
+  camera.position.set(0, 10, 20);
+  camera.lookAt(0, 0, 0);
+  
+  gameState.camera = camera;
+  gameState.cameraTarget = new THREE.Vector3(0, 0, 0);
+  
+  return camera;
+}
+
+export function updateCamera() {
+  if (!gameState.player || !gameState.camera) return;
+  
+  const player = gameState.player;
+  const camera = gameState.camera;
+  
+  // Calculate target position based on vehicle direction
+  const vehicleDirection = new THREE.Vector3(0, 0, -1);
+  vehicleDirection.applyQuaternion(player.mesh.quaternion);
+  
+  // Calculate camera offset based on vehicle speed and direction
+  const speedFactor = Math.min(player.currentSpeed / player.maxSpeed, 1);
+  const dynamicOffset = gameState.cameraOffset.clone();
+  dynamicOffset.z += speedFactor * 3; // Pull back more at high speed
+  dynamicOffset.y += speedFactor * 1; // Raise camera slightly at high speed
+  
+  // Transform offset by vehicle rotation
+  const rotatedOffset = dynamicOffset.clone();
+  rotatedOffset.applyQuaternion(player.mesh.quaternion);
+  
+  // Calculate target camera position
+  const targetPosition = player.mesh.position.clone().add(rotatedOffset);
+  
+  // Smooth camera movement
+  camera.position.lerp(targetPosition, 0.1);
+  
+  // Calculate look-at point (ahead of vehicle)
+  const lookOffset = gameState.cameraLookOffset.clone();
+  lookOffset.applyQuaternion(player.mesh.quaternion);
+  const lookAtPoint = player.mesh.position.clone().add(lookOffset);
+  
+  // Smooth camera look-at
+  gameState.cameraTarget.lerp(lookAtPoint, 0.15);
+  camera.lookAt(gameState.cameraTarget);
+}
+</file>
+
+<file name="physics.js">
+// physics.js - Physics and collision detection
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState } from './globals.js';
+
+export function updatePhysics(deltaTime) {
+  // Physics is handled within entity update methods
+  // This function handles global physics interactions
+}
+
+export function handleCollisions() {
+  if (!gameState.player) return;
+  
+  const player = gameState.player;
+  
+  // Check collisions with obstacles
+  for (const obstacle of gameState.obstacles) {
+    const distance = player.mesh.position.distanceTo(obstacle.position || obstacle.mesh.position);
+    const collisionDistance = player.radius + obstacle.radius;
+    
+    if (distance < collisionDistance) {
+      player.handleCollision(obstacle);
+      break; // Handle one collision per frame
+    }
+  }
+  
+  // Check boundary collisions
+  const boundary = 95;
+  if (Math.abs(player.mesh.position.x) > boundary) {
+    player.mesh.position.x = Math.sign(player.mesh.position.x) * boundary;
+    player.velocity.x = -player.velocity.x * 0.5;
+  }
+  if (Math.abs(player.mesh.position.z) > boundary) {
+    player.mesh.position.z = Math.sign(player.mesh.position.z) * boundary;
+    player.velocity.z = -player.velocity.z * 0.5;
+  }
+}
+
+export class SpatialGrid {
+  constructor(cellSize = 20) {
+    this.cellSize = cellSize;
+    this.grid = new Map();
+  }
+  
+  getCellKey(x, z) {
+    const cellX = Math.floor(x / this.cellSize);
+    const cellZ = Math.floor(z / this.cellSize);
+    return `${cellX},${cellZ}`;
+  }
+  
+  insert(entity) {
+    const key = this.getCellKey(
+      entity.mesh.position.x,
+      entity.mesh.position.z
+    );
+    
+    if (!this.grid.has(key)) {
+      this.grid.set(key, []);
+    }
+    this.grid.get(key).push(entity);
+  }
+  
+  getNearbyEntities(entity, radius = 1) {
+    const nearby = [];
+    const cellRadius = Math.ceil(radius);
+    
+    for (let dx = -cellRadius; dx <= cellRadius; dx++) {
+      for (let dz = -cellRadius; dz <= cellRadius; dz++) {
+        const key = this.getCellKey(
+          entity.mesh.position.x + dx * this.cellSize,
+          entity.mesh.position.z + dz * this.cellSize
+        );
+        
+        if (this.grid.has(key)) {
+          nearby.push(...this.grid.get(key));
+        }
+      }
+    }
+    
+    return nearby;
+  }
+  
+  clear() {
+    this.grid.clear();
+  }
+}
+</file>
+
+<file name="input.js">
+// input.js - Input handling and control modes
+import { gameState, logInput, logGameInfo } from './globals.js';
+import { initializeEntities } from './entities.js';
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+const keys = {};
+
+export function setupInput() {
+  // Keydown handler
+  document.addEventListener('keydown', (event) => {
+    // Prevent default for game keys
+    if ([13, 27, 32, 37, 38, 39, 40, 65, 68, 82, 83, 87, 16].includes(event.keyCode)) {
+      event.preventDefault();
+    }
+    
+    logInput('keydown', event.key, event.keyCode);
+    keys[event.keyCode] = true;
+    
+    handlePhaseControls(event.keyCode);
+  });
+  
+  // Keyup handler
+  document.addEventListener('keyup', (event) => {
+    logInput('keyup', event.key, event.keyCode);
+    keys[event.keyCode] = false;
+  });
+}
+
+function handlePhaseControls(keyCode) {
+  // ENTER - Start game
+  if (keyCode === 13 && gameState.gamePhase === "START") {
+    gameState.gamePhase = "PLAYING";
+    logGameInfo("PLAYING");
+  }
+  
+  // ESC - Pause/Resume
+  if (keyCode === 27) {
+    if (gameState.gamePhase === "PLAYING") {
+      gameState.gamePhase = "PAUSED";
+      logGameInfo("PAUSED");
+    } else if (gameState.gamePhase === "PAUSED") {
+      gameState.gamePhase = "PLAYING";
+      logGameInfo("PLAYING");
+    }
+  }
+  
+  // R - Restart
+  if (keyCode === 82) {
+    if (gameState.gamePhase === "GAME_OVER_WIN" || 
+        gameState.gamePhase === "GAME_OVER_LOSE" ||
+        gameState.gamePhase === "PAUSED") {
+      resetGame();
+    }
+  }
+}
+
+export function handleInput() {
+  if (gameState.gamePhase !== "PLAYING" || !gameState.player) return;
+  
+  const player = gameState.player;
+  
+  // Use control mode
+  if (gameState.controlMode === "HUMAN") {
+    handleHumanInput(player);
+  } else if (gameState.controlMode.startsWith("TEST_")) {
+    handleTestInput(player);
+  }
+}
+
+function handleHumanInput(player) {
+  // Forward movement (W or Up Arrow)
+  if (keys[87] || keys[38]) {
+    player.accelerate();
+  }
+  
+  // Backward movement (S or Down Arrow)
+  if (keys[83] || keys[40]) {
+    player.brake();
+  }
+  
+  // Turn left (A or Left Arrow)
+  if (keys[65] || keys[37]) {
+    player.turnLeft();
+  }
+  
+  // Turn right (D or Right Arrow)
+  if (keys[68] || keys[39]) {
+    player.turnRight();
+  }
+  
+  // Handbrake (Space)
+  if (keys[32]) {
+    player.handbrake();
+  } else {
+    player.isDrifting = false;
+  }
+  
+  // Boost (Shift)
+  if (keys[16]) {
+    player.activateBoost();
+  }
+}
+
+function handleTestInput(player) {
+  const testMode = gameState.controlMode;
+  
+  if (testMode === "TEST_1") {
+    // Test basic movement - figure 8 pattern
+    const time = (Date.now() - gameState.testStartTime) / 1000;
+    
+    if (time < 15) {
+      player.accelerate();
+      
+      // Alternate turning every 3 seconds
+      const phase = Math.floor(time / 3) % 4;
+      if (phase === 0 || phase === 2) {
+        player.turnLeft();
+      } else {
+        player.turnRight();
+      }
+      
+      // Test handbrake in turns
+      if (time % 3 > 2) {
+        player.handbrake();
+      } else {
+        player.isDrifting = false;
+      }
+    }
+  } else if (testMode === "TEST_2") {
+    // Test collection - drive toward nearest token
+    player.accelerate();
+    
+    if (gameState.tokens.length > 0) {
+      const nearestToken = gameState.tokens[0];
+      const dx = nearestToken.mesh.position.x - player.mesh.position.x;
+      const dz = nearestToken.mesh.position.z - player.mesh.position.z;
+      const targetAngle = Math.atan2(dx, -dz);
+      
+      // Get current angle
+      const forward = new THREE.Vector3(0, 0, -1);
+      forward.applyQuaternion(player.mesh.quaternion);
+      const currentAngle = Math.atan2(forward.x, forward.z);
+      
+      // Turn toward target
+      let angleDiff = targetAngle - currentAngle;
+      while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+      while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+      
+      if (angleDiff > 0.1) {
+        player.turnLeft();
+      } else if (angleDiff < -0.1) {
+        player.turnRight();
+      }
+    }
+    
+    // Activate boost if available
+    if (gameState.boostsAvailable > 0 && !player.isBoosting) {
+      player.activateBoost();
+    }
+  } else if (testMode === "TEST_3") {
+    // Test checkpoint navigation
+    player.accelerate();
+    
+    if (gameState.activeCheckpoint) {
+      const checkpoint = gameState.activeCheckpoint;
+      const dx = checkpoint.mesh.position.x - player.mesh.position.x;
+      const dz = checkpoint.mesh.position.z - player.mesh.position.z;
+      const targetAngle = Math.atan2(dx, -dz);
+      
+      const forward = new THREE.Vector3(0, 0, -1);
+      forward.applyQuaternion(player.mesh.quaternion);
+      const currentAngle = Math.atan2(forward.x, forward.z);
+      
+      let angleDiff = targetAngle - currentAngle;
+      while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+      while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+      
+      if (angleDiff > 0.1) {
+        player.turnLeft();
+      } else if (angleDiff < -0.1) {
+        player.turnRight();
+      }
+    }
+  } else if (testMode === "TEST_4") {
+    // Test collision - drive into obstacles
+    const time = (Date.now() - gameState.testStartTime) / 1000;
+    
+    if (time < 15) {
+      player.accelerate();
+      
+      // Turn toward nearest obstacle
+      if (gameState.obstacles.length > 0) {
+        const nearestObstacle = gameState.obstacles[0];
+        const obstaclePos = nearestObstacle.position || nearestObstacle.mesh.position;
+        const dx = obstaclePos.x - player.mesh.position.x;
+        const dz = obstaclePos.z - player.mesh.position.z;
+        const targetAngle = Math.atan2(dx, -dz);
+        
+        const forward = new THREE.Vector3(0, 0, -1);
+        forward.applyQuaternion(player.mesh.quaternion);
+        const currentAngle = Math.atan2(forward.x, forward.z);
+        
+        let angleDiff = targetAngle - currentAngle;
+        while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+        while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+        
+        if (angleDiff > 0.1) {
+          player.turnLeft();
+        } else if (angleDiff < -0.1) {
+          player.turnRight();
+        }
+      }
+    }
+  } else if (testMode === "TEST_5") {
+    // Test camera - various maneuvers
+    const time = (Date.now() - gameState.testStartTime) / 1000;
+    
+    player.accelerate();
+    
+    // Perform different maneuvers
+    const phase = Math.floor(time / 5) % 4;
+    if (phase === 0) {
+      // Sharp left turn
+      player.turnLeft();
+    } else if (phase === 1) {
+      // Sharp right turn
+      player.turnRight();
+    } else if (phase === 2) {
+      // Drift
+      player.handbrake();
+      player.turnLeft();
+    } else {
+      // Straight with speed changes
+      if (time % 2 < 1) {
+        player.accelerate();
+      } else {
+        player.brake();
+      }
+    }
+  } else if (testMode === "TEST_6") {
+    // Test biome diversity - circular pattern
+    player.accelerate();
+    
+    const time = (Date.now() - gameState.testStartTime) / 1000;
+    const turnRate = 0.02;
+    player.angularVelocity = turnRate;
+  } else if (testMode === "TEST_7") {
+    // Test win condition - optimal play
+    player.accelerate();
+    
+    // Prioritize checkpoints, then tokens
+    let target = null;
+    
+    if (gameState.activeCheckpoint) {
+      target = gameState.activeCheckpoint.mesh.position;
+    } else if (gameState.tokens.length > 0) {
+      target = gameState.tokens[0].mesh.position;
+    }
+    
+    if (target) {
+      const dx = target.x - player.mesh.position.x;
+      const dz = target.z - player.mesh.position.z;
+      const targetAngle = Math.atan2(dx, -dz);
+      
+      const forward = new THREE.Vector3(0, 0, -1);
+      forward.applyQuaternion(player.mesh.quaternion);
+      const currentAngle = Math.atan2(forward.x, forward.z);
+      
+      let angleDiff = targetAngle - currentAngle;
+      while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+      while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+      
+      if (angleDiff > 0.1) {
+        player.turnLeft();
+      } else if (angleDiff < -0.1) {
+        player.turnRight();
+      }
+    }
+    
+    // Use boost strategically
+    if (gameState.boostsAvailable > 0 && !player.isBoosting) {
+      player.activateBoost();
+    }
+  }
+}
+
+function resetGame() {
+  // Clear entities
+  gameState.tokens.forEach(token => {
+    gameState.scene.remove(token.mesh);
+    gameState.scene.remove(token.glow);
+  });
+  gameState.tokens = [];
+  
+  gameState.checkpoints.forEach(checkpoint => {
+    gameState.scene.remove(checkpoint.mesh);
+  });
+  gameState.checkpoints = [];
+  gameState.activeCheckpoint = null;
+  gameState.checkpointIndex = 0;
+  
+  // Reset player
+  if (gameState.player) {
+    gameState.player.mesh.position.set(0, 0.2, 0);
+    gameState.player.mesh.rotation.set(0, 0, 0);
+    gameState.player.velocity.set(0, 0, 0);
+    gameState.player.angularVelocity = 0;
+    gameState.player.currentSpeed = 0;
+    gameState.player.isBoosting = false;
+    gameState.player.boostTimer = 0;
+  }
+  
+  // Reset game state
+  gameState.score = 0;
+  gameState.tokensCollected = 0;
+  gameState.checkpointsCompleted = 0;
+  gameState.boostsAvailable = 0;
+  gameState.gamePhase = "START";
+  
+  // Reinitialize entities
+  initializeEntities();
+  
+  logGameInfo("START", { reset: true });
+}
+
+// Expose control mode setter
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  gameState.testStartTime = Date.now();
+  
+  // Update button states
+  document.querySelectorAll('.control-button').forEach(btn => {
+    btn.classList.remove('active');
+  });
+  
+  if (mode === "HUMAN") {
+    document.getElementById('humanModeBtn').classList.add('active');
+  } else if (mode === "TEST_1") {
+    document.getElementById('test_1_ModeBtn').classList.add('active');
+  } else if (mode === "TEST_2") {
+    document.getElementById('test_2_ModeBtn').classList.add('active');
+  }
+  
+  logGameInfo("CONTROL_MODE_CHANGE", { mode });
+};
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

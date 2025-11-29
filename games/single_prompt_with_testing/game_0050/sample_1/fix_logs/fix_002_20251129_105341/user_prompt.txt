@@ -1,0 +1,1013 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+can you make the map scrolling, and can you add 6 levels, 2 easy levels, 2 medium difficult levels, and 2 hard levels? 
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>PaperConquest</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; font-family: Arial, sans-serif; transition: background 0.2s; }
+      .control-button:hover { background: #555; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">PaperConquest</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Survival)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Capture)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">
+        Conquer territory by drawing loops. Close the loop to capture the area. Don't hit the walls or trails!
+      </p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4; font-size: 0.9em;">
+        Controls: Arrows to Steer | Space to Boost | ENTER to Start | ESC to Pause | R to Restart
+      </p>
+    </div>
+    
+    <!-- Dependencies -->
+    <script src="https://cdn.jsdelivr.net/npm/p5@1.7.0/lib/p5.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/p5.collide2d@0.7.3/p5.collide2d.min.js"></script>
+    
+    <!-- Game Module -->
+    <script type="module">
+        import { getGameState } from './globals.js';
+        
+        window.setControlMode = function(mode) {
+            const state = getGameState();
+            if (state) {
+                state.controlMode = mode;
+                console.log("Control Mode set to:", mode);
+                
+                // Update UI
+                document.querySelectorAll('.control-button').forEach(btn => btn.classList.remove('active'));
+                if (mode === 'HUMAN') document.getElementById('humanModeBtn').classList.add('active');
+                if (mode === 'TEST_1') document.getElementById('test_1_ModeBtn').classList.add('active');
+                if (mode === 'TEST_2') document.getElementById('test_2_ModeBtn').classList.add('active');
+                
+                // Reset if switching modes
+                if (state.gamePhase === "PLAYING" || state.gamePhase === "START") {
+                    state.gamePhase = "START";
+                    if (window.resetGame) window.resetGame(window.gameInstance);
+                }
+            }
+        };
+    </script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="automated_testing_controller.js">
+export function get_automated_testing_action(gameState) {
+    if (!gameState.player) return null;
+
+    const mode = gameState.controlMode;
+    const player = gameState.player;
+    const pX = player.x;
+    const pY = player.y;
+
+    if (mode === "TEST_1") {
+        // Survival Mode: Just circle in the middle
+        // If heading is not matching circle tangent, turn
+        // Simple square pattern logic
+        const cx = 300, cy = 200;
+        const dist = Math.sqrt((pX - cx)**2 + (pY - cy)**2);
+        
+        // If too far, turn towards center
+        if (dist > 100) {
+             const angleToCenter = Math.atan2(cy - pY, cx - pX);
+             let diff = angleToCenter - player.heading;
+             while (diff < -Math.PI) diff += Math.PI * 2;
+             while (diff > Math.PI) diff -= Math.PI * 2;
+             
+             if (diff > 0.1) return { keyIsDown: "RIGHT" };
+             if (diff < -0.1) return { keyIsDown: "LEFT" };
+        } else {
+            // Just turn right slowly to circle
+            return { keyIsDown: "RIGHT" };
+        }
+    }
+    
+    if (mode === "TEST_2") {
+        // Capture Mode: Go out, turn, come back
+        // Phase based on frameCount is brittle, but simple for this
+        const cycle = gameState.frameCount % 300;
+        
+        if (cycle < 60) return null; // Go straight
+        if (cycle < 100) return { keyIsDown: "RIGHT" }; // Turn 90 deg approx
+        if (cycle < 160) return null; // Go straight parallel
+        if (cycle < 200) return { keyIsDown: "RIGHT" }; // Turn back
+        // Should return to base
+    }
+
+    return null;
+}
+</file>
+
+<file name="globals.js">
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const TARGET_FPS = 60;
+
+// Grid configuration for the territory map
+export const GRID_CELL_SIZE = 5;
+export const GRID_COLS = CANVAS_WIDTH / GRID_CELL_SIZE;
+export const GRID_ROWS = CANVAS_HEIGHT / GRID_CELL_SIZE;
+
+// Colors
+export const COLORS = {
+    BACKGROUND: '#222222',
+    GRID_LINES: '#333333',
+    TEXT: '#FFFFFF',
+    PLAYER: '#00FFFF',      // Cyan
+    PLAYER_TERRITORY: '#008888',
+    ENEMY_1: '#FF0000',     // Red
+    ENEMY_1_TERRITORY: '#880000',
+    ENEMY_2: '#00FF00',     // Green
+    ENEMY_2_TERRITORY: '#008800',
+    ENEMY_3: '#FFFF00',     // Yellow
+    ENEMY_3_TERRITORY: '#888800',
+    NEUTRAL: '#2A2A2A'
+};
+
+export const gameState = {
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    controlMode: "HUMAN",
+    
+    // Time tracking
+    frameCount: 0,
+    lastFrameTime: 0,
+    deltaTime: 0,
+    
+    // Game Entities & World
+    player: null,
+    enemies: [],
+    entities: [],
+    
+    // Map State (Grid)
+    // 2D Array or 1D TypedArray mapping cell index to Owner ID (0 = Neutral, 1 = Player, 2+ = Enemies)
+    worldGrid: null, 
+    mapGraphics: null, // p5.Graphics buffer for rendering the floor
+    
+    score: 0,    // Percent of map owned * 100 or tile count
+    highScore: 0,
+    
+    // Input state
+    keys: {}
+};
+
+// Initialize logs container
+export const initLogs = (p) => {
+    p.logs = {
+        "game_info": [],
+        "inputs": [],
+        "player_info": []
+    };
+};
+
+// Global accessor
+export function getGameState() {
+    return gameState;
+}
+window.getGameState = getGameState;
+</file>
+
+<file name="game.js">
+import { 
+    CANVAS_WIDTH, CANVAS_HEIGHT, TARGET_FPS, COLORS, 
+    gameState, initLogs, getGameState 
+} from './globals.js';
+import { GameGrid } from './grid.js';
+import { Player, Bot } from './entities.js';
+import { handleInput, handleKeyPress } from './input.js';
+import { renderStartScreen, renderHUD, renderGameOver, renderPaused } from './ui.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+    
+    initLogs(p);
+
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(TARGET_FPS);
+        p.randomSeed(42);
+        
+        // Initialize Game State
+        gameState.worldGrid = new GameGrid(p);
+        resetGame(p);
+        
+        // Initial Log
+        p.logs.game_info.push({
+            event: "SETUP_COMPLETE",
+            timestamp: Date.now()
+        });
+    };
+
+    p.draw = function() {
+        // Time management
+        const now = p.millis();
+        gameState.deltaTime = (now - gameState.lastFrameTime) / 1000;
+        gameState.lastFrameTime = now;
+        gameState.frameCount = p.frameCount;
+        
+        // Clear background
+        p.background(COLORS.BACKGROUND);
+
+        switch (gameState.gamePhase) {
+            case "START":
+                renderStartScreen(p);
+                break;
+            case "PLAYING":
+                updateGame(p);
+                renderGame(p);
+                renderHUD(p);
+                break;
+            case "PAUSED":
+                renderGame(p);
+                renderPaused(p);
+                renderHUD(p);
+                break;
+            case "GAME_OVER_WIN":
+            case "GAME_OVER_LOSE":
+                renderGame(p);
+                renderGameOver(p);
+                break;
+        }
+    };
+
+    p.keyPressed = function() {
+        handleKeyPress(p);
+    };
+    
+    p.keyReleased = function() {
+        // Optional: Handle release if needed for smooth controls
+        p.logs.inputs.push({
+            type: "RELEASE",
+            key: p.key,
+            keyCode: p.keyCode,
+            frame: p.frameCount
+        });
+    };
+});
+
+function resetGame(p) {
+    gameState.worldGrid.reset(p);
+    gameState.entities = [];
+    gameState.enemies = [];
+    
+    // Create Player
+    gameState.player = new Player(100, 100);
+    // Give player initial territory
+    gameState.worldGrid.setSpawnArea(100, 100, 30, 1, p);
+    
+    gameState.entities.push(gameState.player);
+    
+    // Create Bots
+    const botConfigs = [
+        {id: 2, x: 500, y: 100, c: COLORS.ENEMY_1, tc: COLORS.ENEMY_1_TERRITORY},
+        {id: 3, x: 100, y: 300, c: COLORS.ENEMY_2, tc: COLORS.ENEMY_2_TERRITORY},
+        {id: 4, x: 500, y: 300, c: COLORS.ENEMY_3, tc: COLORS.ENEMY_3_TERRITORY}
+    ];
+    
+    botConfigs.forEach(cfg => {
+        const bot = new Bot(cfg.id, cfg.x, cfg.y, cfg.c, cfg.tc);
+        gameState.worldGrid.setSpawnArea(cfg.x, cfg.y, 30, cfg.id, p);
+        gameState.enemies.push(bot);
+        gameState.entities.push(bot);
+    });
+    
+    gameState.score = 0;
+}
+
+// Exposed globally for the 'R' key handler in input.js
+window.resetGame = resetGame;
+
+function updateGame(p) {
+    handleInput(p);
+    
+    // 1. Update all entities (Movement, Trails)
+    gameState.entities.forEach(e => e.update(p));
+    
+    // 2. Cross-Entity Collision (Head vs Trail)
+    checkCollisions();
+    
+    // 3. Update Score
+    gameState.score = gameState.worldGrid.getScore(1); // Player ID 1
+    
+    // 4. Win Condition
+    if (gameState.score >= 90) { // Win at 90%
+        gameState.gamePhase = "GAME_OVER_WIN";
+    }
+    
+    // Remove dead entities
+    gameState.entities = gameState.entities.filter(e => e.alive);
+    gameState.enemies = gameState.enemies.filter(e => e.alive);
+    
+    // Check if player died (removed from entities list or marked dead)
+    if (!gameState.player.alive) {
+        gameState.gamePhase = "GAME_OVER_LOSE";
+    }
+}
+
+function checkCollisions() {
+    // Check every entity against every other entity's trail
+    
+    for (let attacker of gameState.entities) {
+        if (!attacker.alive) continue;
+        
+        for (let victim of gameState.entities) {
+            if (!victim.alive) continue;
+            if (victim.trail.length < 2) continue;
+            
+            // Optimization: Bounding box check first
+            // But for low entity count (4), O(N^2) is fine.
+            
+            // Check attacker HEAD against victim TRAIL
+            // Using a simple proximity check for each trail segment
+            // This is O(TrailLength), potentially expensive. 
+            // Optimization: Only check if attacker is NOT in their own territory (assumed safe? No, can be killed in own territory if trail is cut outside)
+            // Wait, trail only exists outside territory.
+            
+            // If Attacker hits Victim's trail:
+            // 1. Attacker kills Victim (if Attacker != Victim)
+            // 2. Attacker kills Self (if Attacker == Victim) -> Handled in Entity.update already
+            
+            if (attacker === victim) continue; // Self-collision handled in update
+            
+            // Check segments
+            for (let i = 0; i < victim.trail.length - 1; i++) {
+                const p1 = victim.trail[i];
+                const p2 = victim.trail[i+1];
+                
+                // Segment collision with Attacker Head (Point/Small Circle)
+                // p5.collide2d collideLineCircle(x1, y1, x2, y2, cx, cy, d)
+                // Note: p5.collide2d needs to be accessible. We use imported functions usually or raw math.
+                // Using simple distance to segment check
+                
+                if (distToSegment(attacker.x, attacker.y, p1.x, p1.y, p2.x, p2.y) < attacker.radius) {
+                    victim.die(`KILLED_BY_${attacker.id}`);
+                    // Award bonus?
+                    break;
+                }
+            }
+        }
+        
+        // Head to Head collision
+        for (let other of gameState.entities) {
+            if (attacker === other || !other.alive) continue;
+            
+            const dist = Math.hypot(attacker.x - other.x, attacker.y - other.y);
+            if (dist < attacker.radius + other.radius) {
+                // Both die
+                attacker.die("HEAD_ON_COLLISION");
+                other.die("HEAD_ON_COLLISION");
+            }
+        }
+    }
+}
+
+function distToSegment(px, py, x1, y1, x2, y2) {
+    const l2 = (x1-x2)*(x1-x2) + (y1-y2)*(y1-y2);
+    if (l2 === 0) return Math.hypot(px-x1, py-y1);
+    let t = ((px-x1)*(x2-x1) + (py-y1)*(y2-y1)) / l2;
+    t = Math.max(0, Math.min(1, t));
+    return Math.hypot(px - (x1 + t*(x2-x1)), py - (y1 + t*(y2-y1)));
+}
+
+function renderGame(p) {
+    gameState.worldGrid.render(p);
+    gameState.entities.forEach(e => e.render(p));
+}
+
+window.gameInstance = gameInstance;
+</file>
+
+<file name="ui.js">
+import { CANVAS_WIDTH, CANVAS_HEIGHT, COLORS, gameState } from './globals.js';
+
+export function renderStartScreen(p) {
+    p.background(COLORS.BACKGROUND);
+    p.fill(COLORS.TEXT);
+    p.textAlign(p.CENTER, p.CENTER);
+    
+    p.textSize(48);
+    p.text("PAPER CONQUEST", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 60);
+    
+    p.textSize(18);
+    p.text("Conquer territory. Cut trails. Don't die.", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+    
+    p.textSize(14);
+    p.fill(180);
+    p.text("Arrows: Steer  |  Space: Boost  |  Enter: Start", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 40);
+    
+    // Pulse effect
+    if (p.frameCount % 60 < 30) {
+        p.fill(255, 255, 0);
+        p.text("PRESS ENTER", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 80);
+    }
+}
+
+export function renderHUD(p) {
+    p.fill(255);
+    p.noStroke();
+    p.textSize(16);
+    p.textAlign(p.LEFT, p.TOP);
+    p.text(`Score: ${gameState.score}%`, 10, 10);
+    
+    // Leaderboard (Simulated)
+    p.textAlign(p.RIGHT, p.TOP);
+    p.textSize(12);
+    p.text("LEADERBOARD", CANVAS_WIDTH - 10, 10);
+    
+    const sorted = [
+        {name: "YOU", score: gameState.score, color: COLORS.PLAYER},
+        ...gameState.enemies.map((e, i) => ({
+            name: `BOT ${i+1}`, 
+            score: gameState.worldGrid ? gameState.worldGrid.getScore(e.id) : 0, 
+            color: e.color
+        }))
+    ].sort((a, b) => b.score - a.score);
+
+    for (let i = 0; i < sorted.length; i++) {
+        p.fill(sorted[i].color);
+        p.text(`${sorted[i].name}: ${sorted[i].score}%`, CANVAS_WIDTH - 10, 30 + i * 15);
+    }
+}
+
+export function renderGameOver(p) {
+    p.push();
+    p.fill(0, 0, 0, 150);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(40);
+    
+    if (gameState.gamePhase === "GAME_OVER_WIN") {
+        p.fill(0, 255, 0);
+        p.text("VICTORY!", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 20);
+    } else {
+        p.fill(255, 0, 0);
+        p.text("ELIMINATED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 20);
+    }
+    
+    p.fill(255);
+    p.textSize(20);
+    p.text(`Final Territory: ${gameState.score}%`, CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 30);
+    p.text("Press R to Restart", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 60);
+    p.pop();
+}
+
+export function renderPaused(p) {
+    p.push();
+    p.fill(0, 0, 0, 100);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.fill(255);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(32);
+    p.text("PAUSED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+    p.pop();
+}
+</file>
+
+<file name="grid.js">
+import { CANVAS_WIDTH, CANVAS_HEIGHT, GRID_CELL_SIZE, GRID_COLS, GRID_ROWS, gameState, COLORS } from './globals.js';
+import { worldToGrid, pointInPolygon, getBoundingBox } from './utils.js';
+
+export class GameGrid {
+    constructor(p) {
+        // Flat array for performance: index = row * GRID_COLS + col
+        this.cells = new Uint8Array(GRID_COLS * GRID_ROWS).fill(0);
+        
+        // p5.Graphics buffer for rendering the territories efficiently
+        this.buffer = p.createGraphics(CANVAS_WIDTH, CANVAS_HEIGHT);
+        this.buffer.noStroke();
+        this.buffer.background(p.color(COLORS.BACKGROUND));
+        
+        this.needsUpdate = true;
+    }
+
+    reset(p) {
+        this.cells.fill(0);
+        this.buffer.background(p.color(COLORS.BACKGROUND));
+        this.needsUpdate = true;
+    }
+
+    // Set a circular area to a specific owner (used for initial spawn)
+    setSpawnArea(centerX, centerY, radius, ownerId, p) {
+        const gridPos = worldToGrid(centerX, centerY);
+        const radiusInCells = Math.floor(radius / GRID_CELL_SIZE);
+        
+        const minCol = Math.max(0, gridPos.col - radiusInCells);
+        const maxCol = Math.min(GRID_COLS - 1, gridPos.col + radiusInCells);
+        const minRow = Math.max(0, gridPos.row - radiusInCells);
+        const maxRow = Math.min(GRID_ROWS - 1, gridPos.row + radiusInCells);
+
+        let changed = false;
+        
+        for (let r = minRow; r <= maxRow; r++) {
+            for (let c = minCol; c <= maxCol; c++) {
+                const dx = c - gridPos.col;
+                const dy = r - gridPos.row;
+                if (dx * dx + dy * dy <= radiusInCells * radiusInCells) {
+                    const idx = r * GRID_COLS + c;
+                    if (this.cells[idx] !== ownerId) {
+                        this.cells[idx] = ownerId;
+                        changed = true;
+                        
+                        // Update buffer immediately for spawn
+                        const x = c * GRID_CELL_SIZE;
+                        const y = r * GRID_CELL_SIZE;
+                        this.drawCellToBuffer(x, y, ownerId, p);
+                    }
+                }
+            }
+        }
+        return changed;
+    }
+
+    isOwned(x, y, ownerId) {
+        const gp = worldToGrid(x, y);
+        if (gp.col < 0 || gp.col >= GRID_COLS || gp.row < 0 || gp.row >= GRID_ROWS) return false;
+        return this.cells[gp.row * GRID_COLS + gp.col] === ownerId;
+    }
+
+    // Capture territory based on a trail polygon
+    captureTerritory(trailPoints, ownerId, p) {
+        if (trailPoints.length < 3) return 0;
+
+        // Create a closed polygon: trail + closing segment
+        const polygon = trailPoints.map(pt => ({x: pt.x, y: pt.y}));
+        
+        // Calculate bounding box in Grid Coordinates to minimize checks
+        const bbox = getBoundingBox(trailPoints);
+        const minCol = Math.max(0, Math.floor(bbox.minX / GRID_CELL_SIZE));
+        const maxCol = Math.min(GRID_COLS - 1, Math.floor(bbox.maxX / GRID_CELL_SIZE));
+        const minRow = Math.max(0, Math.floor(bbox.minY / GRID_CELL_SIZE));
+        const maxRow = Math.min(GRID_ROWS - 1, Math.floor(bbox.maxY / GRID_CELL_SIZE));
+
+        let captureCount = 0;
+
+        // Scan grid cells in bounding box
+        for (let r = minRow; r <= maxRow; r++) {
+            for (let c = minCol; c <= maxCol; c++) {
+                // Center of the cell in world coords
+                const cellCenterX = c * GRID_CELL_SIZE + GRID_CELL_SIZE / 2;
+                const cellCenterY = r * GRID_CELL_SIZE + GRID_CELL_SIZE / 2;
+
+                if (pointInPolygon({x: cellCenterX, y: cellCenterY}, polygon)) {
+                    const idx = r * GRID_COLS + c;
+                    const oldOwner = this.cells[idx];
+                    
+                    if (oldOwner !== ownerId) {
+                        this.cells[idx] = ownerId;
+                        this.drawCellToBuffer(c * GRID_CELL_SIZE, r * GRID_CELL_SIZE, ownerId, p);
+                        captureCount++;
+                    }
+                }
+            }
+        }
+        
+        // Fill voids logic (simplified): 
+        // In a perfect implementation, we would flood fill "empty" areas that are enclosed.
+        // For this p5 implementation, polygon capture is the primary mechanic.
+        
+        return captureCount;
+    }
+    
+    // Clear territory of a dead player
+    clearTerritory(ownerId, p) {
+        for(let i=0; i < this.cells.length; i++) {
+            if(this.cells[i] === ownerId) {
+                this.cells[i] = 0; // Reset to neutral
+                
+                const c = i % GRID_COLS;
+                const r = Math.floor(i / GRID_COLS);
+                this.drawCellToBuffer(c * GRID_CELL_SIZE, r * GRID_CELL_SIZE, 0, p);
+            }
+        }
+    }
+
+    drawCellToBuffer(x, y, ownerId, p) {
+        let c;
+        if (ownerId === 0) c = COLORS.BACKGROUND;
+        else if (ownerId === 1) c = COLORS.PLAYER_TERRITORY;
+        else if (ownerId === 2) c = COLORS.ENEMY_1_TERRITORY;
+        else if (ownerId === 3) c = COLORS.ENEMY_2_TERRITORY;
+        else if (ownerId === 4) c = COLORS.ENEMY_3_TERRITORY;
+        else c = COLORS.BACKGROUND;
+
+        this.buffer.fill(c);
+        this.buffer.rect(x, y, GRID_CELL_SIZE, GRID_CELL_SIZE);
+    }
+    
+    getScore(ownerId) {
+        let count = 0;
+        for(let i=0; i < this.cells.length; i++) {
+            if(this.cells[i] === ownerId) count++;
+        }
+        return Math.floor((count / (GRID_COLS * GRID_ROWS)) * 100);
+    }
+
+    render(p) {
+        p.image(this.buffer, 0, 0);
+        
+        // Draw grid lines overlay (optional, maybe too noisy)
+        // p.stroke(30);
+        // p.strokeWeight(1);
+        // for (let x = 0; x <= CANVAS_WIDTH; x += 50) p.line(x, 0, x, CANVAS_HEIGHT);
+        // for (let y = 0; y <= CANVAS_HEIGHT; y += 50) p.line(0, y, CANVAS_WIDTH, y);
+    }
+}
+</file>
+
+<file name="entities.js">
+import { CANVAS_WIDTH, CANVAS_HEIGHT, COLORS, gameState } from './globals.js';
+
+export class Entity {
+    constructor(id, x, y, color, territoryColor) {
+        this.id = id;
+        this.x = x;
+        this.y = y;
+        this.color = color;
+        this.territoryColor = territoryColor;
+        this.radius = 6;
+        
+        this.heading = 0; // Radians
+        this.speed = 2.0;
+        this.boostSpeed = 3.5;
+        this.turnSpeed = 0.08;
+        
+        this.trail = []; // Array of {x, y}
+        this.isBoosting = false;
+        this.alive = true;
+        
+        // Trail Optimization: don't add point every frame
+        this.lastTrailPos = {x: x, y: y};
+        this.trailInterval = 5; // Distance before adding new point
+    }
+
+    update(p) {
+        if (!this.alive) return;
+
+        // 1. Move
+        const currentSpeed = this.isBoosting ? this.boostSpeed : this.speed;
+        this.x += Math.cos(this.heading) * currentSpeed;
+        this.y += Math.sin(this.heading) * currentSpeed;
+
+        // 2. Bound checks (Walls are deadly)
+        if (this.x < 0 || this.x > CANVAS_WIDTH || this.y < 0 || this.y > CANVAS_HEIGHT) {
+            this.die("WALL_COLLISION");
+            return;
+        }
+
+        // 3. Trail Logic
+        const dist = Math.hypot(this.x - this.lastTrailPos.x, this.y - this.lastTrailPos.y);
+        
+        // Check if inside own territory
+        const inOwnTerritory = gameState.worldGrid.isOwned(this.x, this.y, this.id);
+
+        if (!inOwnTerritory) {
+            // Currently outside: extending trail
+            if (dist > this.trailInterval) {
+                this.trail.push({x: this.x, y: this.y});
+                this.lastTrailPos = {x: this.x, y: this.y};
+            }
+        } else {
+            // Inside territory
+            if (this.trail.length > 0) {
+                // JUST ENTERED territory: Close the loop!
+                this.trail.push({x: this.x, y: this.y}); // Add final point
+                gameState.worldGrid.captureTerritory(this.trail, this.id, p);
+                this.trail = []; // Clear trail
+                
+                // Audio cue simulation (visual flash)
+                // p.background(255, 50); // too jarring? maybe particle effect
+            }
+            // Update last pos so we start a fresh trail correctly when leaving
+            this.lastTrailPos = {x: this.x, y: this.y};
+        }
+
+        // 4. Self Trail Collision (Suicide)
+        // Only check if trail is long enough to hit
+        if (this.trail.length > 5) {
+            // Check collision with all segments except the most recent few (to avoid self-clipping)
+            for (let i = 0; i < this.trail.length - 3; i++) {
+                const p1 = this.trail[i];
+                const p2 = this.trail[i+1];
+                // Simple point-to-segment distance check or line intersection?
+                // p5.collide2d linePoint isn't imported, let's use circle-line
+                // Actually, head is a point/circle.
+                
+                // Head segment
+                const h1 = {x: this.x - Math.cos(this.heading) * 5, y: this.y - Math.sin(this.heading) * 5};
+                const h2 = {x: this.x, y: this.y};
+                
+                if (p.collideLineLine(p1.x, p1.y, p2.x, p2.y, h1.x, h1.y, h2.x, h2.y)) {
+                    this.die("SELF_TRAIL");
+                    return;
+                }
+            }
+        }
+    }
+
+    render(p) {
+        if (!this.alive) return;
+
+        // Draw Trail
+        if (this.trail.length > 0) {
+            p.noFill();
+            p.stroke(this.color); // Full brightness
+            p.strokeWeight(2);
+            p.beginShape();
+            for (let pt of this.trail) {
+                p.vertex(pt.x, pt.y);
+            }
+            p.vertex(this.x, this.y); // Connect to head
+            p.endShape();
+            
+            // Draw faint fill for trail polygon to indicate "active capture"
+            // (Optional, can be performance heavy, skipping for now)
+        }
+
+        // Draw Player Head
+        p.push();
+        p.translate(this.x, this.y);
+        p.rotate(this.heading);
+        p.fill(255);
+        p.stroke(this.color);
+        p.strokeWeight(3);
+        p.rectMode(p.CENTER);
+        p.rect(0, 0, 16, 16, 2);
+        
+        // Direction indicator
+        // p.fill(0);
+        // p.circle(5, 0, 4);
+        p.pop();
+    }
+
+    die(reason) {
+        if (!this.alive) return;
+        this.alive = false;
+        console.log(`Entity ${this.id} died: ${reason}`);
+        
+        // Remove territory
+        if (gameState.worldGrid) {
+            gameState.worldGrid.clearTerritory(this.id, window.gameInstance);
+        }
+
+        // Trigger particles
+        // (Assuming particle system exists in gameState)
+        // createExplosion(this.x, this.y, this.color);
+        
+        if (this.id === 1) { // Player
+            gameState.gamePhase = "GAME_OVER_LOSE";
+        } else {
+            // Remove from enemies list logic handled in game loop
+        }
+    }
+}
+
+export class Player extends Entity {
+    constructor(x, y) {
+        super(1, x, y, COLORS.PLAYER, COLORS.PLAYER_TERRITORY);
+    }
+    
+    update(p) {
+        super.update(p);
+        
+        // Log player info
+        if (p.frameCount % 10 === 0) {
+             p.logs.player_info.push({
+                x: this.x,
+                y: this.y,
+                trailLength: this.trail.length,
+                score: gameState.score,
+                alive: this.alive,
+                framecount: p.frameCount,
+                timestamp: Date.now()
+            });
+        }
+    }
+}
+
+export class Bot extends Entity {
+    constructor(id, x, y, color, territoryColor) {
+        super(id, x, y, color, territoryColor);
+        this.changeDirTimer = 0;
+        this.targetDir = Math.random() * Math.PI * 2;
+    }
+
+    update(p) {
+        // AI Logic
+        this.changeDirTimer--;
+        
+        if (this.changeDirTimer <= 0) {
+            // Pick a new target direction
+            // Simple AI: Prefer moving towards center if too close to edge
+            const margin = 50;
+            if (this.x < margin) this.targetDir = 0;
+            else if (this.x > CANVAS_WIDTH - margin) this.targetDir = Math.PI;
+            else if (this.y < margin) this.targetDir = Math.PI / 2;
+            else if (this.y > CANVAS_HEIGHT - margin) this.targetDir = 3 * Math.PI / 2;
+            else {
+                // Random wander + bias towards unowned territory?
+                // For simplicity: random wander
+                this.targetDir = (Math.random() * Math.PI * 2);
+            }
+            
+            // Randomize timer
+            this.changeDirTimer = 30 + Math.random() * 60;
+        }
+
+        // Smoothly rotate towards targetDir
+        // Shortest angle difference
+        let diff = this.targetDir - this.heading;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        
+        if (Math.abs(diff) > this.turnSpeed) {
+            this.heading += Math.sign(diff) * this.turnSpeed;
+        } else {
+            this.heading = this.targetDir;
+        }
+
+        super.update(p);
+    }
+}
+</file>
+
+<file name="utils.js">
+import { GRID_CELL_SIZE, GRID_COLS, GRID_ROWS } from './globals.js';
+
+// Convert world coordinates to grid coordinates
+export function worldToGrid(x, y) {
+    return {
+        col: Math.floor(x / GRID_CELL_SIZE),
+        row: Math.floor(y / GRID_CELL_SIZE)
+    };
+}
+
+// Ray-casting algorithm for point in polygon
+// polygon is an array of objects {x, y}
+export function pointInPolygon(point, polygon) {
+    let x = point.x, y = point.y;
+    let inside = false;
+    for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+        let xi = polygon[i].x, yi = polygon[i].y;
+        let xj = polygon[j].x, yj = polygon[j].y;
+        
+        let intersect = ((yi > y) !== (yj > y)) &&
+            (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+        if (intersect) inside = !inside;
+    }
+    return inside;
+}
+
+// Helper to get bounding box of a set of points
+export function getBoundingBox(points) {
+    if (points.length === 0) return { minX: 0, maxX: 0, minY: 0, maxY: 0 };
+    
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (let p of points) {
+        if (p.x < minX) minX = p.x;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.y > maxY) maxY = p.y;
+    }
+    return { minX, maxX, minY, maxY };
+}
+
+// Helper for color manipulation
+export function hexToRgb(hex) {
+    var result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    return result ? {
+        r: parseInt(result[1], 16),
+        g: parseInt(result[2], 16),
+        b: parseInt(result[3], 16)
+    } : { r: 0, g: 0, b: 0 };
+}
+</file>
+
+<file name="input.js">
+import { gameState } from './globals.js';
+import { get_automated_testing_action } from './automated_testing_controller.js';
+
+export function handleInput(p) {
+    if (gameState.gamePhase !== "PLAYING" || !gameState.player) return;
+
+    let turnDir = 0;
+    let boosting = false;
+
+    // Handle Human Input
+    if (gameState.controlMode === "HUMAN") {
+        if (p.keyIsDown(p.LEFT_ARROW)) {
+            turnDir = -1;
+        } else if (p.keyIsDown(p.RIGHT_ARROW)) {
+            turnDir = 1;
+        }
+        
+        // Up/Down arrows could adjust speed or tight turns?
+        // Instructions: "Down Arrow: Slow Down / Tight Turn"
+        if (p.keyIsDown(p.DOWN_ARROW)) {
+            // Reduce speed, increase turn rate
+            gameState.player.turnSpeed = 0.12; 
+            gameState.player.speed = 1.5;
+        } else {
+            gameState.player.turnSpeed = 0.08;
+            gameState.player.speed = 2.0;
+        }
+
+        if (p.keyIsDown(32)) { // Space
+            boosting = true;
+        }
+    } 
+    // Handle Automated Test Input
+    else {
+        const action = get_automated_testing_action(gameState);
+        if (action) {
+            if (action.keyIsDown === "LEFT") turnDir = -1;
+            if (action.keyIsDown === "RIGHT") turnDir = 1;
+            if (action.keyIsDown === "SPACE") boosting = true;
+        }
+    }
+
+    // Apply rotation
+    if (turnDir !== 0) {
+        gameState.player.heading += turnDir * gameState.player.turnSpeed;
+    }
+    
+    // Apply boost
+    gameState.player.isBoosting = boosting;
+}
+
+export function handleKeyPress(p) {
+    const k = p.keyCode;
+    
+    // Log
+    p.logs.inputs.push({
+        type: "PRESS",
+        key: p.key,
+        keyCode: k,
+        frame: p.frameCount,
+        time: Date.now()
+    });
+
+    if (k === 13) { // ENTER
+        if (gameState.gamePhase === "START") {
+            gameState.gamePhase = "PLAYING";
+        }
+    }
+    else if (k === 27) { // ESC
+        if (gameState.gamePhase === "PLAYING") gameState.gamePhase = "PAUSED";
+        else if (gameState.gamePhase === "PAUSED") gameState.gamePhase = "PLAYING";
+    }
+    else if (k === 82) { // R
+        if (gameState.gamePhase.startsWith("GAME_OVER")) {
+            // Signal restart logic in game loop
+            gameState.gamePhase = "START";
+            window.resetGame(p); // Call exposed reset function
+        }
+    }
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

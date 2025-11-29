@@ -1,0 +1,2088 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+this game does not load
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">WEBFISHING</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Basic)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Win)</button>
+        <button id="test_3_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_3')">TEST (Shop)</button>
+        <button id="test_4_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_4')">TEST (Movement)</button>
+        <button id="test_5_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_5')">TEST (Random)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Welcome to WEBFISHING! Cast your line, catch a variety of fish and sea creatures, and build your collection. Earn money by selling your catches, upgrade your fishing rod for better performance, and complete your journal by discovering all the fish species. Watch for bite indicators and reel in your catch at the right moment. Can you become the ultimate angler and catch them all?</p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Arrow Keys: Move your character around the fishing spots | Space: Cast fishing line / Reel in when fish bites | Z: Open/Close shop to buy upgrades | Shift: Sprint (move faster) | Enter: Start game | ESC: Pause/Unpause | R: Restart to main menu</p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="automated_testing_controller.js">
+// automated_testing_controller.js - Automated testing functions
+
+import { gameState, GAME_PHASES, ROD_UPGRADES } from './globals.js';
+
+let testState = {
+  positionHistory: [],
+  stuckCounter: 0,
+  lastAction: null,
+  targetWaterIndex: 0,
+  shopVisitCounter: 0,
+  lastShopFrame: 0
+};
+
+function getTestWinAction(gameState) {
+  // Strategy: Systematically fish in all areas, upgrade rod when possible, complete journal
+  
+  if (gameState.gamePhase !== GAME_PHASES.PLAYING) {
+    return { keys: [] };
+  }
+  
+  const player = gameState.player;
+  const keys = [];
+  
+  // Check if we should visit shop
+  const nextRodLevel = gameState.rodLevel + 1;
+  const canUpgrade = nextRodLevel < ROD_UPGRADES.length && 
+                      gameState.money >= ROD_UPGRADES[nextRodLevel].cost;
+  
+  // Visit shop periodically if we can upgrade
+  if (canUpgrade && !gameState.shopOpen && !gameState.fishingLine) {
+    if (gameState.player.p.frameCount - testState.lastShopFrame > 180) {
+      testState.lastShopFrame = gameState.player.p.frameCount;
+      return { keys: [90] }; // Open shop to upgrade
+    }
+  }
+  
+  // Close shop if it's open
+  if (gameState.shopOpen) {
+    return { keys: [90] };
+  }
+  
+  // Handle active fishing
+  if (gameState.fishingLine) {
+    if (gameState.fishingLine.state === 'biting') {
+      return { keys: [32] }; // Reel when biting
+    }
+    // Wait for bite or complete cast
+    return { keys: [] };
+  }
+  
+  // Find target water area to fish
+  if (!gameState.waterAreas || gameState.waterAreas.length === 0) {
+    return { keys: [] };
+  }
+  
+  // Cycle through water areas
+  testState.targetWaterIndex = testState.targetWaterIndex % gameState.waterAreas.length;
+  const targetWater = gameState.waterAreas[testState.targetWaterIndex];
+  
+  const targetX = targetWater.x + targetWater.width / 2;
+  const targetY = targetWater.y + targetWater.height / 2;
+  
+  const dx = targetX - player.x;
+  const dy = targetY - player.y;
+  const distance = Math.sqrt(dx * dx + dy * dy);
+  
+  // If close enough to water, try to fish
+  if (distance < ROD_UPGRADES[gameState.rodLevel].castRange * 0.8) {
+    if (player.canFish()) {
+      // Rotate to next water area after fishing
+      testState.targetWaterIndex++;
+      return { keys: [32] }; // Cast line
+    }
+  }
+  
+  // Move towards target water
+  if (Math.abs(dx) > 5) {
+    keys.push(dx > 0 ? 39 : 37); // RIGHT or LEFT
+  }
+  if (Math.abs(dy) > 5) {
+    keys.push(dy > 0 ? 40 : 38); // DOWN or UP
+  }
+  
+  // Use sprint for faster movement
+  if (keys.length > 0) {
+    keys.push(16); // SHIFT
+  }
+  
+  return { keys };
+}
+
+function getBasicTestAction(gameState) {
+  // Test basic movement and fishing
+  
+  if (gameState.gamePhase !== GAME_PHASES.PLAYING) {
+    return { keys: [] };
+  }
+  
+  const player = gameState.player;
+  const keys = [];
+  
+  // Handle active fishing
+  if (gameState.fishingLine) {
+    if (gameState.fishingLine.state === 'biting') {
+      return { keys: [32] };
+    }
+    return { keys: [] };
+  }
+  
+  // Try to fish if near water
+  if (player.canFish()) {
+    return { keys: [32] };
+  }
+  
+  // Move towards first water area
+  if (gameState.waterAreas && gameState.waterAreas.length > 0) {
+    const water = gameState.waterAreas[0];
+    const targetX = water.x + water.width / 2;
+    const targetY = water.y + water.height / 2;
+    
+    const dx = targetX - player.x;
+    const dy = targetY - player.y;
+    
+    if (Math.abs(dx) > 10) {
+      keys.push(dx > 0 ? 39 : 37);
+    }
+    if (Math.abs(dy) > 10) {
+      keys.push(dy > 0 ? 40 : 38);
+    }
+  }
+  
+  return { keys };
+}
+
+function getShopTestAction(gameState) {
+  // Test shop and upgrade system
+  
+  if (gameState.gamePhase !== GAME_PHASES.PLAYING) {
+    return { keys: [] };
+  }
+  
+  const player = gameState.player;
+  
+  // Handle active fishing to earn money
+  if (gameState.fishingLine) {
+    if (gameState.fishingLine.state === 'biting') {
+      return { keys: [32] };
+    }
+    return { keys: [] };
+  }
+  
+  // Try to upgrade if possible
+  const nextRodLevel = gameState.rodLevel + 1;
+  if (nextRodLevel < ROD_UPGRADES.length && 
+      gameState.money >= ROD_UPGRADES[nextRodLevel].cost) {
+    if (!gameState.shopOpen) {
+      return { keys: [90] }; // Open shop
+    } else {
+      return { keys: [90] }; // Close shop (upgrade happens on open)
+    }
+  }
+  
+  // Fish to earn money
+  if (player.canFish()) {
+    return { keys: [32] };
+  }
+  
+  // Move to water
+  if (gameState.waterAreas && gameState.waterAreas.length > 0) {
+    const water = gameState.waterAreas[0];
+    const dx = water.x + water.width / 2 - player.x;
+    const dy = water.y + water.height / 2 - player.y;
+    
+    const keys = [];
+    if (Math.abs(dx) > 10) keys.push(dx > 0 ? 39 : 37);
+    if (Math.abs(dy) > 10) keys.push(dy > 0 ? 40 : 38);
+    return { keys };
+  }
+  
+  return { keys: [] };
+}
+
+function getMovementTestAction(gameState) {
+  // Test movement mechanics including sprint
+  
+  if (gameState.gamePhase !== GAME_PHASES.PLAYING) {
+    return { keys: [] };
+  }
+  
+  const player = gameState.player;
+  const frameCount = player.p ? player.p.frameCount : 0;
+  const keys = [];
+  
+  // Move in patterns to test all directions
+  const pattern = Math.floor(frameCount / 60) % 8;
+  
+  switch(pattern) {
+    case 0: keys.push(39); break; // RIGHT
+    case 1: keys.push(40); break; // DOWN
+    case 2: keys.push(37); break; // LEFT
+    case 3: keys.push(38); break; // UP
+    case 4: keys.push(39, 40); break; // RIGHT+DOWN
+    case 5: keys.push(37, 40); break; // LEFT+DOWN
+    case 6: keys.push(37, 38); break; // LEFT+UP
+    case 7: keys.push(39, 38); break; // RIGHT+UP
+  }
+  
+  // Add sprint every other cycle
+  if (pattern % 2 === 0) {
+    keys.push(16);
+  }
+  
+  return { keys };
+}
+
+function getRandomAction(gameState) {
+  // Random exploration
+  
+  if (gameState.gamePhase !== GAME_PHASES.PLAYING) {
+    return { keys: [] };
+  }
+  
+  const player = gameState.player;
+  const rand = player.p ? player.p.random() : Math.random();
+  const keys = [];
+  
+  // Handle fishing
+  if (gameState.fishingLine) {
+    if (gameState.fishingLine.state === 'biting') {
+      return { keys: [32] };
+    }
+    return { keys: [] };
+  }
+  
+  // Random actions
+  if (rand < 0.3 && player.canFish()) {
+    return { keys: [32] };
+  }
+  
+  if (rand < 0.4) {
+    return { keys: [90] }; // Toggle shop
+  }
+  
+  // Random movement
+  if (rand < 0.5) keys.push(37);
+  else if (rand < 0.6) keys.push(39);
+  
+  if (rand < 0.7) keys.push(38);
+  else if (rand < 0.8) keys.push(40);
+  
+  if (rand < 0.3) keys.push(16); // Sprint
+  
+  return { keys };
+}
+
+export function get_automated_testing_action(gameState) {
+  switch (gameState.controlMode) {
+    case "TEST_1":
+      return getBasicTestAction(gameState);
+    case "TEST_2":
+      return getTestWinAction(gameState);
+    case "TEST_3":
+      return getShopTestAction(gameState);
+    case "TEST_4":
+      return getMovementTestAction(gameState);
+    case "TEST_5":
+      return getRandomAction(gameState);
+    default:
+      return { keys: [] };
+  }
+}
+
+window.get_automated_testing_action = get_automated_testing_action;
+export default get_automated_testing_action;
+</file>
+
+<file name="globals.js">
+// globals.js - Global constants and game state
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+export const GAME_PHASES = {
+  START: "START",
+  PLAYING: "PLAYING",
+  PAUSED: "PAUSED",
+  GAME_OVER_WIN: "GAME_OVER_WIN",
+  GAME_OVER_LOSE: "GAME_OVER_LOSE"
+};
+
+export const FISHING_STATES = {
+  IDLE: "IDLE",
+  CASTING: "CASTING",
+  WAITING: "WAITING",
+  BITING: "BITING",
+  REELING: "REELING",
+  CAUGHT: "CAUGHT"
+};
+
+export const WATER_ZONES = {
+  SHALLOW: { name: "Shallow Water", minX: 350, maxX: 550, y: 250, depth: 1 },
+  DEEP: { name: "Deep Water", minX: 50, maxX: 250, y: 280, depth: 2 },
+  SPECIAL: { name: "Golden Spot", minX: 280, maxX: 320, y: 200, depth: 3 }
+};
+
+export const FISH_TYPES = [
+  // Common fish (tier 1)
+  { id: 0, name: "Minnow", rarity: 1, value: 5, color: [200, 200, 200], requiredRod: 0, zone: "SHALLOW" },
+  { id: 1, name: "Perch", rarity: 1, value: 8, color: [150, 180, 100], requiredRod: 0, zone: "SHALLOW" },
+  { id: 2, name: "Sunfish", rarity: 1, value: 10, color: [255, 200, 100], requiredRod: 0, zone: "SHALLOW" },
+  { id: 3, name: "Carp", rarity: 1, value: 12, color: [180, 150, 100], requiredRod: 0, zone: "SHALLOW" },
+  
+  // Uncommon fish (tier 2)
+  { id: 4, name: "Bass", rarity: 2, value: 20, color: [100, 150, 100], requiredRod: 1, zone: "DEEP" },
+  { id: 5, name: "Trout", rarity: 2, value: 25, color: [150, 100, 150], requiredRod: 1, zone: "DEEP" },
+  { id: 6, name: "Pike", rarity: 2, value: 30, color: [100, 150, 150], requiredRod: 1, zone: "DEEP" },
+  { id: 7, name: "Catfish", rarity: 2, value: 28, color: [120, 100, 80], requiredRod: 1, zone: "DEEP" },
+  
+  // Rare fish (tier 3)
+  { id: 8, name: "Salmon", rarity: 3, value: 50, color: [255, 150, 150], requiredRod: 2, zone: "DEEP" },
+  { id: 9, name: "Sturgeon", rarity: 3, value: 60, color: [100, 100, 120], requiredRod: 2, zone: "DEEP" },
+  { id: 10, name: "Tuna", rarity: 3, value: 70, color: [80, 100, 150], requiredRod: 2, zone: "SPECIAL" },
+  
+  // Epic fish (tier 4)
+  { id: 11, name: "Shark", rarity: 4, value: 100, color: [150, 150, 180], requiredRod: 3, zone: "SPECIAL" },
+  { id: 12, name: "Swordfish", rarity: 4, value: 120, color: [100, 120, 180], requiredRod: 3, zone: "SPECIAL" },
+  
+  // Legendary fish (tier 5)
+  { id: 13, name: "Golden Fish", rarity: 5, value: 200, color: [255, 215, 0], requiredRod: 4, zone: "SPECIAL" },
+  { id: 14, name: "Dragon Fish", rarity: 5, value: 250, color: [255, 50, 50], requiredRod: 4, zone: "SPECIAL" }
+];
+
+export const ROD_UPGRADES = [
+  { level: 0, name: "Basic Rod", cost: 0, power: 1, catchChance: 0.7 },
+  { level: 1, name: "Decent Rod", cost: 50, power: 2, catchChance: 0.75 },
+  { level: 2, name: "Good Rod", cost: 150, power: 3, catchChance: 0.8 },
+  { level: 3, name: "Great Rod", cost: 300, power: 4, catchChance: 0.85 },
+  { level: 4, name: "Master Rod", cost: 600, power: 5, catchChance: 0.9 }
+];
+
+export const gameState = {
+  player: null,
+  entities: [],
+  score: 0,
+  money: 0,
+  gamePhase: GAME_PHASES.START,
+  controlMode: "HUMAN",
+  fishingState: FISHING_STATES.IDLE,
+  currentFish: null,
+  fishingTimer: 0,
+  biteWindow: 0,
+  rodLevel: 0,
+  caughtFish: [],
+  journal: new Set(),
+  journalOpen: false,
+  fishingLine: null,
+  masteryLevel: 0,
+  totalFishCaught: 0,
+  currentZone: null,
+  bobberPosition: { x: 0, y: 0 },
+  reactionTime: 0
+};
+
+// Expose gameState globally
+if (typeof window !== 'undefined') {
+  window.getGameState = () => gameState;
+}
+</file>
+
+<file name="game.js">
+// game.js - Main game file
+
+import { 
+  gameState, 
+  GAME_PHASES, 
+  CANVAS_WIDTH, 
+  CANVAS_HEIGHT,
+  resetGameState,
+  ROD_UPGRADES
+} from './globals.js';
+
+import { Player } from './player.js';
+import { FishingLine } from './fishingLine.js';
+import { WaterArea, Tree, Rock } from './environment.js';
+import { drawStartScreen, drawGameOverScreen, drawUI, drawShop } from './ui.js';
+import { get_automated_testing_action } from './automated_testing_controller.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+  // Initialize logs
+  p.logs = {
+    game_info: [],
+    inputs: [],
+    player_info: []
+  };
+
+  let lastLoggedPlayerX = 0;
+  let lastLoggedPlayerY = 0;
+
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(60);
+    p.randomSeed(42);
+    
+    // Initialize environment
+    initializeEnvironment(p);
+    
+    // Initialize player
+    gameState.player = new Player(CANVAS_WIDTH / 2, CANVAS_HEIGHT - 60);
+    gameState.entities.push(gameState.player);
+    
+    // Log initial state
+    logGameInfo(p, "Game initialized", { phase: gameState.gamePhase });
+    logPlayerInfo(p);
+  };
+
+  p.draw = function() {
+    // Apply automated testing controls if not in HUMAN mode
+    if (gameState.controlMode !== 'HUMAN' && gameState.gamePhase === GAME_PHASES.PLAYING) {
+      applyAutomatedControls(p);
+    }
+
+    // Render based on game phase
+    switch(gameState.gamePhase) {
+      case GAME_PHASES.START:
+        drawStartScreen(p);
+        break;
+        
+      case GAME_PHASES.PLAYING:
+        drawGameplay(p);
+        break;
+        
+      case GAME_PHASES.PAUSED:
+        drawGameplay(p);
+        break;
+        
+      case GAME_PHASES.GAME_OVER_WIN:
+      case GAME_PHASES.GAME_OVER_LOSE:
+        drawGameplay(p);
+        drawGameOverScreen(p);
+        break;
+    }
+  };
+
+  function drawGameplay(p) {
+    // Background
+    p.background(100, 160, 100);
+    
+    // Draw environment
+    for (let entity of gameState.entities) {
+      if (entity.type === 'water') entity.draw(p);
+    }
+    
+    for (let entity of gameState.entities) {
+      if (entity.type === 'tree' || entity.type === 'rock') entity.draw(p);
+    }
+    
+    // Update and draw player
+    if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+      gameState.player.update(p);
+      
+      // Log player position changes
+      const dx = Math.abs(gameState.player.x - lastLoggedPlayerX);
+      const dy = Math.abs(gameState.player.y - lastLoggedPlayerY);
+      if (dx > 5 || dy > 5) {
+        logPlayerInfo(p);
+        lastLoggedPlayerX = gameState.player.x;
+        lastLoggedPlayerY = gameState.player.y;
+      }
+    }
+    
+    gameState.player.draw(p);
+    
+    // Update and draw fishing line
+    if (gameState.fishingLine) {
+      if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+        gameState.fishingLine.update(p);
+        
+        // Check if fishing is complete
+        if (gameState.fishingLine.state === 'caught') {
+          if (gameState.fishingLine.caughtFish) {
+            gameState.fishingLine.caughtFish.displayUntil = p.frameCount + 120;
+          }
+          gameState.fishingLine = null;
+          
+          // Check win condition
+          if (gameState.fishJournal.size >= 10) {
+            gameState.gamePhase = GAME_PHASES.GAME_OVER_WIN;
+            logGameInfo(p, "Game won", { 
+              phase: GAME_PHASES.GAME_OVER_WIN,
+              fishCaught: gameState.totalFishCaught,
+              journalComplete: true
+            });
+          }
+        }
+      }
+      
+      if (gameState.fishingLine) {
+        gameState.fishingLine.draw(p);
+      }
+    }
+    
+    // Draw UI
+    drawUI(p);
+    
+    // Draw shop overlay
+    if (gameState.shopOpen) {
+      drawShop(p);
+    }
+  }
+
+  function initializeEnvironment(p) {
+    // Clear existing environment entities
+    gameState.entities = gameState.entities.filter(e => e.type === 'player');
+    gameState.waterAreas = [];
+    gameState.trees = [];
+    gameState.rocks = [];
+    
+    // Create water areas
+    const water1 = new WaterArea(50, 80, 200, 120);
+    const water2 = new WaterArea(350, 100, 200, 140);
+    const water3 = new WaterArea(150, 250, 300, 100);
+    
+    gameState.waterAreas.push(water1, water2, water3);
+    gameState.entities.push(water1, water2, water3);
+    
+    // Create trees
+    const trees = [
+      new Tree(100, 250),
+      new Tree(520, 200),
+      new Tree(300, 80),
+      new Tree(450, 320)
+    ];
+    
+    gameState.trees.push(...trees);
+    gameState.entities.push(...trees);
+    
+    // Create rocks
+    const rocks = [
+      new Rock(280, 200, 15),
+      new Rock(80, 350, 12),
+      new Rock(500, 350, 14)
+    ];
+    
+    gameState.rocks.push(...rocks);
+    gameState.entities.push(...rocks);
+  }
+
+  function applyAutomatedControls(p) {
+    const action = get_automated_testing_action(gameState);
+    
+    if (action && action.keys) {
+      // Reset velocities
+      gameState.player.velocityX = 0;
+      gameState.player.velocityY = 0;
+      
+      // Apply movement
+      const isSprinting = action.keys.includes(16);
+      if (action.keys.includes(37)) gameState.player.move('LEFT', isSprinting);
+      if (action.keys.includes(39)) gameState.player.move('RIGHT', isSprinting);
+      if (action.keys.includes(38)) gameState.player.move('UP', isSprinting);
+      if (action.keys.includes(40)) gameState.player.move('DOWN', isSprinting);
+      
+      // Handle space (fishing)
+      if (action.keys.includes(32)) {
+        handleSpace(p);
+      }
+      
+      // Handle Z (shop)
+      if (action.keys.includes(90)) {
+        handleShop(p);
+      }
+    }
+  }
+
+  function handleSpace(p) {
+    if (gameState.fishingLine) {
+      if (gameState.fishingLine.state === 'biting' || gameState.fishingLine.state === 'waiting') {
+        gameState.fishingLine.reel();
+      }
+    } else if (gameState.player.canFish()) {
+      castLine(p);
+    }
+  }
+
+  function castLine(p) {
+    const currentRod = ROD_UPGRADES[gameState.rodLevel];
+    const castDistance = currentRod.castRange;
+    
+    // Find nearest water
+    let nearestWater = null;
+    let minDist = Infinity;
+    
+    for (let water of gameState.waterAreas) {
+      const centerX = water.x + water.width / 2;
+      const centerY = water.y + water.height / 2;
+      const dist = Math.sqrt(
+        Math.pow(gameState.player.x - centerX, 2) +
+        Math.pow(gameState.player.y - centerY, 2)
+      );
+      
+      if (dist < minDist) {
+        minDist = dist;
+        nearestWater = water;
+      }
+    }
+    
+    if (nearestWater) {
+      const targetX = p.constrain(
+        nearestWater.x + nearestWater.width / 2 + p.random(-30, 30),
+        nearestWater.x + 20,
+        nearestWater.x + nearestWater.width - 20
+      );
+      const targetY = p.constrain(
+        nearestWater.y + nearestWater.height / 2 + p.random(-20, 20),
+        nearestWater.y + 20,
+        nearestWater.y + nearestWater.height - 20
+      );
+      
+      gameState.fishingLine = new FishingLine(p, gameState.player.x, gameState.player.y - 10, targetX, targetY);
+      gameState.entities.push(gameState.fishingLine);
+    }
+  }
+
+  function handleShop(p) {
+    if (!gameState.fishingLine) {
+      gameState.shopOpen = !gameState.shopOpen;
+      
+      if (gameState.shopOpen) {
+        // Try to buy next rod upgrade
+        const nextLevel = gameState.rodLevel + 1;
+        if (nextLevel < ROD_UPGRADES.length) {
+          const nextRod = ROD_UPGRADES[nextLevel];
+          if (gameState.money >= nextRod.cost) {
+            gameState.money -= nextRod.cost;
+            gameState.rodLevel = nextLevel;
+            logGameInfo(p, "Rod upgraded", { 
+              rodLevel: gameState.rodLevel,
+              rodName: ROD_UPGRADES[gameState.rodLevel].name
+            });
+          }
+        }
+      }
+    }
+  }
+
+  p.keyPressed = function() {
+    logInput(p, "keyPressed", p.key, p.keyCode);
+    
+    // Phase transition keys
+    if (p.keyCode === 13) { // ENTER
+      if (gameState.gamePhase === GAME_PHASES.START) {
+        gameState.gamePhase = GAME_PHASES.PLAYING;
+        resetGameState();
+        logGameInfo(p, "Game started", { phase: GAME_PHASES.PLAYING });
+      }
+      return;
+    }
+    
+    if (p.keyCode === 27) { // ESC
+      if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+        gameState.gamePhase = GAME_PHASES.PAUSED;
+        logGameInfo(p, "Game paused", { phase: GAME_PHASES.PAUSED });
+      } else if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+        gameState.gamePhase = GAME_PHASES.PLAYING;
+        logGameInfo(p, "Game resumed", { phase: GAME_PHASES.PLAYING });
+      }
+      return;
+    }
+    
+    if (p.keyCode === 82) { // R
+      if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN || 
+          gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE) {
+        gameState.gamePhase = GAME_PHASES.START;
+        resetGameState();
+        initializeEnvironment(p);
+        logGameInfo(p, "Game restarted", { phase: GAME_PHASES.START });
+      }
+      return;
+    }
+    
+    // Gameplay keys (only in PLAYING phase and HUMAN mode)
+    if (gameState.gamePhase === GAME_PHASES.PLAYING && gameState.controlMode === 'HUMAN') {
+      if (p.keyCode === 32) { // SPACE
+        handleSpace(p);
+      }
+      
+      if (p.keyCode === 90) { // Z
+        handleShop(p);
+      }
+    }
+  };
+
+  p.keyReleased = function() {
+    logInput(p, "keyReleased", p.key, p.keyCode);
+  };
+
+  function logGameInfo(p, message, data) {
+    p.logs.game_info.push({
+      message,
+      data,
+      frameCount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+
+  function logInput(p, inputType, key, keyCode) {
+    p.logs.inputs.push({
+      input_type: inputType,
+      data: { key, keyCode },
+      frameCount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+
+  function logPlayerInfo(p) {
+    if (gameState.player) {
+      p.logs.player_info.push({
+        screen_x: gameState.player.x,
+        screen_y: gameState.player.y,
+        game_x: gameState.player.x,
+        game_y: gameState.player.y,
+        frameCount: p.frameCount
+      });
+    }
+  }
+});
+
+// Expose game instance globally
+window.gameInstance = gameInstance;
+
+// Control mode setter
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  
+  // Update button states
+  const buttons = ['humanModeBtn', 'test_1_ModeBtn', 'test_2_ModeBtn', 'test_3_ModeBtn', 'test_4_ModeBtn', 'test_5_ModeBtn'];
+  buttons.forEach(btnId => {
+    const btn = document.getElementById(btnId);
+    if (btn) {
+      btn.classList.remove('active');
+    }
+  });
+  
+  const activeBtn = document.getElementById(mode === 'HUMAN' ? 'humanModeBtn' : `${mode.toLowerCase()}_ModeBtn`);
+  if (activeBtn) {
+    activeBtn.classList.add('active');
+  }
+};
+</file>
+
+<file name="ui.js">
+// ui.js - UI rendering functions
+
+import { gameState, GAME_PHASES, FISH_TYPES, ROD_UPGRADES, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export function drawStartScreen(p) {
+  p.background(40, 80, 120);
+  
+  // Animated water background
+  for (let i = 0; i < 5; i++) {
+    p.fill(60, 120, 180, 50);
+    p.noStroke();
+    const y = 150 + i * 60 + p.sin(p.frameCount * 0.05 + i) * 20;
+    p.ellipse(CANVAS_WIDTH / 2, y, 400, 80);
+  }
+  
+  // Title
+  p.fill(255, 255, 255);
+  p.stroke(80, 150, 200);
+  p.strokeWeight(4);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text("WEBFISHING", CANVAS_WIDTH / 2, 60);
+  
+  // Subtitle
+  p.noStroke();
+  p.fill(200, 230, 255);
+  p.textSize(18);
+  p.text("Relax and Fish!", CANVAS_WIDTH / 2, 110);
+  
+  // Instructions
+  p.fill(255, 255, 255);
+  p.textSize(14);
+  p.textAlign(p.LEFT, p.CENTER);
+  
+  const instructions = [
+    "OBJECTIVE:",
+    "- Catch all 10 fish species to complete your journal!",
+    "- Earn money and upgrade your fishing rod",
+    "",
+    "CONTROLS:",
+    "Arrow Keys - Move around",
+    "Space - Cast line / Reel in when fish bites",
+    "Shift - Sprint",
+    "Z - Open/Close shop",
+    "",
+    "TIPS:",
+    "- Stand near water to cast your line",
+    "- Watch for the ! when fish bites",
+    "- Better rods unlock rarer fish"
+  ];
+  
+  let yPos = 160;
+  for (let line of instructions) {
+    if (line.startsWith("OBJECTIVE:") || line.startsWith("CONTROLS:") || line.startsWith("TIPS:")) {
+      p.fill(255, 220, 100);
+      p.textSize(16);
+    } else if (line.startsWith("-")) {
+      p.fill(220, 220, 220);
+      p.textSize(12);
+    } else {
+      p.fill(200, 200, 200);
+      p.textSize(12);
+    }
+    p.text(line, 50, yPos);
+    yPos += line === "" ? 8 : 18;
+  }
+  
+  // Start prompt
+  p.fill(255, 255, 100);
+  p.textSize(20);
+  p.textAlign(p.CENTER, p.CENTER);
+  const alpha = 150 + Math.sin(p.frameCount * 0.1) * 105;
+  p.fill(255, 255, 100, alpha);
+  p.text("PRESS ENTER TO START", CANVAS_WIDTH / 2, CANVAS_HEIGHT - 30);
+}
+
+export function drawGameOverScreen(p) {
+  p.background(40, 40, 60, 230);
+  
+  const isWin = gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN;
+  
+  // Title
+  p.fill(isWin ? [100, 255, 100] : [255, 100, 100]);
+  p.stroke(isWin ? [50, 200, 50] : [200, 50, 50]);
+  p.strokeWeight(3);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text(isWin ? "CONGRATULATIONS!" : "GAME OVER", CANVAS_WIDTH / 2, 80);
+  
+  // Message
+  p.noStroke();
+  p.fill(255, 255, 255);
+  p.textSize(20);
+  if (isWin) {
+    p.text("You completed the Fish Journal!", CANVAS_WIDTH / 2, 140);
+  } else {
+    p.text("Better luck next time!", CANVAS_WIDTH / 2, 140);
+  }
+  
+  // Stats
+  p.textSize(16);
+  p.textAlign(p.LEFT, p.CENTER);
+  const stats = [
+    `Fish Caught: ${gameState.totalFishCaught}`,
+    `Species Discovered: ${gameState.fishJournal.size}/${FISH_TYPES.length}`,
+    `Money Earned: $${gameState.money}`,
+    `Final Score: ${gameState.score}`,
+    `Rod Level: ${ROD_UPGRADES[gameState.rodLevel].name}`
+  ];
+  
+  let yPos = 190;
+  for (let stat of stats) {
+    p.text(stat, 180, yPos);
+    yPos += 25;
+  }
+  
+  // Restart prompt
+  p.fill(255, 255, 100);
+  p.textSize(18);
+  p.textAlign(p.CENTER, p.CENTER);
+  const alpha = 150 + Math.sin(p.frameCount * 0.1) * 105;
+  p.fill(255, 255, 100, alpha);
+  p.text("PRESS R TO RESTART", CANVAS_WIDTH / 2, CANVAS_HEIGHT - 40);
+}
+
+export function drawUI(p) {
+  // Top bar background
+  p.fill(0, 0, 0, 150);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, 30);
+  
+  // Money
+  p.fill(255, 215, 0);
+  p.textAlign(p.LEFT, p.CENTER);
+  p.textSize(14);
+  p.text(`💰 $${gameState.money}`, 10, 15);
+  
+  // Fish count
+  p.fill(100, 200, 255);
+  p.text(`🐟 ${gameState.totalFishCaught}`, 120, 15);
+  
+  // Journal progress
+  p.fill(150, 255, 150);
+  p.text(`📖 ${gameState.fishJournal.size}/${FISH_TYPES.length}`, 200, 15);
+  
+  // Rod level
+  p.fill(200, 200, 200);
+  p.textAlign(p.RIGHT, p.CENTER);
+  p.text(`${ROD_UPGRADES[gameState.rodLevel].name}`, CANVAS_WIDTH - 10, 15);
+  
+  // Paused indicator
+  if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+    p.fill(255, 255, 0);
+    p.textSize(12);
+    p.textAlign(p.RIGHT, p.TOP);
+    p.text("PAUSED", CANVAS_WIDTH - 10, 35);
+  }
+  
+  // Last catch notification
+  if (gameState.lastCatch && p.frameCount < gameState.lastCatch.displayUntil) {
+    p.push();
+    p.fill(0, 0, 0, 200);
+    p.rect(CANVAS_WIDTH / 2 - 120, 50, 240, 60);
+    
+    p.fill(...gameState.lastCatch.color);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(16);
+    p.text(`Caught: ${gameState.lastCatch.name}!`, CANVAS_WIDTH / 2, 65);
+    
+    p.fill(255, 215, 0);
+    p.textSize(14);
+    p.text(`+$${gameState.lastCatch.value}`, CANVAS_WIDTH / 2, 88);
+    p.pop();
+  }
+  
+  // Shop prompt when Z can be pressed
+  if (!gameState.shopOpen && !gameState.fishingLine) {
+    p.fill(200, 200, 200, 150);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(11);
+    p.text("Press Z to open Shop", CANVAS_WIDTH / 2, CANVAS_HEIGHT - 15);
+  }
+}
+
+export function drawShop(p) {
+  // Shop background
+  p.fill(0, 0, 0, 230);
+  p.rect(50, 50, CANVAS_WIDTH - 100, CANVAS_HEIGHT - 100);
+  
+  // Title
+  p.fill(255, 215, 0);
+  p.stroke(200, 170, 0);
+  p.strokeWeight(2);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(24);
+  p.text("🛒 FISHING SHOP", CANVAS_WIDTH / 2, 80);
+  
+  // Current money
+  p.noStroke();
+  p.fill(200, 200, 200);
+  p.textSize(14);
+  p.text(`Your Money: $${gameState.money}`, CANVAS_WIDTH / 2, 110);
+  
+  // Rod upgrades
+  p.textAlign(p.LEFT, p.CENTER);
+  p.textSize(12);
+  let yPos = 145;
+  
+  for (let i = 0; i < ROD_UPGRADES.length; i++) {
+    const rod = ROD_UPGRADES[i];
+    const isOwned = i <= gameState.rodLevel;
+    const isNext = i === gameState.rodLevel + 1;
+    const canAfford = gameState.money >= rod.cost;
+    
+    p.push();
+    p.translate(70, yPos);
+    
+    // Background
+    if (isOwned) {
+      p.fill(50, 150, 50, 100);
+    } else if (isNext && canAfford) {
+      p.fill(150, 150, 50, 100);
+    } else {
+      p.fill(60, 60, 60, 100);
+    }
+    p.noStroke();
+    p.rect(0, -18, CANVAS_WIDTH - 140, 36);
+    
+    // Rod info
+    if (isOwned) {
+      p.fill(100, 255, 100);
+      p.text("✓ OWNED", 10, 0);
+    } else if (isNext) {
+      p.fill(canAfford ? [255, 255, 100] : [150, 150, 150]);
+      p.text(`$${rod.cost}`, 10, 0);
+    } else {
+      p.fill(100, 100, 100);
+      p.text("LOCKED", 10, 0);
+    }
+    
+    p.fill(255, 255, 255);
+    p.text(rod.name, 90, 0);
+    
+    p.fill(200, 200, 200);
+    p.textSize(10);
+    p.text(`Range: ${rod.castRange}px | Speed: ${rod.catchSpeed.toFixed(1)}x`, 220, 0);
+    
+    p.pop();
+    yPos += 45;
+  }
+  
+  // Instructions
+  p.fill(255, 255, 255);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(12);
+  p.text("Catch fish to earn money. Better rods unlock rarer fish!", CANVAS_WIDTH / 2, CANVAS_HEIGHT - 70);
+  
+  p.fill(255, 255, 100);
+  p.textSize(14);
+  p.text("Press Z to close shop", CANVAS_WIDTH / 2, CANVAS_HEIGHT - 45);
+}
+</file>
+
+<file name="fishing.js">
+// fishing.js - Fishing mechanics
+
+import { gameState, FISHING_STATES, FISH_TYPES, WATER_ZONES, ROD_UPGRADES } from './globals.js';
+
+export function initFishing() {
+  gameState.fishingState = FISHING_STATES.IDLE;
+  gameState.currentFish = null;
+  gameState.fishingTimer = 0;
+  gameState.biteWindow = 0;
+  gameState.fishingLine = null;
+  gameState.currentZone = null;
+  gameState.reactionTime = 0;
+}
+
+export function startCasting(p) {
+  if (gameState.fishingState === FISHING_STATES.IDLE) {
+    gameState.fishingState = FISHING_STATES.CASTING;
+    gameState.fishingTimer = 30; // Animation frames
+    
+    // Determine which zone player is fishing in
+    const playerCenterX = gameState.player.x + gameState.player.width / 2;
+    gameState.currentZone = determineZone(playerCenterX);
+    
+    // Calculate bobber position
+    const castDistance = 80 + gameState.rodLevel * 20;
+    gameState.bobberPosition = {
+      x: playerCenterX + castDistance * gameState.player.facing,
+      y: gameState.currentZone ? 
+         (gameState.currentZone.name === "Golden Spot" ? 200 : 
+          gameState.currentZone.name === "Deep Water" ? 280 : 250) : 250
+    };
+  }
+}
+
+export function determineZone(x) {
+  for (let zoneKey in WATER_ZONES) {
+    const zone = WATER_ZONES[zoneKey];
+    if (x >= zone.minX && x <= zone.maxX) {
+      return { ...zone, key: zoneKey };
+    }
+  }
+  return null;
+}
+
+export function updateFishing(p) {
+  switch (gameState.fishingState) {
+    case FISHING_STATES.CASTING:
+      gameState.fishingTimer--;
+      if (gameState.fishingTimer <= 0) {
+        gameState.fishingState = FISHING_STATES.WAITING;
+        // Random wait time before bite (2-6 seconds at 60fps)
+        gameState.fishingTimer = p.floor(p.random(120, 360));
+        selectRandomFish(p);
+      }
+      break;
+      
+    case FISHING_STATES.WAITING:
+      gameState.fishingTimer--;
+      if (gameState.fishingTimer <= 0) {
+        if (gameState.currentFish) {
+          gameState.fishingState = FISHING_STATES.BITING;
+          // Short window to react (1-2 seconds)
+          gameState.biteWindow = p.floor(p.random(60, 120));
+          gameState.reactionTime = 0;
+        } else {
+          // No fish, return to idle
+          gameState.fishingState = FISHING_STATES.IDLE;
+        }
+      }
+      break;
+      
+    case FISHING_STATES.BITING:
+      gameState.biteWindow--;
+      gameState.reactionTime++;
+      if (gameState.biteWindow <= 0) {
+        // Missed the bite
+        gameState.fishingState = FISHING_STATES.IDLE;
+        gameState.currentFish = null;
+      }
+      break;
+      
+    case FISHING_STATES.REELING:
+      gameState.fishingTimer--;
+      if (gameState.fishingTimer <= 0) {
+        gameState.fishingState = FISHING_STATES.CAUGHT;
+        gameState.fishingTimer = 60; // Show caught fish for 1 second
+      }
+      break;
+      
+    case FISHING_STATES.CAUGHT:
+      gameState.fishingTimer--;
+      if (gameState.fishingTimer <= 0) {
+        completeCatch();
+        gameState.fishingState = FISHING_STATES.IDLE;
+      }
+      break;
+  }
+}
+
+export function reelIn(p) {
+  if (gameState.fishingState === FISHING_STATES.BITING) {
+    // Attempt to catch
+    const rod = ROD_UPGRADES[gameState.rodLevel];
+    const catchSuccess = p.random() < rod.catchChance;
+    
+    if (catchSuccess) {
+      gameState.fishingState = FISHING_STATES.REELING;
+      gameState.fishingTimer = 30; // Reeling animation
+    } else {
+      // Fish got away
+      gameState.fishingState = FISHING_STATES.IDLE;
+      gameState.currentFish = null;
+    }
+  } else if (gameState.fishingState === FISHING_STATES.WAITING || 
+             gameState.fishingState === FISHING_STATES.CASTING) {
+    // Cancel fishing
+    gameState.fishingState = FISHING_STATES.IDLE;
+    gameState.currentFish = null;
+  }
+}
+
+function selectRandomFish(p) {
+  if (!gameState.currentZone) {
+    gameState.currentFish = null;
+    return;
+  }
+  
+  const rod = ROD_UPGRADES[gameState.rodLevel];
+  const availableFish = FISH_TYPES.filter(fish => 
+    fish.requiredRod <= gameState.rodLevel &&
+    fish.zone === gameState.currentZone.key
+  );
+  
+  if (availableFish.length === 0) {
+    gameState.currentFish = null;
+    return;
+  }
+  
+  // Weight by rarity (inverse)
+  const weights = availableFish.map(fish => 1 / fish.rarity);
+  const totalWeight = weights.reduce((a, b) => a + b, 0);
+  const random = p.random() * totalWeight;
+  
+  let cumulative = 0;
+  for (let i = 0; i < availableFish.length; i++) {
+    cumulative += weights[i];
+    if (random <= cumulative) {
+      gameState.currentFish = { ...availableFish[i] };
+      return;
+    }
+  }
+  
+  gameState.currentFish = { ...availableFish[0] };
+}
+
+function completeCatch() {
+  if (gameState.currentFish) {
+    gameState.money += gameState.currentFish.value;
+    gameState.score += gameState.currentFish.value;
+    gameState.totalFishCaught++;
+    gameState.caughtFish.push({ ...gameState.currentFish, time: Date.now() });
+    gameState.journal.add(gameState.currentFish.id);
+    
+    // Update mastery level
+    gameState.masteryLevel = calculateMasteryLevel();
+    
+    gameState.currentFish = null;
+  }
+}
+
+function calculateMasteryLevel() {
+  const uniqueFish = gameState.journal.size;
+  const totalFish = gameState.totalFishCaught;
+  return Math.min(5, Math.floor(uniqueFish / 3) + Math.floor(totalFish / 20));
+}
+
+export function canUpgradeRod() {
+  const nextRod = ROD_UPGRADES[gameState.rodLevel + 1];
+  return nextRod && gameState.money >= nextRod.cost;
+}
+
+export function upgradeRod() {
+  const nextRod = ROD_UPGRADES[gameState.rodLevel + 1];
+  if (nextRod && gameState.money >= nextRod.cost) {
+    gameState.money -= nextRod.cost;
+    gameState.rodLevel++;
+    return true;
+  }
+  return false;
+}
+</file>
+
+<file name="fishingLine.js">
+// fishingLine.js - Fishing line and mechanics
+
+import { gameState, FISH_TYPES, ROD_UPGRADES } from './globals.js';
+
+export class FishingLine {
+  constructor(p, startX, startY, targetX, targetY) {
+    this.type = 'fishingLine';
+    this.startX = startX;
+    this.startY = startY;
+    this.targetX = targetX;
+    this.targetY = targetY;
+    this.currentX = startX;
+    this.currentY = startY;
+    this.state = 'casting'; // casting, waiting, biting, reeling, caught
+    this.castProgress = 0;
+    this.waitTimer = 0;
+    this.biteTimer = 0;
+    this.biteDuration = 0;
+    this.caughtFish = null;
+    this.bobberBob = 0;
+    this.p = p;
+  }
+
+  update(p) {
+    this.p = p;
+    const currentRod = ROD_UPGRADES[gameState.rodLevel];
+
+    switch(this.state) {
+      case 'casting':
+        this.castProgress += 0.08;
+        if (this.castProgress >= 1) {
+          this.castProgress = 1;
+          this.state = 'waiting';
+          this.waitTimer = p.random(60, 180); // 1-3 seconds
+        }
+        this.currentX = p.lerp(this.startX, this.targetX, this.castProgress);
+        this.currentY = p.lerp(this.startY, this.targetY, this.castProgress);
+        break;
+
+      case 'waiting':
+        this.bobberBob = p.sin(p.frameCount * 0.15) * 3;
+        this.waitTimer--;
+        if (this.waitTimer <= 0) {
+          this.state = 'biting';
+          this.biteDuration = p.random(30, 90); // Bite window
+          this.biteTimer = this.biteDuration;
+        }
+        break;
+
+      case 'biting':
+        this.bobberBob = p.sin(p.frameCount * 0.5) * 8;
+        this.biteTimer--;
+        if (this.biteTimer <= 0) {
+          // Missed the fish
+          this.state = 'reeling';
+        }
+        break;
+
+      case 'reeling':
+        this.castProgress -= 0.1 * currentRod.catchSpeed;
+        if (this.castProgress <= 0) {
+          this.castProgress = 0;
+          this.state = 'caught';
+        }
+        this.currentX = p.lerp(this.startX, this.targetX, this.castProgress);
+        this.currentY = p.lerp(this.startY, this.targetY, this.castProgress);
+        break;
+
+      case 'caught':
+        // Line is done, will be cleaned up
+        break;
+    }
+  }
+
+  reel() {
+    if (this.state === 'biting') {
+      // Success! Catch a fish
+      this.caughtFish = this.generateFish();
+      gameState.money += this.caughtFish.value;
+      gameState.score += this.caughtFish.value;
+      gameState.totalFishCaught++;
+      gameState.fishJournal.add(this.caughtFish.name);
+      gameState.lastCatch = this.caughtFish;
+      this.state = 'reeling';
+    } else if (this.state === 'waiting') {
+      // Reeling in early, no fish
+      this.state = 'reeling';
+    }
+  }
+
+  generateFish() {
+    const currentRod = ROD_UPGRADES[gameState.rodLevel];
+    
+    // Filter fish based on rod level
+    const availableFish = FISH_TYPES.filter(f => f.minRodLevel <= currentRod.level);
+    
+    // Calculate total probability
+    const totalProb = availableFish.reduce((sum, f) => sum + f.rarity, 0);
+    
+    // Random selection based on rarity
+    let rand = this.p.random(totalProb);
+    for (let fish of availableFish) {
+      rand -= fish.rarity;
+      if (rand <= 0) {
+        return { ...fish };
+      }
+    }
+    
+    // Fallback to first fish
+    return { ...availableFish[0] };
+  }
+
+  draw(p) {
+    if (this.state === 'idle' || this.state === 'caught') return;
+
+    // Draw fishing line
+    p.stroke(80, 80, 80);
+    p.strokeWeight(1);
+    p.line(this.startX, this.startY, this.currentX, this.currentY);
+
+    // Draw bobber
+    p.push();
+    p.translate(this.currentX, this.currentY + this.bobberBob);
+    
+    // Bobber color changes when biting
+    if (this.state === 'biting') {
+      p.fill(255, 100, 100);
+      p.stroke(200, 50, 50);
+    } else {
+      p.fill(255, 200, 100);
+      p.stroke(200, 150, 50);
+    }
+    p.strokeWeight(2);
+    p.ellipse(0, 0, 12, 12);
+    
+    // Bobber top
+    p.fill(255, 0, 0);
+    p.noStroke();
+    p.ellipse(0, -3, 8, 6);
+    
+    p.pop();
+
+    // Draw exclamation when biting
+    if (this.state === 'biting') {
+      p.push();
+      p.translate(this.currentX, this.currentY - 30);
+      p.fill(255, 255, 0);
+      p.stroke(255, 200, 0);
+      p.strokeWeight(2);
+      p.textSize(20);
+      p.textAlign(p.CENTER, p.CENTER);
+      p.text("!", 0, 0);
+      p.pop();
+    }
+  }
+}
+</file>
+
+<file name="rendering.js">
+// rendering.js - All rendering functions
+
+import { gameState, GAME_PHASES, CANVAS_WIDTH, CANVAS_HEIGHT, FISHING_STATES, FISH_TYPES, ROD_UPGRADES, WATER_ZONES } from './globals.js';
+
+export function drawStartScreen(p) {
+  p.background(135, 206, 235);
+  
+  // Draw water background
+  p.fill(70, 130, 180, 150);
+  p.noStroke();
+  p.rect(0, CANVAS_HEIGHT - 150, CANVAS_WIDTH, 150);
+  
+  // Animated waves
+  p.stroke(90, 150, 200);
+  p.strokeWeight(2);
+  p.noFill();
+  for (let i = 0; i < 3; i++) {
+    p.beginShape();
+    for (let x = 0; x < CANVAS_WIDTH; x += 20) {
+      const y = CANVAS_HEIGHT - 150 + i * 15 + p.sin((x + p.frameCount * 2) * 0.02) * 5;
+      p.vertex(x, y);
+    }
+    p.endShape();
+  }
+  
+  // Title
+  p.fill(255, 255, 255);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text("WEBFISHING", CANVAS_WIDTH / 2, 80);
+  
+  // Subtitle
+  p.textSize(20);
+  p.fill(255, 255, 200);
+  p.text("Relax and Fish!", CANVAS_WIDTH / 2, 130);
+  
+  // Instructions box
+  p.fill(50, 50, 80, 200);
+  p.rect(CANVAS_WIDTH / 2 - 200, 160, 400, 170, 10);
+  
+  p.fill(255);
+  p.textSize(14);
+  p.textAlign(p.LEFT, p.TOP);
+  const instructions = [
+    "OBJECTIVE: Catch all fish species and reach mastery level 5!",
+    "",
+    "CONTROLS:",
+    "  Arrow Keys - Move around",
+    "  Space - Cast line / Reel in when fish bites",
+    "  Z - Open/Close fish journal",
+    "",
+    "Earn money to upgrade your rod for better catches!"
+  ];
+  
+  for (let i = 0; i < instructions.length; i++) {
+    p.text(instructions[i], CANVAS_WIDTH / 2 - 180, 170 + i * 18);
+  }
+  
+  // Start prompt
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(20);
+  p.fill(255, 255, 100);
+  const alpha = p.map(p.sin(p.frameCount * 0.1), -1, 1, 100, 255);
+  p.fill(255, 255, 100, alpha);
+  p.text("PRESS ENTER TO START", CANVAS_WIDTH / 2, CANVAS_HEIGHT - 40);
+}
+
+export function drawGameOverScreen(p) {
+  p.background(20, 20, 40);
+  
+  const isWin = gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN;
+  
+  // Result text
+  p.fill(isWin ? [100, 255, 100] : [255, 100, 100]);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text(isWin ? "MASTER ANGLER!" : "GAME OVER", CANVAS_WIDTH / 2, 80);
+  
+  // Stats
+  p.fill(255);
+  p.textSize(18);
+  p.text(`Final Score: $${gameState.score}`, CANVAS_WIDTH / 2, 140);
+  p.text(`Total Fish Caught: ${gameState.totalFishCaught}`, CANVAS_WIDTH / 2, 170);
+  p.text(`Unique Species: ${gameState.journal.size}/${FISH_TYPES.length}`, CANVAS_WIDTH / 2, 200);
+  p.text(`Mastery Level: ${gameState.masteryLevel}`, CANVAS_WIDTH / 2, 230);
+  
+  if (isWin) {
+    p.textSize(16);
+    p.fill(255, 255, 150);
+    p.text("You've become the ultimate fisherman!", CANVAS_WIDTH / 2, 270);
+    p.text("All fish caught and mastery achieved!", CANVAS_WIDTH / 2, 295);
+  }
+  
+  // Restart prompt
+  p.textSize(20);
+  const alpha = p.map(p.sin(p.frameCount * 0.1), -1, 1, 100, 255);
+  p.fill(255, 255, 100, alpha);
+  p.text("PRESS R TO RESTART", CANVAS_WIDTH / 2, CANVAS_HEIGHT - 50);
+}
+
+export function drawGameWorld(p) {
+  // Sky
+  p.background(135, 206, 235);
+  
+  // Ground
+  p.fill(139, 115, 85);
+  p.noStroke();
+  p.rect(0, CANVAS_HEIGHT - 100, CANVAS_WIDTH, 100);
+  
+  // Grass
+  p.fill(100, 150, 80);
+  p.rect(0, CANVAS_HEIGHT - 110, CANVAS_WIDTH, 15);
+  
+  // Water zones
+  drawWaterZones(p);
+  
+  // Fishing line and bobber
+  if (gameState.fishingState !== FISHING_STATES.IDLE && gameState.player) {
+    drawFishingLine(p);
+  }
+  
+  // Player
+  if (gameState.player) {
+    gameState.player.draw(p);
+  }
+  
+  // UI
+  drawUI(p);
+  
+  // Fish caught popup
+  if (gameState.fishingState === FISHING_STATES.CAUGHT && gameState.currentFish) {
+    drawCaughtFishPopup(p);
+  }
+  
+  // Journal
+  if (gameState.journalOpen) {
+    drawJournal(p);
+  }
+  
+  // Paused indicator
+  if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+    p.fill(255);
+    p.textAlign(p.RIGHT, p.TOP);
+    p.textSize(16);
+    p.text("PAUSED", CANVAS_WIDTH - 10, 10);
+  }
+}
+
+function drawWaterZones(p) {
+  // Shallow water
+  p.fill(100, 180, 220, 150);
+  p.rect(WATER_ZONES.SHALLOW.minX, WATER_ZONES.SHALLOW.y, 
+         WATER_ZONES.SHALLOW.maxX - WATER_ZONES.SHALLOW.minX, 
+         CANVAS_HEIGHT - WATER_ZONES.SHALLOW.y);
+  
+  // Deep water
+  p.fill(50, 120, 180, 150);
+  p.rect(WATER_ZONES.DEEP.minX, WATER_ZONES.DEEP.y, 
+         WATER_ZONES.DEEP.maxX - WATER_ZONES.DEEP.minX, 
+         CANVAS_HEIGHT - WATER_ZONES.DEEP.y);
+  
+  // Golden spot
+  p.fill(255, 215, 100, 100);
+  p.stroke(255, 215, 0);
+  p.strokeWeight(2);
+  p.ellipse((WATER_ZONES.SPECIAL.minX + WATER_ZONES.SPECIAL.maxX) / 2, 
+            WATER_ZONES.SPECIAL.y + 30, 60, 60);
+  p.noStroke();
+  
+  // Animated waves
+  for (let zoneKey in WATER_ZONES) {
+    const zone = WATER_ZONES[zoneKey];
+    p.stroke(zoneKey === "DEEP" ? [70, 140, 200] : [120, 200, 240]);
+    p.strokeWeight(1);
+    p.noFill();
+    
+    for (let i = 0; i < 2; i++) {
+      p.beginShape();
+      for (let x = zone.minX; x <= zone.maxX; x += 10) {
+        const y = zone.y + i * 10 + p.sin((x + p.frameCount * 1.5) * 0.03) * 3;
+        p.vertex(x, y);
+      }
+      p.endShape();
+    }
+  }
+  p.noStroke();
+}
+
+function drawFishingLine(p) {
+  const player = gameState.player;
+  const rodTipX = player.x + player.width / 2 + 15 * player.facing;
+  const rodTipY = player.y + player.height / 2 - 20;
+  
+  // Fishing line
+  p.stroke(200, 200, 200, 150);
+  p.strokeWeight(1);
+  p.line(rodTipX, rodTipY, gameState.bobberPosition.x, gameState.bobberPosition.y);
+  
+  // Bobber
+  const bobberY = gameState.bobberPosition.y + 
+    (gameState.fishingState === FISHING_STATES.BITING ? 
+     p.sin(p.frameCount * 0.3) * 5 : 0);
+  
+  p.fill(gameState.fishingState === FISHING_STATES.BITING ? 
+         [255, 100, 100] : [255, 255, 255]);
+  p.noStroke();
+  p.ellipse(gameState.bobberPosition.x, bobberY, 8, 8);
+  
+  // Red top when biting
+  if (gameState.fishingState === FISHING_STATES.BITING) {
+    p.fill(255, 0, 0);
+    p.ellipse(gameState.bobberPosition.x, bobberY - 4, 4, 4);
+  }
+  
+  p.noStroke();
+}
+
+function drawUI(p) {
+  // Top bar background
+  p.fill(50, 50, 50, 200);
+  p.rect(0, 0, CANVAS_WIDTH, 80);
+  
+  // Money
+  p.fill(255, 215, 0);
+  p.textAlign(p.LEFT, p.TOP);
+  p.textSize(16);
+  p.text(`$${gameState.money}`, 10, 10);
+  
+  // Rod info
+  const rod = ROD_UPGRADES[gameState.rodLevel];
+  p.fill(255);
+  p.text(`Rod: ${rod.name}`, 10, 35);
+  
+  // Next upgrade
+  const nextRod = ROD_UPGRADES[gameState.rodLevel + 1];
+  if (nextRod) {
+    p.textSize(12);
+    p.fill(gameState.money >= nextRod.cost ? [100, 255, 100] : [255, 100, 100]);
+    p.text(`Next: ${nextRod.name} ($${nextRod.cost})`, 10, 58);
+  } else {
+    p.textSize(12);
+    p.fill(255, 215, 0);
+    p.text("MAX LEVEL!", 10, 58);
+  }
+  
+  // Stats
+  p.fill(255);
+  p.textAlign(p.RIGHT, p.TOP);
+  p.textSize(14);
+  p.text(`Fish: ${gameState.journal.size}/${FISH_TYPES.length}`, CANVAS_WIDTH - 10, 10);
+  p.text(`Caught: ${gameState.totalFishCaught}`, CANVAS_WIDTH - 10, 30);
+  p.text(`Mastery Lv: ${gameState.masteryLevel}`, CANVAS_WIDTH - 10, 50);
+  
+  // Fishing state indicator
+  if (gameState.fishingState !== FISHING_STATES.IDLE) {
+    p.fill(255, 255, 150);
+    p.textAlign(p.CENTER, p.TOP);
+    p.textSize(12);
+    let stateText = "";
+    switch (gameState.fishingState) {
+      case FISHING_STATES.CASTING:
+        stateText = "Casting...";
+        break;
+      case FISHING_STATES.WAITING:
+        stateText = "Waiting for bite...";
+        break;
+      case FISHING_STATES.BITING:
+        stateText = "FISH BITING! Press SPACE!";
+        break;
+      case FISHING_STATES.REELING:
+        stateText = "Reeling in...";
+        break;
+    }
+    p.text(stateText, CANVAS_WIDTH / 2, 90);
+  }
+  
+  // Instructions
+  p.fill(200, 200, 200);
+  p.textAlign(p.CENTER, p.BOTTOM);
+  p.textSize(10);
+  p.text("Z: Journal | Arrows: Move | Space: Fish", CANVAS_WIDTH / 2, CANVAS_HEIGHT - 5);
+}
+
+function drawCaughtFishPopup(p) {
+  if (!gameState.currentFish) return;
+  
+  const fish = gameState.currentFish;
+  
+  // Popup background
+  p.fill(50, 50, 80, 230);
+  p.stroke(255, 215, 0);
+  p.strokeWeight(3);
+  p.rect(CANVAS_WIDTH / 2 - 120, CANVAS_HEIGHT / 2 - 60, 240, 120, 10);
+  p.noStroke();
+  
+  // Fish icon
+  drawFishIcon(p, CANVAS_WIDTH / 2 - 80, CANVAS_HEIGHT / 2, fish<game_description>
+Welcome to WEBFISHING! Cast your line, catch a variety of fish and sea creatures, and build your collection. Earn money by selling your catches, upgrade your fishing rod for better performance, and complete your journal by discovering all the fish species. Watch for bite indicators and reel in your catch at the right moment. Can you become the ultimate angler and catch them all?
+</game_description>
+
+<game_controls>
+Arrow Keys: Move your character around the fishing spots
+Space: Cast fishing line / Reel in when fish bites
+Z: Open/Close shop to buy upgrades
+Shift: Sprint (move faster)
+Enter: Start game
+ESC: Pause/Unpause
+R: Restart to main menu
+</game_controls>
+
+<automated_testing>
+<TEST_1>
+<test_description>Basic movement and fishing mechanics test. Validates that the player can move around, cast line, and catch fish successfully.</test_description>
+<strategy_description>Move to a fishing spot near water, cast the line, wait for a bite, and reel in the fish. Repeat this process to catch multiple fish and validate the catching mechanic works consistently.</strategy_description>
+<expected_outcome>Player successfully moves to water, casts line, catches fish when biting, and earns money. The test confirms basic gameplay loop functions correctly.</expected_outcome>
+</TEST_1>
+
+<TEST_2>
+<test_description>Win condition test - complete the fish journal. Tests the full progression system including catching all fish types and upgrading equipment.</test_description>
+<strategy_description>Systematically fish in different water areas, upgrade rod when possible to catch rarer fish, and continue until all fish species are discovered and the journal is complete.</strategy_description>
+<expected_outcome>Successfully catch all fish types, fill the journal to 100%, trigger GAME_OVER_WIN condition. Validates progression system and win condition work correctly.</expected_outcome>
+</TEST_2>
+
+<TEST_3>
+<test_description>Shop and upgrade system test. Validates purchasing mechanics and rod upgrades improve fishing performance.</test_description>
+<strategy_description>Fish to earn money, open shop, purchase rod upgrades in sequence, verify upgrades affect fishing range and catch quality.</strategy_description>
+<expected_outcome>Successfully earn money, purchase upgrades, and observe improved fishing capabilities with better rods. Confirms economy and upgrade systems function properly.</expected_outcome>
+</TEST_3>
+
+<TEST_4>
+<test_description>Movement and collision test. Ensures player movement is smooth and boundaries are respected.</test_description>
+<strategy_description>Move player in all directions including diagonal, test sprint functionality, attempt to move beyond canvas boundaries, and verify collision with obstacles.</strategy_description>
+<expected_outcome>Player moves smoothly, sprinting works, stays within playable area, and collides properly with boundaries. Movement system is responsive and correct.</expected_outcome>
+</TEST_4>
+
+<TEST_5>
+<test_description>Random exploration test. Simulates casual play with random movements and fishing attempts.</test_description>
+<strategy_description>Perform random movements, cast lines at various locations, explore different areas of the map, and fish randomly to test general stability.</strategy_description>
+<expected_outcome>Game remains stable during random actions, no crashes occur, fish can be caught from valid locations, and game state remains consistent.</expected_outcome>
+</TEST_5>
+</automated_testing>
+
+<code filename="globals.js">
+// globals.js - Global constants and game state
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+export const GAME_PHASES = {
+  START: "START",
+  PLAYING: "PLAYING",
+  PAUSED: "PAUSED",
+  GAME_OVER_WIN: "GAME_OVER_WIN",
+  GAME_OVER_LOSE: "GAME_OVER_LOSE"
+};
+
+export const CONTROL_MODES = {
+  HUMAN: "HUMAN",
+  TEST_1: "TEST_1",
+  TEST_2: "TEST_2",
+  TEST_3: "TEST_3",
+  TEST_4: "TEST_4",
+  TEST_5: "TEST_5"
+};
+
+// Fish types with rarity and value
+export const FISH_TYPES = [
+  { name: "Minnow", rarity: 0.4, value: 5, minRodLevel: 0, color: [200, 200, 200] },
+  { name: "Carp", rarity: 0.25, value: 10, minRodLevel: 0, color: [180, 140, 80] },
+  { name: "Bass", rarity: 0.15, value: 20, minRodLevel: 0, color: [100, 150, 100] },
+  { name: "Trout", rarity: 0.1, value: 30, minRodLevel: 1, color: [200, 150, 180] },
+  { name: "Pike", rarity: 0.05, value: 50, minRodLevel: 1, color: [150, 180, 150] },
+  { name: "Salmon", rarity: 0.025, value: 75, minRodLevel: 2, color: [255, 150, 120] },
+  { name: "Tuna", rarity: 0.015, value: 100, minRodLevel: 2, color: [100, 100, 150] },
+  { name: "Swordfish", rarity: 0.008, value: 150, minRodLevel: 3, color: [150, 150, 200] },
+  { name: "Shark", rarity: 0.005, value: 250, minRodLevel: 3, color: [120, 120, 140] },
+  { name: "Golden Fish", rarity: 0.002, value: 500, minRodLevel: 4, color: [255, 215, 0] }
+];
+
+// Rod upgrades
+export const ROD_UPGRADES = [
+  { level: 0, name: "Basic Rod", cost: 0, castRange: 80, catchSpeed: 1.0 },
+  { level: 1, name: "Wooden Rod", cost: 100, castRange: 100, catchSpeed: 1.2 },
+  { level: 2, name: "Iron Rod", cost: 300, castRange: 120, catchSpeed: 1.4 },
+  { level: 3, name: "Steel Rod", cost: 700, castRange: 140, catchSpeed: 1.6 },
+  { level: 4, name: "Master Rod", cost: 1500, castRange: 160, catchSpeed: 2.0 }
+];
+
+export const gameState = {
+  player: null,
+  entities: [],
+  score: 0,
+  money: 0,
+  gamePhase: GAME_PHASES.START,
+  controlMode: CONTROL_MODES.HUMAN,
+  fishingLine: null,
+  fishJournal: new Set(),
+  rodLevel: 0,
+  shopOpen: false,
+  lastCatch: null,
+  totalFishCaught: 0,
+  waterAreas: [],
+  trees: [],
+  rocks: []
+};
+
+// Expose gameState globally
+window.getGameState = function() {
+  return gameState;
+};
+
+export function resetGameState() {
+  gameState.score = 0;
+  gameState.money = 0;
+  gameState.fishingLine = null;
+  gameState.fishJournal = new Set();
+  gameState.rodLevel = 0;
+  gameState.shopOpen = false;
+  gameState.lastCatch = null;
+  gameState.totalFishCaught = 0;
+  gameState.entities = gameState.entities.filter(e => e.type === 'player');
+  if (gameState.player) {
+    gameState.player.x = CANVAS_WIDTH / 2;
+    gameState.player.y = CANVAS_HEIGHT - 60;
+    gameState.player.velocityX = 0;
+    gameState.player.velocityY = 0;
+  }
+}
+</file>
+
+<file name="player.js">
+// player.js - Player entity class
+
+import { CANVAS_WIDTH, CANVAS_HEIGHT, gameState, ROD_UPGRADES } from './globals.js';
+
+export class Player {
+  constructor(x, y) {
+    this.type = 'player';
+    this.x = x;
+    this.y = y;
+    this.width = 20;
+    this.height = 30;
+    this.velocityX = 0;
+    this.velocityY = 0;
+    this.speed = 2;
+    this.sprintSpeed = 3.5;
+    this.facing = 1; // 1 for right, -1 for left
+    this.bobOffset = 0;
+  }
+
+  update(p) {
+    // Update position
+    this.x += this.velocityX;
+    this.y += this.velocityY;
+
+    // Constrain to canvas
+    this.x = p.constrain(this.x, this.width / 2, CANVAS_WIDTH - this.width / 2);
+    this.y = p.constrain(this.y, this.height / 2, CANVAS_HEIGHT - this.height / 2);
+
+    // Bob animation
+    this.bobOffset = p.sin(p.frameCount * 0.1) * 2;
+
+    // Apply friction
+    this.velocityX *= 0.85;
+    this.velocityY *= 0.85;
+
+    // Stop if very slow
+    if (Math.abs(this.velocityX) < 0.1) this.velocityX = 0;
+    if (Math.abs(this.velocityY) < 0.1) this.velocityY = 0;
+  }
+
+  move(direction, isSprinting) {
+    const speed = isSprinting ? this.sprintSpeed : this.speed;
+    
+    switch(direction) {
+      case 'LEFT':
+        this.velocityX = -speed;
+        this.facing = -1;
+        break;
+      case 'RIGHT':
+        this.velocityX = speed;
+        this.facing = 1;
+        break;
+      case 'UP':
+        this.velocityY = -speed;
+        break;
+      case 'DOWN':
+        this.velocityY = speed;
+        break;
+    }
+  }
+
+  draw(p) {
+    p.push();
+    p.translate(this.x, this.y + this.bobOffset);
+    p.scale(this.facing, 1);
+
+    // Body
+    p.fill(80, 120, 180);
+    p.stroke(60, 100, 160);
+    p.strokeWeight(2);
+    p.ellipse(0, 5, this.width, this.height);
+
+    // Head
+    p.fill(100, 140, 200);
+    p.ellipse(0, -5, this.width * 0.8, this.width * 0.8);
+
+    // Eye
+    p.fill(255);
+    p.noStroke();
+    p.ellipse(4, -6, 6, 6);
+    p.fill(0);
+    p.ellipse(5, -6, 3, 3);
+
+    // Rod
+    if (!gameState.fishingLine || gameState.fishingLine.state === 'idle') {
+      p.stroke(120, 80, 40);
+      p.strokeWeight(2);
+      const rodLength = 25;
+      p.line(0, 0, rodLength * this.facing, -rodLength);
+    }
+
+    p.pop();
+  }
+
+  canFish() {
+    // Check if player is near water
+    for (let water of gameState.waterAreas) {
+      const distance = Math.sqrt(
+        Math.pow(this.x - water.x - water.width / 2, 2) +
+        Math.pow(this.y - water.y - water.height / 2, 2)
+      );
+      const currentRod = ROD_UPGRADES[gameState.rodLevel];
+      if (distance < currentRod.castRange) {
+        return true;
+      }
+    }
+    return false;
+  }
+}
+</file>
+
+<file name="environment.js">
+// environment.js - Environment objects like water, trees, rocks
+
+export class WaterArea {
+  constructor(x, y, width, height) {
+    this.type = 'water';
+    this.x = x;
+    this.y = y;
+    this.width = width;
+    this.height = height;
+  }
+
+  draw(p) {
+    // Animated water
+    p.push();
+    p.noStroke();
+    
+    // Base water
+    p.fill(80, 140, 200, 200);
+    p.rect(this.x, this.y, this.width, this.height);
+    
+    // Water shimmer effect
+    for (let i = 0; i < 3; i++) {
+      const offsetX = p.sin(p.frameCount * 0.02 + i * 2) * 10;
+      const offsetY = p.cos(p.frameCount * 0.03 + i * 1.5) * 5;
+      p.fill(120, 180, 220, 80);
+      p.ellipse(
+        this.x + this.width * 0.3 + offsetX + i * 30,
+        this.y + this.height * 0.4 + offsetY + i * 20,
+        40 + i * 10,
+        30 + i * 8
+      );
+    }
+    
+    p.pop();
+  }
+}
+
+export class Tree {
+  constructor(x, y) {
+    this.type = 'tree';
+    this.x = x;
+    this.y = y;
+    this.trunkWidth = 15;
+    this.trunkHeight = 40;
+    this.crownRadius = 30;
+  }
+
+  draw(p) {
+    p.push();
+    
+    // Trunk
+    p.fill(100, 70, 40);
+    p.stroke(80, 50, 30);
+    p.strokeWeight(2);
+    p.rect(this.x - this.trunkWidth / 2, this.y - this.trunkHeight, this.trunkWidth, this.trunkHeight);
+    
+    // Crown (foliage)
+    p.fill(60, 140, 60);
+    p.stroke(50, 120, 50);
+    p.ellipse(this.x, this.y - this.trunkHeight, this.crownRadius * 2, this.crownRadius * 1.8);
+    
+    // Highlights
+    p.fill(80, 160, 80, 150);
+    p.noStroke();
+    p.ellipse(this.x - 8, this.y - this.trunkHeight - 5, this.crownRadius, this.crownRadius * 0.8);
+    
+    p.pop();
+  }
+}
+
+export class Rock {
+  constructor(x, y, size) {
+    this.type = 'rock';
+    this.x = x;
+    this.y = y;
+    this.size = size;
+  }
+
+  draw(p) {
+    p.push();
+    
+    // Rock
+    p.fill(120, 120, 130);
+    p.stroke(90, 90, 100);
+    p.strokeWeight(2);
+    
+    // Draw irregular rock shape
+    p.beginShape();
+    for (let i = 0; i < 6; i++) {
+      const angle = (i / 6) * p.TWO_PI;
+      const radius = this.size * (0.8 + p.sin(i * 2.3) * 0.2);
+      const x = this.x + p.cos(angle) * radius;
+      const y = this.y + p.sin(angle) * radius * 0.8;
+      p.vertex(x, y);
+    }
+    p.endShape(p.CLOSE);
+    
+    // Highlight
+    p.fill(150, 150, 160, 100);
+    p.noStroke();
+    p.ellipse(this.x - this.size * 0.2, this.y - this.size * 0.2, this.size * 0.5, this.size * 0.4);
+    
+    p.pop();
+  }
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

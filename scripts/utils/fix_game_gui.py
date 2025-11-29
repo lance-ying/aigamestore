@@ -130,12 +130,30 @@ GAME_DIRECTORIES = {
     "Games": "games/games",
     "Single Prompt (nested)": "games/single_prompt_with_testing",
     "Single Prompt 1 (nested)": "games/single_prompt_with_testing_1",
-    "Game Platform": "games/archive/public_platform/games",
-    "Batch 103125": "games/archive/games_gen_halloween",
-    "Batch 110325": "games/archive/new_batch_110325",
-    "Batch 110425": "games/archive/batch_110425",
-    "Games 111125": "games/archive/archive/games_111125",
-    "old games": "games/archive/games_old",
+    "Game Platform": "archive/games/games_platform",  # or "archive/games/public_platform" if you prefer
+    "Batch 103125": "archive/games/games_gen_halloween",  # Added "games/" prefix
+    "Batch 110325": "archive/games/new_batch_110325",  # ✓ Correct
+    "Batch 110425": "archive/games/batch_110425",  # ✓ Correct
+    "Games 111125": "archive/games/archive/games_111125",  # ✓ Correct
+    "old games": "archive/games/games_old",  # ✓ Correct
+}
+
+# Flag system configuration
+FLAGS_FILE = PROJECT_ROOT / "flags.json"
+FLAG_COLORS = ["red", "yellow", "green", "blue", "purple"]
+COLOR_EMOJIS = {
+    "red": "🔴",
+    "yellow": "🟡",
+    "green": "🟢",
+    "blue": "🔵",
+    "purple": "🟣",
+}
+COLOR_HEX = {
+    "red": "#ff4444",
+    "yellow": "#ffaa00",
+    "green": "#44ff44",
+    "blue": "#4444ff",
+    "purple": "#aa44ff",
 }
 
 
@@ -205,19 +223,109 @@ def count_backups(game_path: str) -> int:
     return count
 
 
-def list_games(games_dir: str = "games/games") -> List[Dict[str, str]]:
+# Flag storage system
+def normalize_game_path(game_path: str) -> str:
+    """Normalize game path to absolute path string for consistent flag storage."""
+    game_dir = Path(game_path) if Path(game_path).is_absolute() else SCRIPT_DIR / game_path
+    return str(game_dir.resolve())
+
+
+def load_flags() -> Dict[str, str]:
+    """Load flags from flags.json, return dict mapping game paths to colors."""
+    if not FLAGS_FILE.exists():
+        return {}
+    
+    try:
+        with open(FLAGS_FILE, 'r', encoding='utf-8') as f:
+            flags = json.load(f)
+        # Normalize all paths in loaded flags
+        normalized_flags = {}
+        for path, color in flags.items():
+            try:
+                normalized_path = normalize_game_path(path)
+                normalized_flags[normalized_path] = color
+            except Exception:
+                # Skip invalid paths
+                continue
+        return normalized_flags
+    except Exception as e:
+        print(f"Error loading flags: {e}")
+        return {}
+
+
+def save_flags(flags_dict: Dict[str, str]) -> None:
+    """Save flags dict to flags.json."""
+    try:
+        with open(FLAGS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(flags_dict, f, indent=2)
+    except Exception as e:
+        print(f"Error saving flags: {e}")
+
+
+def get_game_flag(game_path: str) -> Optional[str]:
+    """Get flag color for a game (returns None if not flagged)."""
+    flags = load_flags()
+    normalized_path = normalize_game_path(game_path)
+    return flags.get(normalized_path)
+
+
+def set_game_flag(game_path: str, color: Optional[str]) -> None:
+    """Set/update flag for a game. Pass None or empty string to remove flag."""
+    flags = load_flags()
+    normalized_path = normalize_game_path(game_path)
+    
+    if color and color.strip() and color.lower() != "none":
+        flags[normalized_path] = color.lower()
+    else:
+        # Remove flag if color is None, empty, or "none"
+        flags.pop(normalized_path, None)
+    
+    save_flags(flags)
+
+
+def remove_game_flag(game_path: str) -> None:
+    """Remove flag for a game."""
+    set_game_flag(game_path, None)
+
+
+def get_flag_counts(games_list: List[Dict[str, str]]) -> Dict[str, int]:
+    """Count games per color, return dict with color counts."""
+    counts = {color: 0 for color in FLAG_COLORS}
+    flags = load_flags()
+    
+    for game in games_list:
+        game_path = game.get('path', '')
+        if not game_path:
+            continue
+        
+        normalized_path = normalize_game_path(game_path)
+        color = flags.get(normalized_path)
+        if color and color in counts:
+            counts[color] += 1
+    
+    return counts
+
+
+def list_games(games_dir: str = "games/games", sort_by: Optional[str] = None) -> List[Dict[str, str]]:
     """
     Scan games directory and return list of games with metadata.
     Handles both flat structure (games/games/game_name/) and nested structure (games/single_prompt_with_testing/game_XXXX/sample_Y/).
     
+    Args:
+        games_dir: Directory to scan for games
+        sort_by: Sort option - "alphabetical", "last_modified", "last_added", or None (defaults to alphabetical)
+    
     Returns:
-        List of dicts with 'title', 'dir_name', 'path', and 'backup_count' keys
+        List of dicts with 'title', 'dir_name', 'path', 'backup_count', and 'flag_color' keys
     """
     # Use absolute path from script directory to avoid issues with directory changes
     games_path = SCRIPT_DIR / games_dir
     
     if not games_path.exists():
         return []
+    
+    # Load flags once for all games
+    flags = load_flags()
     
     games = []
     
@@ -273,11 +381,16 @@ def list_games(games_dir: str = "games/games") -> List[Dict[str, str]]:
                 # Count backups for this game
                 backup_count = count_backups(str(item))
                 
+                # Get flag color for this game
+                normalized_path = normalize_game_path(str(item))
+                flag_color = flags.get(normalized_path)
+                
                 games.append({
                     'title': display_title,
                     'dir_name': item.name,
                     'path': str(item),
-                    'backup_count': backup_count
+                    'backup_count': backup_count,
+                    'flag_color': flag_color
                 })
             else:
                 # No index.html here, recurse into subdirectories
@@ -286,10 +399,75 @@ def list_games(games_dir: str = "games/games") -> List[Dict[str, str]]:
     # Start recursive search (max 3 levels deep: game_XXXX/sample_Y/ is 2 levels)
     find_games_recursive(games_path, games_path, max_depth=3)
     
-    # Sort by title
-    games.sort(key=lambda x: x['title'].lower())
+    # Apply sorting based on sort_by parameter
+    if sort_by == "last_modified":
+        # Get timestamps for all games
+        game_paths = [g['path'] for g in games]
+        timestamps = get_game_timestamps(game_paths)
+        # Sort by mtime (newest first)
+        games.sort(key=lambda x: timestamps.get(x['path'], {}).get('mtime', 0), reverse=True)
+    elif sort_by == "last_added":
+        # Get timestamps for all games
+        game_paths = [g['path'] for g in games]
+        timestamps = get_game_timestamps(game_paths)
+        # Sort by ctime (newest first)
+        games.sort(key=lambda x: timestamps.get(x['path'], {}).get('ctime', 0), reverse=True)
+    else:
+        # Default: alphabetical sort by title
+        games.sort(key=lambda x: x['title'].lower())
     
     return games
+
+
+def get_game_timestamps(game_paths: List[str]) -> Dict[str, Dict[str, float]]:
+    """
+    Extract filesystem timestamps for game directories.
+    
+    Args:
+        game_paths: List of game directory paths
+        
+    Returns:
+        Dict mapping game paths to dict with 'mtime' (last-modified) and 'ctime' (last-added) keys
+    """
+    timestamps = {}
+    
+    for game_path in game_paths:
+        game_dir = Path(game_path) if Path(game_path).is_absolute() else SCRIPT_DIR / game_path
+        
+        if not game_dir.exists() or not game_dir.is_dir():
+            continue
+        
+        # Get directory creation time (last-added)
+        ctime = game_dir.stat().st_ctime
+        
+        # Get most recent file modification time in directory (last-modified)
+        # Walk through all files in the directory to find the most recent mtime
+        mtime = game_dir.stat().st_mtime  # Start with directory's own mtime
+        
+        try:
+            for root, dirs, files in os.walk(game_dir):
+                # Skip backup directories
+                dirs[:] = [d for d in dirs if '_backup_' not in d]
+                
+                for file in files:
+                    file_path = Path(root) / file
+                    try:
+                        file_mtime = file_path.stat().st_mtime
+                        if file_mtime > mtime:
+                            mtime = file_mtime
+                    except (OSError, PermissionError):
+                        # Skip files we can't access
+                        continue
+        except (OSError, PermissionError):
+            # If we can't walk the directory, just use directory mtime
+            pass
+        
+        timestamps[game_path] = {
+            'mtime': mtime,
+            'ctime': ctime
+        }
+    
+    return timestamps
 
 
 def get_game_metadata(game_path: str) -> Dict[str, str]:
@@ -676,12 +854,21 @@ def create_backup(game_dir: Path) -> Path:
 
 # Gradio event handlers
 
-def refresh_games(directory: str = "games/games") -> gr.Dropdown:
+def refresh_games(directory: str = "games/games", sort_by: str = "alphabetical") -> gr.Dropdown:
     """Refresh the games dropdown list."""
-    games = list_games(directory)
+    # Convert "alphabetical" to None for list_games
+    sort_param = None if sort_by == "alphabetical" else sort_by
+    games = list_games(directory, sort_by=sort_param)
     choices = []
     for g in games:
         display_name = g['title']
+        
+        # Add color indicator if flagged
+        flag_color = g.get('flag_color')
+        if flag_color and flag_color in COLOR_EMOJIS:
+            emoji = COLOR_EMOJIS[flag_color]
+            display_name = f"{emoji} {display_name}"
+        
         if g['backup_count'] > 0:
             display_name += f" ({g['backup_count']} backup{'s' if g['backup_count'] > 1 else ''})"
         choices.append((display_name, g['path']))
@@ -692,15 +879,15 @@ def refresh_games(directory: str = "games/games") -> gr.Dropdown:
     return gr.Dropdown(choices=choices, value=choices[0][1] if choices else "")
 
 
-def on_game_selected_minimal(game_path: str) -> Tuple[str, gr.Dropdown]:
+def on_game_selected_minimal(game_path: str) -> Tuple[str, gr.Dropdown, str]:
     """
     Handle game selection event (minimal version).
     
     Returns:
-        Tuple of (iframe_html, backup_dropdown)
+        Tuple of (iframe_html, backup_dropdown, current_flag_color)
     """
     if not game_path:
-        return "", gr.Dropdown(choices=[])
+        return "", gr.Dropdown(choices=[]), "none"
     
     game_dir = Path(game_path)
     
@@ -720,7 +907,11 @@ def on_game_selected_minimal(game_path: str) -> Tuple[str, gr.Dropdown]:
     backups = list_backups(game_path)
     backup_choices = backups if backups else [("No backups", "")]
     
-    return iframe_html, gr.Dropdown(choices=backup_choices)
+    # Get current flag color
+    flag_color = get_game_flag(game_path)
+    current_flag = flag_color if flag_color else "none"
+    
+    return iframe_html, gr.Dropdown(choices=backup_choices), current_flag
 
 
 # COMMENTED OUT: Level selector functionality
@@ -768,9 +959,14 @@ def refresh_game_preview(game_path: str) -> str:
     return get_game_iframe_html(str(game_relative_path_from_games), cache_bust=True)
 
 
-def fix_game_action(game_path: str, feedback: str) -> Tuple[str, gr.Dropdown, str]:
+def fix_game_action(game_path: str, feedback: str, model: str = "anthropic:claude-4.5-sonnet") -> Tuple[str, gr.Dropdown, str]:
     """
     Apply fixes to the selected game.
+    
+    Args:
+        game_path: Path to the game directory
+        feedback: User feedback describing the issue
+        model: Model to use for fixing (default: "anthropic:claude-4.5-sonnet")
     
     Returns:
         Tuple of (status_message, updated_backup_dropdown, updated_iframe_html)
@@ -802,7 +998,7 @@ def fix_game_action(game_path: str, feedback: str) -> Tuple[str, gr.Dropdown, st
     
     try:
         iterator = FeedbackFixIterator(
-            model="anthropic:claude-4.5-sonnet",  
+            model=model,  
             temperature=0.6,
             thinking=True,
             thinking_budget=8000,
@@ -955,7 +1151,7 @@ def fix_game_action(game_path: str, feedback: str) -> Tuple[str, gr.Dropdown, st
         # Try to save error log
         try:
             # Get model info from iterator if available
-            model_name = "anthropic:claude-4.5-sonnet"
+            model_name = model
             temperature = 0.6
             thinking = True
             thinking_budget = 8000
@@ -1055,6 +1251,95 @@ def restore_backup_action(game_path: str, backup_path: str) -> Tuple[str, str]:
         return "\n".join(status_lines), ""
 
 
+def update_flag_counts(games_dir: str = "games/games") -> str:
+    """
+    Calculate and return HTML display of flag counts.
+    
+    Returns:
+        HTML string showing counts per color
+    """
+    games = list_games(games_dir)
+    counts = get_flag_counts(games)
+    
+    total_flagged = sum(counts.values())
+    
+    html_lines = [
+        '<div style="background: #0d1117; border: 1px solid #30363d; border-radius: 4px; padding: 15px; font-family: monospace; color: #c9d1d9;">',
+        '<h3 style="margin: 0 0 15px 0; color: #c9d1d9; font-size: 14px;">Flag Counts</h3>',
+    ]
+    
+    for color in FLAG_COLORS:
+        count = counts[color]
+        emoji = COLOR_EMOJIS[color]
+        color_name = color.capitalize()
+        html_lines.append(
+            f'<div style="margin-bottom: 8px; font-size: 12px;">'
+            f'<span style="margin-right: 8px;">{emoji}</span>'
+            f'<span style="color: #8b949e;">{color_name}:</span> '
+            f'<span style="color: #c9d1d9; font-weight: bold;">{count}</span>'
+            f'</div>'
+        )
+    
+    html_lines.append('<div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #30363d; font-size: 12px;">')
+    html_lines.append(f'<span style="color: #8b949e;">Total Flagged:</span> ')
+    html_lines.append(f'<span style="color: #c9d1d9; font-weight: bold;">{total_flagged}</span>')
+    html_lines.append('</div>')
+    html_lines.append('</div>')
+    
+    return '\n'.join(html_lines)
+
+
+def set_flag_action(game_path: str, color: str, games_dir: str = "games/games", sort_by: str = "alphabetical") -> Tuple[gr.Dropdown, str, str]:
+    """
+    Set flag for a game, return updated dropdown and counts.
+    
+    Returns:
+        Tuple of (updated_game_dropdown, updated_flag_counts_html, status_message)
+    """
+    if not game_path:
+        return gr.Dropdown(), "", "Error: No game selected"
+    
+    try:
+        # Set the flag
+        set_game_flag(game_path, color)
+        
+        # Get updated games list
+        sort_param = None if sort_by == "alphabetical" else sort_by
+        games = list_games(games_dir, sort_by=sort_param)
+        choices = []
+        for g in games:
+            display_name = g['title']
+            
+            # Add color indicator if flagged
+            flag_color = g.get('flag_color')
+            if flag_color and flag_color in COLOR_EMOJIS:
+                emoji = COLOR_EMOJIS[flag_color]
+                display_name = f"{emoji} {display_name}"
+            
+            if g['backup_count'] > 0:
+                display_name += f" ({g['backup_count']} backup{'s' if g['backup_count'] > 1 else ''})"
+            choices.append((display_name, g['path']))
+        
+        if not choices:
+            choices = [("No games found", "")]
+        
+        # Update counts
+        counts_html = update_flag_counts(games_dir)
+        
+        # Status message
+        if color and color.lower() != "none":
+            color_name = color.capitalize()
+            emoji = COLOR_EMOJIS.get(color.lower(), "🏷️")
+            status = f"Flagged game with {emoji} {color_name}"
+        else:
+            status = "Removed flag from game"
+        
+        return gr.Dropdown(choices=choices, value=game_path), counts_html, status
+    
+    except Exception as e:
+        return gr.Dropdown(), "", f"Error setting flag: {e}"
+
+
 def build_interface():
     """Build the Gradio interface."""
     
@@ -1067,6 +1352,13 @@ def build_interface():
     game_choices = []
     for g in games:
         display_name = g['title']
+        
+        # Add color indicator if flagged
+        flag_color = g.get('flag_color')
+        if flag_color and flag_color in COLOR_EMOJIS:
+            emoji = COLOR_EMOJIS[flag_color]
+            display_name = f"{emoji} {display_name}"
+        
         if g['backup_count'] > 0:
             display_name += f" ({g['backup_count']} backup{'s' if g['backup_count'] > 1 else ''})"
         game_choices.append((display_name, g['path']))
@@ -1115,70 +1407,11 @@ def build_interface():
     with gr.Blocks(title="Game Fix", theme=gr.themes.Monochrome(), css=custom_css) as app:
         
         with gr.Row():
-            # Left: Level Selector Panel (narrow) - COMMENTED OUT
-            # with gr.Column(scale=1, min_width=200):
-            #     level_selector_html = gr.HTML(value="""
-            #         <div style="background: #0d1117; border: 1px solid #30363d; border-radius: 4px; padding: 15px; font-family: monospace; color: #c9d1d9;">
-            #             <h3 style="margin: 0 0 15px 0; color: #00ff00; font-size: 14px;">Level Selector</h3>
-            #             <div style="margin-bottom: 10px;">
-            #                 <label style="display: block; margin-bottom: 5px; font-size: 12px; color: #8b949e;">Current Level:</label>
-            #                 <div id="dev-current-level-display" style="font-size: 18px; font-weight: bold; color: #00ff00;">-</div>
-            #             </div>
-            #             <div style="margin-bottom: 15px;">
-            #                 <label style="display: block; margin-bottom: 5px; font-size: 12px; color: #8b949e;">Jump to Level:</label>
-            #                 <input type="number" id="dev-level-input-gradio" 
-            #                        style="width: 100%; padding: 8px; background: #21262d; color: #c9d1d9; border: 1px solid #30363d; border-radius: 4px; font-size: 14px; box-sizing: border-box;"
-            #                        min="1" placeholder="Enter level">
-            #             </div>
-            #             <div style="display: flex; gap: 5px; margin-bottom: 10px;">
-            #                 <button id="dev-load-level-btn" 
-            #                         style="flex: 1; padding: 8px; background: #00ff00; color: #000; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;">
-            #                     Load
-            #                 </button>
-            #             </div>
-            #             <div style="display: flex; gap: 5px; margin-bottom: 15px;">
-            #                 <button id="dev-prev-level-btn" 
-            #                         style="flex: 1; padding: 8px; background: #21262d; color: #c9d1d9; border: 1px solid #30363d; border-radius: 4px; cursor: pointer; font-size: 12px;">
-            #                     ◀ Prev
-            #                 </button>
-            #                 <button id="dev-next-level-btn" 
-            #                         style="flex: 1; padding: 8px; background: #21262d; color: #c9d1d9; border: 1px solid #30363d; border-radius: 4px; cursor: pointer; font-size: 12px;">
-            #                     Next ▶
-            #                 </button>
-            #             </div>
-            #             <div style="padding-top: 15px; border-top: 1px solid #30363d; font-size: 11px; color: #8b949e;">
-            #                 <div>Shortcuts in game:</div>
-            #                 <div>L - Level selector</div>
-            #                 <div>N/P - Next/Prev</div>
-            #                 <div>I - Info overlay</div>
-            #             </div>
-            #         </div>
-            #         <script>
-            #         // Ensure level selector buttons are set up when this component loads
-            #         // This script runs in the level selector component context
-            #         (function() {
-            #             // Mark that level selector is ready
-            #             window.levelSelectorReady = true;
-            #             
-            #             // Trigger global setup function if it exists
-            #             if (window.setupLevelSelectorGlobally) {
-            #                 setTimeout(window.setupLevelSelectorGlobally, 100);
-            #             }
-            #             
-            #             // Also try to set up directly after a short delay
-            #             setTimeout(function() {
-            #                 var loadBtn = document.getElementById('dev-load-level-btn');
-            #                 if (loadBtn && !loadBtn.dataset.setup) {
-            #                     if (window.setupLevelSelectorGlobally) {
-            #                         window.setupLevelSelectorGlobally();
-            #                     }
-            #                 }
-            #             }, 500);
-            #         })();
-            #         </script>
-            #     """)
+            # Left: Flag Counts Sidebar (narrow)
+            with gr.Column(scale=1, min_width=200):
+                flag_counts_html = gr.HTML(value=update_flag_counts(initial_dir))
             
-            # Right: Game Preview (wider)
+            # Middle: Game Preview (wider)
             with gr.Column(scale=5):
                 refresh_game_btn = gr.Button("Refresh Game", size="sm")
                 game_iframe = gr.HTML(value="<p>Select a game</p>")
@@ -1193,6 +1426,17 @@ def build_interface():
                     interactive=True
                 )
                 
+                sort_dropdown = gr.Dropdown(
+                    choices=[
+                        ("Alphabetical", "alphabetical"),
+                        ("Last Modified", "last_modified"),
+                        ("Last Added", "last_added"),
+                    ],
+                    value="alphabetical",
+                    label="Sort By",
+                    interactive=True
+                )
+                
                 game_dropdown = gr.Dropdown(
                     choices=game_choices,
                     value=game_choices[0][1] if game_choices else "",
@@ -1200,6 +1444,33 @@ def build_interface():
                     interactive=True
                 )
                 refresh_btn = gr.Button("Refresh Games List", size="sm")
+                
+                # Flag management UI
+                with gr.Row():
+                    flag_color_dropdown = gr.Dropdown(
+                        choices=[
+                            ("None (Clear Flag)", "none"),
+                            ("🔴 Red", "red"),
+                            ("🟡 Yellow", "yellow"),
+                            ("🟢 Green", "green"),
+                            ("🔵 Blue", "blue"),
+                            ("🟣 Purple", "purple"),
+                        ],
+                        value="none",
+                        label="Flag Color",
+                        interactive=True
+                    )
+                    set_flag_btn = gr.Button("Set Flag", size="sm")
+                
+                model_dropdown = gr.Dropdown(
+                    choices=[
+                        ("Claude 4.5 Sonnet", "anthropic:claude-4.5-sonnet"),
+                        ("Gemini 3 Pro Preview", "google:gemini-3-pro-preview"),
+                    ],
+                    value="anthropic:claude-4.5-sonnet",
+                    label="Model",
+                    interactive=True
+                )
                 
                 feedback_input = gr.Textbox(
                     label="Feedback",
@@ -1223,17 +1494,34 @@ def build_interface():
                     restore_btn = gr.Button("Restore")
         
         # Wire up events
-        # When directory changes, refresh game list
+        # When directory changes, refresh game list and flag counts
         directory_dropdown.change(
             fn=refresh_games,
+            inputs=[directory_dropdown, sort_dropdown],
+            outputs=[game_dropdown]
+        )
+        directory_dropdown.change(
+            fn=update_flag_counts,
             inputs=[directory_dropdown],
+            outputs=[flag_counts_html]
+        )
+        
+        # When sort changes, refresh game list
+        sort_dropdown.change(
+            fn=refresh_games,
+            inputs=[directory_dropdown, sort_dropdown],
             outputs=[game_dropdown]
         )
         
         refresh_btn.click(
             fn=refresh_games,
-            inputs=[directory_dropdown],
+            inputs=[directory_dropdown, sort_dropdown],
             outputs=[game_dropdown]
+        )
+        refresh_btn.click(
+            fn=update_flag_counts,
+            inputs=[directory_dropdown],
+            outputs=[flag_counts_html]
         )
         
         refresh_game_btn.click(
@@ -1245,12 +1533,19 @@ def build_interface():
         game_dropdown.change(
             fn=on_game_selected_minimal,
             inputs=[game_dropdown],
-            outputs=[game_iframe, backup_list]
+            outputs=[game_iframe, backup_list, flag_color_dropdown]
+        )
+        
+        # Flag management events
+        set_flag_btn.click(
+            fn=set_flag_action,
+            inputs=[game_dropdown, flag_color_dropdown, directory_dropdown, sort_dropdown],
+            outputs=[game_dropdown, flag_counts_html, status_output]
         )
         
         fix_btn.click(
             fn=fix_game_action,
-            inputs=[game_dropdown, feedback_input],
+            inputs=[game_dropdown, feedback_input, model_dropdown],
             outputs=[status_output, backup_list, game_iframe]
         )
         
@@ -1264,7 +1559,12 @@ def build_interface():
         app.load(
             fn=on_game_selected_minimal,
             inputs=[game_dropdown],
-            outputs=[game_iframe, backup_list]
+            outputs=[game_iframe, backup_list, flag_color_dropdown]
+        )
+        app.load(
+            fn=update_flag_counts,
+            inputs=[directory_dropdown],
+            outputs=[flag_counts_html]
         )
     
     return app

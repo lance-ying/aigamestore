@@ -1,0 +1,548 @@
+<analysis>
+- Issue identified: The player's collision detection only checks the center point, not the full bounding circle. This causes the player to clip into walls when their radius extends beyond a ground tile into a wall tile. Additionally, the player might spawn too close to room edges.
+- Files affected: player.js, world.js
+- Changes needed: 
+  1. Add a proper collision check that validates multiple points around the player's circular hitbox
+  2. Update player movement to use this improved collision detection
+  3. Ensure player spawns safely away from walls by adding padding to spawn position
+</analysis>
+
+<code filename="world.js">
+// world.js - World generation and tile management
+
+import { gameState, WORLD_WIDTH, WORLD_HEIGHT, TILE_SIZE } from './globals.js';
+import { Collectible, HealthPickup, EnergyPickup, HealingCrystal } from './collectibles.js';
+import { Enemy } from './enemy.js';
+import { Hazard } from './hazards.js';
+
+export class Tile {
+  constructor(x, y, type) {
+    this.x = x;
+    this.y = y;
+    this.type = type; // 'ground', 'wall', 'void'
+  }
+}
+
+export function generateWorld(p) {
+  const tiles = [];
+  const tilesX = Math.floor(WORLD_WIDTH / TILE_SIZE);
+  const tilesY = Math.floor(WORLD_HEIGHT / TILE_SIZE);
+  
+  // Initialize all tiles as ground
+  for (let y = 0; y < tilesY; y++) {
+    tiles[y] = [];
+    for (let x = 0; x < tilesX; x++) {
+      tiles[y][x] = new Tile(x * TILE_SIZE, y * TILE_SIZE, 'ground');
+    }
+  }
+  
+  // Create rooms and corridors
+  const rooms = [];
+  const numRooms = 12;
+  
+  for (let i = 0; i < numRooms; i++) {
+    const roomWidth = Math.floor(p.random(8, 15));
+    const roomHeight = Math.floor(p.random(6, 12));
+    const roomX = Math.floor(p.random(2, tilesX - roomWidth - 2));
+    const roomY = Math.floor(p.random(2, tilesY - roomHeight - 2));
+    
+    // Check for overlap with existing rooms
+    let overlaps = false;
+    for (const room of rooms) {
+      if (
+        roomX < room.x + room.width + 2 &&
+        roomX + roomWidth + 2 > room.x &&
+        roomY < room.y + room.height + 2 &&
+        roomY + roomHeight + 2 > room.y
+      ) {
+        overlaps = true;
+        break;
+      }
+    }
+    
+    if (!overlaps) {
+      rooms.push({ x: roomX, y: roomY, width: roomWidth, height: roomHeight });
+    }
+  }
+  
+  // Carve out rooms and add walls
+  for (const room of rooms) {
+    for (let y = room.y - 1; y <= room.y + room.height; y++) {
+      for (let x = room.x - 1; x <= room.x + room.width; x++) {
+        if (y >= 0 && y < tilesY && x >= 0 && x < tilesX) {
+          // Add walls around room perimeter
+          if (
+            x === room.x - 1 ||
+            x === room.x + room.width ||
+            y === room.y - 1 ||
+            y === room.y + room.height
+          ) {
+            tiles[y][x].type = 'wall';
+          } else {
+            tiles[y][x].type = 'ground';
+          }
+        }
+      }
+    }
+  }
+  
+  // Connect rooms with corridors
+  for (let i = 0; i < rooms.length - 1; i++) {
+    const room1 = rooms[i];
+    const room2 = rooms[i + 1];
+    
+    const centerX1 = Math.floor(room1.x + room1.width / 2);
+    const centerY1 = Math.floor(room1.y + room1.height / 2);
+    const centerX2 = Math.floor(room2.x + room2.width / 2);
+    const centerY2 = Math.floor(room2.y + room2.height / 2);
+    
+    // Horizontal corridor
+    const startX = Math.min(centerX1, centerX2);
+    const endX = Math.max(centerX1, centerX2);
+    for (let x = startX; x <= endX; x++) {
+      if (centerY1 >= 0 && centerY1 < tilesY && x >= 0 && x < tilesX) {
+        tiles[centerY1][x].type = 'ground';
+        if (centerY1 > 0) tiles[centerY1 - 1][x].type = 'wall';
+        if (centerY1 < tilesY - 1) tiles[centerY1 + 1][x].type = 'wall';
+      }
+    }
+    
+    // Vertical corridor
+    const startY = Math.min(centerY1, centerY2);
+    const endY = Math.max(centerY1, centerY2);
+    for (let y = startY; y <= endY; y++) {
+      if (y >= 0 && y < tilesY && centerX2 >= 0 && centerX2 < tilesX) {
+        tiles[y][centerX2].type = 'ground';
+        if (centerX2 > 0) tiles[y][centerX2 - 1].type = 'wall';
+        if (centerX2 < tilesX - 1) tiles[y][centerX2 + 1].type = 'wall';
+      }
+    }
+  }
+  
+  gameState.worldTiles = tiles;
+  gameState.worldRooms = rooms;
+  
+  // Populate world with entities
+  populateWorld(p, rooms);
+}
+
+function populateWorld(p, rooms) {
+  // Place player in first room
+  const startRoom = rooms[0];
+  const playerX = (startRoom.x + startRoom.width / 2) * TILE_SIZE;
+  const playerY = (startRoom.y + startRoom.height / 2) * TILE_SIZE;
+  
+  // Create entities in other rooms
+  for (let i = 1; i < rooms.length; i++) {
+    const room = rooms[i];
+    const centerX = (room.x + room.width / 2) * TILE_SIZE;
+    const centerY = (room.y + room.height / 2) * TILE_SIZE;
+    
+    // Determine room type
+    const roomType = p.random();
+    
+    if (roomType < 0.3) {
+      // Enemy room
+      const numEnemies = Math.floor(p.random(2, 5));
+      for (let j = 0; j < numEnemies; j++) {
+        const ex = (room.x + p.random(1, room.width - 1)) * TILE_SIZE;
+        const ey = (room.y + p.random(1, room.height - 1)) * TILE_SIZE;
+        new Enemy(ex, ey, p);
+      }
+    } else if (roomType < 0.5) {
+      // Treasure room
+      const numItems = Math.floor(p.random(3, 6));
+      for (let j = 0; j < numItems; j++) {
+        const cx = (room.x + p.random(1, room.width - 1)) * TILE_SIZE;
+        const cy = (room.y + p.random(1, room.height - 1)) * TILE_SIZE;
+        const itemType = p.random();
+        if (itemType < 0.3) {
+          new HealthPickup(cx, cy);
+        } else if (itemType < 0.6) {
+          new EnergyPickup(cx, cy);
+        } else {
+          new Collectible(cx, cy, 'artifact');
+        }
+      }
+    } else if (roomType < 0.7) {
+      // Hazard room
+      const numHazards = Math.floor(p.random(4, 8));
+      for (let j = 0; j < numHazards; j++) {
+        const hx = (room.x + p.random(1, room.width - 1)) * TILE_SIZE;
+        const hy = (room.y + p.random(1, room.height - 1)) * TILE_SIZE;
+        const hazardType = p.random() < 0.5 ? 'spike' : 'poison';
+        new Hazard(hx, hy, hazardType);
+      }
+      
+      // Add a few enemies too
+      const numEnemies = Math.floor(p.random(1, 3));
+      for (let j = 0; j < numEnemies; j++) {
+        const ex = (room.x + p.random(1, room.width - 1)) * TILE_SIZE;
+        const ey = (room.y + p.random(1, room.height - 1)) * TILE_SIZE;
+        new Enemy(ex, ey, p);
+      }
+    } else {
+      // Mixed room
+      new Enemy(centerX, centerY, p);
+      const numItems = Math.floor(p.random(1, 3));
+      for (let j = 0; j < numItems; j++) {
+        const cx = (room.x + p.random(1, room.width - 1)) * TILE_SIZE;
+        const cy = (room.y + p.random(1, room.height - 1)) * TILE_SIZE;
+        if (p.random() < 0.5) {
+          new HealthPickup(cx, cy);
+        } else {
+          new EnergyPickup(cx, cy);
+        }
+      }
+    }
+  }
+  
+  // Place healing crystals in specific rooms
+  const crystalRooms = [
+    rooms[Math.floor(rooms.length * 0.3)],
+    rooms[Math.floor(rooms.length * 0.5)],
+    rooms[Math.floor(rooms.length * 0.7)],
+    rooms[Math.floor(rooms.length * 0.85)],
+    rooms[rooms.length - 1]
+  ];
+  
+  for (const room of crystalRooms) {
+    const cx = (room.x + room.width / 2) * TILE_SIZE;
+    const cy = (room.y + room.height / 2) * TILE_SIZE;
+    new HealingCrystal(cx, cy);
+  }
+  
+  return { playerX, playerY };
+}
+
+export function getTileAt(worldX, worldY) {
+  const tileX = Math.floor(worldX / TILE_SIZE);
+  const tileY = Math.floor(worldY / TILE_SIZE);
+  
+  if (
+    tileY >= 0 &&
+    tileY < gameState.worldTiles.length &&
+    tileX >= 0 &&
+    tileX < gameState.worldTiles[0].length
+  ) {
+    return gameState.worldTiles[tileY][tileX];
+  }
+  
+  return null;
+}
+
+export function isWalkable(worldX, worldY) {
+  const tile = getTileAt(worldX, worldY);
+  return tile && tile.type === 'ground';
+}
+
+// Check if a circle at position (x, y) with given radius can fit in walkable space
+export function canMoveTo(x, y, radius) {
+  // Check center and 8 points around the circle perimeter
+  const checkPoints = [
+    { x: x, y: y }, // center
+    { x: x + radius, y: y }, // right
+    { x: x - radius, y: y }, // left
+    { x: x, y: y + radius }, // bottom
+    { x: x, y: y - radius }, // top
+    { x: x + radius * 0.707, y: y + radius * 0.707 }, // bottom-right
+    { x: x - radius * 0.707, y: y + radius * 0.707 }, // bottom-left
+    { x: x + radius * 0.707, y: y - radius * 0.707 }, // top-right
+    { x: x - radius * 0.707, y: y - radius * 0.707 }  // top-left
+  ];
+  
+  for (const point of checkPoints) {
+    if (!isWalkable(point.x, point.y)) {
+      return false;
+    }
+  }
+  
+  return true;
+}
+</code>
+
+<code filename="player.js">
+// player.js - Player character implementation
+
+import { gameState, COLORS, KEY_LEFT, KEY_RIGHT, KEY_UP, KEY_DOWN, KEY_SPACE, KEY_Z } from './globals.js';
+import { canMoveTo } from './world.js';
+import { addCameraShake } from './utils.js';
+import { createParticleBurst } from './particles.js';
+import { EnergySlash } from './projectiles.js';
+
+export class Player {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.width = 20;
+    this.height = 20;
+    this.radius = 10;
+    
+    // Physics
+    this.vx = 0;
+    this.vy = 0;
+    this.speed = 3;
+    this.dashSpeed = 15;
+    this.dashDuration = 8;
+    this.dashCooldown = 30;
+    
+    // State
+    this.health = 100;
+    this.maxHealth = 100;
+    this.energy = 100;
+    this.maxEnergy = 100;
+    this.isDashing = false;
+    this.dashTimer = 0;
+    this.invulnerable = false;
+    this.invulnerableTimer = 0;
+    
+    // Facing direction
+    this.facing = 0; // radians
+    this.lastMoveX = 1;
+    this.lastMoveY = 0;
+    
+    // Animation
+    this.animFrame = 0;
+    this.animSpeed = 0.15;
+    this.flashTimer = 0;
+    
+    // Tracking
+    this.lastPosition = { x, y };
+    
+    gameState.player = this;
+    gameState.entities.push(this);
+  }
+  
+  update(p) {
+    // Update invulnerability
+    if (this.invulnerable) {
+      this.invulnerableTimer--;
+      if (this.invulnerableTimer <= 0) {
+        this.invulnerable = false;
+      }
+    }
+    
+    // Update flash effect
+    if (this.flashTimer > 0) {
+      this.flashTimer--;
+    }
+    
+    // Regenerate energy slowly
+    this.energy = Math.min(this.maxEnergy, this.energy + 0.1);
+    
+    // Handle dashing
+    if (this.isDashing) {
+      this.dashTimer--;
+      if (this.dashTimer <= 0) {
+        this.isDashing = false;
+      }
+    }
+    
+    // Movement
+    let moveX = 0;
+    let moveY = 0;
+    
+    if (gameState.keys[KEY_LEFT]) moveX -= 1;
+    if (gameState.keys[KEY_RIGHT]) moveX += 1;
+    if (gameState.keys[KEY_UP]) moveY -= 1;
+    if (gameState.keys[KEY_DOWN]) moveY += 1;
+    
+    // Normalize diagonal movement
+    if (moveX !== 0 && moveY !== 0) {
+      moveX *= 0.707;
+      moveY *= 0.707;
+    }
+    
+    // Update facing direction
+    if (moveX !== 0 || moveY !== 0) {
+      this.lastMoveX = moveX;
+      this.lastMoveY = moveY;
+      this.facing = Math.atan2(moveY, moveX);
+    }
+    
+    // Apply movement
+    const currentSpeed = this.isDashing ? this.dashSpeed : this.speed;
+    this.vx = moveX * currentSpeed;
+    this.vy = moveY * currentSpeed;
+    
+    // Check collision before moving - use improved collision detection
+    const nextX = this.x + this.vx;
+    const nextY = this.y + this.vy;
+    
+    // Try moving on X axis
+    if (canMoveTo(nextX, this.y, this.radius)) {
+      this.x = nextX;
+    } else {
+      // If blocked, try to slide along the wall
+      this.vx = 0;
+    }
+    
+    // Try moving on Y axis
+    if (canMoveTo(this.x, nextY, this.radius)) {
+      this.y = nextY;
+    } else {
+      // If blocked, try to slide along the wall
+      this.vy = 0;
+    }
+    
+    // Keep in world bounds
+    this.x = Math.max(this.radius + 5, Math.min(gameState.worldWidth - this.radius - 5, this.x));
+    this.y = Math.max(this.radius + 5, Math.min(gameState.worldHeight - this.radius - 5, this.y));
+    
+    // Update animation
+    if (moveX !== 0 || moveY !== 0) {
+      this.animFrame += this.animSpeed;
+    }
+    
+    // Log position changes
+    if (Math.abs(this.x - this.lastPosition.x) > 5 || 
+        Math.abs(this.y - this.lastPosition.y) > 5) {
+      this.logPosition(p);
+      this.lastPosition.x = this.x;
+      this.lastPosition.y = this.y;
+    }
+    
+    // Update camera
+    this.updateCamera();
+  }
+  
+  updateCamera() {
+    const targetX = this.x - 300;
+    const targetY = this.y - 200;
+    
+    gameState.cameraX += (targetX - gameState.cameraX) * 0.1;
+    gameState.cameraY += (targetY - gameState.cameraY) * 0.1;
+    
+    // Clamp camera to world bounds
+    gameState.cameraX = Math.max(0, Math.min(gameState.worldWidth - 600, gameState.cameraX));
+    gameState.cameraY = Math.max(0, Math.min(gameState.worldHeight - 400, gameState.cameraY));
+  }
+  
+  dash() {
+    if (this.isDashing || this.energy < 20) return;
+    
+    const timeSinceLastDash = gameState.frameCount - gameState.lastDashTime;
+    if (timeSinceLastDash < this.dashCooldown) return;
+    
+    this.isDashing = true;
+    this.dashTimer = this.dashDuration;
+    this.invulnerable = true;
+    this.invulnerableTimer = this.dashDuration;
+    this.energy -= 20;
+    
+    gameState.lastDashTime = gameState.frameCount;
+    
+    // Create dash particles
+    createParticleBurst(this.x, this.y, 8, COLORS.playerGlow);
+    addCameraShake(2);
+  }
+  
+  attack(p) {
+    if (this.energy < 15) return;
+    
+    const timeSinceLastAttack = gameState.frameCount - gameState.lastAttackTime;
+    if (timeSinceLastAttack < 20) return;
+    
+    this.energy -= 15;
+    gameState.lastAttackTime = gameState.frameCount;
+    
+    // Create energy slash projectile
+    const slashX = this.x + Math.cos(this.facing) * 25;
+    const slashY = this.y + Math.sin(this.facing) * 25;
+    new EnergySlash(slashX, slashY, this.facing, p);
+    
+    // Visual feedback
+    this.flashTimer = 5;
+    addCameraShake(3);
+  }
+  
+  takeDamage(amount) {
+    if (this.invulnerable) return;
+    
+    this.health = Math.max(0, this.health - amount);
+    this.invulnerable = true;
+    this.invulnerableTimer = 30;
+    this.flashTimer = 10;
+    
+    addCameraShake(5);
+    createParticleBurst(this.x, this.y, 12, COLORS.health);
+    
+    if (this.health <= 0) {
+      this.die();
+    }
+  }
+  
+  heal(amount) {
+    this.health = Math.min(this.maxHealth, this.health + amount);
+  }
+  
+  restoreEnergy(amount) {
+    this.energy = Math.min(this.maxEnergy, this.energy + amount);
+  }
+  
+  die() {
+    gameState.gamePhase = "GAME_OVER_LOSE";
+    createParticleBurst(this.x, this.y, 30, COLORS.player);
+  }
+  
+  logPosition(p) {
+    if (p.logs && p.logs.player_info) {
+      p.logs.player_info.push({
+        screen_x: this.x - gameState.cameraX,
+        screen_y: this.y - gameState.cameraY,
+        game_x: this.x,
+        game_y: this.y,
+        health: this.health,
+        energy: this.energy,
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  }
+  
+  render(p) {
+    const screenX = this.x - gameState.cameraX + gameState.cameraShakeX;
+    const screenY = this.y - gameState.cameraY + gameState.cameraShakeY;
+    
+    p.push();
+    p.translate(screenX, screenY);
+    
+    // Glow effect
+    if (!this.invulnerable || gameState.frameCount % 4 < 2) {
+      p.fill(...COLORS.playerGlow);
+      p.noStroke();
+      p.circle(0, 0, this.radius * 3);
+    }
+    
+    // Flash effect
+    const flash = this.flashTimer > 0 ? 255 : 0;
+    
+    // Main body
+    p.fill(...COLORS.player);
+    if (flash > 0) {
+      p.fill(255, 255, 255);
+    }
+    p.stroke(0);
+    p.strokeWeight(2);
+    p.circle(0, 0, this.radius * 2);
+    
+    // Direction indicator
+    p.stroke(...COLORS.player);
+    p.strokeWeight(3);
+    p.line(0, 0, Math.cos(this.facing) * 12, Math.sin(this.facing) * 12);
+    
+    // Cape effect (animated trail)
+    const bobOffset = Math.sin(this.animFrame) * 2;
+    p.noStroke();
+    p.fill(...COLORS.player.slice(0, 3), 150);
+    p.ellipse(
+      -Math.cos(this.facing) * 8,
+      -Math.sin(this.facing) * 8 + bobOffset,
+      12,
+      16
+    );
+    
+    p.pop();
+  }
+}
+</code>

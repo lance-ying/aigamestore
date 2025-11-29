@@ -1,0 +1,1903 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+can you make this first person instead, and when I jump I jump float down, can you make these fixes
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>ULTRAKILL: Blood Arena</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        html, body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            margin: 0;
+            padding: 0;
+            background: #000;
+            font-family: Arial, sans-serif;
+        }
+        
+        body {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        #game-container {
+            width: 600px;
+            height: 400px;
+            position: relative;
+            overflow: hidden;
+            margin: 0;
+            padding: 0;
+            border: 2px solid #ff0000;
+        }
+        
+        canvas {
+            display: block;
+            margin: 0;
+            padding: 0;
+        }
+        
+        .game-info {
+            text-align: center;
+            margin-bottom: 20px;
+            max-width: 600px;
+        }
+        
+        #gameTitle {
+            color: #ff0000;
+            font-family: Arial, sans-serif;
+            margin-bottom: 10px;
+            font-size: 32px;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.8);
+        }
+        
+        .control-buttons {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        
+        .control-button {
+            padding: 8px 16px;
+            cursor: pointer;
+            background: #444;
+            color: #fff;
+            border: 2px solid #666;
+            border-radius: 4px;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+        
+        .control-button:hover {
+            background: #555;
+            border-color: #888;
+        }
+        
+        .control-button.active {
+            background: #ff0000;
+            border-color: #ff4444;
+        }
+        
+        #gameDescription {
+            color: #ccc;
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 0 auto 15px auto;
+            line-height: 1.4;
+            font-size: 14px;
+        }
+        
+        #gameControls {
+            color: #ffcccc;
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 0 auto 20px auto;
+            line-height: 1.4;
+            font-size: 13px;
+        }
+    </style>
+</head>
+<body>
+    <div class="game-info">
+        <h1 id="gameTitle">ULTRAKILL: Blood Arena</h1>
+        <div class="control-buttons">
+            <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+            <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Basic Movement)</button>
+            <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Win Mode)</button>
+        </div>
+        <p id="gameDescription">You are V1, a blood-fueled machine battling through the depths of Hell. Enemies spawn in waves - destroy them with your arsenal to collect their blood and restore health. Movement is key: dash through the arena, jump to dodge attacks. Chain kills quickly for style points and score multipliers. Survive all waves to achieve victory. Death means game over - keep moving, keep killing, keep bleeding.</p>
+        <p id="gameControls">W/A/S/D: Move | Space: Jump | Shift: Dash | Z: Shoot | Arrow Keys: Aim | Enter: Start | ESC: Pause | R: Restart</p>
+    </div>
+    
+    <script src="https://cdn.jsdelivr.net/npm/seedrandom@3.0.5/seedrandom.min.js"></script>
+    <script type="module" src="game.js"></script>
+</body>
+</html>
+</file>
+
+<file name="globals.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+// Canvas dimensions
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+// Game constants
+export const ARENA_SIZE = 30;
+export const PLAYER_SPEED = 0.15;
+export const PLAYER_DASH_SPEED = 0.5;
+export const PLAYER_JUMP_POWER = 0.4;
+export const PROJECTILE_SPEED = 0.8;
+export const ENEMY_SPEED = 0.08;
+export const BLOOD_PARTICLE_LIFETIME = 2.0;
+export const MAX_ENEMIES_PER_WAVE = 8;
+export const TOTAL_WAVES = 5;
+export const STYLE_COMBO_TIMEOUT = 3.0; // seconds without kill to reset combo
+
+// Style ranks
+export const STYLE_RANKS = ['D', 'C', 'B', 'A', 'S', 'SS', 'SSS', 'ULTRAKILL'];
+export const STYLE_THRESHOLDS = [0, 5, 10, 20, 35, 50, 75, 100];
+
+// Game state object
+export const gameState = {
+  // Core game state
+  gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+  controlMode: "HUMAN", // HUMAN, TEST_1, TEST_2, etc.
+  
+  // Three.js core objects
+  scene: null,
+  camera: null,
+  renderer: null,
+  
+  // Lighting
+  lights: [],
+  ambientLight: null,
+  directionalLight: null,
+  
+  // Physics
+  gravity: new THREE.Vector3(0, -0.02, 0),
+  
+  // Camera state
+  cameraAngleX: 0, // Horizontal rotation
+  cameraAngleY: 0.3, // Vertical rotation
+  cameraDistance: 12,
+  cameraHeight: 5,
+  
+  // Entities
+  player: null,
+  enemies: [],
+  projectiles: [],
+  bloodParticles: [],
+  platforms: [],
+  
+  // Game progression
+  currentWave: 0,
+  enemiesKilledThisWave: 0,
+  totalEnemiesKilled: 0,
+  score: 0,
+  
+  // Style system
+  styleCombo: 0,
+  stylePoints: 0,
+  lastKillTime: 0,
+  currentStyleRank: 'D',
+  
+  // Performance tracking
+  frameCount: 0,
+  lastFrameTime: 0,
+  deltaTime: 0,
+  
+  // Wave management
+  waveSpawnTimer: 0,
+  waveSpawnDelay: 2.0,
+  enemiesSpawnedThisWave: 0,
+  
+  // Input state
+  keys: {},
+  
+  // Testing
+  testStartTime: 0,
+  testEnemiesKilled: 0
+};
+
+// Initialize logs (write-only)
+export const logs = {
+  game_info: [],
+  player_info: [],
+  inputs: []
+};
+
+// Expose logs globally
+window.logs = logs;
+
+// Expose getGameState globally
+export function getGameState() {
+  return gameState;
+}
+window.getGameState = getGameState;
+
+// Log game info
+export function logGameInfo(status, data = {}) {
+  logs.game_info.push({
+    game_status: status,
+    data: data,
+    framecount: gameState.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+// Log input
+export function logInput(inputType, key, keyCode) {
+  logs.inputs.push({
+    input_type: inputType,
+    data: { key, keyCode },
+    framecount: gameState.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+// Log player info
+export function logPlayerInfo() {
+  if (!gameState.player) return;
+  
+  const screenPos = gameState.player.mesh.position.clone().project(gameState.camera);
+  
+  logs.player_info.push({
+    screen_x: (screenPos.x + 1) * CANVAS_WIDTH / 2,
+    screen_y: (1 - screenPos.y) * CANVAS_HEIGHT / 2,
+    game_x: gameState.player.mesh.position.x,
+    game_y: gameState.player.mesh.position.y,
+    game_z: gameState.player.mesh.position.z,
+    framecount: gameState.frameCount,
+    timestamp: Date.now()
+  });
+}
+</file>
+
+<file name="waveManager.js">
+import { gameState, MAX_ENEMIES_PER_WAVE, TOTAL_WAVES, ARENA_SIZE, logGameInfo } from './globals.js';
+import { Enemy } from './entities.js';
+
+// Initialize wave system
+export function initWaveSystem() {
+  gameState.currentWave = 0;
+  gameState.enemiesKilledThisWave = 0;
+  gameState.enemiesSpawnedThisWave = 0;
+  gameState.waveSpawnTimer = 0;
+  
+  // Initialize style system
+  gameState.styleCombo = 0;
+  gameState.stylePoints = 0;
+  gameState.lastKillTime = 0;
+  gameState.currentStyleRank = 'D';
+  
+  // Define style thresholds
+  gameState.styleRanks = ['D', 'C', 'B', 'A', 'S', 'SS', 'SSS', 'ULTRAKILL'];
+  gameState.styleThresholds = [0, 500, 1000, 2000, 3500, 5000, 7500, 10000];
+}
+
+// Update wave system
+export function updateWaveSystem(deltaTime) {
+  // Check if current wave is complete
+  if (gameState.currentWave > 0) {
+    const waveSize = getWaveSize(gameState.currentWave);
+    
+    if (gameState.enemiesKilledThisWave >= waveSize && gameState.enemies.length === 0) {
+      // Wave complete
+      if (gameState.currentWave >= TOTAL_WAVES) {
+        // All waves complete - victory!
+        gameState.gamePhase = "GAME_OVER_WIN";
+        logGameInfo("GAME_OVER_WIN", {
+          score: gameState.score,
+          rank: gameState.currentStyleRank,
+          enemiesKilled: gameState.totalEnemiesKilled
+        });
+        return;
+      } else {
+        // Start next wave
+        startNextWave();
+      }
+    }
+  }
+  
+  // Spawn enemies for current wave
+  if (gameState.currentWave > 0) {
+    gameState.waveSpawnTimer += deltaTime;
+    
+    const waveSize = getWaveSize(gameState.currentWave);
+    const spawnInterval = getSpawnInterval(gameState.currentWave);
+    
+    if (gameState.waveSpawnTimer >= spawnInterval && 
+        gameState.enemiesSpawnedThisWave < waveSize) {
+      spawnEnemy();
+      gameState.waveSpawnTimer = 0;
+    }
+  }
+}
+
+// Start first wave
+export function startFirstWave() {
+  gameState.currentWave = 1;
+  gameState.enemiesKilledThisWave = 0;
+  gameState.enemiesSpawnedThisWave = 0;
+  gameState.waveSpawnTimer = 0;
+  
+  logGameInfo("WAVE_START", { wave: gameState.currentWave });
+}
+
+// Start next wave
+function startNextWave() {
+  gameState.currentWave++;
+  gameState.enemiesKilledThisWave = 0;
+  gameState.enemiesSpawnedThisWave = 0;
+  gameState.waveSpawnTimer = 0;
+  
+  logGameInfo("WAVE_START", { wave: gameState.currentWave });
+}
+
+// Get wave size
+function getWaveSize(wave) {
+  return Math.min(5 + wave * 2, MAX_ENEMIES_PER_WAVE);
+}
+
+// Get spawn interval
+function getSpawnInterval(wave) {
+  return Math.max(1.0 - wave * 0.1, 0.3);
+}
+
+// Spawn a single enemy
+function spawnEnemy() {
+  // Random position around arena perimeter
+  const angle = Math.random() * Math.PI * 2;
+  const distance = ARENA_SIZE / 2 - 2;
+  
+  const x = Math.cos(angle) * distance;
+  const z = Math.sin(angle) * distance;
+  const y = 2;
+  
+  const enemy = new Enemy(x, y, z);
+  gameState.enemies.push(enemy);
+  gameState.enemiesSpawnedThisWave++;
+}
+</file>
+
+<file name="game.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, logGameInfo, ARENA_SIZE } from './globals.js';
+import { setupCamera, updateCamera } from './camera.js';
+import { setupRenderer } from './renderer.js';
+import { setupLighting } from './lighting.js';
+import { initUI, renderUI } from './ui.js';
+import { initInput, processPlayerInput, processAIInput } from './input.js';
+import { Player, Platform } from './entities.js';
+import { initWaveSystem, updateWaveSystem, startFirstWave } from './waveManager.js';
+
+// Initialize game
+function init() {
+  // Setup scene
+  gameState.scene = new THREE.Scene();
+  gameState.scene.background = new THREE.Color(0x1a0a0a);
+  gameState.scene.fog = new THREE.Fog(0x1a0a0a, 20, 60);
+  
+  // Setup three.js components
+  setupCamera();
+  setupRenderer();
+  setupLighting();
+  
+  // Setup UI
+  initUI();
+  
+  // Setup input
+  initInput();
+  
+  // Create arena
+  createArena();
+  
+  // Initialize game state
+  gameState.gamePhase = "START";
+  gameState.controlMode = "HUMAN";
+  
+  // Initialize wave system
+  initWaveSystem();
+  
+  // Seed random
+  Math.seedrandom(42);
+  
+  // Log initial state
+  logGameInfo("START", {});
+  
+  // Expose control mode setter
+  window.setControlMode = (mode) => {
+    gameState.controlMode = mode;
+    updateControlModeButtons();
+    
+    // Start game if not already started
+    if (gameState.gamePhase === "START") {
+      gameState.gamePhase = "PLAYING";
+      logGameInfo("PLAYING", {});
+      
+      if (mode === "TEST_2") {
+        gameState.testStartTime = performance.now();
+        gameState.testEnemiesKilled = 0;
+      }
+    }
+  };
+}
+
+// Create arena
+function createArena() {
+  // Floor
+  const floor = new Platform(0, -0.5, 0, ARENA_SIZE, 1, ARENA_SIZE);
+  gameState.platforms.push(floor);
+  
+  // Walls (visual only, not for collision)
+  const wallHeight = 5;
+  const wallThickness = 0.5;
+  
+  // North wall
+  const northWall = new Platform(0, wallHeight / 2, -ARENA_SIZE / 2, ARENA_SIZE, wallHeight, wallThickness);
+  gameState.platforms.push(northWall);
+  
+  // South wall
+  const southWall = new Platform(0, wallHeight / 2, ARENA_SIZE / 2, ARENA_SIZE, wallHeight, wallThickness);
+  gameState.platforms.push(southWall);
+  
+  // East wall
+  const eastWall = new Platform(ARENA_SIZE / 2, wallHeight / 2, 0, wallThickness, wallHeight, ARENA_SIZE);
+  gameState.platforms.push(eastWall);
+  
+  // West wall
+  const westWall = new Platform(-ARENA_SIZE / 2, wallHeight / 2, 0, wallThickness, wallHeight, ARENA_SIZE);
+  gameState.platforms.push(westWall);
+}
+
+// Create player
+function createPlayer() {
+  gameState.player = new Player(0, 1, 0);
+}
+
+// Update game logic
+function updateGame(deltaTime) {
+  gameState.deltaTime = deltaTime;
+  gameState.frameCount++;
+  
+  // Handle input based on control mode
+  if (gameState.controlMode === "HUMAN") {
+    processPlayerInput();
+  } else {
+    processAIInput();
+  }
+  
+  // Update based on game phase
+  switch (gameState.gamePhase) {
+    case "START":
+      // Wait for input
+      break;
+      
+    case "PLAYING":
+      // Create player if doesn't exist
+      if (!gameState.player) {
+        createPlayer();
+        startFirstWave();
+        gameState.testStartTime = performance.now();
+        gameState.testEnemiesKilled = 0;
+      }
+      
+      // Update entities
+      if (gameState.player) {
+        gameState.player.update(deltaTime);
+      }
+      
+      gameState.enemies.forEach(enemy => enemy.update(deltaTime));
+      gameState.projectiles.forEach(projectile => projectile.update(deltaTime));
+      gameState.bloodParticles.forEach(particle => particle.update(deltaTime));
+      
+      // Update camera
+      updateCamera();
+      
+      // Update wave system
+      updateWaveSystem(deltaTime);
+      
+      // Update style combo timeout
+      const currentTime = performance.now() / 1000;
+      if (currentTime - gameState.lastKillTime > 3.0 && gameState.styleCombo > 0) {
+        gameState.styleCombo = 0;
+      }
+      
+      break;
+      
+    case "PAUSED":
+      // Paused - don't update
+      break;
+      
+    case "GAME_OVER_WIN":
+    case "GAME_OVER_LOSE":
+      // Game over
+      break;
+  }
+  
+  // Render UI
+  renderUI();
+}
+
+// Render game
+function render() {
+  gameState.renderer.render(gameState.scene, gameState.camera);
+}
+
+// Main game loop
+let lastTime = performance.now();
+function gameLoop(currentTime) {
+  requestAnimationFrame(gameLoop);
+  
+  const deltaTime = Math.min((currentTime - lastTime) / 1000, 0.1);
+  lastTime = currentTime;
+  
+  updateGame(deltaTime);
+  render();
+}
+
+// Reset game
+export function resetGame() {
+  // Clear entities
+  if (gameState.player) {
+    gameState.scene.remove(gameState.player.mesh);
+    gameState.player = null;
+  }
+  
+  gameState.enemies.forEach(enemy => {
+    gameState.scene.remove(enemy.mesh);
+  });
+  gameState.enemies = [];
+  
+  gameState.projectiles.forEach(projectile => {
+    gameState.scene.remove(projectile.mesh);
+  });
+  gameState.projectiles = [];
+  
+  gameState.bloodParticles.forEach(particle => {
+    gameState.scene.remove(particle.mesh);
+  });
+  gameState.bloodParticles = [];
+  
+  // Reset game state
+  gameState.score = 0;
+  gameState.currentWave = 0;
+  gameState.enemiesKilledThisWave = 0;
+  gameState.enemiesSpawnedThisWave = 0;
+  gameState.totalEnemiesKilled = 0;
+  gameState.styleCombo = 0;
+  gameState.stylePoints = 0;
+  gameState.currentStyleRank = 'D';
+  gameState.lastKillTime = 0;
+  
+  // Reset camera
+  gameState.cameraAngleX = 0;
+  gameState.cameraAngleY = 0.3;
+  
+  // Reset keys
+  gameState.keys = {};
+}
+
+// Update control mode buttons
+function updateControlModeButtons() {
+  const buttons = document.querySelectorAll('.control-button');
+  buttons.forEach(button => {
+    button.classList.remove('active');
+  });
+  
+  const modeMap = {
+    'HUMAN': 'humanModeBtn',
+    'TEST_1': 'test_1_ModeBtn',
+    'TEST_2': 'test_2_ModeBtn'
+  };
+  
+  const activeButtonId = modeMap[gameState.controlMode];
+  if (activeButtonId) {
+    const activeButton = document.getElementById(activeButtonId);
+    if (activeButton) {
+      activeButton.classList.add('active');
+    }
+  }
+}
+
+// Start game
+init();
+gameLoop(performance.now());
+</file>
+
+<file name="renderer.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+// Setup renderer
+export function setupRenderer() {
+  // Create container
+  const gameContainer = document.createElement('div');
+  gameContainer.id = 'game-container';
+  gameContainer.style.width = CANVAS_WIDTH + 'px';
+  gameContainer.style.height = CANVAS_HEIGHT + 'px';
+  gameContainer.style.position = 'relative';
+  gameContainer.style.overflow = 'hidden';
+  gameContainer.style.margin = '0';
+  gameContainer.style.padding = '0';
+  gameContainer.style.border = 'none';
+  document.body.appendChild(gameContainer);
+  
+  // Set body styles
+  document.body.style.margin = '0';
+  document.body.style.padding = '0';
+  document.body.style.overflow = 'hidden';
+  
+  // Create renderer
+  gameState.renderer = new THREE.WebGLRenderer({ 
+    antialias: true,
+    alpha: false,
+    powerPreference: "high-performance"
+  });
+  
+  gameState.renderer.setSize(CANVAS_WIDTH, CANVAS_HEIGHT);
+  gameState.renderer.shadowMap.enabled = true;
+  gameState.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  gameState.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  
+  gameContainer.appendChild(gameState.renderer.domElement);
+  gameState.gameContainer = gameContainer;
+}
+</file>
+
+<file name="ui.js">
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, STYLE_RANKS } from './globals.js';
+
+let uiCanvas = null;
+let uiContext = null;
+
+// Initialize UI canvas
+export function initUI() {
+  uiCanvas = document.createElement('canvas');
+  uiCanvas.width = CANVAS_WIDTH;
+  uiCanvas.height = CANVAS_HEIGHT;
+  uiCanvas.style.position = 'absolute';
+  uiCanvas.style.top = '0';
+  uiCanvas.style.left = '0';
+  uiCanvas.style.pointerEvents = 'none';
+  uiCanvas.style.zIndex = '1000';
+  uiCanvas.style.margin = '0';
+  uiCanvas.style.padding = '0';
+  
+  if (gameState.gameContainer) {
+    gameState.gameContainer.appendChild(uiCanvas);
+  }
+  
+  uiContext = uiCanvas.getContext('2d');
+}
+
+// Render UI based on game phase
+export function renderUI() {
+  if (!uiContext) return;
+  
+  // Clear canvas
+  uiContext.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  switch (gameState.gamePhase) {
+    case "START":
+      renderStartScreen();
+      break;
+    case "PLAYING":
+      renderHUD();
+      break;
+    case "PAUSED":
+      renderHUD();
+      renderPauseOverlay();
+      break;
+    case "GAME_OVER_WIN":
+      renderGameOverScreen(true);
+      break;
+    case "GAME_OVER_LOSE":
+      renderGameOverScreen(false);
+      break;
+  }
+}
+
+// Start screen
+function renderStartScreen() {
+  // Dark overlay
+  uiContext.fillStyle = 'rgba(20, 0, 0, 0.9)';
+  uiContext.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  // Title
+  uiContext.fillStyle = '#ff0000';
+  uiContext.font = 'bold 48px Arial';
+  uiContext.textAlign = 'center';
+  uiContext.fillText('ULTRAKILL', CANVAS_WIDTH / 2, 100);
+  
+  // Subtitle
+  uiContext.fillStyle = '#ff6666';
+  uiContext.font = 'bold 20px Arial';
+  uiContext.fillText('BLOOD ARENA', CANVAS_WIDTH / 2, 140);
+  
+  // Instructions
+  uiContext.fillStyle = 'white';
+  uiContext.font = '16px Arial';
+  uiContext.textAlign = 'left';
+  
+  const instructions = [
+    'WASD - Move',
+    'SPACE - Jump',
+    'SHIFT - Dash',
+    'Z - Shoot',
+    'ARROWS - Aim',
+    '',
+    'Kill enemies to collect blood and restore health.',
+    'Chain kills for higher style ranks and score!',
+    'Survive all 5 waves to achieve victory.'
+  ];
+  
+  instructions.forEach((text, i) => {
+    uiContext.fillText(text, 180, 180 + i * 25);
+  });
+  
+  // Start prompt
+  uiContext.fillStyle = '#ffff00';
+  uiContext.font = 'bold 24px Arial';
+  uiContext.textAlign = 'center';
+  
+  // Blinking effect
+  if (Math.floor(performance.now() / 500) % 2 === 0) {
+    uiContext.fillText('PRESS ENTER TO START', CANVAS_WIDTH / 2, 370);
+  }
+}
+
+// HUD
+function renderHUD() {
+  // Health bar
+  const healthBarX = 20;
+  const healthBarY = 20;
+  const healthBarWidth = 200;
+  const healthBarHeight = 25;
+  
+  // Background
+  uiContext.fillStyle = 'rgba(100, 0, 0, 0.7)';
+  uiContext.fillRect(healthBarX, healthBarY, healthBarWidth, healthBarHeight);
+  
+  // Health fill
+  if (gameState.player) {
+    const healthRatio = gameState.player.health / gameState.player.maxHealth;
+    const fillWidth = healthBarWidth * healthRatio;
+    
+    // Color based on health
+    let healthColor = 'rgba(0, 255, 0, 0.9)';
+    if (healthRatio < 0.3) healthColor = 'rgba(255, 0, 0, 0.9)';
+    else if (healthRatio < 0.6) healthColor = 'rgba(255, 255, 0, 0.9)';
+    
+    uiContext.fillStyle = healthColor;
+    uiContext.fillRect(healthBarX, healthBarY, fillWidth, healthBarHeight);
+    
+    // Border
+    uiContext.strokeStyle = 'white';
+    uiContext.lineWidth = 2;
+    uiContext.strokeRect(healthBarX, healthBarY, healthBarWidth, healthBarHeight);
+    
+    // Text
+    uiContext.fillStyle = 'white';
+    uiContext.font = 'bold 14px Arial';
+    uiContext.textAlign = 'center';
+    uiContext.fillText(
+      `${Math.ceil(gameState.player.health)} / ${gameState.player.maxHealth}`,
+      healthBarX + healthBarWidth / 2,
+      healthBarY + healthBarHeight / 2 + 5
+    );
+  }
+  
+  // Score
+  uiContext.fillStyle = 'white';
+  uiContext.font = 'bold 18px Arial';
+  uiContext.textAlign = 'left';
+  uiContext.fillText(`SCORE: ${gameState.score}`, 20, 70);
+  
+  // Wave counter
+  uiContext.fillText(`WAVE: ${gameState.currentWave} / ${5}`, 20, 95);
+  
+  // Style rank (large, center-top)
+  uiContext.fillStyle = getStyleRankColor(gameState.currentStyleRank);
+  uiContext.font = 'bold 36px Arial';
+  uiContext.textAlign = 'center';
+  uiContext.fillText(gameState.currentStyleRank, CANVAS_WIDTH / 2, 50);
+  
+  // Combo counter
+  if (gameState.styleCombo > 1) {
+    uiContext.fillStyle = '#ffff00';
+    uiContext.font = 'bold 20px Arial';
+    uiContext.fillText(`x${gameState.styleCombo} COMBO`, CANVAS_WIDTH / 2, 80);
+  }
+  
+  // Enemy counter
+  const enemiesLeft = gameState.enemies.length;
+  uiContext.fillStyle = 'white';
+  uiContext.font = '16px Arial';
+  uiContext.textAlign = 'right';
+  uiContext.fillText(`ENEMIES: ${enemiesLeft}`, CANVAS_WIDTH - 20, 30);
+  
+  // Cooldown indicators
+  if (gameState.player) {
+    // Dash cooldown
+    if (gameState.player.dashCooldown > 0) {
+      const dashProgress = 1 - (gameState.player.dashCooldown / gameState.player.dashCooldownMax);
+      drawCooldownIndicator(CANVAS_WIDTH - 70, CANVAS_HEIGHT - 40, 25, dashProgress, '#00ffff', 'DASH');
+    }
+  }
+}
+
+// Draw cooldown indicator
+function drawCooldownIndicator(x, y, radius, progress, color, label) {
+  // Background circle
+  uiContext.fillStyle = 'rgba(0, 0, 0, 0.5)';
+  uiContext.beginPath();
+  uiContext.arc(x, y, radius, 0, Math.PI * 2);
+  uiContext.fill();
+  
+  // Progress arc
+  uiContext.strokeStyle = color;
+  uiContext.lineWidth = 4;
+  uiContext.beginPath();
+  uiContext.arc(x, y, radius - 2, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * progress);
+  uiContext.stroke();
+  
+  // Label
+  uiContext.fillStyle = 'white';
+  uiContext.font = '10px Arial';
+  uiContext.textAlign = 'center';
+  uiContext.fillText(label, x, y + 35);
+}
+
+// Pause overlay
+function renderPauseOverlay() {
+  uiContext.fillStyle = 'rgba(0, 0, 0, 0.7)';
+  uiContext.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  uiContext.fillStyle = 'white';
+  uiContext.font = 'bold 48px Arial';
+  uiContext.textAlign = 'center';
+  uiContext.fillText('PAUSED', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 20);
+  
+  uiContext.font = '20px Arial';
+  uiContext.fillText('Press ESC to Resume', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 30);
+  uiContext.fillText('Press R to Restart', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 60);
+}
+
+// Game over screen
+function renderGameOverScreen(won) {
+  uiContext.fillStyle = 'rgba(0, 0, 0, 0.85)';
+  uiContext.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  // Title
+  uiContext.fillStyle = won ? '#00ff00' : '#ff0000';
+  uiContext.font = 'bold 56px Arial';
+  uiContext.textAlign = 'center';
+  uiContext.fillText(won ? 'VICTORY' : 'DEATH', CANVAS_WIDTH / 2, 120);
+  
+  // Final style rank
+  uiContext.fillStyle = getStyleRankColor(gameState.currentStyleRank);
+  uiContext.font = 'bold 48px Arial';
+  uiContext.fillText(`RANK: ${gameState.currentStyleRank}`, CANVAS_WIDTH / 2, 180);
+  
+  // Stats
+  uiContext.fillStyle = 'white';
+  uiContext.font = '20px Arial';
+  uiContext.fillText(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, 220);
+  uiContext.fillText(`Enemies Killed: ${gameState.totalEnemiesKilled}`, CANVAS_WIDTH / 2, 250);
+  uiContext.fillText(`Max Combo: ${gameState.styleCombo}`, CANVAS_WIDTH / 2, 280);
+  
+  // Restart prompt
+  uiContext.fillStyle = '#ffff00';
+  uiContext.font = 'bold 24px Arial';
+  
+  if (Math.floor(performance.now() / 500) % 2 === 0) {
+    uiContext.fillText('Press R to Restart', CANVAS_WIDTH / 2, 340);
+  }
+}
+
+// Get color for style rank
+function getStyleRankColor(rank) {
+  switch (rank) {
+    case 'ULTRAKILL': return '#ff00ff';
+    case 'SSS': return '#ff0000';
+    case 'SS': return '#ff4444';
+    case 'S': return '#ff8800';
+    case 'A': return '#ffff00';
+    case 'B': return '#88ff00';
+    case 'C': return '#00ff88';
+    case 'D': return '#888888';
+    default: return '#ffffff';
+  }
+}
+</file>
+
+<file name="lighting.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState } from './globals.js';
+
+// Setup lighting
+export function setupLighting() {
+  // Ambient light (base illumination)
+  gameState.ambientLight = new THREE.AmbientLight(0x330033, 0.4);
+  gameState.scene.add(gameState.ambientLight);
+  
+  // Directional light (main light source)
+  gameState.directionalLight = new THREE.DirectionalLight(0xff6666, 1.0);
+  gameState.directionalLight.position.set(10, 20, 10);
+  gameState.directionalLight.castShadow = true;
+  
+  // Configure shadow map
+  gameState.directionalLight.shadow.mapSize.width = 2048;
+  gameState.directionalLight.shadow.mapSize.height = 2048;
+  gameState.directionalLight.shadow.camera.near = 0.5;
+  gameState.directionalLight.shadow.camera.far = 50;
+  gameState.directionalLight.shadow.camera.left = -30;
+  gameState.directionalLight.shadow.camera.right = 30;
+  gameState.directionalLight.shadow.camera.top = 30;
+  gameState.directionalLight.shadow.camera.bottom = -30;
+  
+  gameState.scene.add(gameState.directionalLight);
+  
+  // Add atmospheric red point light
+  const pointLight = new THREE.PointLight(0xff0000, 1.0, 50);
+  pointLight.position.set(0, 10, 0);
+  gameState.scene.add(pointLight);
+  gameState.lights.push(pointLight);
+  
+  // Add blue accent light for player
+  const playerLight = new THREE.PointLight(0x00ccff, 0.8, 20);
+  playerLight.position.set(0, 5, 0);
+  gameState.scene.add(playerLight);
+  gameState.lights.push(playerLight);
+}
+</file>
+
+<file name="entities.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, PLAYER_SPEED, PLAYER_DASH_SPEED, PLAYER_JUMP_POWER, ARENA_SIZE, PROJECTILE_SPEED, ENEMY_SPEED, BLOOD_PARTICLE_LIFETIME, logPlayerInfo } from './globals.js';
+
+// Player class
+export class Player {
+  constructor(x, y, z) {
+    // Create player mesh (robotic cube design)
+    const geometry = new THREE.BoxGeometry(0.8, 1.6, 0.8);
+    const material = new THREE.MeshStandardMaterial({ 
+      color: 0x00ccff,
+      metalness: 0.8,
+      roughness: 0.2,
+      emissive: 0x0088cc,
+      emissiveIntensity: 0.3
+    });
+    this.mesh = new THREE.Mesh(geometry, material);
+    this.mesh.position.set(x, y, z);
+    this.mesh.castShadow = true;
+    this.mesh.receiveShadow = true;
+    
+    // Add a "head" to indicate facing direction
+    const headGeometry = new THREE.BoxGeometry(0.5, 0.5, 0.6);
+    const headMaterial = new THREE.MeshStandardMaterial({ 
+      color: 0x00ffff,
+      metalness: 0.9,
+      roughness: 0.1,
+      emissive: 0x00ccff,
+      emissiveIntensity: 0.5
+    });
+    this.headMesh = new THREE.Mesh(headGeometry, headMaterial);
+    this.headMesh.position.set(0, 0.5, 0.2);
+    this.headMesh.castShadow = true;
+    this.mesh.add(this.headMesh);
+    
+    // Physics properties
+    this.velocity = new THREE.Vector3(0, 0, 0);
+    this.acceleration = new THREE.Vector3(0, 0, 0);
+    this.speed = PLAYER_SPEED;
+    this.jumpPower = PLAYER_JUMP_POWER;
+    this.dashPower = PLAYER_DASH_SPEED;
+    this.onGround = false;
+    
+    // Combat properties
+    this.health = 100;
+    this.maxHealth = 100;
+    this.shootCooldown = 0;
+    this.shootCooldownMax = 0.15; // Fast fire rate
+    this.dashCooldown = 0;
+    this.dashCooldownMax = 0.8;
+    this.isDashing = false;
+    this.dashDuration = 0;
+    this.dashDurationMax = 0.15;
+    
+    // Rotation
+    this.rotation = 0;
+    
+    // State tracking
+    this.lastLogPosition = new THREE.Vector3().copy(this.mesh.position);
+    
+    gameState.scene.add(this.mesh);
+  }
+  
+  update(deltaTime) {
+    // Update cooldowns
+    if (this.shootCooldown > 0) this.shootCooldown -= deltaTime;
+    if (this.dashCooldown > 0) this.dashCooldown -= deltaTime;
+    
+    // Handle dash
+    if (this.isDashing) {
+      this.dashDuration -= deltaTime;
+      if (this.dashDuration <= 0) {
+        this.isDashing = false;
+      }
+    }
+    
+    // Apply gravity
+    if (!this.onGround && !this.isDashing) {
+      this.acceleration.add(gameState.gravity);
+    }
+    
+    // Update velocity
+    this.velocity.add(this.acceleration.clone().multiplyScalar(deltaTime));
+    
+    // Apply friction when on ground
+    if (this.onGround) {
+      this.velocity.x *= 0.85;
+      this.velocity.z *= 0.85;
+    } else {
+      this.velocity.multiplyScalar(0.98);
+    }
+    
+    // Clamp velocity
+    const maxVelocity = this.isDashing ? 2.0 : 0.5;
+    if (this.velocity.length() > maxVelocity) {
+      this.velocity.normalize().multiplyScalar(maxVelocity);
+    }
+    
+    // Update position
+    this.mesh.position.add(this.velocity.clone().multiplyScalar(deltaTime * 60));
+    
+    // Constrain to arena
+    const halfArena = ARENA_SIZE / 2 - 1;
+    this.mesh.position.x = Math.max(-halfArena, Math.min(halfArena, this.mesh.position.x));
+    this.mesh.position.z = Math.max(-halfArena, Math.min(halfArena, this.mesh.position.z));
+    
+    // Check ground collision
+    this.checkGroundCollision();
+    
+    // Update rotation to face camera direction
+    this.mesh.rotation.y = gameState.cameraAngleX;
+    
+    // Reset acceleration
+    this.acceleration.set(0, 0, 0);
+    
+    // Log position if moved significantly
+    if (this.mesh.position.distanceTo(this.lastLogPosition) > 0.5) {
+      logPlayerInfo();
+      this.lastLogPosition.copy(this.mesh.position);
+    }
+  }
+  
+  checkGroundCollision() {
+    const groundY = 0.8; // Half height of player
+    if (this.mesh.position.y <= groundY) {
+      this.mesh.position.y = groundY;
+      this.velocity.y = 0;
+      this.onGround = true;
+    } else {
+      this.onGround = false;
+    }
+  }
+  
+  move(direction) {
+    if (this.isDashing) return;
+    
+    // Convert direction to world space based on camera rotation
+    const forward = new THREE.Vector3(0, 0, -1);
+    const right = new THREE.Vector3(1, 0, 0);
+    
+    forward.applyAxisAngle(new THREE.Vector3(0, 1, 0), gameState.cameraAngleX);
+    right.applyAxisAngle(new THREE.Vector3(0, 1, 0), gameState.cameraAngleX);
+    
+    const movement = new THREE.Vector3();
+    if (direction.z !== 0) movement.add(forward.multiplyScalar(direction.z));
+    if (direction.x !== 0) movement.add(right.multiplyScalar(direction.x));
+    
+    movement.normalize().multiplyScalar(this.speed);
+    this.acceleration.add(movement);
+  }
+  
+  jump() {
+    if (this.onGround) {
+      this.velocity.y = this.jumpPower;
+      this.onGround = false;
+    }
+  }
+  
+  dash() {
+    if (this.dashCooldown > 0) return;
+    
+    // Dash in current movement direction
+    const dashDirection = new THREE.Vector3();
+    
+    const forward = new THREE.Vector3(0, 0, -1);
+    const right = new THREE.Vector3(1, 0, 0);
+    
+    forward.applyAxisAngle(new THREE.Vector3(0, 1, 0), gameState.cameraAngleX);
+    right.applyAxisAngle(new THREE.Vector3(0, 1, 0), gameState.cameraAngleX);
+    
+    // Use current acceleration direction or forward by default
+    if (this.acceleration.length() > 0) {
+      dashDirection.copy(this.acceleration).normalize();
+    } else {
+      dashDirection.copy(forward);
+    }
+    
+    this.velocity.add(dashDirection.multiplyScalar(this.dashPower));
+    this.isDashing = true;
+    this.dashDuration = this.dashDurationMax;
+    this.dashCooldown = this.dashCooldownMax;
+  }
+  
+  shoot() {
+    if (this.shootCooldown > 0) return;
+    
+    // Create projectile in facing direction
+    const direction = new THREE.Vector3(0, 0, -1);
+    direction.applyAxisAngle(new THREE.Vector3(0, 1, 0), gameState.cameraAngleX);
+    
+    // Apply camera vertical angle
+    direction.y = Math.sin(gameState.cameraAngleY);
+    direction.normalize();
+    
+    const spawnPos = this.mesh.position.clone();
+    spawnPos.y += 0.5; // Shoot from center mass
+    spawnPos.add(direction.clone().multiplyScalar(1)); // Offset forward
+    
+    const projectile = new Projectile(spawnPos, direction);
+    gameState.projectiles.push(projectile);
+    
+    this.shootCooldown = this.shootCooldownMax;
+  }
+  
+  takeDamage(amount) {
+    this.health = Math.max(0, this.health - amount);
+    
+    // Flash effect
+    this.mesh.material.emissiveIntensity = 1.0;
+    setTimeout(() => {
+      if (this.mesh.material) {
+        this.mesh.material.emissiveIntensity = 0.3;
+      }
+    }, 100);
+    
+    if (this.health <= 0) {
+      this.die();
+    }
+  }
+  
+  heal(amount) {
+    this.health = Math.min(this.maxHealth, this.health + amount);
+  }
+  
+  die() {
+    gameState.gamePhase = "GAME_OVER_LOSE";
+  }
+}
+
+// Enemy class
+export class Enemy {
+  constructor(x, y, z) {
+    // Create enemy mesh (demonic angular design)
+    const geometry = new THREE.ConeGeometry(0.6, 1.5, 4);
+    const material = new THREE.MeshStandardMaterial({ 
+      color: 0xff0000,
+      metalness: 0.3,
+      roughness: 0.7,
+      emissive: 0xff0000,
+      emissiveIntensity: 0.5
+    });
+    this.mesh = new THREE.Mesh(geometry, material);
+    this.mesh.position.set(x, y, z);
+    this.mesh.rotation.x = Math.PI; // Point down
+    this.mesh.castShadow = true;
+    this.mesh.receiveShadow = true;
+    
+    // Add glowing "eyes"
+    const eyeGeometry = new THREE.SphereGeometry(0.1, 8, 8);
+    const eyeMaterial = new THREE.MeshBasicMaterial({ color: 0xffff00 });
+    this.eye1 = new THREE.Mesh(eyeGeometry, eyeMaterial);
+    this.eye1.position.set(-0.2, 0.3, 0.3);
+    this.mesh.add(this.eye1);
+    
+    this.eye2 = new THREE.Mesh(eyeGeometry, eyeMaterial);
+    this.eye2.position.set(0.2, 0.3, 0.3);
+    this.mesh.add(this.eye2);
+    
+    // Physics
+    this.velocity = new THREE.Vector3(0, 0, 0);
+    this.speed = ENEMY_SPEED;
+    
+    // Combat
+    this.health = 50;
+    this.maxHealth = 50;
+    this.damage = 15;
+    this.attackRange = 2.0;
+    this.attackCooldown = 0;
+    this.attackCooldownMax = 1.5;
+    
+    // Behavior
+    this.state = 'chase'; // chase, attack
+    this.aggroRange = 50; // Always aggro
+    
+    // Animation
+    this.floatOffset = Math.random() * Math.PI * 2;
+    this.floatSpeed = 0.05;
+    this.baseY = y;
+    
+    gameState.scene.add(this.mesh);
+  }
+  
+  update(deltaTime) {
+    if (!gameState.player) return;
+    
+    // Update attack cooldown
+    if (this.attackCooldown > 0) this.attackCooldown -= deltaTime;
+    
+    // Floating animation
+    this.floatOffset += this.floatSpeed;
+    this.mesh.position.y = this.baseY + Math.sin(this.floatOffset) * 0.3;
+    
+    // Rotate to face player
+    const direction = new THREE.Vector3()
+      .subVectors(gameState.player.mesh.position, this.mesh.position);
+    const angle = Math.atan2(direction.x, direction.z);
+    this.mesh.rotation.y = angle;
+    
+    const distanceToPlayer = this.mesh.position.distanceTo(gameState.player.mesh.position);
+    
+    // AI behavior
+    if (distanceToPlayer < this.attackRange) {
+      this.state = 'attack';
+      this.attack();
+    } else {
+      this.state = 'chase';
+      this.chase();
+    }
+    
+    // Update position
+    this.mesh.position.add(this.velocity.clone().multiplyScalar(deltaTime * 60));
+    
+    // Apply friction
+    this.velocity.multiplyScalar(0.9);
+  }
+  
+  chase() {
+    const direction = new THREE.Vector3()
+      .subVectors(gameState.player.mesh.position, this.mesh.position)
+      .normalize();
+    
+    this.velocity.add(direction.multiplyScalar(this.speed * 0.1));
+  }
+  
+  attack() {
+    if (this.attackCooldown > 0) return;
+    
+    if (gameState.player) {
+      gameState.player.takeDamage(this.damage);
+      this.attackCooldown = this.attackCooldownMax;
+      
+      // Visual feedback
+      this.mesh.material.emissiveIntensity = 1.0;
+      setTimeout(() => {
+        if (this.mesh.material) {
+          this.mesh.material.emissiveIntensity = 0.5;
+        }
+      }, 100);
+    }
+  }
+  
+  takeDamage(amount) {
+    this.health -= amount;
+    
+    // Flash white
+    this.mesh.material.emissive.setHex(0xffffff);
+    this.mesh.material.emissiveIntensity = 1.0;
+    setTimeout(() => {
+      if (this.mesh.material) {
+        this.mesh.material.emissive.setHex(0xff0000);
+        this.mesh.material.emissiveIntensity = 0.5;
+      }
+    }, 50);
+    
+    if (this.health <= 0) {
+      this.die();
+    }
+  }
+  
+  die() {
+    // Spawn blood particles
+    this.spawnBlood();
+    
+    // Remove from scene
+    gameState.scene.remove(this.mesh);
+    
+    // Remove from enemies array
+    const index = gameState.enemies.indexOf(this);
+    if (index > -1) {
+      gameState.enemies.splice(index, 1);
+    }
+    
+    // Update game state
+    gameState.enemiesKilledThisWave++;
+    gameState.totalEnemiesKilled++;
+    gameState.testEnemiesKilled++;
+    
+    // Update style system
+    updateStyleSystem();
+  }
+  
+  spawnBlood() {
+    // Spawn multiple blood particles
+    const particleCount = 15;
+    for (let i = 0; i < particleCount; i++) {
+      const particle = new BloodParticle(
+        this.mesh.position.x + (Math.random() - 0.5) * 2,
+        this.mesh.position.y + (Math.random() - 0.5) * 2,
+        this.mesh.position.z + (Math.random() - 0.5) * 2
+      );
+      gameState.bloodParticles.push(particle);
+    }
+  }
+}
+
+// Update style system
+function updateStyleSystem() {
+  const currentTime = performance.now() / 1000;
+  
+  // Check if combo should reset
+  if (currentTime - gameState.lastKillTime > 3.0) {
+    gameState.styleCombo = 0;
+  }
+  
+  // Increment combo
+  gameState.styleCombo++;
+  gameState.lastKillTime = currentTime;
+  
+  // Calculate style points (combo multiplier)
+  const comboMultiplier = Math.min(gameState.styleCombo, 10);
+  const basePoints = 100;
+  const pointsEarned = basePoints * comboMultiplier;
+  
+  gameState.stylePoints += pointsEarned;
+  gameState.score += pointsEarned;
+  
+  // Update style rank
+  updateStyleRank();
+}
+
+// Update style rank based on points
+function updateStyleRank() {
+  const points = gameState.stylePoints;
+  let rank = 'D';
+  
+  for (let i = 7; i >= 0; i--) {
+    if (points >= gameState.styleThresholds[i]) {
+      rank = gameState.styleRanks[i];
+      break;
+    }
+  }
+  
+  gameState.currentStyleRank = rank;
+}
+
+// Projectile class
+export class Projectile {
+  constructor(position, direction) {
+    // Create projectile mesh (glowing bullet)
+    const geometry = new THREE.SphereGeometry(0.15, 8, 8);
+    const material = new THREE.MeshBasicMaterial({ 
+      color: 0xffff00,
+      transparent: true,
+      opacity: 0.9
+    });
+    this.mesh = new THREE.Mesh(geometry, material);
+    this.mesh.position.copy(position);
+    
+    // Add glow effect
+    const glowGeometry = new THREE.SphereGeometry(0.25, 8, 8);
+    const glowMaterial = new THREE.MeshBasicMaterial({ 
+      color: 0xffff00,
+      transparent: true,
+      opacity: 0.3
+    });
+    this.glowMesh = new THREE.Mesh(glowGeometry, glowMaterial);
+    this.mesh.add(this.glowMesh);
+    
+    this.velocity = direction.normalize().multiplyScalar(PROJECTILE_SPEED);
+    this.damage = 25;
+    this.lifetime = 3.0;
+    this.age = 0;
+    
+    gameState.scene.add(this.mesh);
+  }
+  
+  update(deltaTime) {
+    // Update position
+    this.mesh.position.add(this.velocity.clone().multiplyScalar(deltaTime * 60));
+    
+    // Update age
+    this.age += deltaTime;
+    
+    // Fade out as lifetime expires
+    const fadeStart = this.lifetime * 0.7;
+    if (this.age > fadeStart) {
+      const fadeProgress = (this.age - fadeStart) / (this.lifetime - fadeStart);
+      this.mesh.material.opacity = 0.9 * (1 - fadeProgress);
+      this.glowMesh.material.opacity = 0.3 * (1 - fadeProgress);
+    }
+    
+    // Remove if expired
+    if (this.age >= this.lifetime) {
+      this.destroy();
+      return;
+    }
+    
+    // Check collision with enemies
+    for (const enemy of gameState.enemies) {
+      const distance = this.mesh.position.distanceTo(enemy.mesh.position);
+      if (distance < 0.8) {
+        enemy.takeDamage(this.damage);
+        this.destroy();
+        return;
+      }
+    }
+  }
+  
+  destroy() {
+    gameState.scene.remove(this.mesh);
+    const index = gameState.projectiles.indexOf(this);
+    if (index > -1) {
+      gameState.projectiles.splice(index, 1);
+    }
+  }
+}
+
+// Blood Particle class
+export class BloodParticle {
+  constructor(x, y, z) {
+    const geometry = new THREE.SphereGeometry(0.1, 6, 6);
+    const material = new THREE.MeshBasicMaterial({ 
+      color: 0xff0000,
+      transparent: true,
+      opacity: 0.9
+    });
+    this.mesh = new THREE.Mesh(geometry, material);
+    this.mesh.position.set(x, y, z);
+    
+    // Physics
+    this.velocity = new THREE.Vector3(
+      (Math.random() - 0.5) * 0.3,
+      Math.random() * 0.2,
+      (Math.random() - 0.5) * 0.3
+    );
+    
+    this.lifetime = BLOOD_PARTICLE_LIFETIME;
+    this.age = 0;
+    this.collected = false;
+    
+    gameState.scene.add(this.mesh);
+  }
+  
+  update(deltaTime) {
+    if (this.collected) return;
+    
+    // Apply gravity
+    this.velocity.add(gameState.gravity.clone().multiplyScalar(deltaTime * 60));
+    
+    // Update position
+    this.mesh.position.add(this.velocity.clone().multiplyScalar(deltaTime * 60));
+    
+    // Ground collision
+    if (this.mesh.position.y < 0.1) {
+      this.mesh.position.y = 0.1;
+      this.velocity.y = 0;
+      this.velocity.x *= 0.8;
+      this.velocity.z *= 0.8;
+    }
+    
+    // Update age
+    this.age += deltaTime;
+    
+    // Fade out
+    const fadeStart = this.lifetime * 0.5;
+    if (this.age > fadeStart) {
+      const fadeProgress = (this.age - fadeStart) / (this.lifetime - fadeStart);
+      this.mesh.material.opacity = 0.9 * (1 - fadeProgress);
+    }
+    
+    // Check collection by player
+    if (gameState.player) {
+      const distance = this.mesh.position.distanceTo(gameState.player.mesh.position);
+      if (distance < 1.5) {
+        this.collect();
+      }
+    }
+    
+    // Remove if expired
+    if (this.age >= this.lifetime) {
+      this.destroy();
+    }
+  }
+  
+  collect() {
+    if (this.collected) return;
+    this.collected = true;
+    
+    // Heal player
+    if (gameState.player) {
+      gameState.player.heal(5);
+    }
+    
+    this.destroy();
+  }
+  
+  destroy() {
+    gameState.scene.remove(this.mesh);
+    const index = gameState.bloodParticles.indexOf(this);
+    if (index > -1) {
+      gameState.bloodParticles.splice(index, 1);
+    }
+  }
+}
+
+// Platform/Arena floor
+export class Platform {
+  constructor(x, y, z, width, height, depth) {
+    const geometry = new THREE.BoxGeometry(width, height, depth);
+    
+    // Create checkered pattern texture
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 256;
+    const ctx = canvas.getContext('2d');
+    
+    const tileSize = 32;
+    for (let i = 0; i < 8; i++) {
+      for (let j = 0; j < 8; j++) {
+        ctx.fillStyle = (i + j) % 2 === 0 ? '#333333' : '#444444';
+        ctx.fillRect(i * tileSize, j * tileSize, tileSize, tileSize);
+      }
+    }
+    
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.repeat.set(width / 2, depth / 2);
+    
+    const material = new THREE.MeshStandardMaterial({ 
+      map: texture,
+      roughness: 0.8,
+      metalness: 0.2
+    });
+    
+    this.mesh = new THREE.Mesh(geometry, material);
+    this.mesh.position.set(x, y, z);
+    this.mesh.receiveShadow = true;
+    
+    gameState.scene.add(this.mesh);
+  }
+}
+</file>
+
+<file name="camera.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+// Setup camera
+export function setupCamera() {
+  gameState.camera = new THREE.PerspectiveCamera(
+    75,
+    CANVAS_WIDTH / CANVAS_HEIGHT,
+    0.1,
+    1000
+  );
+  
+  gameState.camera.position.set(0, 5, 10);
+  gameState.camera.lookAt(0, 0, 0);
+}
+
+// Update camera position and rotation
+export function updateCamera() {
+  if (!gameState.player) return;
+  
+  // Calculate camera position based on player position and angles
+  const distance = gameState.cameraDistance;
+  const height = gameState.cameraHeight;
+  
+  const offsetX = Math.sin(gameState.cameraAngleX) * distance * Math.cos(gameState.cameraAngleY);
+  const offsetZ = Math.cos(gameState.cameraAngleX) * distance * Math.cos(gameState.cameraAngleY);
+  const offsetY = height + Math.sin(gameState.cameraAngleY) * distance;
+  
+  const targetPosition = new THREE.Vector3(
+    gameState.player.mesh.position.x + offsetX,
+    gameState.player.mesh.position.y + offsetY,
+    gameState.player.mesh.position.z + offsetZ
+  );
+  
+  // Smooth camera movement
+  gameState.camera.position.lerp(targetPosition, 0.1);
+  
+  // Look at player
+  const lookAtTarget = gameState.player.mesh.position.clone();
+  lookAtTarget.y += 0.5;
+  gameState.camera.lookAt(lookAtTarget);
+}
+
+// Handle camera rotation input
+export function rotateCameraHorizontal(direction) {
+  gameState.cameraAngleX += direction * 0.05;
+}
+
+export function rotateCameraVertical(direction) {
+  gameState.cameraAngleY += direction * 0.03;
+  gameState.cameraAngleY = Math.max(-Math.PI / 3, Math.min(Math.PI / 3, gameState.cameraAngleY));
+}
+</file>
+
+<file name="input.js">
+import { gameState, logInput, logGameInfo } from './globals.js';
+import { rotateCameraHorizontal, rotateCameraVertical } from './camera.js';
+import { resetGame } from './game.js';
+
+// Initialize input handlers
+export function initInput() {
+  document.addEventListener('keydown', handleKeyDown);
+  document.addEventListener('keyup', handleKeyUp);
+}
+
+// Handle key down
+function handleKeyDown(event) {
+  const keyCode = event.keyCode;
+  const key = event.key;
+  
+  logInput('keydown', key, keyCode);
+  
+  gameState.keys[keyCode] = true;
+  
+  // Phase controls
+  if (keyCode === 13 && gameState.gamePhase === "START") { // ENTER
+    gameState.gamePhase = "PLAYING";
+    logGameInfo("PLAYING", {});
+  }
+  
+  if (keyCode === 27) { // ESC
+    if (gameState.gamePhase === "PLAYING") {
+      gameState.gamePhase = "PAUSED";
+      logGameInfo("PAUSED", {});
+    } else if (gameState.gamePhase === "PAUSED") {
+      gameState.gamePhase = "PLAYING";
+      logGameInfo("PLAYING", {});
+    }
+  }
+  
+  if (keyCode === 82) { // R - Restart
+    if (gameState.gamePhase === "GAME_OVER_WIN" || 
+        gameState.gamePhase === "GAME_OVER_LOSE" ||
+        gameState.gamePhase === "PAUSED") {
+      resetGame();
+      gameState.gamePhase = "START";
+      logGameInfo("START", {});
+    }
+  }
+}
+
+// Handle key up
+function handleKeyUp(event) {
+  const keyCode = event.keyCode;
+  const key = event.key;
+  
+  logInput('keyup', key, keyCode);
+  
+  gameState.keys[keyCode] = false;
+}
+
+// Process player input
+export function processPlayerInput() {
+  if (gameState.gamePhase !== "PLAYING" || !gameState.player) return;
+  
+  // Movement (WASD)
+  const movement = { x: 0, z: 0 };
+  
+  if (gameState.keys[87] || gameState.keys[38]) { // W or Up Arrow
+    movement.z = -1;
+  }
+  if (gameState.keys[83] || gameState.keys[40]) { // S or Down Arrow
+    movement.z = 1;
+  }
+  if (gameState.keys[65]) { // A
+    movement.x = -1;
+  }
+  if (gameState.keys[68]) { // D
+    movement.x = 1;
+  }
+  
+  if (movement.x !== 0 || movement.z !== 0) {
+    gameState.player.move(movement);
+  }
+  
+  // Jump (Space)
+  if (gameState.keys[32]) {
+    gameState.player.jump();
+  }
+  
+  // Dash (Shift)
+  if (gameState.keys[16]) {
+    gameState.player.dash();
+  }
+  
+  // Shoot (Z)
+  if (gameState.keys[90]) {
+    gameState.player.shoot();
+  }
+  
+  // Camera rotation (Arrow keys)
+  if (gameState.keys[37]) { // Left Arrow
+    rotateCameraHorizontal(1);
+  }
+  if (gameState.keys[39]) { // Right Arrow
+    rotateCameraHorizontal(-1);
+  }
+  if (gameState.keys[38] && !gameState.keys[87]) { // Up Arrow (only if not W)
+    rotateCameraVertical(1);
+  }
+  if (gameState.keys[40] && !gameState.keys[83]) { // Down Arrow (only if not S)
+    rotateCameraVertical(-1);
+  }
+}
+
+// AI control for testing
+export function processAIInput() {
+  if (gameState.gamePhase !== "PLAYING" || !gameState.player) return;
+  
+  switch (gameState.controlMode) {
+    case "TEST_1":
+      testMode1();
+      break;
+    case "TEST_2":
+      testMode2();
+      break;
+  }
+}
+
+// Test mode 1: Basic movement and shooting
+function testMode1() {
+  const time = (performance.now() - gameState.testStartTime) / 1000;
+  
+  // Circular movement
+  const angle = time * 0.5;
+  const movement = {
+    x: Math.cos(angle),
+    z: Math.sin(angle)
+  };
+  
+  gameState.player.move(movement);
+  
+  // Periodic jump
+  if (Math.floor(time) % 3 === 0 && time % 1 < 0.1) {
+    gameState.player.jump();
+  }
+  
+  // Periodic dash
+  if (Math.floor(time) % 4 === 0 && time % 1 < 0.1) {
+    gameState.player.dash();
+  }
+  
+  // Shoot if enemies nearby
+  if (gameState.enemies.length > 0) {
+    const nearestEnemy = findNearestEnemy();
+    if (nearestEnemy) {
+      aimAtTarget(nearestEnemy.mesh.position);
+      gameState.player.shoot();
+    }
+  }
+}
+
+// Test mode 2: Aggressive combat
+function testMode2() {
+  if (gameState.enemies.length === 0) return;
+  
+  const nearestEnemy = findNearestEnemy();
+  if (!nearestEnemy) return;
+  
+  // Move toward enemy
+  const direction = new THREE.Vector3()
+    .subVectors(nearestEnemy.mesh.position, gameState.player.mesh.position)
+    .normalize();
+  
+  gameState.player.move({ x: direction.x, z: direction.z });
+  
+  // Aim at enemy
+  aimAtTarget(nearestEnemy.mesh.position);
+  
+  // Shoot constantly
+  gameState.player.shoot();
+  
+  // Dash toward enemy if cooldown ready
+  if (gameState.player.dashCooldown <= 0) {
+    gameState.player.dash();
+  }
+}
+
+// Find nearest enemy
+function findNearestEnemy() {
+  if (!gameState.player || gameState.enemies.length === 0) return null;
+  
+  let nearest = null;
+  let minDistance = Infinity;
+  
+  for (const enemy of gameState.enemies) {
+    const distance = gameState.player.mesh.position.distanceTo(enemy.mesh.position);
+    if (distance < minDistance) {
+      minDistance = distance;
+      nearest = enemy;
+    }
+  }
+  
+  return nearest;
+}
+
+// Aim camera at target
+function aimAtTarget(targetPos) {
+  const direction = new THREE.Vector3()
+    .subVectors(targetPos, gameState.player.mesh.position);
+  
+  const horizontalAngle = Math.atan2(direction.x, direction.z);
+  const horizontalDistance = Math.sqrt(direction.x * direction.x + direction.z * direction.z);
+  const verticalAngle = Math.atan2(direction.y, horizontalDistance);
+  
+  gameState.cameraAngleX = horizontalAngle;
+  gameState.cameraAngleY = verticalAngle;
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

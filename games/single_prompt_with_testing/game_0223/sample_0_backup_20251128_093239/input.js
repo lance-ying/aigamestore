@@ -1,0 +1,201 @@
+// input.js - Input handling
+
+import { gameState, PLAYER_SPRINT_SPEED, PLAYER_SPEED } from './globals.js';
+import { initGame, resetGame, nextLevel } from './game.js';
+import { distance3D } from './utils.js';
+
+// Key codes
+const KEY_LEFT = 37;
+const KEY_UP = 38;
+const KEY_RIGHT = 39;
+const KEY_DOWN = 40;
+const KEY_SPACE = 32;
+const KEY_SHIFT = 16;
+const KEY_Z = 90;
+const KEY_X = 88;
+const KEY_ENTER = 13;
+const KEY_ESC = 27;
+const KEY_R = 82;
+
+export function handleKeyDown(event) {
+  // Prevent default browser behavior for game keys (especially arrow keys)
+  event.preventDefault();
+  
+  gameState.keys[event.keyCode] = true;
+  
+  // Log input
+  window.logs.inputs.push({
+    input_type: 'keydown',
+    data: { key: event.key, keyCode: event.keyCode },
+    framecount: gameState.frameCount,
+    timestamp: Date.now()
+  });
+  
+  // Phase controls
+  if (event.keyCode === KEY_ENTER) {
+    if (gameState.gamePhase === "START") {
+      gameState.gamePhase = "PLAYING";
+      initGame();
+      gameState.gameStartTime = Date.now();
+      window.logs.game_info.push({
+        data: { gamePhase: "PLAYING" },
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+      });
+    } else if (gameState.gamePhase === "LEVEL_COMPLETE") {
+      nextLevel();
+      window.logs.game_info.push({
+        data: { gamePhase: "PLAYING", level: gameState.currentLevel },
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  }
+  
+  if (event.keyCode === KEY_ESC) {
+    if (gameState.gamePhase === "PLAYING") {
+      gameState.gamePhase = "PAUSED";
+      window.logs.game_info.push({
+        data: { gamePhase: "PAUSED" },
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+      });
+    } else if (gameState.gamePhase === "PAUSED") {
+      gameState.gamePhase = "PLAYING";
+      window.logs.game_info.push({
+        data: { gamePhase: "PLAYING" },
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  }
+  
+  if (event.keyCode === KEY_R) {
+    if (gameState.gamePhase === "GAME_OVER_WIN" || 
+        gameState.gamePhase === "GAME_OVER_LOSE") {
+      resetGame();
+      gameState.gamePhase = "START";
+      window.logs.game_info.push({
+        data: { gamePhase: "START" },
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  }
+  
+  // Gameplay controls (only during PLAYING)
+  if (gameState.gamePhase === "PLAYING") {
+    if (event.keyCode === KEY_Z) {
+      toggleFlashlight();
+    }
+  }
+}
+
+export function handleKeyUp(event) {
+  // Prevent default browser behavior for game keys (especially arrow keys)
+  event.preventDefault();
+  
+  gameState.keys[event.keyCode] = false;
+  
+  // Log input
+  window.logs.inputs.push({
+    input_type: 'keyup',
+    data: { key: event.key, keyCode: event.keyCode },
+    framecount: gameState.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+export function updatePlayerInput() {
+  if (gameState.gamePhase !== "PLAYING") return;
+  if (!gameState.player) return;
+  
+  // Check if sprinting (Shift key)
+  gameState.isSprinting = isKeyPressed(KEY_SHIFT);
+  
+  // Movement
+  if (isKeyPressed(KEY_UP)) {
+    gameState.player.moveForward(gameState.isSprinting);
+  }
+  if (isKeyPressed(KEY_DOWN)) {
+    gameState.player.moveBackward(gameState.isSprinting);
+  }
+  if (isKeyPressed(KEY_LEFT)) {
+    gameState.player.turnLeft();
+  }
+  if (isKeyPressed(KEY_RIGHT)) {
+    gameState.player.turnRight();
+  }
+  
+  // Flashlight shake (X key)
+  if (isKeyPressed(KEY_X)) {
+    shakeFlashlight();
+  }
+  
+  // Interact with Tattletail
+  if (isKeyPressed(KEY_SPACE)) {
+    interactWithTattletail();
+  }
+}
+
+function isKeyPressed(keyCode) {
+  return gameState.keys[keyCode] === true;
+}
+
+function toggleFlashlight() {
+  gameState.flashlightOn = !gameState.flashlightOn;
+  if (gameState.flashlightOn) {
+    gameState.noiseLevel += 0.5;
+  }
+}
+
+function shakeFlashlight() {
+  const now = Date.now();
+  if (now - gameState.lastShakeTime > 100) { // Limit shake rate
+    gameState.flashlightBattery = Math.min(100, gameState.flashlightBattery + 2);
+    gameState.noiseLevel += 1.2;
+    gameState.lastShakeTime = now;
+  }
+}
+
+function interactWithTattletail() {
+  if (!gameState.player || !gameState.tattletail) return;
+  
+  const dist = distance3D(
+    gameState.player.mesh.position.x, 0, gameState.player.mesh.position.z,
+    gameState.tattletail.mesh.position.x, 0, gameState.tattletail.mesh.position.z
+  );
+  
+  // Must be close to interact
+  if (dist > 4) return;
+  
+  // Perform action based on need
+  if (gameState.tattletailNeedType === "food") {
+    gameState.tattletail.feed();
+    gameState.noiseLevel += 0.5;
+  } else if (gameState.tattletailNeedType === "brush") {
+    gameState.tattletail.brush();
+    gameState.noiseLevel += 0.3;
+  } else if (gameState.tattletailNeedType === "charge") {
+    gameState.tattletail.charge();
+    gameState.noiseLevel += 0.2;
+  }
+}
+
+// Automated testing support
+export function processAutomatedAction(action) {
+  if (!action) return;
+  
+  // Simulate key press
+  gameState.keys[action.keyCode] = true;
+  
+  // Handle immediate actions (non-continuous)
+  if (action.keyCode === KEY_Z || action.keyCode === KEY_SPACE) {
+    // These are handled in update
+  }
+  
+  // Clear key after a frame
+  setTimeout(() => {
+    gameState.keys[action.keyCode] = false;
+  }, 50);
+}

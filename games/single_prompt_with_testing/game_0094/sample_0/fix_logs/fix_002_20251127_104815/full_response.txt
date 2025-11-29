@@ -1,0 +1,1904 @@
+<analysis>
+- Issue identified: Game needs level system (9 levels with varying difficulty), scrolling camera system, and enemy type variety. The bouncing on enemies during shovel drop is already implemented.
+- Files affected: globals.js, game.js, entities.js, ui.js, physics.js
+- Changes needed:
+  1. Add level definitions with 9 levels (3 easy, 3 medium, 3 hard) with varying enemy counts
+  2. Add enemy types (basic and tough) for difficulty scaling
+  3. Implement horizontal scrolling camera that follows player
+  4. Add level progression system and level selection
+  5. Update rendering to use camera offset
+  6. Expand world width beyond canvas for scrolling
+  7. Add level UI indicators
+</analysis>
+
+<code filename="globals.js">
+// globals.js - Game constants and global state management
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+// Game constants
+export const GRAVITY = 0.6;
+export const FRICTION = 0.85;
+export const AIR_RESISTANCE = 0.98;
+export const GROUND_Y = CANVAS_HEIGHT - 40;
+
+// Player constants
+export const PLAYER_SPEED = 4;
+export const PLAYER_JUMP_POWER = -11;
+export const PLAYER_DOUBLE_JUMP_POWER = -10;
+export const PLAYER_SHOVEL_DROP_POWER = 12;
+export const PLAYER_BOUNCE_POWER = -13;
+
+// Level definitions - 9 levels with increasing difficulty
+export const LEVELS = [
+  // Easy levels (1-3)
+  {
+    id: 1,
+    name: "Novice Ruins",
+    difficulty: "EASY",
+    worldWidth: 1200,
+    enemyCount: 2,
+    enemyTypes: { basic: 2, tough: 0 },
+    gemCount: 10,
+    platformCount: 8
+  },
+  {
+    id: 2,
+    name: "Ancient Path",
+    difficulty: "EASY",
+    worldWidth: 1400,
+    enemyCount: 3,
+    enemyTypes: { basic: 3, tough: 0 },
+    gemCount: 12,
+    platformCount: 10
+  },
+  {
+    id: 3,
+    name: "Hidden Grove",
+    difficulty: "EASY",
+    worldWidth: 1600,
+    enemyCount: 3,
+    enemyTypes: { basic: 2, tough: 1 },
+    gemCount: 15,
+    platformCount: 12
+  },
+  // Medium levels (4-6)
+  {
+    id: 4,
+    name: "Forgotten Temple",
+    difficulty: "MEDIUM",
+    worldWidth: 1800,
+    enemyCount: 5,
+    enemyTypes: { basic: 3, tough: 2 },
+    gemCount: 15,
+    platformCount: 14
+  },
+  {
+    id: 5,
+    name: "Shadow Keep",
+    difficulty: "MEDIUM",
+    worldWidth: 2000,
+    enemyCount: 6,
+    enemyTypes: { basic: 3, tough: 3 },
+    gemCount: 18,
+    platformCount: 16
+  },
+  {
+    id: 6,
+    name: "Crystal Cavern",
+    difficulty: "MEDIUM",
+    worldWidth: 2200,
+    enemyCount: 7,
+    enemyTypes: { basic: 3, tough: 4 },
+    gemCount: 20,
+    platformCount: 18
+  },
+  // Hard levels (7-9)
+  {
+    id: 7,
+    name: "Demon's Gate",
+    difficulty: "HARD",
+    worldWidth: 2400,
+    enemyCount: 8,
+    enemyTypes: { basic: 2, tough: 6 },
+    gemCount: 20,
+    platformCount: 20
+  },
+  {
+    id: 8,
+    name: "Infernal Depths",
+    difficulty: "HARD",
+    worldWidth: 2600,
+    enemyCount: 9,
+    enemyTypes: { basic: 2, tough: 7 },
+    gemCount: 22,
+    platformCount: 22
+  },
+  {
+    id: 9,
+    name: "Final Sanctum",
+    difficulty: "HARD",
+    worldWidth: 3000,
+    enemyCount: 10,
+    enemyTypes: { basic: 0, tough: 10 },
+    gemCount: 25,
+    platformCount: 25
+  }
+];
+
+// Color palette (retro 8-bit inspired)
+export const COLORS = {
+  sky: [60, 120, 180],
+  ground: [90, 70, 50],
+  platform: [120, 100, 80],
+  platformEdge: [80, 60, 40],
+  player: [70, 160, 230],
+  playerArmor: [180, 160, 140],
+  playerShovel: [200, 200, 200],
+  gem: [255, 220, 0],
+  gemShine: [255, 255, 200],
+  enemy: [200, 50, 50],
+  enemyDetail: [150, 30, 30],
+  enemyTough: [150, 50, 150],
+  enemyToughDetail: [100, 30, 100],
+  health: [220, 50, 50],
+  healthBg: [80, 20, 20],
+  ui: [255, 255, 255],
+  uiShadow: [40, 40, 40]
+};
+
+// Game state object
+export const gameState = {
+  // Core game state
+  gamePhase: "LEVEL_SELECT", // "LEVEL_SELECT", "START", "PLAYING", "PAUSED", "GAME_OVER_WIN", "GAME_OVER_LOSE", "LEVEL_COMPLETE"
+  controlMode: "HUMAN", // "HUMAN", "TEST_1", "TEST_2", etc.
+  
+  // Level state
+  currentLevel: 1,
+  currentLevelData: null,
+  levelsCompleted: [false, false, false, false, false, false, false, false, false],
+  
+  // Entities
+  player: null,
+  entities: [],
+  platforms: [],
+  enemies: [],
+  gems: [],
+  projectiles: [],
+  particles: [],
+  
+  // Physics
+  gravity: GRAVITY,
+  friction: FRICTION,
+  airResistance: AIR_RESISTANCE,
+  
+  // Game progress
+  score: 0,
+  gemsCollected: 0,
+  enemiesDefeated: 0,
+  totalGems: 0,
+  
+  // Performance tracking
+  frameCount: 0,
+  lastFrameTime: 0,
+  deltaTime: 0,
+  
+  // Camera
+  cameraX: 0,
+  cameraY: 0,
+  cameraShakeX: 0,
+  cameraShakeY: 0,
+  worldWidth: 1200,
+  
+  // Input tracking
+  keys: {},
+  lastAttackFrame: 0,
+  attackCooldown: 20
+};
+
+// Expose getGameState globally
+export function getGameState() {
+  return gameState;
+}
+
+window.getGameState = getGameState;
+</code>
+
+<code filename="game.js">
+// game.js - Main game loop and p5.js instance
+
+import { gameState, getGameState, CANVAS_WIDTH, CANVAS_HEIGHT, LEVELS } from './globals.js';
+import { Player, Enemy, Gem, Platform, Particle } from './entities.js';
+import { handleKeyPress, handleKeyRelease, handlePlayerInput } from './input.js';
+import { renderStartScreen, renderUI, renderPausedOverlay, renderGameOver, renderBackground, renderLevelSelect, renderLevelComplete } from './ui.js';
+import { get_automated_testing_action } from './automated_testing.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+  // Initialize the logs
+  p.logs = {
+    "game_info": [],
+    "inputs": [],
+    "player_info": []
+  };
+  
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(60);
+    p.randomSeed(42); // Set seed ONCE in setup
+    
+    // Initialize game state
+    gameState.gamePhase = "LEVEL_SELECT";
+    gameState.controlMode = "HUMAN";
+    gameState.currentLevel = 1;
+    
+    // Log initial state
+    p.logs.game_info.push({
+      data: { 
+        gamePhase: gameState.gamePhase,
+        controlMode: gameState.controlMode 
+      },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  };
+  
+  p.draw = function() {
+    // Update frame count
+    gameState.frameCount = p.frameCount;
+    
+    // Update delta time
+    const currentTime = p.millis();
+    gameState.deltaTime = (currentTime - gameState.lastFrameTime) / 1000;
+    gameState.lastFrameTime = currentTime;
+    
+    // CRITICAL: Exactly one background() call
+    p.background(20, 20, 30);
+    
+    // Handle automated testing
+    if (gameState.controlMode !== "HUMAN" && gameState.gamePhase === "PLAYING") {
+      const action = get_automated_testing_action(gameState);
+      if (action) {
+        simulateKeyPress(p, action.keyCode);
+      }
+    }
+    
+    // Update and render based on game phase
+    switch (gameState.gamePhase) {
+      case "LEVEL_SELECT":
+        renderLevelSelect(p);
+        break;
+        
+      case "START":
+        renderStartScreen(p);
+        break;
+        
+      case "PLAYING":
+        updateGame(p);
+        updateCamera();
+        renderGame(p);
+        renderUI(p);
+        break;
+        
+      case "PAUSED":
+        renderGame(p);
+        renderPausedOverlay(p);
+        break;
+        
+      case "LEVEL_COMPLETE":
+        renderGame(p);
+        renderLevelComplete(p);
+        break;
+        
+      case "GAME_OVER_WIN":
+      case "GAME_OVER_LOSE":
+        renderGame(p);
+        renderGameOver(p);
+        break;
+    }
+    
+    // Update camera shake
+    if (gameState.cameraShakeX !== 0 || gameState.cameraShakeY !== 0) {
+      gameState.cameraShakeX *= 0.8;
+      gameState.cameraShakeY *= 0.8;
+      
+      if (Math.abs(gameState.cameraShakeX) < 0.1) gameState.cameraShakeX = 0;
+      if (Math.abs(gameState.cameraShakeY) < 0.1) gameState.cameraShakeY = 0;
+    }
+  };
+  
+  p.keyPressed = function() {
+    handleKeyPress(p);
+  };
+  
+  p.keyReleased = function() {
+    handleKeyRelease(p);
+  };
+});
+
+function initializeLevel(p, levelId) {
+  const levelData = LEVELS[levelId - 1];
+  if (!levelData) return;
+  
+  gameState.currentLevelData = levelData;
+  gameState.worldWidth = levelData.worldWidth;
+  gameState.totalGems = levelData.gemCount;
+  
+  // Clear all entities
+  gameState.entities = [];
+  gameState.platforms = [];
+  gameState.enemies = [];
+  gameState.gems = [];
+  gameState.particles = [];
+  
+  // Create platforms spread across the world
+  const platformSpacing = levelData.worldWidth / levelData.platformCount;
+  for (let i = 0; i < levelData.platformCount; i++) {
+    const x = 50 + i * platformSpacing + (Math.random() - 0.5) * 60;
+    const y = 100 + Math.sin(i * 0.5) * 100 + Math.random() * 40;
+    const width = 80 + Math.random() * 60;
+    new Platform(x, y, width, 20);
+  }
+  
+  // Create player at start
+  new Player(100, 200);
+  
+  // Create enemies distributed across platforms
+  const enemyPlatforms = gameState.platforms.slice(1); // Skip first platform (player spawn)
+  let basicCount = levelData.enemyTypes.basic;
+  let toughCount = levelData.enemyTypes.tough;
+  
+  for (let i = 0; i < levelData.enemyCount && i < enemyPlatforms.length; i++) {
+    const platform = enemyPlatforms[i];
+    const isTough = toughCount > 0 && (basicCount === 0 || Math.random() > 0.5);
+    
+    if (isTough) {
+      toughCount--;
+    } else {
+      basicCount--;
+    }
+    
+    new Enemy(
+      platform.x + platform.width / 2,
+      platform.y - 15,
+      i,
+      isTough ? "TOUGH" : "BASIC"
+    );
+  }
+  
+  // Create gems scattered across platforms
+  for (let i = 0; i < levelData.gemCount; i++) {
+    const platformIndex = Math.floor(Math.random() * gameState.platforms.length);
+    const platform = gameState.platforms[platformIndex];
+    const offsetX = (Math.random() - 0.5) * (platform.width - 20);
+    new Gem(
+      platform.x + platform.width / 2 + offsetX,
+      platform.y - 25
+    );
+  }
+  
+  // Reset game state
+  gameState.score = 0;
+  gameState.gemsCollected = 0;
+  gameState.enemiesDefeated = 0;
+  gameState.cameraX = 0;
+  gameState.cameraY = 0;
+  gameState.cameraShakeX = 0;
+  gameState.cameraShakeY = 0;
+}
+
+function updateCamera() {
+  if (!gameState.player) return;
+  
+  // Smooth camera follow
+  const targetX = gameState.player.x - CANVAS_WIDTH / 2;
+  gameState.cameraX += (targetX - gameState.cameraX) * 0.1;
+  
+  // Clamp camera to world bounds
+  gameState.cameraX = Math.max(0, Math.min(gameState.cameraX, gameState.worldWidth - CANVAS_WIDTH));
+}
+
+function updateGame(p) {
+  // Handle player input
+  if (gameState.controlMode === "HUMAN") {
+    handlePlayerInput(gameState.player);
+  }
+  
+  // Update player
+  if (gameState.player) {
+    gameState.player.update(p);
+  }
+  
+  // Update enemies
+  for (let i = gameState.enemies.length - 1; i >= 0; i--) {
+    gameState.enemies[i].update(p);
+  }
+  
+  // Update gems
+  for (let i = gameState.gems.length - 1; i >= 0; i--) {
+    gameState.gems[i].update(p);
+  }
+  
+  // Update particles
+  for (let i = gameState.particles.length - 1; i >= 0; i--) {
+    gameState.particles[i].update();
+    if (gameState.particles[i].isDead()) {
+      gameState.particles.splice(i, 1);
+    }
+  }
+}
+
+function renderGame(p) {
+  p.push();
+  
+  // Apply camera offset and shake
+  p.translate(-gameState.cameraX + gameState.cameraShakeX, gameState.cameraShakeY);
+  
+  // Render background
+  renderBackground(p);
+  
+  // Render platforms
+  gameState.platforms.forEach(platform => platform.render(p));
+  
+  // Render gems
+  gameState.gems.forEach(gem => gem.render(p));
+  
+  // Render enemies
+  gameState.enemies.forEach(enemy => enemy.render(p));
+  
+  // Render player
+  if (gameState.player) {
+    gameState.player.render(p);
+  }
+  
+  // Render particles
+  gameState.particles.forEach(particle => particle.render(p));
+  
+  p.pop();
+}
+
+export function resetGame(p) {
+  initializeLevel(p, gameState.currentLevel);
+}
+
+export function loadLevel(p, levelId) {
+  gameState.currentLevel = levelId;
+  initializeLevel(p, levelId);
+  gameState.gamePhase = "START";
+}
+
+export function nextLevel(p) {
+  // Mark current level as completed
+  gameState.levelsCompleted[gameState.currentLevel - 1] = true;
+  
+  if (gameState.currentLevel < LEVELS.length) {
+    gameState.currentLevel++;
+    loadLevel(p, gameState.currentLevel);
+  } else {
+    // All levels completed!
+    gameState.gamePhase = "GAME_OVER_WIN";
+  }
+}
+
+function simulateKeyPress(p, keyCode) {
+  // Simulate a key press for automated testing
+  p.keyCode = keyCode;
+  
+  switch(keyCode) {
+    case 37: p.key = 'ArrowLeft'; break;
+    case 38: p.key = 'ArrowUp'; break;
+    case 39: p.key = 'ArrowRight'; break;
+    case 40: p.key = 'ArrowDown'; break;
+    case 32: p.key = ' '; break;
+    case 90: p.key = 'z'; break;
+    default: p.key = String.fromCharCode(keyCode);
+  }
+  
+  handleKeyPress(p);
+  
+  // Auto-release after a short delay (simulate key tap)
+  setTimeout(() => {
+    handleKeyRelease(p);
+  }, 50);
+}
+
+// Control mode switching
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  
+  // Update button styles
+  document.querySelectorAll('.control-button').forEach(btn => {
+    btn.classList.remove('active');
+  });
+  
+  const btnId = mode === "HUMAN" ? "humanModeBtn" : 
+                mode === "TEST_1" ? "test_1_ModeBtn" : 
+                "test_2_ModeBtn";
+  const btn = document.getElementById(btnId);
+  if (btn) {
+    btn.classList.add('active');
+  }
+  
+  // Log control mode change
+  if (gameInstance && gameInstance.logs) {
+    gameInstance.logs.game_info.push({
+      data: { controlMode: mode },
+      framecount: gameState.frameCount,
+      timestamp: Date.now()
+    });
+  }
+};
+
+// Expose the game instance globally
+window.gameInstance = gameInstance;
+</code>
+
+<code filename="entities.js">
+// entities.js - All game entity classes
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, GROUND_Y, COLORS,
+         PLAYER_SPEED, PLAYER_JUMP_POWER, PLAYER_DOUBLE_JUMP_POWER,
+         PLAYER_SHOVEL_DROP_POWER, PLAYER_BOUNCE_POWER } from './globals.js';
+import { checkCollisionWithPlatforms, checkCollisionAABB } from './physics.js';
+
+export class Player {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.width = 24;
+    this.height = 32;
+    
+    // Physics
+    this.vx = 0;
+    this.vy = 0;
+    this.speed = PLAYER_SPEED;
+    this.jumpPower = PLAYER_JUMP_POWER;
+    this.doubleJumpPower = PLAYER_DOUBLE_JUMP_POWER;
+    this.onGround = false;
+    this.canDoubleJump = false;
+    this.hasDoubleJumped = false;
+    
+    // Combat
+    this.health = 100;
+    this.maxHealth = 100;
+    this.isAttacking = false;
+    this.attackFrame = 0;
+    this.attackDuration = 15;
+    this.attackHitbox = null;
+    this.isShovelDropping = false;
+    this.invulnerable = false;
+    this.invulnerableTimer = 0;
+    this.invulnerableDuration = 60;
+    
+    // Animation
+    this.facing = 1; // 1 = right, -1 = left
+    this.animFrame = 0;
+    this.animSpeed = 0.15;
+    this.walkCycle = 0;
+    
+    // State
+    this.lastPosition = { x: x, y: y };
+    
+    gameState.player = this;
+    gameState.entities.push(this);
+  }
+  
+  update(p) {
+    // Handle invulnerability
+    if (this.invulnerable) {
+      this.invulnerableTimer--;
+      if (this.invulnerableTimer <= 0) {
+        this.invulnerable = false;
+      }
+    }
+    
+    // Apply gravity
+    if (!this.onGround) {
+      this.vy += gameState.gravity;
+    }
+    
+    // Terminal velocity
+    this.vy = p.constrain(this.vy, -20, 20);
+    
+    // Apply air resistance
+    if (!this.onGround) {
+      this.vx *= gameState.airResistance;
+    } else {
+      this.vx *= gameState.friction;
+    }
+    
+    // Update position
+    this.x += this.vx;
+    this.y += this.vy;
+    
+    // Check platform collisions
+    const collision = checkCollisionWithPlatforms(this);
+    if (collision) {
+      this.onGround = collision.onGround;
+      if (this.onGround) {
+        this.canDoubleJump = true;
+        this.hasDoubleJumped = false;
+        this.isShovelDropping = false;
+        // Small bounce on landing from shovel drop
+        if (this.vy > 8) {
+          this.vy = -this.vy * 0.3;
+        } else {
+          this.vy = 0;
+        }
+      }
+    } else {
+      this.onGround = false;
+    }
+    
+    // Ground collision
+    if (this.y + this.height / 2 >= GROUND_Y) {
+      this.y = GROUND_Y - this.height / 2;
+      this.vy = 0;
+      this.onGround = true;
+      this.canDoubleJump = true;
+      this.hasDoubleJumped = false;
+      this.isShovelDropping = false;
+    }
+    
+    // Wall collision (world bounds)
+    if (this.x - this.width / 2 < 0) {
+      this.x = this.width / 2;
+      this.vx = 0;
+    }
+    if (this.x + this.width / 2 > gameState.worldWidth) {
+      this.x = gameState.worldWidth - this.width / 2;
+      this.vx = 0;
+    }
+    
+    // Update attack
+    if (this.isAttacking) {
+      this.attackFrame++;
+      if (this.attackFrame >= this.attackDuration) {
+        this.isAttacking = false;
+        this.attackFrame = 0;
+        this.attackHitbox = null;
+      } else {
+        // Create attack hitbox
+        const hitboxWidth = 30;
+        const hitboxHeight = 20;
+        this.attackHitbox = {
+          x: this.x + (this.facing * (this.width / 2 + hitboxWidth / 2)),
+          y: this.y,
+          width: hitboxWidth,
+          height: hitboxHeight
+        };
+      }
+    }
+    
+    // Update walk animation
+    if (Math.abs(this.vx) > 0.5 && this.onGround) {
+      this.walkCycle += this.animSpeed;
+    } else {
+      this.walkCycle = 0;
+    }
+    
+    // Check for death
+    if (this.health <= 0) {
+      this.die();
+    }
+    
+    // Log position changes
+    if (Math.abs(this.x - this.lastPosition.x) > 1 || 
+        Math.abs(this.y - this.lastPosition.y) > 1) {
+      this.logPosition(p);
+      this.lastPosition.x = this.x;
+      this.lastPosition.y = this.y;
+    }
+  }
+  
+  moveLeft() {
+    this.vx = -this.speed;
+    this.facing = -1;
+  }
+  
+  moveRight() {
+    this.vx = this.speed;
+    this.facing = 1;
+  }
+  
+  jump() {
+    if (this.onGround) {
+      this.vy = this.jumpPower;
+      this.onGround = false;
+      this.canDoubleJump = true;
+    } else if (this.canDoubleJump && !this.hasDoubleJumped) {
+      this.vy = this.doubleJumpPower;
+      this.hasDoubleJumped = true;
+      this.canDoubleJump = false;
+      // Create jump particles
+      this.createJumpParticles();
+    }
+  }
+  
+  attack() {
+    if (!this.isAttacking && gameState.frameCount - gameState.lastAttackFrame > gameState.attackCooldown) {
+      this.isAttacking = true;
+      this.attackFrame = 0;
+      gameState.lastAttackFrame = gameState.frameCount;
+    }
+  }
+  
+  shovelDrop() {
+    if (!this.onGround && !this.isShovelDropping) {
+      this.isShovelDropping = true;
+      this.vy = PLAYER_SHOVEL_DROP_POWER;
+    }
+  }
+  
+  bounceFromShovelDrop() {
+    this.vy = PLAYER_BOUNCE_POWER;
+    this.isShovelDropping = false;
+    // Create bounce particles
+    this.createBounceParticles();
+  }
+  
+  takeDamage(amount) {
+    if (!this.invulnerable) {
+      this.health = Math.max(0, this.health - amount);
+      this.invulnerable = true;
+      this.invulnerableTimer = this.invulnerableDuration;
+      // Knockback
+      this.vy = -8;
+      // Camera shake
+      gameState.cameraShakeX = 5;
+      gameState.cameraShakeY = 5;
+    }
+  }
+  
+  die() {
+    gameState.gamePhase = "GAME_OVER_LOSE";
+  }
+  
+  createJumpParticles() {
+    for (let i = 0; i < 5; i++) {
+      gameState.particles.push(new Particle(
+        this.x + (Math.random() - 0.5) * this.width,
+        this.y + this.height / 2,
+        (Math.random() - 0.5) * 3,
+        Math.random() * 2 + 1,
+        [200, 200, 255],
+        20
+      ));
+    }
+  }
+  
+  createBounceParticles() {
+    for (let i = 0; i < 8; i++) {
+      const angle = (i / 8) * Math.PI * 2;
+      gameState.particles.push(new Particle(
+        this.x,
+        this.y,
+        Math.cos(angle) * 4,
+        Math.sin(angle) * 4,
+        [255, 255, 150],
+        25
+      ));
+    }
+  }
+  
+  logPosition(p) {
+    if (p.logs && p.logs.player_info) {
+      p.logs.player_info.push({
+        screen_x: this.x - gameState.cameraX,
+        screen_y: this.y,
+        game_x: this.x,
+        game_y: this.y,
+        health: this.health,
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  }
+  
+  render(p) {
+    p.push();
+    p.translate(this.x, this.y);
+    
+    // Flip sprite if facing left
+    if (this.facing < 0) {
+      p.scale(-1, 1);
+    }
+    
+    // Flicker when invulnerable
+    if (this.invulnerable && Math.floor(this.invulnerableTimer / 5) % 2 === 0) {
+      p.pop();
+      return;
+    }
+    
+    // Draw shovel drop effect
+    if (this.isShovelDropping) {
+      p.push();
+      p.stroke(255, 255, 0);
+      p.strokeWeight(2);
+      p.noFill();
+      for (let i = 0; i < 3; i++) {
+        p.circle(0, this.height / 2 + i * 8, 20 - i * 5);
+      }
+      p.pop();
+    }
+    
+    // Body (armor)
+    p.fill(...COLORS.playerArmor);
+    p.noStroke();
+    p.rectMode(p.CENTER);
+    p.rect(0, 2, 18, 24, 2);
+    
+    // Cape
+    const capeWave = Math.sin(this.walkCycle) * 2;
+    p.fill(...COLORS.player);
+    p.beginShape();
+    p.vertex(-9, -8);
+    p.vertex(-9 + capeWave, 8);
+    p.vertex(-6 + capeWave, 12);
+    p.vertex(-3, 8);
+    p.vertex(-3, -8);
+    p.endShape(p.CLOSE);
+    
+    // Head (helmet)
+    p.fill(...COLORS.player);
+    p.circle(0, -8, 16);
+    
+    // Helmet horns
+    p.fill(...COLORS.playerArmor);
+    p.circle(-6, -12, 6);
+    p.circle(6, -12, 6);
+    
+    // Visor
+    p.fill(50, 50, 100);
+    p.rect(0, -7, 10, 4);
+    
+    // Shovel
+    const shovelAngle = this.isAttacking ? 
+      Math.sin(this.attackFrame / this.attackDuration * Math.PI) * 0.5 : 0;
+    p.push();
+    p.translate(8, 0);
+    p.rotate(shovelAngle);
+    
+    // Handle
+    p.fill(120, 80, 40);
+    p.rect(0, 0, 3, 16);
+    
+    // Blade
+    p.fill(...COLORS.playerShovel);
+    p.stroke(180, 180, 180);
+    p.strokeWeight(1);
+    p.beginShape();
+    p.vertex(-4, -8);
+    p.vertex(4, -8);
+    p.vertex(2, -12);
+    p.vertex(-2, -12);
+    p.endShape(p.CLOSE);
+    p.pop();
+    
+    // Legs (simple walk cycle)
+    const legOffset = Math.sin(this.walkCycle * 2) * 3;
+    p.fill(...COLORS.playerArmor);
+    p.noStroke();
+    p.rect(-4 + legOffset, 16, 5, 12);
+    p.rect(4 - legOffset, 16, 5, 12);
+    
+    p.pop();
+  }
+}
+
+export class Enemy {
+  constructor(x, y, platformId, type = "BASIC") {
+    this.x = x;
+    this.y = y;
+    this.width = 24;
+    this.height = 24;
+    this.platformId = platformId;
+    this.type = type;
+    
+    // Physics
+    if (type === "TOUGH") {
+      this.vx = 1.0;
+      this.speed = 1.0;
+    } else {
+      this.vx = 1.5;
+      this.speed = 1.5;
+    }
+    this.vy = 0;
+    this.onGround = false;
+    
+    // Combat
+    if (type === "TOUGH") {
+      this.health = 80;
+      this.maxHealth = 80;
+      this.damage = 20;
+    } else {
+      this.health = 40;
+      this.maxHealth = 40;
+      this.damage = 15;
+    }
+    this.attackRange = 35;
+    this.detectionRange = 150;
+    this.attackCooldown = 60;
+    this.lastAttackFrame = 0;
+    
+    // AI
+    this.patrolLeft = x - 80;
+    this.patrolRight = x + 80;
+    this.state = "PATROL"; // "PATROL", "CHASE", "ATTACK"
+    
+    // Animation
+    this.animFrame = 0;
+    this.facing = 1;
+    
+    gameState.enemies.push(this);
+    gameState.entities.push(this);
+  }
+  
+  update(p) {
+    if (!gameState.player) return;
+    
+    const dx = gameState.player.x - this.x;
+    const dy = gameState.player.y - this.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    
+    // AI state machine
+    if (distance < this.attackRange) {
+      this.state = "ATTACK";
+    } else if (distance < this.detectionRange) {
+      this.state = "CHASE";
+    } else {
+      this.state = "PATROL";
+    }
+    
+    // Execute state behavior
+    switch (this.state) {
+      case "PATROL":
+        this.patrol();
+        break;
+      case "CHASE":
+        this.chase(dx);
+        break;
+      case "ATTACK":
+        this.attackPlayer();
+        break;
+    }
+    
+    // Apply gravity
+    this.vy += gameState.gravity;
+    
+    // Update position
+    this.x += this.vx;
+    this.y += this.vy;
+    
+    // Platform collision
+    const collision = checkCollisionWithPlatforms(this);
+    if (collision) {
+      this.onGround = collision.onGround;
+      if (this.onGround) {
+        this.vy = 0;
+      }
+    } else {
+      this.onGround = false;
+    }
+    
+    // Ground collision
+    if (this.y + this.height / 2 >= GROUND_Y) {
+      this.y = GROUND_Y - this.height / 2;
+      this.vy = 0;
+      this.onGround = true;
+    }
+    
+    // Animation
+    this.animFrame += 0.1;
+    
+    // Check collision with player's attack
+    if (gameState.player.attackHitbox) {
+      if (checkCollisionAABB(this, gameState.player.attackHitbox)) {
+        this.takeDamage(25);
+      }
+    }
+    
+    // Check collision with player (shovel drop) - BOUNCE MECHANIC
+    if (gameState.player.isShovelDropping) {
+      if (checkCollisionAABB(this, gameState.player)) {
+        this.takeDamage(30);
+        gameState.player.bounceFromShovelDrop();
+      }
+    }
+    
+    // Check collision with player (damage to player)
+    if (!gameState.player.invulnerable && checkCollisionAABB(this, gameState.player)) {
+      gameState.player.takeDamage(this.damage);
+    }
+  }
+  
+  patrol() {
+    // Move back and forth
+    if (this.x <= this.patrolLeft) {
+      this.vx = this.speed;
+      this.facing = 1;
+    } else if (this.x >= this.patrolRight) {
+      this.vx = -this.speed;
+      this.facing = -1;
+    }
+  }
+  
+  chase(dx) {
+    if (dx > 0) {
+      this.vx = this.speed;
+      this.facing = 1;
+    } else {
+      this.vx = -this.speed;
+      this.facing = -1;
+    }
+  }
+  
+  attackPlayer() {
+    this.vx = 0;
+    if (gameState.frameCount - this.lastAttackFrame > this.attackCooldown) {
+      // Attack logic handled in update collision check
+      this.lastAttackFrame = gameState.frameCount;
+    }
+  }
+  
+  takeDamage(amount) {
+    this.health -= amount;
+    // Knockback
+    this.vy = -5;
+    this.vx = this.facing * -3;
+    
+    // Create damage particles
+    const particleColor = this.type === "TOUGH" ? [200, 100, 200] : [255, 100, 100];
+    for (let i = 0; i < 5; i++) {
+      gameState.particles.push(new Particle(
+        this.x,
+        this.y,
+        (Math.random() - 0.5) * 4,
+        -Math.random() * 3,
+        particleColor,
+        20
+      ));
+    }
+    
+    if (this.health <= 0) {
+      this.die();
+    }
+  }
+  
+  die() {
+    // Add score
+    gameState.score += this.type === "TOUGH" ? 100 : 50;
+    gameState.enemiesDefeated++;
+    
+    // Create death particles
+    const particleColor = this.type === "TOUGH" ? [200, 80, 200] : [255, 80, 80];
+    for (let i = 0; i < 12; i++) {
+      const angle = (i / 12) * Math.PI * 2;
+      gameState.particles.push(new Particle(
+        this.x,
+        this.y,
+        Math.cos(angle) * 5,
+        Math.sin(angle) * 5,
+        particleColor,
+        30
+      ));
+    }
+    
+    // Remove from arrays
+    const index = gameState.enemies.indexOf(this);
+    if (index > -1) {
+      gameState.enemies.splice(index, 1);
+    }
+    const entityIndex = gameState.entities.indexOf(this);
+    if (entityIndex > -1) {
+      gameState.entities.splice(entityIndex, 1);
+    }
+  }
+  
+  render(p) {
+    p.push();
+    p.translate(this.x, this.y);
+    
+    if (this.facing < 0) {
+      p.scale(-1, 1);
+    }
+    
+    // Body color depends on type
+    const bodyColor = this.type === "TOUGH" ? COLORS.enemyTough : COLORS.enemy;
+    const detailColor = this.type === "TOUGH" ? COLORS.enemyToughDetail : COLORS.enemyDetail;
+    
+    // Body
+    p.fill(...bodyColor);
+    p.noStroke();
+    p.rectMode(p.CENTER);
+    p.rect(0, 0, 20, 20, 2);
+    
+    // Armor details
+    p.fill(...detailColor);
+    p.rect(0, -4, 18, 4);
+    p.rect(0, 4, 18, 4);
+    
+    // Spikes on top (more for tough enemies)
+    p.fill(...detailColor);
+    if (this.type === "TOUGH") {
+      p.triangle(-10, -10, -6, -16, -2, -10);
+      p.triangle(-2, -10, 2, -16, 6, -10);
+      p.triangle(6, -10, 10, -16, 14, -10);
+    } else {
+      p.triangle(-8, -10, -4, -14, 0, -10);
+      p.triangle(0, -10, 4, -14, 8, -10);
+    }
+    
+    // Eyes (glow)
+    const eyeGlow = Math.sin(this.animFrame * 2) * 20 + 200;
+    const eyeColor = this.type === "TOUGH" ? [eyeGlow, 0, eyeGlow] : [eyeGlow, 0, 0];
+    p.fill(...eyeColor);
+    p.circle(-5, -2, 6);
+    p.circle(5, -2, 6);
+    
+    // Legs
+    const legWave = Math.sin(this.animFrame * 3) * 2;
+    p.fill(...bodyColor);
+    p.rect(-5 + legWave, 12, 4, 8);
+    p.rect(5 - legWave, 12, 4, 8);
+    
+    // Health bar
+    if (this.health < this.maxHealth) {
+      p.push();
+      p.translate(0, -22);
+      const barWidth = 24;
+      const barHeight = 3;
+      const healthRatio = this.health / this.maxHealth;
+      
+      p.fill(...COLORS.healthBg);
+      p.rect(0, 0, barWidth, barHeight);
+      
+      p.fill(...COLORS.health);
+      p.rect(-barWidth / 2 + (barWidth * healthRatio) / 2, 0, barWidth * healthRatio, barHeight);
+      p.pop();
+    }
+    
+    p.pop();
+  }
+}
+
+export class Gem {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.initialY = y;
+    this.radius = 8;
+    this.value = 10;
+    
+    // Animation
+    this.rotation = Math.random() * Math.PI * 2;
+    this.rotationSpeed = 0.08;
+    this.bobOffset = 0;
+    this.bobSpeed = 0.08;
+    this.pulsePhase = Math.random() * Math.PI * 2;
+    
+    gameState.gems.push(this);
+    gameState.entities.push(this);
+  }
+  
+  update(p) {
+    // Rotate
+    this.rotation += this.rotationSpeed;
+    
+    // Bob up and down
+    this.bobOffset = Math.sin(p.frameCount * this.bobSpeed + this.pulsePhase) * 4;
+    this.y = this.initialY + this.bobOffset;
+    
+    // Check collision with player
+    if (gameState.player) {
+      const dx = gameState.player.x - this.x;
+      const dy = gameState.player.y - this.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      
+      if (distance < this.radius + gameState.player.width / 2) {
+        this.collect();
+      }
+    }
+  }
+  
+  collect() {
+    // Add score
+    gameState.score += this.value;
+    gameState.gemsCollected++;
+    
+    // Create collection particles
+    for (let i = 0; i < 10; i++) {
+      const angle = (i / 10) * Math.PI * 2;
+      gameState.particles.push(new Particle(
+        this.x,
+        this.y,
+        Math.cos(angle) * 3,
+        Math.sin(angle) * 3,
+        [255, 220, 0],
+        25
+      ));
+    }
+    
+    // Check win condition
+    if (gameState.gemsCollected >= gameState.totalGems) {
+      gameState.gamePhase = "LEVEL_COMPLETE";
+    }
+    
+    // Remove from arrays
+    const index = gameState.gems.indexOf(this);
+    if (index > -1) {
+      gameState.gems.splice(index, 1);
+    }
+    const entityIndex = gameState.entities.indexOf(this);
+    if (entityIndex > -1) {
+      gameState.entities.splice(entityIndex, 1);
+    }
+  }
+  
+  render(p) {
+    p.push();
+    p.translate(this.x, this.y);
+    p.rotate(this.rotation);
+    
+    // Outer glow
+    const glowSize = 20 + Math.sin(p.frameCount * 0.1 + this.pulsePhase) * 4;
+    p.noStroke();
+    p.fill(255, 220, 0, 50);
+    p.star(0, 0, glowSize / 2, glowSize / 4, 8);
+    
+    // Main gem
+    p.fill(...COLORS.gem);
+    p.stroke(...COLORS.gemShine);
+    p.strokeWeight(1);
+    p.star(0, 0, this.radius, this.radius * 0.5, 5);
+    
+    // Shine effect
+    p.noStroke();
+    p.fill(...COLORS.gemShine);
+    p.circle(-2, -2, 3);
+    
+    p.pop();
+  }
+}
+
+export class Platform {
+  constructor(x, y, width, height) {
+    this.x = x;
+    this.y = y;
+    this.width = width;
+    this.height = height;
+    
+    gameState.platforms.push(this);
+  }
+  
+  render(p) {
+    p.push();
+    
+    // Platform top (lighter)
+    p.fill(...COLORS.platform);
+    p.noStroke();
+    p.rect(this.x, this.y, this.width, 4);
+    
+    // Platform body
+    p.fill(...COLORS.platformEdge);
+    p.rect(this.x, this.y + 4, this.width, this.height - 4);
+    
+    // Brick pattern
+    p.stroke(80, 60, 40);
+    p.strokeWeight(1);
+    const brickWidth = 20;
+    for (let i = 0; i < this.width; i += brickWidth) {
+      p.line(this.x + i, this.y + 4, this.x + i, this.y + this.height);
+    }
+    for (let j = 8; j < this.height; j += 8) {
+      p.line(this.x, this.y + j, this.x + this.width, this.y + j);
+    }
+    
+    // Edge highlight
+    p.stroke(140, 120, 100);
+    p.strokeWeight(2);
+    p.line(this.x, this.y, this.x + this.width, this.y);
+    
+    p.pop();
+  }
+}
+
+export class Particle {
+  constructor(x, y, vx, vy, color, lifetime) {
+    this.x = x;
+    this.y = y;
+    this.vx = vx;
+    this.vy = vy;
+    this.color = color;
+    this.lifetime = lifetime;
+    this.age = 0;
+    this.size = Math.random() * 4 + 2;
+    this.gravity = 0.2;
+  }
+  
+  update() {
+    this.x += this.vx;
+    this.y += this.vy;
+    this.vy += this.gravity;
+    this.age++;
+  }
+  
+  isDead() {
+    return this.age >= this.lifetime;
+  }
+  
+  render(p) {
+    const alpha = 1 - (this.age / this.lifetime);
+    p.noStroke();
+    p.fill(this.color[0], this.color[1], this.color[2], alpha * 255);
+    p.circle(this.x, this.y, this.size);
+  }
+}
+
+// Helper function to draw a star
+p5.prototype.star = function(x, y, radius1, radius2, npoints) {
+  const angle = (Math.PI * 2) / npoints;
+  const halfAngle = angle / 2.0;
+  this.beginShape();
+  for (let a = -Math.PI / 2; a < Math.PI * 2 - Math.PI / 2; a += angle) {
+    let sx = x + Math.cos(a) * radius1;
+    let sy = y + Math.sin(a) * radius1;
+    this.vertex(sx, sy);
+    sx = x + Math.cos(a + halfAngle) * radius2;
+    sy = y + Math.sin(a + halfAngle) * radius2;
+    this.vertex(sx, sy);
+  }
+  this.endShape(this.CLOSE);
+};
+</code>
+
+<code filename="ui.js">
+// ui.js - UI rendering and game screens
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, GROUND_Y, COLORS, LEVELS } from './globals.js';
+import { loadLevel, nextLevel } from './game.js';
+
+export function renderLevelSelect(p) {
+  // Sky gradient background
+  for (let i = 0; i < CANVAS_HEIGHT; i++) {
+    const inter = i / CANVAS_HEIGHT;
+    const c = p.lerpColor(
+      p.color(40, 80, 140),
+      p.color(20, 40, 80),
+      inter
+    );
+    p.stroke(c);
+    p.line(0, i, CANVAS_WIDTH, i);
+  }
+  
+  // Title
+  p.fill(70, 160, 230);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(36);
+  p.text('SELECT LEVEL', CANVAS_WIDTH / 2, 40);
+  
+  // Level buttons
+  const buttonWidth = 160;
+  const buttonHeight = 60;
+  const cols = 3;
+  const startX = (CANVAS_WIDTH - (cols * buttonWidth + (cols - 1) * 20)) / 2;
+  const startY = 100;
+  
+  for (let i = 0; i < LEVELS.length; i++) {
+    const level = LEVELS[i];
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    const x = startX + col * (buttonWidth + 20);
+    const y = startY + row * (buttonHeight + 15);
+    
+    // Button background
+    let buttonColor;
+    if (level.difficulty === "EASY") {
+      buttonColor = p.color(80, 180, 80);
+    } else if (level.difficulty === "MEDIUM") {
+      buttonColor = p.color(200, 150, 50);
+    } else {
+      buttonColor = p.color(200, 60, 60);
+    }
+    
+    // Hover effect
+    if (p.mouseX > x && p.mouseX < x + buttonWidth &&
+        p.mouseY > y && p.mouseY < y + buttonHeight) {
+      p.fill(p.red(buttonColor) + 40, p.green(buttonColor) + 40, p.blue(buttonColor) + 40);
+      p.cursor(p.HAND);
+      
+      // Check for click
+      if (p.mouseIsPressed && p.frameCount % 10 === 0) {
+        loadLevel(window.gameInstance, level.id);
+      }
+    } else {
+      p.fill(buttonColor);
+    }
+    
+    p.noStroke();
+    p.rect(x, y, buttonWidth, buttonHeight, 5);
+    
+    // Level number
+    p.fill(255);
+    p.textSize(24);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.text(`Level ${level.id}`, x + buttonWidth / 2, y + 15);
+    
+    // Level name
+    p.textSize(12);
+    p.text(level.name, x + buttonWidth / 2, y + 35);
+    
+    // Difficulty badge
+    p.textSize(10);
+    p.text(level.difficulty, x + buttonWidth / 2, y + 50);
+    
+    // Completion checkmark
+    if (gameState.levelsCompleted[i]) {
+      p.fill(255, 220, 0);
+      p.textSize(20);
+      p.text('✓', x + buttonWidth - 15, y + 15);
+    }
+  }
+  
+  // Instructions
+  p.fill(255);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(14);
+  p.text('Click a level to start your adventure!', CANVAS_WIDTH / 2, CANVAS_HEIGHT - 30);
+}
+
+export function renderStartScreen(p) {
+  // Sky gradient background
+  for (let i = 0; i < CANVAS_HEIGHT; i++) {
+    const inter = i / CANVAS_HEIGHT;
+    const c = p.lerpColor(
+      p.color(40, 80, 140),
+      p.color(20, 40, 80),
+      inter
+    );
+    p.stroke(c);
+    p.line(0, i, CANVAS_WIDTH, i);
+  }
+  
+  // Level info box
+  if (gameState.currentLevelData) {
+    p.fill(20, 20, 40, 200);
+    p.rect(CANVAS_WIDTH / 2 - 180, 60, 360, 140, 5);
+    
+    p.fill(255, 220, 0);
+    p.textAlign(p.CENTER, p.TOP);
+    p.textSize(28);
+    p.text(`Level ${gameState.currentLevelData.id}: ${gameState.currentLevelData.name}`, 
+           CANVAS_WIDTH / 2, 75);
+    
+    p.fill(255);
+    p.textSize(16);
+    const diffColor = gameState.currentLevelData.difficulty === "EASY" ? [100, 255, 100] :
+                      gameState.currentLevelData.difficulty === "MEDIUM" ? [255, 200, 100] :
+                      [255, 100, 100];
+    p.fill(...diffColor);
+    p.text(`Difficulty: ${gameState.currentLevelData.difficulty}`, CANVAS_WIDTH / 2, 110);
+    
+    p.fill(255);
+    p.textSize(14);
+    p.text(`Collect ${gameState.currentLevelData.gemCount} gems to complete the level!`, 
+           CANVAS_WIDTH / 2, 135);
+    p.text(`Enemies: ${gameState.currentLevelData.enemyCount} (${gameState.currentLevelData.enemyTypes.basic} basic, ${gameState.currentLevelData.enemyTypes.tough} tough)`, 
+           CANVAS_WIDTH / 2, 155);
+    p.text(`World Width: ${gameState.currentLevelData.worldWidth}px (scrolling level)`, 
+           CANVAS_WIDTH / 2, 175);
+  }
+  
+  // Instructions box
+  p.fill(20, 20, 40, 200);
+  p.rect(CANVAS_WIDTH / 2 - 180, 220, 360, 110, 5);
+  
+  p.fill(255);
+  p.textSize(14);
+  p.textAlign(p.LEFT, p.TOP);
+  
+  const instructions = [
+    'ARROW KEYS - Move left/right',
+    'SPACE - Jump (double jump available)',
+    'Z - Attack with Shovel Blade',
+    'DOWN (in air) - Shovel Drop (bounce on enemies!)',
+    'ESC - Pause | R - Restart'
+  ];
+  
+  for (let i = 0; i < instructions.length; i++) {
+    p.text(instructions[i], CANVAS_WIDTH / 2 - 160, 235 + i * 18);
+  }
+  
+  // Start prompt (pulsing)
+  const pulseAlpha = (Math.sin(gameState.frameCount * 0.1) + 1) * 0.5;
+  p.fill(255, 220, 0, pulseAlpha * 255);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(24);
+  p.text('PRESS ENTER TO START', CANVAS_WIDTH / 2, 360);
+}
+
+export function renderUI(p) {
+  // Semi-transparent background for HUD
+  p.fill(0, 0, 0, 150);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, 50);
+  
+  // Level info
+  p.fill(...COLORS.ui);
+  p.textAlign(p.LEFT, p.TOP);
+  p.textSize(14);
+  if (gameState.currentLevelData) {
+    p.text(`Lv${gameState.currentLevelData.id}: ${gameState.currentLevelData.name}`, 10, 10);
+  }
+  
+  // Score
+  p.textSize(16);
+  p.text(`Score: ${gameState.score}`, 10, 28);
+  
+  // Gems collected
+  p.push();
+  p.translate(200, 32);
+  p.rotate(gameState.frameCount * 0.05);
+  p.fill(255, 220, 0);
+  p.noStroke();
+  p.star(0, 0, 8, 4, 5);
+  p.pop();
+  
+  p.fill(...COLORS.ui);
+  p.textAlign(p.LEFT, p.CENTER);
+  p.textSize(16);
+  p.text(`${gameState.gemsCollected} / ${gameState.totalGems}`, 215, 32);
+  
+  // Health bar
+  if (gameState.player) {
+    const barWidth = 150;
+    const barHeight = 20;
+    const barX = CANVAS_WIDTH - barWidth - 15;
+    const barY = 15;
+    const healthRatio = gameState.player.health / gameState.player.maxHealth;
+    
+    // Background
+    p.fill(...COLORS.healthBg);
+    p.rect(barX, barY, barWidth, barHeight, 3);
+    
+    // Health fill (gradient effect)
+    const healthColor = healthRatio > 0.5 ? 
+      p.lerpColor(p.color(255, 220, 0), p.color(0, 255, 0), (healthRatio - 0.5) * 2) :
+      p.lerpColor(p.color(255, 0, 0), p.color(255, 220, 0), healthRatio * 2);
+    
+    p.fill(healthColor);
+    p.rect(barX, barY, barWidth * healthRatio, barHeight, 3);
+    
+    // Border
+    p.noFill();
+    p.stroke(255);
+    p.strokeWeight(2);
+    p.rect(barX, barY, barWidth, barHeight, 3);
+    
+    // Health text
+    p.fill(...COLORS.ui);
+    p.noStroke();
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(12);
+    p.text(`HP: ${Math.ceil(gameState.player.health)}`, barX + barWidth / 2, barY + barHeight / 2);
+  }
+}
+
+export function renderPausedOverlay(p) {
+  // Semi-transparent overlay
+  p.fill(0, 0, 0, 180);
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  // Paused box
+  p.fill(20, 20, 40, 230);
+  p.rect(CANVAS_WIDTH / 2 - 150, CANVAS_HEIGHT / 2 - 80, 300, 160, 10);
+  
+  // Paused text
+  p.fill(255, 220, 0);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text('PAUSED', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 30);
+  
+  p.fill(255);
+  p.textSize(20);
+  p.text('Press ESC to Resume', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 20);
+  p.textSize(16);
+  p.text('Press R to Restart', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 50);
+}
+
+export function renderLevelComplete(p) {
+  // Background overlay
+  p.fill(0, 0, 0, 200);
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  // Result box
+  p.fill(20, 60, 20, 230);
+  p.rect(CANVAS_WIDTH / 2 - 180, CANVAS_HEIGHT / 2 - 100, 360, 200, 10);
+  
+  // Title
+  p.fill(100, 255, 100);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text('LEVEL COMPLETE!', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 60);
+  
+  // Message
+  p.fill(255);
+  p.textSize(18);
+  if (gameState.currentLevelData) {
+    p.text(`${gameState.currentLevelData.name} conquered!`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 20);
+  }
+  
+  // Stats
+  p.textSize(16);
+  p.fill(255, 220, 0);
+  p.text(`Score: ${gameState.score}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 15);
+  p.fill(255);
+  p.textSize(14);
+  p.text(`Gems: ${gameState.gemsCollected} | Enemies: ${gameState.enemiesDefeated}`, 
+         CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 35);
+  
+  // Next level instruction (pulsing)
+  const pulseAlpha = (Math.sin(gameState.frameCount * 0.1) + 1) * 0.5;
+  p.fill(255, 255, 255, pulseAlpha * 255);
+  p.textSize(20);
+  if (gameState.currentLevel < LEVELS.length) {
+    p.text('Press ENTER for Next Level', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 65);
+  } else {
+    p.text('All Levels Complete!', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 65);
+  }
+  p.fill(200, 200, 200, pulseAlpha * 255);
+  p.textSize(16);
+  p.text('Press ESC for Level Select', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 85);
+}
+
+export function renderGameOver(p) {
+  // Background overlay
+  p.fill(0, 0, 0, 200);
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  const isWin = gameState.gamePhase === "GAME_OVER_WIN";
+  
+  // Result box
+  const boxColor = isWin ? p.color(20, 60, 20, 230) : p.color(60, 20, 20, 230);
+  p.fill(boxColor);
+  p.rect(CANVAS_WIDTH / 2 - 180, CANVAS_HEIGHT / 2 - 100, 360, 200, 10);
+  
+  // Title
+  const titleColor = isWin ? p.color(100, 255, 100) : p.color(255, 100, 100);
+  p.fill(titleColor);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text(isWin ? 'VICTORY!' : 'DEFEATED', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 60);
+  
+  // Message
+  p.fill(255);
+  p.textSize(18);
+  if (isWin) {
+    p.text('All levels conquered!', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 20);
+    p.text('Shovelry prevails!', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 5);
+  } else {
+    p.text('The quest continues...', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 10);
+  }
+  
+  // Stats
+  p.textSize(16);
+  p.fill(255, 220, 0);
+  p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 35);
+  p.fill(255);
+  p.textSize(14);
+  p.text(`Gems: ${gameState.gemsCollected} | Enemies: ${gameState.enemiesDefeated}`, 
+         CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 55);
+  
+  // Restart instruction (pulsing)
+  const pulseAlpha = (Math.sin(gameState.frameCount * 0.1) + 1) * 0.5;
+  p.fill(255, 255, 255, pulseAlpha * 255);
+  p.textSize(20);
+  p.text('Press ESC for Level Select', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 85);
+}
+
+export function renderBackground(p) {
+  // Sky gradient
+  for (let i = 0; i < CANVAS_HEIGHT; i++) {
+    const inter = i / CANVAS_HEIGHT;
+    const c = p.lerpColor(
+      p.color(...COLORS.sky),
+      p.color(30, 60, 100),
+      inter
+    );
+    p.stroke(c);
+    p.line(gameState.cameraX, i, gameState.cameraX + CANVAS_WIDTH, i);
+  }
+  
+  // Clouds (parallax)
+  p.noStroke();
+  p.fill(255, 255, 255, 100);
+  const cloudOffset = (gameState.frameCount * 0.2 + gameState.cameraX * 0.3) % (CANVAS_WIDTH + 200);
+  
+  // Cloud 1
+  p.circle(gameState.cameraX + cloudOffset - 100, 60, 30);
+  p.circle(gameState.cameraX + cloudOffset - 80, 55, 40);
+  p.circle(gameState.cameraX + cloudOffset - 60, 60, 30);
+  
+  // Cloud 2
+  p.circle(gameState.cameraX + cloudOffset + 100, 100, 25);
+  p.circle(gameState.cameraX + cloudOffset + 120, 95, 35);
+  p.circle(gameState.cameraX + cloudOffset + 140, 100, 25);
+  
+  // Mountains in background (parallax)
+  p.fill(40, 60, 80, 150);
+  const mountainOffset = gameState.cameraX * 0.5;
+  p.triangle(mountainOffset, CANVAS_HEIGHT - 100, 
+             mountainOffset + 150, CANVAS_HEIGHT - 250, 
+             mountainOffset + 300, CANVAS_HEIGHT - 100);
+  p.triangle(mountainOffset + 200, CANVAS_HEIGHT - 100, 
+             mountainOffset + 400, CANVAS_HEIGHT - 200, 
+             mountainOffset + 600, CANVAS_HEIGHT - 100);
+  
+  // Ground
+  p.fill(...COLORS.ground);
+  p.rect(0, GROUND_Y, gameState.worldWidth, CANVAS_HEIGHT - GROUND_Y);
+  
+  // Ground texture
+  p.stroke(70, 50, 30);
+  p.strokeWeight(1);
+  for (let i = 0; i < gameState.worldWidth; i += 15) {
+    p.line(i, GROUND_Y, i + 10, CANVAS_HEIGHT);
+  }
+  for (let j = GROUND_Y; j < CANVAS_HEIGHT; j += 10) {
+    p.line(0, j, gameState.worldWidth, j);
+  }
+}
+
+// Helper for star drawing
+p5.prototype.star = function(x, y, radius1, radius2, npoints) {
+  const angle = (Math.PI * 2) / npoints;
+  const halfAngle = angle / 2.0;
+  this.beginShape();
+  for (let a = -Math.PI / 2; a < Math.PI * 2 - Math.PI / 2; a += angle) {
+    let sx = x + Math.cos(a) * radius1;
+    let sy = y + Math.sin(a) * radius1;
+    this.vertex(sx, sy);
+    sx = x + Math.cos(a + halfAngle) * radius2;
+    sy = y + Math.sin(a + halfAngle) * radius2;
+    this.vertex(sx, sy);
+  }
+  this.endShape(this.CLOSE);
+};
+</code>
+
+<code filename="input.js">
+// input.js - Input handling
+
+import { gameState } from './globals.js';
+import { resetGame, nextLevel } from './game.js';
+
+// Key state tracking
+const keys = {};
+
+export function handleKeyPress(p) {
+  keys[p.keyCode] = true;
+  
+  // Log input
+  if (p.logs && p.logs.inputs) {
+    p.logs.inputs.push({
+      input_type: 'keyPressed',
+      data: { key: p.key, keyCode: p.keyCode },
+      framecount: gameState.frameCount,
+      timestamp: Date.now()
+    });
+  }
+  
+  // Handle phase controls
+  if (p.keyCode === 13) { // ENTER
+    if (gameState.gamePhase === "START") {
+      gameState.gamePhase = "PLAYING";
+      if (p.logs && p.logs.game_info) {
+        p.logs.game_info.push({
+          data: { gamePhase: "PLAYING" },
+          framecount: gameState.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    } else if (gameState.gamePhase === "LEVEL_COMPLETE") {
+      nextLevel(p);
+    }
+  }
+  
+  if (p.keyCode === 27) { // ESC
+    if (gameState.gamePhase === "PLAYING") {
+      gameState.gamePhase = "PAUSED";
+      if (p.logs && p.logs.game_info) {
+        p.logs.game_info.push({
+          data: { gamePhase: "PAUSED" },
+          framecount: gameState.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    } else if (gameState.gamePhase === "PAUSED") {
+      gameState.gamePhase = "PLAYING";
+      if (p.logs && p.logs.game_info) {
+        p.logs.game_info.push({
+          data: { gamePhase: "PLAYING" },
+          framecount: gameState.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    } else if (gameState.gamePhase === "LEVEL_COMPLETE" || 
+               gameState.gamePhase === "GAME_OVER_WIN" || 
+               gameState.gamePhase === "GAME_OVER_LOSE") {
+      // Return to level select
+      gameState.gamePhase = "LEVEL_SELECT";
+    }
+  }
+  
+  if (p.keyCode === 82) { // R - Restart
+    if (gameState.gamePhase === "GAME_OVER_LOSE" || 
+        gameState.gamePhase === "PAUSED") {
+      resetGame(p);
+      gameState.gamePhase = "START";
+      if (p.logs && p.logs.game_info) {
+        p.logs.game_info.push({
+          data: { gamePhase: "START", action: "restart" },
+          framecount: gameState.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    }
+  }
+}
+
+export function handleKeyRelease(p) {
+  keys[p.keyCode] = false;
+  
+  // Log input
+  if (p.logs && p.logs.inputs) {
+    p.logs.inputs.push({
+      input_type: 'keyReleased',
+      data: { key: p.key, keyCode: p.keyCode },
+      framecount: gameState.frameCount,
+      timestamp: Date.now()
+    });
+  }
+}
+
+export function isKeyPressed(keyCode) {
+  return keys[keyCode] === true;
+}
+
+export function handlePlayerInput(player) {
+  if (!player) return;
+  
+  // Movement
+  if (isKeyPressed(37)) { // Left arrow
+    player.moveLeft();
+  }
+  if (isKeyPressed(39)) { // Right arrow
+    player.moveRight();
+  }
+  
+  // Jump
+  if (isKeyPressed(32)) { // Space
+    player.jump();
+    keys[32] = false; // Prevent holding
+  }
+  
+  // Attack
+  if (isKeyPressed(90)) { // Z
+    player.attack();
+    keys[90] = false; // Prevent holding
+  }
+  
+  // Shovel drop
+  if (isKeyPressed(40) && !player.onGround) { // Down arrow
+    player.shovelDrop();
+  }
+}
+
+export function clearKeys() {
+  for (const key in keys) {
+    keys[key] = false;
+  }
+}
+</code>

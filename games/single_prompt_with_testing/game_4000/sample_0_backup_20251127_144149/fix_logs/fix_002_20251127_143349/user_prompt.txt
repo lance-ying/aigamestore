@@ -1,0 +1,1863 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+I can't place portals, and I want to change it so that I control camera movement with arrows, and I move with wasd, can you add that fix
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Portal Chambers</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        html, body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #000;
+            font-family: Arial, sans-serif;
+        }
+        
+        body {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        #game-container {
+            width: 600px;
+            height: 400px;
+            position: relative;
+            overflow: hidden;
+            margin: 0;
+            padding: 0;
+            border: 2px solid #333;
+        }
+        
+        canvas {
+            display: block;
+            margin: 0;
+            padding: 0;
+        }
+        
+        .game-header {
+            text-align: center;
+            margin-bottom: 20px;
+            color: #fff;
+        }
+        
+        .game-header h1 {
+            font-size: 32px;
+            margin-bottom: 10px;
+            color: #00ccff;
+            text-shadow: 0 0 10px #00ccff;
+        }
+        
+        .control-buttons {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        
+        .control-button {
+            padding: 8px 16px;
+            cursor: pointer;
+            background: #444;
+            color: #fff;
+            border: none;
+            border-radius: 4px;
+            font-size: 14px;
+            transition: background 0.3s;
+        }
+        
+        .control-button:hover {
+            background: #555;
+        }
+        
+        .control-button.active {
+            background: #007bff;
+        }
+        
+        .game-description {
+            color: #ccc;
+            max-width: 600px;
+            margin: 0 auto 15px auto;
+            line-height: 1.6;
+            font-size: 14px;
+        }
+        
+        .game-controls {
+            color: #aaa;
+            max-width: 600px;
+            margin: 0 auto 20px auto;
+            line-height: 1.4;
+            font-size: 13px;
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/seedrandom/3.0.5/seedrandom.min.js"></script>
+</head>
+<body>
+    <div class="game-header">
+        <h1>PORTAL CHAMBERS</h1>
+        <div class="control-buttons">
+            <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+            <button id="test_1ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST 1 (Portal Mechanics)</button>
+            <button id="test_2ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST 2 (Win Condition)</button>
+        </div>
+        <p class="game-description">
+            Navigate through test chambers using your dual portal device. Fire blue and orange portals on white surfaces to create instant teleportation connections. Use portals to reach platforms, cross gaps, and solve physics-based puzzles. Momentum is preserved through portals - enter fast, exit fast! Complete each chamber by reaching the exit door to advance to the next challenge.
+        </p>
+        <p class="game-controls">
+            <strong>Controls:</strong> WASD/Arrows: Move | Space: Jump | Z/Click: Blue Portal | X/Shift: Orange Portal | ESC: Pause | R: Restart | Enter: Start
+        </p>
+    </div>
+    <script type="module" src="game.js"></script>
+</body>
+</html>
+</file>
+
+<file name="globals.js">
+// globals.js - Game constants and state management
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+// Canvas dimensions
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+// Physics constants
+export const GRAVITY = new THREE.Vector3(0, -0.015, 0);
+export const PLAYER_SPEED = 0.15;
+export const PLAYER_JUMP_POWER = 0.3;
+export const FRICTION = 0.9;
+export const AIR_RESISTANCE = 0.98;
+
+// Portal colors
+export const PORTAL_BLUE = 0x0099ff;
+export const PORTAL_ORANGE = 0xff6600;
+
+// Game state object
+export const gameState = {
+    // Core game state
+    gamePhase: "START", // "START", "PLAYING", "PAUSED", "GAME_OVER_WIN", "GAME_OVER_LOSE"
+    controlMode: "HUMAN", // "HUMAN", "TEST_1", "TEST_2"
+    
+    // Three.js core
+    scene: null,
+    camera: null,
+    renderer: null,
+    
+    // Game container
+    gameContainer: null,
+    
+    // Lighting
+    lights: [],
+    ambientLight: null,
+    directionalLight: null,
+    
+    // Player
+    player: null,
+    
+    // Entities
+    entities: [],
+    platforms: [],
+    portalSurfaces: [],
+    collectibles: [],
+    
+    // Portals
+    bluePortal: null,
+    orangePortal: null,
+    
+    // Camera state
+    cameraOffset: new THREE.Vector3(0, 3, 8),
+    cameraRotation: { yaw: 0, pitch: 0.3 },
+    
+    // Physics
+    gravity: GRAVITY.clone(),
+    
+    // Level state
+    currentLevel: 1,
+    maxLevels: 3,
+    exitDoor: null,
+    
+    // Score
+    score: 0,
+    
+    // Performance tracking
+    frameCount: 0,
+    lastFrameTime: 0,
+    deltaTime: 0,
+    
+    // Input state
+    keys: {},
+    mouseX: 0,
+    mouseY: 0,
+    
+    // Test mode state
+    testTimer: 0,
+    testStep: 0
+};
+
+// Initialize logs (write-only)
+export const logs = {
+    game_info: [],
+    player_info: [],
+    inputs: []
+};
+
+// Expose logs globally
+if (typeof window !== 'undefined') {
+    window.logs = logs;
+}
+
+// Expose getGameState function
+export function getGameState() {
+    return gameState;
+}
+
+if (typeof window !== 'undefined') {
+    window.getGameState = getGameState;
+}
+
+// Log helper functions
+export function logGameInfo(status, data = {}) {
+    logs.game_info.push({
+        game_status: status,
+        data: data,
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+    });
+}
+
+export function logInput(inputType, key, keyCode) {
+    logs.inputs.push({
+        input_type: inputType,
+        data: { key, keyCode },
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+    });
+}
+
+export function logPlayerInfo(player) {
+    if (!player || !player.mesh) return;
+    
+    const screenPos = player.mesh.position.clone().project(gameState.camera);
+    logs.player_info.push({
+        screen_x: (screenPos.x + 1) * CANVAS_WIDTH / 2,
+        screen_y: (1 - screenPos.y) * CANVAS_HEIGHT / 2,
+        game_x: player.mesh.position.x,
+        game_y: player.mesh.position.y,
+        game_z: player.mesh.position.z,
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+    });
+}
+</file>
+
+<file name="game.js">
+// game.js - Main game loop and initialization
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, logGameInfo, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { setupRenderer } from './renderer.js';
+import { setupScene } from './scene.js';
+import { setupCamera, updateCamera } from './camera.js';
+import { setupLighting } from './lighting.js';
+import { setupUI, renderUI } from './ui.js';
+import { setupInput, processInput } from './input.js';
+import { updatePhysics } from './physics.js';
+import { Player } from './entities.js';
+import { updateTestMode } from './testmode.js';
+
+// Initialize game
+function init() {
+    // Seed random
+    Math.seedrandom(42);
+    
+    // Setup Three.js
+    setupScene();
+    setupCamera();
+    setupRenderer();
+    setupLighting();
+    
+    // Setup UI
+    setupUI();
+    
+    // Setup input
+    setupInput();
+    
+    // Create player (but don't add to scene until game starts)
+    gameState.player = new Player(0, 2, 0);
+    
+    // Initialize game phase
+    gameState.gamePhase = "START";
+    
+    // Log initial state
+    logGameInfo("START", { level: 1 });
+}
+
+// Update game logic
+function updateGame(deltaTime) {
+    gameState.deltaTime = deltaTime;
+    gameState.frameCount++;
+    
+    // Update test mode
+    updateTestMode(deltaTime);
+    
+    // Process input
+    if (gameState.controlMode === "HUMAN") {
+        processInput();
+    }
+    
+    // Update based on game phase
+    switch (gameState.gamePhase) {
+        case "START":
+            // Waiting for player to start
+            break;
+        
+        case "PLAYING":
+            // Update physics and entities
+            updatePhysics(deltaTime);
+            
+            // Update camera
+            updateCamera();
+            
+            // Check win condition
+            if (gameState.exitDoor && gameState.player) {
+                if (gameState.exitDoor.checkPlayerCollision(gameState.player)) {
+                    gameState.gamePhase = "GAME_OVER_WIN";
+                    logGameInfo("GAME_OVER_WIN", { 
+                        score: gameState.score,
+                        level: gameState.currentLevel 
+                    });
+                }
+            }
+            break;
+        
+        case "PAUSED":
+            // Game paused - no updates
+            break;
+        
+        case "GAME_OVER_WIN":
+        case "GAME_OVER_LOSE":
+            // Game over - waiting for restart
+            break;
+    }
+}
+
+// Render game
+function render() {
+    if (!gameState.renderer || !gameState.scene || !gameState.camera) return;
+    
+    gameState.renderer.render(gameState.scene, gameState.camera);
+    renderUI();
+}
+
+// Main game loop
+let lastTime = performance.now();
+
+function gameLoop(currentTime) {
+    requestAnimationFrame(gameLoop);
+    
+    const deltaTime = Math.min((currentTime - lastTime) / 1000, 0.1);
+    lastTime = currentTime;
+    
+    updateGame(deltaTime);
+    render();
+}
+
+// Control mode switching
+window.setControlMode = function(mode) {
+    gameState.controlMode = mode;
+    gameState.testTimer = 0;
+    gameState.testStep = 0;
+    
+    // Update button states
+    document.querySelectorAll('.control-button').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    document.getElementById(`${mode.toLowerCase()}ModeBtn`).classList.add('active');
+    
+    // Restart game for test modes
+    if (mode !== "HUMAN") {
+        gameState.gamePhase = "START";
+        gameState.score = 0;
+        gameState.currentLevel = 1;
+    }
+};
+
+// Start game
+init();
+gameLoop(performance.now());
+
+// Expose game instance
+window.gameInstance = {
+    gameState,
+    init,
+    updateGame,
+    render
+};
+</file>
+
+<file name="renderer.js">
+// renderer.js - WebGL renderer setup and configuration
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { CANVAS_WIDTH, CANVAS_HEIGHT, gameState } from './globals.js';
+
+export function setupRenderer() {
+    // Create container div to properly contain the game canvas
+    const gameContainer = document.createElement('div');
+    gameContainer.id = 'game-container';
+    gameContainer.style.width = CANVAS_WIDTH + 'px';
+    gameContainer.style.height = CANVAS_HEIGHT + 'px';
+    gameContainer.style.position = 'relative';
+    gameContainer.style.overflow = 'hidden';
+    gameContainer.style.margin = '0';
+    gameContainer.style.padding = '0';
+    gameContainer.style.border = '2px solid #333';
+    document.body.appendChild(gameContainer);
+    
+    // Create WebGL renderer
+    const renderer = new THREE.WebGLRenderer({
+        antialias: true,
+        alpha: false,
+        powerPreference: "high-performance"
+    });
+    
+    renderer.setSize(CANVAS_WIDTH, CANVAS_HEIGHT);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    
+    // Append canvas to container
+    gameContainer.appendChild(renderer.domElement);
+    
+    gameState.renderer = renderer;
+    gameState.gameContainer = gameContainer;
+    
+    return renderer;
+}
+</file>
+
+<file name="ui.js">
+// ui.js - UI rendering on canvas overlay
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+let uiCanvas = null;
+let uiContext = null;
+
+export function setupUI() {
+    // Create 2D canvas overlay for UI
+    uiCanvas = document.createElement('canvas');
+    uiCanvas.width = CANVAS_WIDTH;
+    uiCanvas.height = CANVAS_HEIGHT;
+    uiCanvas.style.position = 'absolute';
+    uiCanvas.style.top = '0';
+    uiCanvas.style.left = '0';
+    uiCanvas.style.pointerEvents = 'none';
+    uiCanvas.style.zIndex = '1000';
+    uiCanvas.style.margin = '0';
+    uiCanvas.style.padding = '0';
+    
+    // Append to game container
+    if (gameState.gameContainer) {
+        gameState.gameContainer.appendChild(uiCanvas);
+    }
+    
+    uiContext = uiCanvas.getContext('2d');
+}
+
+export function renderUI() {
+    if (!uiContext) return;
+    
+    // Clear canvas
+    uiContext.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    switch (gameState.gamePhase) {
+        case "START":
+            renderStartScreen();
+            break;
+        case "PLAYING":
+            renderHUD();
+            renderCrosshair();
+            break;
+        case "PAUSED":
+            renderHUD();
+            renderPauseScreen();
+            break;
+        case "GAME_OVER_WIN":
+            renderWinScreen();
+            break;
+        case "GAME_OVER_LOSE":
+            renderLoseScreen();
+            break;
+    }
+}
+
+function renderStartScreen() {
+    // Semi-transparent background
+    uiContext.fillStyle = 'rgba(0, 0, 0, 0.8)';
+    uiContext.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    // Title
+    uiContext.fillStyle = '#00ccff';
+    uiContext.font = 'bold 48px Arial';
+    uiContext.textAlign = 'center';
+    uiContext.fillText('PORTAL CHAMBERS', CANVAS_WIDTH / 2, 100);
+    
+    // Subtitle
+    uiContext.fillStyle = '#ffffff';
+    uiContext.font = '20px Arial';
+    uiContext.fillText('A 3D Puzzle Adventure', CANVAS_WIDTH / 2, 140);
+    
+    // Description
+    uiContext.font = '14px Arial';
+    uiContext.fillStyle = '#cccccc';
+    const desc = [
+        'Navigate test chambers using your portal device.',
+        'Fire blue and orange portals on white surfaces.',
+        'Use momentum to solve puzzles and reach the exit!',
+    ];
+    desc.forEach((line, i) => {
+        uiContext.fillText(line, CANVAS_WIDTH / 2, 180 + i * 20);
+    });
+    
+    // Controls
+    uiContext.fillStyle = '#ffaa00';
+    uiContext.font = 'bold 16px Arial';
+    uiContext.fillText('CONTROLS', CANVAS_WIDTH / 2, 260);
+    
+    uiContext.fillStyle = '#ffffff';
+    uiContext.font = '14px Arial';
+    const controls = [
+        'WASD / Arrow Keys: Move',
+        'Space: Jump',
+        'Z / Mouse Click: Blue Portal',
+        'X / Shift: Orange Portal',
+        'ESC: Pause',
+    ];
+    controls.forEach((line, i) => {
+        uiContext.fillText(line, CANVAS_WIDTH / 2, 285 + i * 18);
+    });
+    
+    // Start prompt
+    uiContext.fillStyle = '#00ff00';
+    uiContext.font = 'bold 20px Arial';
+    const flash = Math.sin(gameState.frameCount * 0.1) > 0;
+    if (flash) {
+        uiContext.fillText('PRESS ENTER TO START', CANVAS_WIDTH / 2, 380);
+    }
+}
+
+function renderHUD() {
+    // HUD background
+    uiContext.fillStyle = 'rgba(0, 0, 0, 0.6)';
+    uiContext.fillRect(10, 10, 220, 80);
+    
+    // Score
+    uiContext.fillStyle = '#ffff00';
+    uiContext.font = 'bold 18px Arial';
+    uiContext.textAlign = 'left';
+    uiContext.fillText(`Score: ${gameState.score}`, 20, 35);
+    
+    // Level
+    uiContext.fillStyle = '#00ccff';
+    uiContext.fillText(`Chamber: ${gameState.currentLevel}/${gameState.maxLevels}`, 20, 60);
+    
+    // Portal status
+    const blueActive = gameState.bluePortal && gameState.bluePortal.active;
+    const orangeActive = gameState.orangePortal && gameState.orangePortal.active;
+    
+    uiContext.fillStyle = blueActive ? '#00aaff' : '#444444';
+    uiContext.fillText('Blue Portal', 20, 80);
+    
+    uiContext.fillStyle = orangeActive ? '#ff6600' : '#444444';
+    uiContext.fillText('Orange Portal', 130, 80);
+}
+
+function renderCrosshair() {
+    // Draw crosshair in center
+    const centerX = CANVAS_WIDTH / 2;
+    const centerY = CANVAS_HEIGHT / 2;
+    const size = 10;
+    
+    uiContext.strokeStyle = '#00ff00';
+    uiContext.lineWidth = 2;
+    
+    // Horizontal line
+    uiContext.beginPath();
+    uiContext.moveTo(centerX - size, centerY);
+    uiContext.lineTo(centerX + size, centerY);
+    uiContext.stroke();
+    
+    // Vertical line
+    uiContext.beginPath();
+    uiContext.moveTo(centerX, centerY - size);
+    uiContext.lineTo(centerX, centerY + size);
+    uiContext.stroke();
+    
+    // Center dot
+    uiContext.fillStyle = '#00ff00';
+    uiContext.beginPath();
+    uiContext.arc(centerX, centerY, 2, 0, Math.PI * 2);
+    uiContext.fill();
+}
+
+function renderPauseScreen() {
+    // Semi-transparent overlay
+    uiContext.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    uiContext.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    // Paused text
+    uiContext.fillStyle = '#ffffff';
+    uiContext.font = 'bold 48px Arial';
+    uiContext.textAlign = 'center';
+    uiContext.fillText('PAUSED', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 20);
+    
+    // Instructions
+    uiContext.font = '20px Arial';
+    uiContext.fillText('Press ESC to Resume', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 30);
+    uiContext.fillText('Press R to Restart', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 60);
+}
+
+function renderWinScreen() {
+    // Background
+    uiContext.fillStyle = 'rgba(0, 100, 0, 0.8)';
+    uiContext.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    // Win text
+    uiContext.fillStyle = '#00ff00';
+    uiContext.font = 'bold 56px Arial';
+    uiContext.textAlign = 'center';
+    uiContext.fillText('CHAMBER COMPLETE!', CANVAS_WIDTH / 2, 140);
+    
+    // Score
+    uiContext.fillStyle = '#ffffff';
+    uiContext.font = '24px Arial';
+    uiContext.fillText(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, 190);
+    
+    // Next level or complete
+    if (gameState.currentLevel < gameState.maxLevels) {
+        uiContext.fillStyle = '#ffff00';
+        uiContext.font = '20px Arial';
+        uiContext.fillText('Next Chamber Unlocked!', CANVAS_WIDTH / 2, 240);
+        uiContext.fillText('Press ENTER to Continue', CANVAS_WIDTH / 2, 270);
+    } else {
+        uiContext.fillStyle = '#ffaa00';
+        uiContext.font = 'bold 28px Arial';
+        uiContext.fillText('ALL CHAMBERS COMPLETED!', CANVAS_WIDTH / 2, 240);
+        uiContext.fillStyle = '#ffffff';
+        uiContext.font = '18px Arial';
+        uiContext.fillText('You have mastered the Portal Device!', CANVAS_WIDTH / 2, 275);
+    }
+    
+    uiContext.fillStyle = '#cccccc';
+    uiContext.font = '16px Arial';
+    uiContext.fillText('Press R to Return to Main Menu', CANVAS_WIDTH / 2, 330);
+}
+
+function renderLoseScreen() {
+    // Background
+    uiContext.fillStyle = 'rgba(100, 0, 0, 0.8)';
+    uiContext.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    // Lose text
+    uiContext.fillStyle = '#ff0000';
+    uiContext.font = 'bold 48px Arial';
+    uiContext.textAlign = 'center';
+    uiContext.fillText('TEST FAILED', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 40);
+    
+    // Score
+    uiContext.fillStyle = '#ffffff';
+    uiContext.font = '20px Arial';
+    uiContext.fillText(`Score: ${gameState.score}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+    
+    // Restart prompt
+    uiContext.fillText('Press R to Restart', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 40);
+}
+</file>
+
+<file name="lighting.js">
+// lighting.js - Lighting setup
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState } from './globals.js';
+
+export function setupLighting() {
+    // Ambient light for base illumination
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+    gameState.scene.add(ambientLight);
+    gameState.ambientLight = ambientLight;
+    
+    // Directional light for shadows
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.6);
+    directionalLight.position.set(10, 20, 10);
+    directionalLight.castShadow = true;
+    
+    // Configure shadow properties
+    directionalLight.shadow.mapSize.width = 2048;
+    directionalLight.shadow.mapSize.height = 2048;
+    directionalLight.shadow.camera.near = 0.5;
+    directionalLight.shadow.camera.far = 100;
+    directionalLight.shadow.camera.left = -30;
+    directionalLight.shadow.camera.right = 30;
+    directionalLight.shadow.camera.top = 30;
+    directionalLight.shadow.camera.bottom = -30;
+    
+    gameState.scene.add(directionalLight);
+    gameState.directionalLight = directionalLight;
+    
+    // Add hemisphere light for better ambient lighting
+    const hemisphereLight = new THREE.HemisphereLight(0x87ceeb, 0x444444, 0.3);
+    hemisphereLight.position.set(0, 20, 0);
+    gameState.scene.add(hemisphereLight);
+    gameState.lights.push(hemisphereLight);
+    
+    return { ambientLight, directionalLight, hemisphereLight };
+}
+</file>
+
+<file name="scene.js">
+// scene.js - Scene setup and configuration
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState } from './globals.js';
+
+export function setupScene() {
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x1a1a2e);
+    scene.fog = new THREE.Fog(0x1a1a2e, 20, 60);
+    
+    gameState.scene = scene;
+    return scene;
+}
+</file>
+
+<file name="testmode.js">
+// testmode.js - Automated testing modes
+import { gameState } from './globals.js';
+import { getCameraDirection } from './camera.js';
+import { castRayForPortal } from './physics.js';
+import { Portal } from './entities.js';
+
+export function updateTestMode(deltaTime) {
+    if (gameState.controlMode === "HUMAN") return;
+    
+    gameState.testTimer += deltaTime;
+    
+    switch (gameState.controlMode) {
+        case "TEST_1":
+            runTest1();
+            break;
+        case "TEST_2":
+            runTest2();
+            break;
+    }
+}
+
+function runTest1() {
+    // Test basic portal mechanics and teleportation
+    if (!gameState.player) return;
+    
+    const player = gameState.player;
+    
+    switch (gameState.testStep) {
+        case 0:
+            // Wait for game to start
+            if (gameState.gamePhase === "START" && gameState.testTimer > 1) {
+                simulateKeyPress(13); // ENTER
+                gameState.testStep++;
+                gameState.testTimer = 0;
+            }
+            break;
+        
+        case 1:
+            // Place blue portal on left wall
+            if (gameState.gamePhase === "PLAYING" && gameState.testTimer > 1) {
+                const hit = castRayForPortal(
+                    player.mesh.position.clone(),
+                    new THREE.Vector3(-1, 0, 0)
+                );
+                if (hit) {
+                    if (!gameState.bluePortal) {
+                        gameState.bluePortal = new Portal(true);
+                    }
+                    gameState.bluePortal.place(hit.position, hit.normal, hit.surface);
+                }
+                gameState.testStep++;
+                gameState.testTimer = 0;
+            }
+            break;
+        
+        case 2:
+            // Place orange portal on elevated platform
+            if (gameState.testTimer > 1) {
+                const hit = castRayForPortal(
+                    player.mesh.position.clone(),
+                    new THREE.Vector3(1, 0.5, -1).normalize()
+                );
+                if (hit) {
+                    if (!gameState.orangePortal) {
+                        gameState.orangePortal = new Portal(false);
+                    }
+                    gameState.orangePortal.place(hit.position, hit.normal, hit.surface);
+                }
+                gameState.testStep++;
+                gameState.testTimer = 0;
+            }
+            break;
+        
+        case 3:
+            // Move towards blue portal
+            if (gameState.testTimer < 3) {
+                player.move(new THREE.Vector3(-1, 0, 0));
+            } else {
+                gameState.testStep++;
+            }
+            break;
+        
+        case 4:
+            // Test complete
+            console.log("Test 1 complete: Portal mechanics validated");
+            break;
+    }
+}
+
+function runTest2() {
+    // Test win condition
+    if (!gameState.player) return;
+    
+    const player = gameState.player;
+    
+    switch (gameState.testStep) {
+        case 0:
+            // Start game
+            if (gameState.gamePhase === "START" && gameState.testTimer > 0.5) {
+                simulateKeyPress(13); // ENTER
+                gameState.testStep++;
+                gameState.testTimer = 0;
+            }
+            break;
+        
+        case 1:
+            // Place portals strategically
+            if (gameState.gamePhase === "PLAYING" && gameState.testTimer > 1) {
+                // Blue portal on floor
+                const hit1 = castRayForPortal(
+                    player.mesh.position.clone(),
+                    new THREE.Vector3(0, -1, 0)
+                );
+                if (hit1) {
+                    if (!gameState.bluePortal) {
+                        gameState.bluePortal = new Portal(true);
+                    }
+                    gameState.bluePortal.place(hit1.position, hit1.normal, hit1.surface);
+                }
+                
+                // Orange portal on elevated platform surface
+                const hit2 = castRayForPortal(
+                    player.mesh.position.clone(),
+                    new THREE.Vector3(1, 0.5, -1).normalize()
+                );
+                if (hit2) {
+                    if (!gameState.orangePortal) {
+                        gameState.orangePortal = new Portal(false);
+                    }
+                    gameState.orangePortal.place(hit2.position, hit2.normal, hit2.surface);
+                }
+                
+                gameState.testStep++;
+                gameState.testTimer = 0;
+            }
+            break;
+        
+        case 2:
+            // Jump through portal
+            if (gameState.testTimer < 0.5) {
+                player.jump();
+            } else if (gameState.testTimer < 3) {
+                // Wait for teleportation
+            } else {
+                gameState.testStep++;
+                gameState.testTimer = 0;
+            }
+            break;
+        
+        case 3:
+            // Move towards exit
+            if (gameState.exitDoor) {
+                const dirToExit = new THREE.Vector3()
+                    .subVectors(gameState.exitDoor.position, player.mesh.position)
+                    .normalize();
+                player.move(dirToExit);
+                
+                // Check if reached exit
+                if (gameState.exitDoor.checkPlayerCollision(player)) {
+                    gameState.gamePhase = "GAME_OVER_WIN";
+                    gameState.testStep++;
+                }
+            }
+            break;
+        
+        case 4:
+            // Test complete
+            console.log("Test 2 complete: Win condition validated");
+            break;
+    }
+}
+
+function simulateKeyPress(keyCode) {
+    gameState.keys[keyCode] = true;
+    setTimeout(() => {
+        gameState.keys[keyCode] = false;
+    }, 100);
+}
+</file>
+
+<file name="entities.js">
+// entities.js - Game entity classes
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, PLAYER_SPEED, PLAYER_JUMP_POWER, logPlayerInfo, FRICTION, AIR_RESISTANCE } from './globals.js';
+import { getCameraDirection, getCameraRightVector } from './camera.js';
+
+export class Player {
+    constructor(x, y, z) {
+        // Create player geometry - a simple capsule-like shape
+        const bodyGeometry = new THREE.CapsuleGeometry(0.4, 1.2, 8, 16);
+        const bodyMaterial = new THREE.MeshStandardMaterial({
+            color: 0xffffff,
+            roughness: 0.7,
+            metalness: 0.3
+        });
+        this.mesh = new THREE.Mesh(bodyGeometry, bodyMaterial);
+        this.mesh.position.set(x, y, z);
+        this.mesh.castShadow = true;
+        this.mesh.receiveShadow = true;
+        
+        // Physics properties
+        this.velocity = new THREE.Vector3(0, 0, 0);
+        this.acceleration = new THREE.Vector3(0, 0, 0);
+        this.speed = PLAYER_SPEED;
+        this.jumpPower = PLAYER_JUMP_POWER;
+        this.onGround = false;
+        this.mass = 1.0;
+        
+        // Player dimensions
+        this.radius = 0.4;
+        this.height = 1.8;
+        
+        // State
+        this.isMoving = false;
+        this.lastPosition = new THREE.Vector3().copy(this.mesh.position);
+        this.lastLogTime = 0;
+        
+        // Portal cooldown
+        this.justTeleported = false;
+        this.teleportCooldown = 0;
+        
+        // Add to scene
+        gameState.scene.add(this.mesh);
+    }
+    
+    update(deltaTime) {
+        // Update teleport cooldown
+        if (this.teleportCooldown > 0) {
+            this.teleportCooldown -= deltaTime;
+            if (this.teleportCooldown <= 0) {
+                this.justTeleported = false;
+            }
+        }
+        
+        // Apply gravity
+        if (!this.onGround) {
+            this.acceleration.add(gameState.gravity);
+        }
+        
+        // Update velocity
+        this.velocity.add(this.acceleration.clone().multiplyScalar(deltaTime * 60));
+        
+        // Apply friction/air resistance
+        if (this.onGround) {
+            this.velocity.x *= FRICTION;
+            this.velocity.z *= FRICTION;
+        } else {
+            this.velocity.multiplyScalar(AIR_RESISTANCE);
+        }
+        
+        // Update position
+        this.mesh.position.add(this.velocity.clone().multiplyScalar(deltaTime * 60));
+        
+        // Reset acceleration
+        this.acceleration.set(0, 0, 0);
+        
+        // Log position periodically
+        if (Date.now() - this.lastLogTime > 100) {
+            logPlayerInfo(this);
+            this.lastLogTime = Date.now();
+        }
+    }
+    
+    move(direction) {
+        const moveDir = direction.clone().normalize();
+        this.acceleration.add(moveDir.multiplyScalar(this.speed));
+        this.isMoving = true;
+    }
+    
+    jump() {
+        if (this.onGround) {
+            this.velocity.y = this.jumpPower;
+            this.onGround = false;
+        }
+    }
+    
+    setOnGround(value) {
+        this.onGround = value;
+    }
+    
+    teleport(position, velocity) {
+        this.mesh.position.copy(position);
+        this.velocity.copy(velocity);
+        this.justTeleported = true;
+        this.teleportCooldown = 0.5; // 0.5 second cooldown
+    }
+}
+
+export class Platform {
+    constructor(x, y, z, width, height, depth, isPortalSurface = false) {
+        const geometry = new THREE.BoxGeometry(width, height, depth);
+        const material = new THREE.MeshStandardMaterial({
+            color: isPortalSurface ? 0xeeeeee : 0x333333,
+            roughness: 0.8,
+            metalness: 0.2
+        });
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.position.set(x, y, z);
+        this.mesh.receiveShadow = true;
+        this.mesh.castShadow = true;
+        
+        this.width = width;
+        this.height = height;
+        this.depth = depth;
+        this.isPortalSurface = isPortalSurface;
+        
+        // Store for portal placement
+        if (isPortalSurface) {
+            gameState.portalSurfaces.push(this);
+        }
+        
+        gameState.scene.add(this.mesh);
+        gameState.platforms.push(this);
+    }
+    
+    getBounds() {
+        return {
+            min: new THREE.Vector3(
+                this.mesh.position.x - this.width / 2,
+                this.mesh.position.y - this.height / 2,
+                this.mesh.position.z - this.depth / 2
+            ),
+            max: new THREE.Vector3(
+                this.mesh.position.x + this.width / 2,
+                this.mesh.position.y + this.height / 2,
+                this.mesh.position.z + this.depth / 2
+            )
+        };
+    }
+}
+
+export class Portal {
+    constructor(isBlue = true) {
+        this.isBlue = isBlue;
+        this.active = false;
+        this.position = new THREE.Vector3();
+        this.normal = new THREE.Vector3(0, 0, 1);
+        this.surface = null;
+        
+        // Create portal visual
+        const geometry = new THREE.RingGeometry(0.8, 1.0, 32);
+        const material = new THREE.MeshBasicMaterial({
+            color: isBlue ? 0x0099ff : 0xff6600,
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0.8
+        });
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.visible = false;
+        
+        // Create portal center glow
+        const glowGeometry = new THREE.CircleGeometry(0.8, 32);
+        const glowMaterial = new THREE.MeshBasicMaterial({
+            color: isBlue ? 0x0099ff : 0xff6600,
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0.3
+        });
+        this.glowMesh = new THREE.Mesh(glowGeometry, glowMaterial);
+        this.mesh.add(this.glowMesh);
+        
+        gameState.scene.add(this.mesh);
+    }
+    
+    place(position, normal, surface) {
+        this.active = true;
+        this.position.copy(position);
+        this.normal.copy(normal);
+        this.surface = surface;
+        
+        // Position portal slightly in front of surface
+        this.mesh.position.copy(position).add(normal.clone().multiplyScalar(0.05));
+        
+        // Orient portal to face away from surface
+        const up = new THREE.Vector3(0, 1, 0);
+        if (Math.abs(normal.y) > 0.9) {
+            up.set(0, 0, 1);
+        }
+        this.mesh.lookAt(this.mesh.position.clone().add(normal));
+        
+        this.mesh.visible = true;
+    }
+    
+    deactivate() {
+        this.active = false;
+        this.mesh.visible = false;
+    }
+    
+    update(deltaTime) {
+        if (this.active) {
+            // Animate portal rotation
+            this.glowMesh.rotation.z += deltaTime * 2;
+        }
+    }
+}
+
+export class ExitDoor {
+    constructor(x, y, z) {
+        // Create door frame
+        const frameGeometry = new THREE.BoxGeometry(2.5, 3.5, 0.3);
+        const frameMaterial = new THREE.MeshStandardMaterial({
+            color: 0x00ff00,
+            emissive: 0x00ff00,
+            emissiveIntensity: 0.3,
+            roughness: 0.5,
+            metalness: 0.7
+        });
+        this.frameMesh = new THREE.Mesh(frameGeometry, frameMaterial);
+        this.frameMesh.position.set(x, y, z);
+        this.frameMesh.castShadow = true;
+        this.frameMesh.receiveShadow = true;
+        
+        // Create door center (glowing)
+        const doorGeometry = new THREE.PlaneGeometry(2.0, 3.0);
+        const doorMaterial = new THREE.MeshBasicMaterial({
+            color: 0x00ff00,
+            transparent: true,
+            opacity: 0.3,
+            side: THREE.DoubleSide
+        });
+        this.doorMesh = new THREE.Mesh(doorGeometry, doorMaterial);
+        this.doorMesh.position.set(x, y, z + 0.1);
+        
+        gameState.scene.add(this.frameMesh);
+        gameState.scene.add(this.doorMesh);
+        
+        this.position = new THREE.Vector3(x, y, z);
+        this.width = 2.5;
+        this.height = 3.5;
+    }
+    
+    update(deltaTime) {
+        // Animate door glow
+        const intensity = 0.3 + Math.sin(gameState.frameCount * 0.05) * 0.1;
+        this.frameMesh.material.emissiveIntensity = intensity;
+        this.doorMesh.material.opacity = 0.3 + Math.sin(gameState.frameCount * 0.05) * 0.1;
+    }
+    
+    checkPlayerCollision(player) {
+        const distance = player.mesh.position.distanceTo(this.position);
+        return distance < 2.0;
+    }
+}
+
+export class Collectible {
+    constructor(x, y, z) {
+        const geometry = new THREE.TorusGeometry(0.3, 0.1, 16, 32);
+        const material = new THREE.MeshStandardMaterial({
+            color: 0xffff00,
+            emissive: 0xffff00,
+            emissiveIntensity: 0.5,
+            roughness: 0.3,
+            metalness: 0.8
+        });
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.position.set(x, y, z);
+        this.mesh.castShadow = true;
+        
+        this.value = 10;
+        this.initialY = y;
+        this.collected = false;
+        
+        gameState.scene.add(this.mesh);
+    }
+    
+    update(deltaTime) {
+        if (this.collected) return;
+        
+        // Rotate
+        this.mesh.rotation.y += deltaTime * 3;
+        
+        // Bob up and down
+        this.mesh.position.y = this.initialY + Math.sin(gameState.frameCount * 0.05) * 0.2;
+        
+        // Check collision with player
+        if (gameState.player) {
+            const distance = this.mesh.position.distanceTo(gameState.player.mesh.position);
+            if (distance < 1.0) {
+                this.collect();
+            }
+        }
+    }
+    
+    collect() {
+        if (this.collected) return;
+        this.collected = true;
+        gameState.score += this.value;
+        gameState.scene.remove(this.mesh);
+    }
+}
+</file>
+
+<file name="levels.js">
+// levels.js - Level generation and management
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState } from './globals.js';
+import { Platform, ExitDoor, Collectible } from './entities.js';
+
+export function loadLevel(levelNumber) {
+    // Clear existing level
+    clearLevel();
+    
+    switch (levelNumber) {
+        case 1:
+            createLevel1();
+            break;
+        case 2:
+            createLevel2();
+            break;
+        case 3:
+            createLevel3();
+            break;
+        default:
+            createLevel1();
+    }
+    
+    gameState.currentLevel = levelNumber;
+}
+
+function clearLevel() {
+    // Remove platforms
+    gameState.platforms.forEach(platform => {
+        gameState.scene.remove(platform.mesh);
+    });
+    gameState.platforms = [];
+    gameState.portalSurfaces = [];
+    
+    // Remove collectibles
+    gameState.collectibles.forEach(item => {
+        if (!item.collected) {
+            gameState.scene.remove(item.mesh);
+        }
+    });
+    gameState.collectibles = [];
+    
+    // Remove exit door
+    if (gameState.exitDoor) {
+        gameState.scene.remove(gameState.exitDoor.frameMesh);
+        gameState.scene.remove(gameState.exitDoor.doorMesh);
+        gameState.exitDoor = null;
+    }
+    
+    // Deactivate portals
+    if (gameState.bluePortal) {
+        gameState.bluePortal.deactivate();
+    }
+    if (gameState.orangePortal) {
+        gameState.orangePortal.deactivate();
+    }
+}
+
+function createLevel1() {
+    // Simple introductory level
+    // Ground floor
+    new Platform(0, -0.5, 0, 20, 1, 20, false);
+    
+    // Left wall (portal surface)
+    new Platform(-10, 5, 0, 1, 12, 20, true);
+    
+    // Right wall (portal surface)
+    new Platform(10, 5, 0, 1, 12, 20, true);
+    
+    // Back wall
+    new Platform(0, 5, -10, 20, 12, 1, false);
+    
+    // Front wall sections (leaving space for exit)
+    new Platform(-5, 5, 10, 8, 12, 1, true);
+    new Platform(7, 5, 10, 4, 12, 1, true);
+    
+    // Elevated platform
+    new Platform(5, 3, -5, 4, 1, 4, true);
+    
+    // Exit on elevated platform
+    gameState.exitDoor = new ExitDoor(5, 5, -5);
+    
+    // Collectibles
+    gameState.collectibles.push(new Collectible(-5, 2, -5));
+    gameState.collectibles.push(new Collectible(5, 1, 5));
+    gameState.collectibles.push(new Collectible(-5, 1, 5));
+}
+
+function createLevel2() {
+    // More complex level with multiple platforms
+    // Ground floor
+    new Platform(0, -0.5, 0, 30, 1, 30, false);
+    
+    // Walls
+    new Platform(-15, 8, 0, 1, 18, 30, true);
+    new Platform(15, 8, 0, 1, 18, 30, true);
+    new Platform(0, 8, -15, 30, 18, 1, true);
+    new Platform(0, 8, 15, 30, 18, 1, false);
+    
+    // Platform stairs
+    new Platform(-10, 1.5, -10, 4, 2, 4, true);
+    new Platform(-5, 3.5, -5, 4, 2, 4, true);
+    new Platform(0, 5.5, 0, 4, 2, 4, true);
+    new Platform(5, 7.5, 5, 4, 2, 4, true);
+    
+    // Final platform with exit
+    new Platform(10, 10, 10, 6, 1, 6, true);
+    gameState.exitDoor = new ExitDoor(10, 12.5, 10);
+    
+    // Collectibles
+    gameState.collectibles.push(new Collectible(-10, 3, -10));
+    gameState.collectibles.push(new Collectible(-5, 5, -5));
+    gameState.collectibles.push(new Collectible(0, 7, 0));
+    gameState.collectibles.push(new Collectible(5, 9, 5));
+}
+
+function createLevel3() {
+    // Advanced level with complex geometry
+    // Ground floor
+    new Platform(0, -0.5, 0, 40, 1, 40, false);
+    
+    // Walls
+    new Platform(-20, 10, 0, 1, 22, 40, true);
+    new Platform(20, 10, 0, 1, 22, 40, true);
+    new Platform(0, 10, -20, 40, 22, 1, true);
+    new Platform(0, 10, 20, 40, 22, 1, false);
+    
+    // Ceiling
+    new Platform(0, 20, 0, 40, 1, 40, true);
+    
+    // Floating platforms
+    new Platform(-15, 3, -15, 5, 1, 5, true);
+    new Platform(-10, 6, 0, 5, 1, 5, true);
+    new Platform(0, 9, 15, 5, 1, 5, true);
+    new Platform(10, 12, -10, 5, 1, 5, true);
+    new Platform(15, 15, 5, 5, 1, 5, true);
+    
+    // Exit platform (very high)
+    new Platform(0, 18, 0, 6, 1, 6, true);
+    gameState.exitDoor = new ExitDoor(0, 20.5, 0);
+    
+    // Collectibles
+    gameState.collectibles.push(new Collectible(-15, 5, -15));
+    gameState.collectibles.push(new Collectible(-10, 8, 0));
+    gameState.collectibles.push(new Collectible(0, 11, 15));
+    gameState.collectibles.push(new Collectible(10, 14, -10));
+    gameState.collectibles.push(new Collectible(15, 17, 5));
+}
+</file>
+
+<file name="camera.js">
+// camera.js - Camera setup and control
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { CANVAS_WIDTH, CANVAS_HEIGHT, gameState } from './globals.js';
+
+export function setupCamera() {
+    const camera = new THREE.PerspectiveCamera(
+        75,
+        CANVAS_WIDTH / CANVAS_HEIGHT,
+        0.1,
+        1000
+    );
+    
+    camera.position.set(0, 5, 10);
+    camera.lookAt(0, 0, 0);
+    
+    gameState.camera = camera;
+    return camera;
+}
+
+export function updateCamera() {
+    if (!gameState.player || !gameState.camera) return;
+    
+    const player = gameState.player;
+    const camera = gameState.camera;
+    
+    // Third-person camera with smooth following
+    const targetPosition = new THREE.Vector3();
+    
+    // Calculate camera position based on yaw and pitch
+    const yaw = gameState.cameraRotation.yaw;
+    const pitch = gameState.cameraRotation.pitch;
+    
+    const distance = 8;
+    const offsetX = Math.sin(yaw) * Math.cos(pitch) * distance;
+    const offsetY = Math.sin(pitch) * distance + 3;
+    const offsetZ = Math.cos(yaw) * Math.cos(pitch) * distance;
+    
+    targetPosition.set(
+        player.mesh.position.x + offsetX,
+        player.mesh.position.y + offsetY,
+        player.mesh.position.z + offsetZ
+    );
+    
+    // Smooth camera movement
+    camera.position.lerp(targetPosition, 0.1);
+    
+    // Look at player with slight offset
+    const lookAtTarget = new THREE.Vector3(
+        player.mesh.position.x,
+        player.mesh.position.y + 1,
+        player.mesh.position.z
+    );
+    camera.lookAt(lookAtTarget);
+}
+
+export function getCameraDirection() {
+    if (!gameState.camera) return new THREE.Vector3(0, 0, -1);
+    
+    const direction = new THREE.Vector3();
+    gameState.camera.getWorldDirection(direction);
+    return direction;
+}
+
+export function getCameraRightVector() {
+    if (!gameState.camera) return new THREE.Vector3(1, 0, 0);
+    
+    const direction = getCameraDirection();
+    const right = new THREE.Vector3();
+    right.crossVectors(direction, new THREE.Vector3(0, 1, 0)).normalize();
+    return right;
+}
+</file>
+
+<file name="physics.js">
+// physics.js - Physics and collision handling
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState } from './globals.js';
+
+export function updatePhysics(deltaTime) {
+    // Update player physics
+    if (gameState.player) {
+        gameState.player.update(deltaTime);
+        checkPlayerCollisions();
+        checkPortalTeleportation();
+    }
+    
+    // Update portals
+    if (gameState.bluePortal) {
+        gameState.bluePortal.update(deltaTime);
+    }
+    if (gameState.orangePortal) {
+        gameState.orangePortal.update(deltaTime);
+    }
+    
+    // Update collectibles
+    gameState.collectibles.forEach(item => item.update(deltaTime));
+    
+    // Update exit door
+    if (gameState.exitDoor) {
+        gameState.exitDoor.update(deltaTime);
+    }
+}
+
+export function checkPlayerCollisions() {
+    if (!gameState.player) return;
+    
+    const player = gameState.player;
+    player.setOnGround(false);
+    
+    // Check collision with each platform
+    for (const platform of gameState.platforms) {
+        const bounds = platform.getBounds();
+        const playerPos = player.mesh.position;
+        const playerRadius = player.radius;
+        const playerHalfHeight = player.height / 2;
+        
+        // Check if player is within platform bounds (expanded by player radius)
+        if (playerPos.x + playerRadius > bounds.min.x &&
+            playerPos.x - playerRadius < bounds.max.x &&
+            playerPos.z + playerRadius > bounds.min.z &&
+            playerPos.z - playerRadius < bounds.max.z) {
+            
+            // Check vertical collision (ground)
+            const playerBottom = playerPos.y - playerHalfHeight;
+            const platformTop = bounds.max.y;
+            
+            if (playerBottom <= platformTop && playerBottom >= bounds.min.y - 0.5) {
+                player.mesh.position.y = platformTop + playerHalfHeight;
+                player.velocity.y = Math.max(0, player.velocity.y);
+                player.setOnGround(true);
+            }
+            
+            // Check ceiling collision
+            const playerTop = playerPos.y + playerHalfHeight;
+            const platformBottom = bounds.min.y;
+            
+            if (playerTop >= platformBottom && playerTop <= bounds.max.y + 0.5 && player.velocity.y > 0) {
+                player.mesh.position.y = platformBottom - playerHalfHeight;
+                player.velocity.y = 0;
+            }
+        }
+        
+        // Check horizontal collisions (walls)
+        if (playerPos.y - playerHalfHeight < bounds.max.y &&
+            playerPos.y + playerHalfHeight > bounds.min.y) {
+            
+            // X-axis collision
+            if (playerPos.z + playerRadius > bounds.min.z &&
+                playerPos.z - playerRadius < bounds.max.z) {
+                
+                if (playerPos.x + playerRadius > bounds.min.x &&
+                    playerPos.x + playerRadius < bounds.max.x) {
+                    player.mesh.position.x = bounds.min.x - playerRadius;
+                    player.velocity.x = Math.min(0, player.velocity.x);
+                }
+                
+                if (playerPos.x - playerRadius < bounds.max.x &&
+                    playerPos.x - playerRadius > bounds.min.x) {
+                    player.mesh.position.x = bounds.max.x + playerRadius;
+                    player.velocity.x = Math.max(0, player.velocity.x);
+                }
+            }
+            
+            // Z-axis collision
+            if (playerPos.x + playerRadius > bounds.min.x &&
+                playerPos.x - playerRadius < bounds.max.x) {
+                
+                if (playerPos.z + playerRadius > bounds.min.z &&
+                    playerPos.z + playerRadius < bounds.max.z) {
+                    player.mesh.position.z = bounds.min.z - playerRadius;
+                    player.velocity.z = Math.min(0, player.velocity.z);
+                }
+                
+                if (playerPos.z - playerRadius < bounds.max.z &&
+                    playerPos.z - playerRadius > bounds.min.z) {
+                    player.mesh.position.z = bounds.max.z + playerRadius;
+                    player.velocity.z = Math.max(0, player.velocity.z);
+                }
+            }
+        }
+    }
+    
+    // Check if player fell off the world
+    if (player.mesh.position.y < -10) {
+        // Respawn player
+        player.mesh.position.set(0, 2, 0);
+        player.velocity.set(0, 0, 0);
+    }
+}
+
+export function checkPortalTeleportation() {
+    if (!gameState.player || gameState.player.justTeleported) return;
+    
+    const bluePortal = gameState.bluePortal;
+    const orangePortal = gameState.orangePortal;
+    
+    // Check if both portals are active
+    if (!bluePortal || !orangePortal || !bluePortal.active || !orangePortal.active) {
+        return;
+    }
+    
+    const player = gameState.player;
+    const playerPos = player.mesh.position;
+    
+    // Check distance to blue portal
+    const distToBlue = playerPos.distanceTo(bluePortal.position);
+    if (distToBlue < 1.2) {
+        // Check if player is moving towards portal
+        const dirToBlue = new THREE.Vector3().subVectors(bluePortal.position, playerPos).normalize();
+        const dot = player.velocity.clone().normalize().dot(dirToBlue);
+        
+        if (dot > 0.3) {
+            teleportPlayer(bluePortal, orangePortal);
+            return;
+        }
+    }
+    
+    // Check distance to orange portal
+    const distToOrange = playerPos.distanceTo(orangePortal.position);
+    if (distToOrange < 1.2) {
+        // Check if player is moving towards portal
+        const dirToOrange = new THREE.Vector3().subVectors(orangePortal.position, playerPos).normalize();
+        const dot = player.velocity.clone().normalize().dot(dirToOrange);
+        
+        if (dot > 0.3) {
+            teleportPlayer(orangePortal, bluePortal);
+            return;
+        }
+    }
+}
+
+function teleportPlayer(fromPortal, toPortal) {
+    const player = gameState.player;
+    
+    // Calculate exit position (in front of exit portal)
+    const exitPos = toPortal.position.clone().add(
+        toPortal.normal.clone().multiplyScalar(1.5)
+    );
+    
+    // Transform velocity through portals
+    const entryVelocity = player.velocity.clone();
+    const entryNormal = fromPortal.normal.clone();
+    const exitNormal = toPortal.normal.clone();
+    
+    // Calculate velocity relative to entry portal
+    const velocityAlongNormal = entryVelocity.dot(entryNormal);
+    const tangentialVelocity = entryVelocity.clone().sub(
+        entryNormal.clone().multiplyScalar(velocityAlongNormal)
+    );
+    
+    // Reflect velocity to exit portal
+    const exitVelocity = exitNormal.clone().multiplyScalar(Math.abs(velocityAlongNormal))
+        .add(tangentialVelocity);
+    
+    // Apply slight velocity boost to prevent getting stuck
+    exitVelocity.multiplyScalar(1.1);
+    
+    // Teleport player
+    player.teleport(exitPos, exitVelocity);
+}
+
+export function castRayForPortal(origin, direction) {
+    const raycaster = new THREE.Raycaster(origin, direction, 0, 50);
+    
+    // Only check portal surfaces
+    const surfaceMeshes = gameState.portalSurfaces.map(s => s.mesh);
+    const intersects = raycaster.intersectObjects(surfaceMeshes);
+    
+    if (intersects.length > 0) {
+        const hit = intersects[0];
+        return {
+            position: hit.point,
+            normal: hit.face.normal.clone().transformDirection(hit.object.matrixWorld),
+            surface: gameState.portalSurfaces.find(s => s.mesh === hit.object)
+        };
+    }
+    
+    return null;
+}
+</file>
+
+<file name="input.js">
+// input.js - Input handling
+import { gameState, logInput } from './globals.js';
+import { getCameraDirection, getCameraRightVector } from './camera.js';
+import { castRayForPortal } from './physics.js';
+import { Portal } from './entities.js';
+
+export function setupInput() {
+    // Keyboard input
+    document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('keyup', handleKeyUp);
+    
+    // Mouse input for portal firing (optional)
+    document.addEventListener('click', handleMouseClick);
+}
+
+function handleKeyDown(event) {
+    logInput('keydown', event.key, event.keyCode);
+    gameState.keys[event.keyCode] = true;
+    
+    // Prevent default for game keys
+    if ([37, 38, 39, 40, 32, 27, 13, 82].includes(event.keyCode)) {
+        event.preventDefault();
+    }
+    
+    // Phase controls
+    if (event.keyCode === 13) { // ENTER
+        if (gameState.gamePhase === "START") {
+            startGame();
+        } else if (gameState.gamePhase === "GAME_OVER_WIN") {
+            if (gameState.currentLevel < gameState.maxLevels) {
+                nextLevel();
+            }
+        }
+    }
+    
+    if (event.keyCode === 27) { // ESC
+        if (gameState.gamePhase === "PLAYING") {
+            pauseGame();
+        } else if (gameState.gamePhase === "PAUSED") {
+            resumeGame();
+        }
+    }
+    
+    if (event.keyCode === 82) { // R
+        if (gameState.gamePhase === "GAME_OVER_WIN" || 
+            gameState.gamePhase === "GAME_OVER_LOSE" ||
+            gameState.gamePhase === "PAUSED") {
+            restartGame();
+        }
+    }
+    
+    // Gameplay controls
+    if (gameState.gamePhase === "PLAYING") {
+        // Portal firing
+        if (event.keyCode === 90) { // Z - Blue portal
+            firePortal(true);
+        }
+        if (event.keyCode === 88 || event.keyCode === 16) { // X or Shift - Orange portal
+            firePortal(false);
+        }
+    }
+}
+
+function handleKeyUp(event) {
+    logInput('keyup', event.key, event.keyCode);
+    gameState.keys[event.keyCode] = false;
+}
+
+function handleMouseClick(event) {
+    if (gameState.gamePhase === "PLAYING") {
+        // Left click = blue portal
+        firePortal(true);
+    }
+}
+
+export function processInput() {
+    if (gameState.gamePhase !== "PLAYING" || !gameState.player) return;
+    
+    const player = gameState.player;
+    const keys = gameState.keys;
+    
+    // Movement
+    const cameraDir = getCameraDirection();
+    const cameraRight = getCameraRightVector();
+    
+    // Forward/backward (W/S or Up/Down)
+    if (keys[87] || keys[38]) { // W or Up
+        const moveDir = new THREE.Vector3(cameraDir.x, 0, cameraDir.z);
+        player.move(moveDir);
+    }
+    if (keys[83] || keys[40]) { // S or Down
+        const moveDir = new THREE.Vector3(-cameraDir.x, 0, -cameraDir.z);
+        player.move(moveDir);
+    }
+    
+    // Strafe left/right (A/D or Left/Right)
+    if (keys[65] || keys[37]) { // A or Left
+        player.move(cameraRight.clone().negate());
+    }
+    if (keys[68] || keys[39]) { // D or Right
+        player.move(cameraRight);
+    }
+    
+    // Jump (Space)
+    if (keys[32]) {
+        player.jump();
+    }
+}
+
+function firePortal(isBlue) {
+    // Cast ray from camera center
+    const origin = gameState.camera.position.clone();
+    const direction = getCameraDirection();
+    
+    const hit = castRayForPortal(origin, direction);
+    
+    if (hit) {
+        // Create or move portal
+        if (isBlue) {
+            if (!gameState.bluePortal) {
+                gameState.bluePortal = new Portal(true);
+            }
+            gameState.bluePortal.place(hit.position, hit.normal, hit.surface);
+        } else {
+            if (!gameState.orangePortal) {
+                gameState.orangePortal = new Portal(false);
+            }
+            gameState.orangePortal.place(hit.position, hit.normal, hit.surface);
+        }
+    }
+}
+
+function startGame() {
+    gameState.gamePhase = "PLAYING";
+    import('./levels.js').then(module => {
+        module.loadLevel(1);
+    });
+}
+
+function nextLevel() {
+    gameState.currentLevel++;
+    gameState.gamePhase = "PLAYING";
+    import('./levels.js').then(module => {
+        module.loadLevel(gameState.currentLevel);
+    });
+}
+
+function pauseGame() {
+    gameState.gamePhase = "PAUSED";
+}
+
+function resumeGame() {
+    gameState.gamePhase = "PLAYING";
+}
+
+function restartGame() {
+    gameState.gamePhase = "START";
+    gameState.score = 0;
+    gameState.currentLevel = 1;
+    
+    // Reset player
+    if (gameState.player) {
+        gameState.player.mesh.position.set(0, 2, 0);
+        gameState.player.velocity.set(0, 0, 0);
+    }
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

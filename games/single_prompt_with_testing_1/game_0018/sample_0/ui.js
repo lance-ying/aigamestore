@@ -1,269 +1,326 @@
 // ui.js - UI rendering functions
-
 import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, GAME_PHASES } from './globals.js';
 
-export function renderStartScreen(p) {
-  p.background(20, 30, 50);
+let uiCanvas = null;
+let uiContext = null;
+
+function initUICanvas() {
+  if (uiCanvas) return;
   
-  // Title
-  p.fill(255);
-  p.textAlign(p.CENTER, p.CENTER);
-  p.textSize(32);
-  p.text("EXTREME LANDINGS PRO", CANVAS_WIDTH / 2, 80);
+  uiCanvas = document.createElement('canvas');
+  uiCanvas.width = CANVAS_WIDTH;
+  uiCanvas.height = CANVAS_HEIGHT;
+  uiCanvas.className = 'ui-overlay';
+  uiCanvas.style.position = 'absolute';
+  uiCanvas.style.top = '0';
+  uiCanvas.style.left = '0';
+  uiCanvas.style.pointerEvents = 'none';
+  uiCanvas.style.zIndex = '1000';
   
-  // Instructions
-  p.textSize(14);
-  p.fill(200);
-  p.text("Navigate your aircraft to a safe landing", CANVAS_WIDTH / 2, 140);
-  p.text("Manage systems and respond to emergencies", CANVAS_WIDTH / 2, 165);
+  if (gameState.gameContainer) {
+    gameState.gameContainer.appendChild(uiCanvas);
+  }
   
-  // Controls
-  p.textSize(12);
-  p.textAlign(p.LEFT);
-  p.fill(180);
-  p.text("W/S: Pitch Control", 50, 220);
-  p.text("A/D: Roll Control", 50, 240);
-  p.text("←/→: Rudder", 50, 260);
-  p.text("↑/↓: Throttle", 50, 280);
-  
-  p.text("SPACE: Landing Gear", 320, 220);
-  p.text("SHIFT: Flaps", 320, 240);
-  p.text("Z: Spoilers", 320, 260);
-  
-  // Start prompt
-  p.textAlign(p.CENTER);
-  p.textSize(16);
-  p.fill(100, 255, 100);
-  p.text("PRESS ENTER TO START", CANVAS_WIDTH / 2, 340);
+  uiContext = uiCanvas.getContext('2d');
 }
 
-export function renderHUD(p) {
-  // Background panel
-  p.fill(0, 0, 0, 150);
-  p.noStroke();
-  p.rect(0, 0, CANVAS_WIDTH, 80);
+export function renderUI() {
+  initUICanvas();
   
-  // Primary Flight Display (left side)
-  p.fill(255);
-  p.textSize(12);
-  p.textAlign(p.LEFT);
+  // Clear canvas
+  uiContext.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  switch (gameState.gamePhase) {
+    case GAME_PHASES.START:
+      renderStartScreen();
+      break;
+    case GAME_PHASES.PLAYING:
+      renderHUD();
+      break;
+    case GAME_PHASES.PAUSED:
+      renderHUD();
+      renderPausedOverlay();
+      break;
+    case GAME_PHASES.GAME_OVER_WIN:
+    case GAME_PHASES.GAME_OVER_LOSE:
+      renderGameOver();
+      break;
+  }
+}
+
+export function renderStartScreen() {
+  const ctx = uiContext;
+  
+  // Semi-transparent background
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+  ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  // Title
+  ctx.fillStyle = 'white';
+  ctx.font = 'bold 28px Arial';
+  ctx.textAlign = 'center';
+  ctx.fillText('EXTREME LANDINGS PRO 3D', CANVAS_WIDTH / 2, 80);
+  
+  // Instructions
+  ctx.font = '14px Arial';
+  ctx.fillStyle = '#aaaaaa';
+  ctx.fillText('Navigate your aircraft to a safe landing', CANVAS_WIDTH / 2, 120);
+  ctx.fillText('Manage systems and respond to emergencies', CANVAS_WIDTH / 2, 140);
+  
+  // Controls
+  ctx.font = '11px Arial';
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#999999';
+  ctx.fillText('W/S: Pitch Control', 50, 180);
+  ctx.fillText('A/D: Roll Control', 50, 195);
+  ctx.fillText('←/→: Rudder', 50, 210);
+  ctx.fillText('↑/↓: Throttle', 50, 225);
+  
+  ctx.fillText('SPACE: Landing Gear', 320, 180);
+  ctx.fillText('SHIFT: Flaps', 320, 195);
+  ctx.fillText('Z: Spoilers', 320, 210);
+  
+  // Start prompt
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 16px Arial';
+  ctx.fillStyle = '#66ff66';
+  ctx.fillText('PRESS ENTER TO START', CANVAS_WIDTH / 2, 320);
+}
+
+export function renderHUD() {
+  const ctx = uiContext;
+  
+  // Background panel
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+  ctx.fillRect(0, 0, CANVAS_WIDTH, 70);
+  
+  // Primary Flight Display
+  ctx.font = '11px Arial';
+  ctx.textAlign = 'left';
   
   // Altitude
-  p.text(`ALT: ${Math.floor(gameState.altitude)} ft`, 10, 15);
+  ctx.fillStyle = 'white';
+  ctx.fillText(`ALT: ${Math.floor(gameState.altitude)} m`, 10, 15);
   
-  // Speed
-  const speedColor = gameState.speed < 110 ? [255, 100, 100] : 
-                     gameState.speed > 180 ? [255, 200, 100] : [100, 255, 100];
-  p.fill(speedColor);
-  p.text(`SPD: ${Math.floor(gameState.speed)} kts`, 10, 30);
+  // Speed (convert to knots for display)
+  const speedKnots = Math.floor(gameState.speed * 1.944);
+  const speedColor = speedKnots < 100 ? '#ff6666' : 
+                     speedKnots > 180 ? '#ffcc66' : '#66ff66';
+  ctx.fillStyle = speedColor;
+  ctx.fillText(`SPD: ${speedKnots} kts`, 10, 28);
   
   // Vertical Speed
-  const vsColor = Math.abs(gameState.verticalSpeed) > 500 ? [255, 100, 100] : [255, 255, 255];
-  p.fill(vsColor);
-  const vsSign = gameState.verticalSpeed > 0 ? "+" : "";
-  p.text(`V/S: ${vsSign}${Math.floor(gameState.verticalSpeed)} fpm`, 10, 45);
+  const vsColor = Math.abs(gameState.verticalSpeed) > 500 ? '#ff6666' : 'white';
+  ctx.fillStyle = vsColor;
+  const vsSign = gameState.verticalSpeed > 0 ? '+' : '';
+  ctx.fillText(`V/S: ${vsSign}${Math.floor(gameState.verticalSpeed)} fpm`, 10, 41);
   
   // Heading
-  p.fill(255);
-  p.text(`HDG: ${Math.floor(gameState.heading)}°`, 10, 60);
+  ctx.fillStyle = 'white';
+  ctx.fillText(`HDG: ${Math.floor(gameState.heading)}°`, 10, 54);
   
-  // Systems status (middle)
-  p.textAlign(p.CENTER);
-  p.textSize(11);
+  // Pitch and Roll
+  ctx.fillText(`PITCH: ${Math.floor(gameState.pitch)}°`, 10, 67);
+  
+  // Systems (center)
+  ctx.textAlign = 'center';
   
   // Throttle
-  p.fill(255);
-  p.text(`THROTTLE: ${Math.floor(gameState.throttle * 100)}%`, CANVAS_WIDTH / 2, 15);
+  ctx.fillStyle = 'white';
+  ctx.fillText(`THR: ${Math.floor(gameState.throttle * 100)}%`, CANVAS_WIDTH / 2, 15);
   
   // Gear
-  const gearColor = gameState.gearDeployed ? [100, 255, 100] : [150, 150, 150];
-  p.fill(gearColor);
-  p.text(gameState.gearDeployed ? "GEAR DOWN" : "GEAR UP", CANVAS_WIDTH / 2, 30);
+  const gearColor = gameState.gearDeployed ? '#66ff66' : '#999999';
+  ctx.fillStyle = gearColor;
+  ctx.fillText(gameState.gearDeployed ? 'GEAR DOWN' : 'GEAR UP', CANVAS_WIDTH / 2, 28);
   
   // Flaps
-  p.fill(255);
-  p.text(`FLAPS: ${gameState.flapSetting}`, CANVAS_WIDTH / 2, 45);
+  ctx.fillStyle = 'white';
+  ctx.fillText(`FLAPS: ${gameState.flapSetting}`, CANVAS_WIDTH / 2, 41);
   
   // Spoilers
   if (gameState.spoilersDeployed) {
-    p.fill(255, 200, 100);
-    p.text("SPOILERS DEPLOYED", CANVAS_WIDTH / 2, 60);
+    ctx.fillStyle = '#ffcc66';
+    ctx.fillText('SPOILERS', CANVAS_WIDTH / 2, 54);
   }
   
-  // Fuel and engines (right side)
-  p.textAlign(p.RIGHT);
+  // Fuel and engines (right)
+  ctx.textAlign = 'right';
   
   // Fuel
-  const fuelColor = gameState.fuel < 20 ? [255, 100, 100] : 
-                    gameState.fuel < 50 ? [255, 200, 100] : [100, 255, 100];
-  p.fill(fuelColor);
-  p.text(`FUEL: ${Math.floor(gameState.fuel)}%`, CANVAS_WIDTH - 10, 15);
+  const fuelColor = gameState.fuel < 20 ? '#ff6666' : 
+                    gameState.fuel < 50 ? '#ffcc66' : '#66ff66';
+  ctx.fillStyle = fuelColor;
+  ctx.fillText(`FUEL: ${Math.floor(gameState.fuel)}%`, CANVAS_WIDTH - 10, 15);
   
   // Engines
-  p.fill(gameState.engine1Running ? [100, 255, 100] : [255, 100, 100]);
-  p.text(`ENG1: ${gameState.engine1Running ? "ON" : "OFF"}`, CANVAS_WIDTH - 10, 30);
+  ctx.fillStyle = gameState.engine1Running ? '#66ff66' : '#ff6666';
+  ctx.fillText(`ENG1: ${gameState.engine1Running ? 'ON' : 'OFF'}`, CANVAS_WIDTH - 10, 28);
   
-  p.fill(gameState.engine2Running ? [100, 255, 100] : [255, 100, 100]);
-  p.text(`ENG2: ${gameState.engine2Running ? "ON" : "OFF"}`, CANVAS_WIDTH - 10, 45);
+  ctx.fillStyle = gameState.engine2Running ? '#66ff66' : '#ff6666';
+  ctx.fillText(`ENG2: ${gameState.engine2Running ? 'ON' : 'OFF'}`, CANVAS_WIDTH - 10, 41);
   
   // Score
-  p.fill(255);
-  p.text(`SCORE: ${gameState.score}`, CANVAS_WIDTH - 10, 65);
+  ctx.fillStyle = 'white';
+  ctx.fillText(`SCORE: ${gameState.score}`, CANVAS_WIDTH - 10, 54);
+  
+  // Roll indicator (bottom center)
+  ctx.fillText(`ROLL: ${Math.floor(gameState.roll)}°`, CANVAS_WIDTH - 10, 67);
   
   // Emergency alerts
   if (gameState.activeEmergencies.length > 0) {
-    p.fill(255, 0, 0);
-    p.textAlign(p.CENTER);
-    p.textSize(14);
-    p.text(`⚠ ${gameState.activeEmergencies[0]} ⚠`, CANVAS_WIDTH / 2, 75);
+    ctx.fillStyle = 'rgba(255, 0, 0, 0.8)';
+    ctx.fillRect(0, 70, CANVAS_WIDTH, 25);
+    ctx.fillStyle = 'white';
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 12px Arial';
+    ctx.fillText(`⚠ ${gameState.activeEmergencies[0]} ⚠`, CANVAS_WIDTH / 2, 85);
   }
+  
+  // Artificial Horizon (simplified)
+  renderArtificialHorizon();
 }
 
-export function renderAttitudeIndicator(p) {
-  // Artificial horizon (simplified)
+function renderArtificialHorizon() {
+  const ctx = uiContext;
   const centerX = CANVAS_WIDTH / 2;
-  const centerY = CANVAS_HEIGHT / 2;
-  const size = 60;
+  const centerY = CANVAS_HEIGHT / 2 + 50;
+  const size = 40;
   
-  p.push();
-  p.translate(centerX, centerY);
-  p.rotate(gameState.player.body.angle);
+  ctx.save();
+  ctx.translate(centerX, centerY);
+  
+  // Rotate based on roll
+  ctx.rotate(-gameState.roll * Math.PI / 180);
   
   // Sky
-  p.fill(100, 150, 255);
-  p.noStroke();
-  p.rect(-size, -size, size * 2, size);
+  ctx.fillStyle = 'rgba(100, 150, 255, 0.6)';
+  ctx.fillRect(-size, -size - gameState.pitch, size * 2, size + gameState.pitch);
   
   // Ground
-  p.fill(139, 90, 43);
-  p.rect(-size, 0, size * 2, size);
+  ctx.fillStyle = 'rgba(139, 90, 43, 0.6)';
+  ctx.fillRect(-size, -gameState.pitch, size * 2, size + gameState.pitch);
   
   // Horizon line
-  p.stroke(255);
-  p.strokeWeight(2);
-  p.line(-size, 0, size, 0);
+  ctx.strokeStyle = 'white';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(-size, -gameState.pitch);
+  ctx.lineTo(size, -gameState.pitch);
+  ctx.stroke();
   
-  p.pop();
+  ctx.restore();
   
-  // Aircraft reference
-  p.stroke(255, 255, 0);
-  p.strokeWeight(3);
-  p.noFill();
-  p.line(centerX - 30, centerY, centerX - 10, centerY);
-  p.line(centerX + 10, centerY, centerX + 30, centerY);
-  p.line(centerX, centerY - 5, centerX, centerY + 5);
+  // Aircraft reference (fixed)
+  ctx.strokeStyle = '#ffff00';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(centerX - 25, centerY);
+  ctx.lineTo(centerX - 10, centerY);
+  ctx.moveTo(centerX + 10, centerY);
+  ctx.lineTo(centerX + 25, centerY);
+  ctx.moveTo(centerX, centerY - 5);
+  ctx.lineTo(centerX, centerY + 5);
+  ctx.stroke();
 }
 
-export function renderILS(p) {
-  // ILS guidance (when near runway)
-  const distanceToRunway = Math.abs(gameState.player.body.position.x - gameState.runway.body.position.x);
+export function renderPausedOverlay() {
+  const ctx = uiContext;
   
-  if (distanceToRunway < 200 && gameState.altitude < 500) {
-    const ilsX = 500;
-    const ilsY = CANVAS_HEIGHT / 2;
-    const ilsSize = 40;
-    
-    // Background
-    p.fill(0, 0, 0, 180);
-    p.noStroke();
-    p.rect(ilsX - ilsSize, ilsY - ilsSize, ilsSize * 2, ilsSize * 2);
-    
-    // Cross
-    p.stroke(100);
-    p.strokeWeight(1);
-    p.line(ilsX - ilsSize, ilsY, ilsX + ilsSize, ilsY);
-    p.line(ilsX, ilsY - ilsSize, ilsX, ilsY + ilsSize);
-    
-    // Localizer (horizontal alignment)
-    const localizerOffset = (gameState.player.body.position.x - gameState.runway.body.position.x) / 50;
-    p.fill(255, 100, 255);
-    p.noStroke();
-    p.circle(ilsX + localizerOffset * ilsSize, ilsY, 8);
-    
-    // Glideslope (vertical alignment)
-    const targetAltitude = (distanceToRunway / 200) * 300; // 3 degree glideslope approximation
-    const glideOffset = (gameState.altitude - targetAltitude) / 100;
-    p.fill(255, 100, 255);
-    p.circle(ilsX, ilsY - glideOffset * ilsSize, 8);
-    
-    // Center dot
-    p.fill(255);
-    p.circle(ilsX, ilsY, 4);
-    
-    // Label
-    p.textSize(10);
-    p.textAlign(p.CENTER);
-    p.text("ILS", ilsX, ilsY - ilsSize - 5);
-  }
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+  ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  ctx.fillStyle = 'white';
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 32px Arial';
+  ctx.fillText('PAUSED', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 10);
+  
+  ctx.font = '16px Arial';
+  ctx.fillText('Press ESC to resume', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 20);
 }
 
-export function renderPausedOverlay(p) {
-  p.fill(0, 0, 0, 150);
-  p.noStroke();
-  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+export function renderGameOver() {
+  const ctx = uiContext;
   
-  p.fill(255);
-  p.textAlign(p.CENTER, p.CENTER);
-  p.textSize(32);
-  p.text("PAUSED", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 20);
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+  ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
   
-  p.textSize(16);
-  p.text("Press ESC to resume", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 20);
-}
-
-export function renderGameOver(p) {
-  p.background(20, 30, 50);
-  
-  p.textAlign(p.CENTER, p.CENTER);
+  ctx.textAlign = 'center';
   
   if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN) {
     // Success
-    p.fill(100, 255, 100);
-    p.textSize(36);
-    p.text("LANDING SUCCESSFUL", CANVAS_WIDTH / 2, 100);
+    ctx.fillStyle = '#66ff66';
+    ctx.font = 'bold 32px Arial';
+    ctx.fillText('LANDING SUCCESSFUL', CANVAS_WIDTH / 2, 80);
     
-    p.fill(255);
-    p.textSize(16);
-    p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, 160);
+    ctx.fillStyle = 'white';
+    ctx.font = '14px Arial';
+    ctx.fillText(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, 130);
     
-    p.textSize(14);
-    p.fill(200);
-    p.text(`Touchdown Speed: ${Math.floor(gameState.touchdownSpeed)} kts`, CANVAS_WIDTH / 2, 200);
-    p.text(`Vertical Speed: ${Math.floor(gameState.touchdownVerticalSpeed)} fpm`, CANVAS_WIDTH / 2, 220);
-    p.text(`Centerline Deviation: ${Math.floor(gameState.touchdownAlignment)} ft`, CANVAS_WIDTH / 2, 240);
+    ctx.font = '12px Arial';
+    ctx.fillStyle = '#cccccc';
+    ctx.fillText(`Touchdown Speed: ${Math.floor(gameState.touchdownSpeed)} kts`, CANVAS_WIDTH / 2, 160);
+    ctx.fillText(`Vertical Speed: ${Math.floor(gameState.touchdownVerticalSpeed)} fpm`, CANVAS_WIDTH / 2, 175);
+    ctx.fillText(`Centerline Deviation: ${Math.floor(gameState.touchdownAlignment)} m`, CANVAS_WIDTH / 2, 190);
     
     // Rating
-    let rating = "EXCELLENT";
-    if (gameState.touchdownVerticalSpeed > 200 || gameState.touchdownAlignment > 20) {
-      rating = "GOOD";
+    let rating = 'EXCELLENT';
+    if (gameState.touchdownVerticalSpeed > 200 || gameState.touchdownAlignment > 3) {
+      rating = 'GOOD';
     }
-    if (gameState.touchdownVerticalSpeed > 250 || gameState.touchdownAlignment > 30) {
-      rating = "FAIR";
+    if (gameState.touchdownVerticalSpeed > 250 || gameState.touchdownAlignment > 4) {
+      rating = 'FAIR';
     }
     
-    p.fill(255, 255, 100);
-    p.textSize(20);
-    p.text(`Landing Rating: ${rating}`, CANVAS_WIDTH / 2, 280);
+    ctx.fillStyle = '#ffff66';
+    ctx.font = 'bold 18px Arial';
+    ctx.fillText(`Landing Rating: ${rating}`, CANVAS_WIDTH / 2, 230);
     
   } else {
     // Failure
-    p.fill(255, 100, 100);
-    p.textSize(36);
-    p.text("CRASH", CANVAS_WIDTH / 2, 100);
+    ctx.fillStyle = '#ff6666';
+    ctx.font = 'bold 32px Arial';
+    ctx.fillText('CRASH', CANVAS_WIDTH / 2, 80);
     
-    p.fill(255);
-    p.textSize(16);
-    p.text(gameState.crashReason || "Aircraft crashed", CANVAS_WIDTH / 2, 160);
+    ctx.fillStyle = 'white';
+    ctx.font = '13px Arial';
+    const lines = wrapText(ctx, gameState.crashReason || 'Aircraft crashed', 500);
+    lines.forEach((line, i) => {
+      ctx.fillText(line, CANVAS_WIDTH / 2, 130 + i * 18);
+    });
     
-    p.textSize(14);
-    p.fill(200);
+    ctx.font = '12px Arial';
+    ctx.fillStyle = '#cccccc';
     if (gameState.touchdownSpeed > 0) {
-      p.text(`Impact Speed: ${Math.floor(gameState.touchdownSpeed)} kts`, CANVAS_WIDTH / 2, 200);
-      p.text(`Vertical Speed: ${Math.floor(gameState.touchdownVerticalSpeed)} fpm`, CANVAS_WIDTH / 2, 220);
+      ctx.fillText(`Impact Speed: ${Math.floor(gameState.touchdownSpeed)} kts`, CANVAS_WIDTH / 2, 200);
+      ctx.fillText(`Vertical Speed: ${Math.floor(gameState.touchdownVerticalSpeed)} fpm`, CANVAS_WIDTH / 2, 215);
     }
   }
   
-  p.fill(100, 255, 255);
-  p.textSize(18);
-  p.text("PRESS R TO RESTART", CANVAS_WIDTH / 2, 340);
+  ctx.fillStyle = '#66ffff';
+  ctx.font = 'bold 16px Arial';
+  ctx.fillText('PRESS R TO RESTART', CANVAS_WIDTH / 2, 320);
+}
+
+function wrapText(ctx, text, maxWidth) {
+  const words = text.split(' ');
+  const lines = [];
+  let currentLine = '';
+  
+  words.forEach(word => {
+    const testLine = currentLine + word + ' ';
+    const metrics = ctx.measureText(testLine);
+    if (metrics.width > maxWidth && currentLine !== '') {
+      lines.push(currentLine.trim());
+      currentLine = word + ' ';
+    } else {
+      currentLine = testLine;
+    }
+  });
+  
+  if (currentLine) {
+    lines.push(currentLine.trim());
+  }
+  
+  return lines;
 }

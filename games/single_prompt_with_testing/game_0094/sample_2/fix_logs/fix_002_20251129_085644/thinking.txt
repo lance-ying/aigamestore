@@ -1,0 +1,80 @@
+The human is reporting that the game crashes after 1-2 seconds of moving the cursor. Let me analyze the code to find the root cause.
+
+Looking at the code flow:
+1. `game.js` has the main draw loop
+2. When in PLAYING phase, it calls `updateGame(p)`
+3. `updateGame` is in `logic.js` and updates all entities
+4. Input is handled through `handleInput` in `input.js`
+5. Automated testing controller can also inject inputs
+
+The crash happens when moving the cursor. Let me look at cursor movement and what could cause a crash.
+
+In `input.js`, cursor movement:
+```javascript
+if (keyCode === p.LEFT_ARROW) {
+    gameState.cursor.col = Math.max(0, gameState.cursor.col - 1);
+} else if (keyCode === p.RIGHT_ARROW) {
+    gameState.cursor.col = Math.min(GRID_COLS - 1, gameState.cursor.col + 1);
+} else if (keyCode === p.UP_ARROW) {
+    gameState.cursor.row = Math.max(0, gameState.cursor.row - 1);
+} else if (keyCode === p.DOWN_ARROW) {
+    gameState.cursor.row = Math.min(GRID_ROWS - 1, gameState.cursor.row + 1);
+}
+```
+
+This looks safe. But wait, I notice something in `game.js`:
+
+```javascript
+// --- Automated Testing Inputs ---
+if (gameState.controlMode !== "HUMAN" && gameState.gamePhase === "PLAYING") {
+    // Throttle AI inputs to be "human-like" or every few frames to prevent glitching
+    if (p.frameCount % 5 === 0) {
+        const action = get_automated_testing_action(gameState);
+        if (action) {
+            handleInput(p, action.keyCode, true);
+        }
+    }
+}
+```
+
+I see two input paths: automated testing and manual input. Both call `handleInput`, which seems like a standard approach. However, something in the implementation might be causing unexpected behavior.
+
+The partial code for `handleInput` suggests there might be a logging mechanism or additional processing that could potentially trigger an issue. I'll need to investigate the full implementation to understand what might be causing the crash.
+
+The key observation is the potential mismatch between how `keyCode` is passed and how it's compared against p5.js arrow key constants. This could lead to unexpected control flow or input handling.
+
+When comparing `keyCode` values, the numeric representation matters. Whether from user input via `p.keyPressed` or automated testing, the arrow key codes should align: 37 for LEFT, 39 for RIGHT, 38 for UP, and 40 for DOWN.
+
+I need to verify the exact mechanism of input handling and ensure consistent key code interpretation across different input sources.
+
+The `moveTowards` function in the automated testing controller directly returns raw numeric keycodes, which should theoretically match the processing in `handleInput`. This suggests the crash might stem from a different interaction or state transition during cursor movement.
+
+The game logs are structured with multiple arrays for tracking different event types. The input logging mechanism seems to capture keycode events, potentially capturing manual cursor movements differently than automated testing actions.
+
+I'm noticing a potential synchronization issue between the game state tracking and input handling that could trigger unexpected behavior during cursor navigation. The conditional logging suggests there might be nuanced state management around simulated versus manual inputs.
+
+The key observation is how repeated inputs could stress the logging system, potentially creating performance bottlenecks or unexpected state interruptions during cursor movement. The continuous logging of keycode events might introduce subtle synchronization challenges that manifest as input responsiveness problems.
+
+I notice the handler manages game state transitions through specific key triggers - ENTER for game initialization, ESC for pausing, and R likely for reset. Each key interaction carefully modifies the game's current phase, suggesting a state machine approach to game flow control.
+
+The logging mechanism captures granular details about each key interaction, recording frame count and precise timestamp, which provides rich diagnostic potential for understanding player input sequences.
+
+The potential performance concern involves input logging, where repeated key presses might generate excessive log entries. This hints at a need for input event management strategy that prevents unbounded log growth.
+
+The code demonstrates a nuanced input handling system that differentiates between global game control keys and gameplay-specific input processing, routing different key codes through specialized logic paths.
+
+I notice an intriguing conditional block in the draw loop related to automated testing inputs, which suggests a sophisticated input simulation mechanism that could potentially interact with standard input handling in complex ways.
+
+The current implementation seems to have multiple input detection strategies - through `keyPressed()`, draw loop simulation, and potentially other event handlers - which might create unexpected interaction scenarios.
+
+The log arrays present a significant performance and memory risk. As they continuously accumulate entries without any size limitation, they could progressively consume system resources, potentially leading to performance degradation or even application instability.
+
+A strategic approach would involve implementing log array size management, either through periodic clearing mechanisms or establishing a maximum array length threshold to prevent unbounded growth.
+
+The code snippet reveals nuanced input handling logic, particularly around space key interactions, which suggests multiple potential input modification paths that could complicate cursor or game state management.
+
+The investigation points toward a critical optimization need focusing on log array memory control and precise input event processing.
+
+I'll implement a circular buffer strategy to manage log storage efficiently. This approach will cap log entries while maintaining recent interaction data integrity. The key priorities involve preventing unbounded array growth and ensuring clean input handling across different execution contexts.
+
+The solution requires two primary implementation steps: size-limiting log arrays and verifying no recursive or infinite logging scenarios emerge during gameplay.

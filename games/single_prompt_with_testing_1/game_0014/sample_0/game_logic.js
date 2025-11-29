@@ -1,7 +1,7 @@
 // game_logic.js - Core game logic
 
 import { gameState, PHASE, ENTITY_TYPE, DIRECTION } from './globals.js';
-import { isWalkable, getEntityAt } from './grid.js';
+import { isWalkable, getEntityAt, loadLevel } from './grid.js';
 
 export function movePlayer(direction, p) {
   if (!gameState.player || gameState.gamePhase !== PHASE.PLAYING) {
@@ -205,7 +205,6 @@ function logPlayerPosition(p) {
 }
 
 export function initializeGameState(p) {
-  const { loadLevel } = require('./grid.js');
   const levelData = loadLevel(gameState.level, p);
   gameState.grid = levelData.grid;
   gameState.entities = levelData.entities;

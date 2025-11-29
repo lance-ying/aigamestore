@@ -13,8 +13,12 @@ import { handleKeyPress, handleGameInput } from './input.js';
 import { renderUI } from './ui.js';
 import { updateParticles, renderParticles } from './particles.js';
 import { offerRandomBoons, applyBoon, renderBoonSelection } from './boons.js';
+import { get_automated_testing_action } from './automated_testing_controller.js';
 
 const p5 = window.p5;
+
+// Expose automated testing globally
+window.get_automated_testing_action = get_automated_testing_action;
 
 let gameInstance = new p5(p => {
   // Initialize p5 logs

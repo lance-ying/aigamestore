@@ -1,0 +1,809 @@
+// entities.js - Entity classes for player creature, humans, tentacles, etc.
+
+import { 
+  gameState, 
+  CANVAS_WIDTH, 
+  CANVAS_HEIGHT,
+  distance,
+  angleBetween,
+  clamp,
+  COLORS
+} from './globals.js';
+
+// Player creature class
+export class Creature {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.vx = 0;
+    this.vy = 0;
+    this.baseSize = 20;
+    this.size = this.baseSize;
+    this.targetSize = this.baseSize;
+    this.speed = 3;
+    this.mass = 1;
+    
+    // Blob morphing properties
+    this.blobPoints = 12; // Number of points around the perimeter
+    this.blobVertices = [];
+    this.blobNoiseOffsets = [];
+    this.initBlobVertices();
+    
+    // Tentacle positions (relative to body)
+    this.tentacles = [];
+    this.numTentacles = 6;
+    this.initTentacles();
+    
+    // Attack
+    this.lungeTimer = 0;
+    this.lungeCooldown = 0;
+    this.lungeSpeed = 15;
+    this.attackRange = 40;
+    
+    // Animation
+    this.pulsePhase = 0;
+    this.rotation = 0;
+    this.morphTime = 0;
+    this.stretchFactor = 1.0;
+    this.stretchAngle = 0;
+    
+    // Add to entities
+    gameState.player = this;
+    gameState.entities.push(this);
+  }
+  
+  initBlobVertices() {
+    this.blobVertices = [];
+    this.blobNoiseOffsets = [];
+    for (let i = 0; i < this.blobPoints; i++) {
+      const angle = (i / this.blobPoints) * Math.PI * 2;
+      this.blobVertices.push({
+        baseAngle: angle,
+        distance: 1.0,
+        noiseOffset: Math.random() * 1000
+      });
+      this.blobNoiseOffsets.push(Math.random() * 1000);
+    }
+  }
+  
+  initTentacles() {
+    this.tentacles = [];
+    for (let i = 0; i < this.numTentacles; i++) {
+      const angle = (i / this.numTentacles) * Math.PI * 2;
+      this.tentacles.push({
+        angle: angle,
+        length: 0,
+        targetLength: this.size * 0.8,
+        grabbing: false
+      });
+    }
+  }
+  
+  update(p) {
+    // Update size based on biomass
+    this.targetSize = this.baseSize + (gameState.biomass - 1) * 15;
+    this.size = p.lerp(this.size, this.targetSize, 0.1);
+    
+    // Update blob morphing
+    this.updateBlobMorphing(p);
+    
+    // Update tentacle positions
+    this.updateTentacles(p);
+    
+    // Apply friction
+    this.vx *= gameState.friction;
+    this.vy *= gameState.friction;
+    
+    // Update position
+    this.x += this.vx;
+    this.y += this.vy;
+    
+    // Constrain to level bounds
+    this.x = clamp(this.x, this.size, gameState.levelWidth - this.size);
+    this.y = clamp(this.y, this.size, gameState.levelHeight - this.size);
+    
+    // Update timers
+    if (this.lungeTimer > 0) {
+      this.lungeTimer--;
+    }
+    if (this.lungeCooldown > 0) {
+      this.lungeCooldown--;
+    }
+    
+    // Update animation
+    this.pulsePhase += 0.05;
+    this.rotation += 0.01;
+    this.morphTime += 0.03;
+    
+    // Calculate stretch based on movement
+    const speed = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
+    this.stretchFactor = 1.0 + speed * 0.15;
+    if (speed > 0.5) {
+      this.stretchAngle = Math.atan2(this.vy, this.vx);
+    }
+    
+    // Check collisions with walls
+    this.checkWallCollisions();
+  }
+  
+  updateBlobMorphing(p) {
+    // Update each blob vertex to create organic morphing
+    for (let i = 0; i < this.blobPoints; i++) {
+      const vertex = this.blobVertices[i];
+      
+      // Use Perlin noise for smooth organic movement
+      const noiseVal = p.noise(
+        vertex.noiseOffset + this.morphTime * 0.5,
+        this.x * 0.001,
+        this.y * 0.001
+      );
+      
+      // Distance varies between 0.7 and 1.3 of base size
+      vertex.distance = 0.75 + noiseVal * 0.5;
+      
+      // Add pulsing effect
+      const pulseOffset = Math.sin(this.pulsePhase + i * 0.5) * 0.1;
+      vertex.distance += pulseOffset;
+      
+      // Add secondary wave for more organic feel
+      const secondaryWave = Math.sin(this.morphTime * 2 + i * 0.8) * 0.08;
+      vertex.distance += secondaryWave;
+    }
+  }
+  
+  updateTentacles(p) {
+    for (let tentacle of this.tentacles) {
+      tentacle.targetLength = this.size * 0.8;
+      tentacle.length = p.lerp(tentacle.length, tentacle.targetLength, 0.1);
+    }
+  }
+  
+  checkWallCollisions() {
+    // Use a smaller collision radius to allow squeezing through narrow spaces
+    // The creature is amorphous and can compress to fit through tight corridors
+    const collisionRadius = this.size * 0.5; // 50% of visual size for collision
+    
+    for (let wall of gameState.walls) {
+      const closestX = clamp(this.x, wall.x, wall.x + wall.width);
+      const closestY = clamp(this.y, wall.y, wall.y + wall.height);
+      const dist = distance(this.x, this.y, closestX, closestY);
+      
+      if (dist < collisionRadius) {
+        // Push creature out of wall
+        const angle = angleBetween(closestX, closestY, this.x, this.y);
+        const overlap = collisionRadius - dist;
+        this.x += Math.cos(angle) * overlap;
+        this.y += Math.sin(angle) * overlap;
+      }
+    }
+  }
+  
+  moveLeft() {
+    this.vx = -this.speed * (gameState.bloodTrailActive ? 1.5 : 1);
+  }
+  
+  moveRight() {
+    this.vx = this.speed * (gameState.bloodTrailActive ? 1.5 : 1);
+  }
+  
+  moveUp() {
+    this.vy = -this.speed * (gameState.bloodTrailActive ? 1.5 : 1);
+  }
+  
+  moveDown() {
+    this.vy = this.speed * (gameState.bloodTrailActive ? 1.5 : 1);
+  }
+  
+  lunge() {
+    if (this.lungeCooldown > 0) return;
+    
+    // Find nearest human
+    let nearest = null;
+    let minDist = this.attackRange;
+    
+    for (let human of gameState.humans) {
+      const dist = distance(this.x, this.y, human.x, human.y);
+      if (dist < minDist) {
+        minDist = dist;
+        nearest = human;
+      }
+    }
+    
+    if (nearest) {
+      const angle = angleBetween(this.x, this.y, nearest.x, nearest.y);
+      this.vx = Math.cos(angle) * this.lungeSpeed;
+      this.vy = Math.sin(angle) * this.lungeSpeed;
+      this.lungeTimer = 10;
+      this.lungeCooldown = 30;
+      
+      // Screen shake
+      gameState.shakeAmount = 5;
+    }
+  }
+  
+  spawnTentacle() {
+    if (!gameState.canUseTentacles) return;
+    
+    // Find nearest human within range
+    let nearest = null;
+    let minDist = 150;
+    
+    for (let human of gameState.humans) {
+      const dist = distance(this.x, this.y, human.x, human.y);
+      if (dist < minDist) {
+        minDist = dist;
+        nearest = human;
+      }
+    }
+    
+    if (nearest) {
+      const tentacle = new Tentacle(this.x, this.y, nearest);
+      gameState.tentacles.push(tentacle);
+      gameState.entities.push(tentacle);
+    }
+  }
+  
+  useBloodTrail() {
+    if (!gameState.canUseBloodTrail || gameState.bloodTrailCooldown > 0) return;
+    
+    gameState.bloodTrailActive = true;
+    gameState.bloodTrailTimer = 120;
+    gameState.bloodTrailCooldown = 300;
+  }
+  
+  consume(human) {
+    gameState.humansConsumed++;
+    gameState.score++;
+    gameState.biomass += 0.35;
+    
+    // Update evolution stage
+    if (gameState.biomass >= 2.5) {
+      gameState.evolutionStage = "LARGE";
+      gameState.canUseTentacles = true;
+      gameState.canUseBloodTrail = true;
+    } else if (gameState.biomass >= 1.8) {
+      gameState.evolutionStage = "MEDIUM";
+      gameState.canUseBloodTrail = true;
+    }
+    
+    // Visual feedback
+    gameState.flashAmount = 0.3;
+    gameState.shakeAmount = 8;
+    
+    // Create blood particles
+    for (let i = 0; i < 20; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = Math.random() * 5 + 2;
+      gameState.particles.push(new BloodParticle(
+        human.x,
+        human.y,
+        Math.cos(angle) * speed,
+        Math.sin(angle) * speed
+      ));
+    }
+    
+    // Check win condition
+    if (gameState.humansConsumed >= gameState.totalHumans) {
+      gameState.gamePhase = "GAME_OVER_WIN";
+    }
+  }
+  
+  render(p) {
+    const screenX = this.x - gameState.cameraX;
+    const screenY = this.y - gameState.cameraY;
+    
+    p.push();
+    p.translate(screenX, screenY);
+    
+    // Draw tentacles first (behind body)
+    for (let i = 0; i < this.tentacles.length; i++) {
+      const t = this.tentacles[i];
+      const pulse = Math.sin(this.pulsePhase + i * 0.5) * 0.1 + 0.9;
+      const length = t.length * pulse;
+      
+      p.stroke(...COLORS.tentacle, 150);
+      p.strokeWeight(4);
+      p.noFill();
+      
+      const endX = Math.cos(t.angle) * length;
+      const endY = Math.sin(t.angle) * length;
+      
+      p.beginShape();
+      p.vertex(0, 0);
+      p.bezierVertex(
+        endX * 0.3, endY * 0.3,
+        endX * 0.7, endY * 0.7,
+        endX, endY
+      );
+      p.endShape();
+    }
+    
+    // Draw blob body with morphing shape
+    const pulseSize = Math.sin(this.pulsePhase) * 0.15 + 1;
+    
+    // Outer glow layers
+    for (let layer = 3; layer > 0; layer--) {
+      const alpha = (3 - layer) * 25;
+      p.fill(...COLORS.creature, alpha);
+      p.noStroke();
+      
+      p.beginShape();
+      for (let i = 0; i < this.blobPoints; i++) {
+        const vertex = this.blobVertices[i];
+        const nextVertex = this.blobVertices[(i + 1) % this.blobPoints];
+        
+        // Calculate position with stretch applied
+        const stretchX = Math.cos(this.stretchAngle);
+        const stretchY = Math.sin(this.stretchAngle);
+        
+        const baseAngle = vertex.baseAngle;
+        const angleRelativeToStretch = Math.abs(Math.cos(baseAngle - this.stretchAngle));
+        const localStretch = 1 + (this.stretchFactor - 1) * angleRelativeToStretch;
+        
+        const dist = vertex.distance * this.size * pulseSize * localStretch * (1 + layer * 0.1);
+        const px = Math.cos(baseAngle) * dist;
+        const py = Math.sin(baseAngle) * dist;
+        
+        if (i === 0) {
+          p.vertex(px, py);
+        } else {
+          // Use curve vertices for smooth blob shape
+          const nextAngle = nextVertex.baseAngle;
+          const nextDist = nextVertex.distance * this.size * pulseSize * localStretch * (1 + layer * 0.1);
+          const npx = Math.cos(nextAngle) * nextDist;
+          const npy = Math.sin(nextAngle) * nextDist;
+          
+          // Control points for smooth curves
+          const cpx1 = px + Math.cos(baseAngle + Math.PI * 0.5) * dist * 0.2;
+          const cpy1 = py + Math.sin(baseAngle + Math.PI * 0.5) * dist * 0.2;
+          const cpx2 = npx + Math.cos(nextAngle - Math.PI * 0.5) * nextDist * 0.2;
+          const cpy2 = npy + Math.sin(nextAngle - Math.PI * 0.5) * nextDist * 0.2;
+          
+          p.bezierVertex(cpx1, cpy1, cpx2, cpy2, npx, npy);
+        }
+      }
+      p.endShape(p.CLOSE);
+    }
+    
+    // Main blob body
+    p.fill(...COLORS.creature);
+    p.noStroke();
+    
+    p.beginShape();
+    for (let i = 0; i < this.blobPoints; i++) {
+      const vertex = this.blobVertices[i];
+      const nextVertex = this.blobVertices[(i + 1) % this.blobPoints];
+      
+      const baseAngle = vertex.baseAngle;
+      const angleRelativeToStretch = Math.abs(Math.cos(baseAngle - this.stretchAngle));
+      const localStretch = 1 + (this.stretchFactor - 1) * angleRelativeToStretch;
+      
+      const dist = vertex.distance * this.size * pulseSize * localStretch;
+      const px = Math.cos(baseAngle) * dist;
+      const py = Math.sin(baseAngle) * dist;
+      
+      if (i === 0) {
+        p.vertex(px, py);
+      } else {
+        const nextAngle = nextVertex.baseAngle;
+        const nextDist = nextVertex.distance * this.size * pulseSize * localStretch;
+        const npx = Math.cos(nextAngle) * nextDist;
+        const npy = Math.sin(nextAngle) * nextDist;
+        
+        const cpx1 = px + Math.cos(baseAngle + Math.PI * 0.5) * dist * 0.2;
+        const cpy1 = py + Math.sin(baseAngle + Math.PI * 0.5) * dist * 0.2;
+        const cpx2 = npx + Math.cos(nextAngle - Math.PI * 0.5) * nextDist * 0.2;
+        const cpy2 = npy + Math.sin(nextAngle - Math.PI * 0.5) * nextDist * 0.2;
+        
+        p.bezierVertex(cpx1, cpy1, cpx2, cpy2, npx, npy);
+      }
+    }
+    p.endShape(p.CLOSE);
+    
+    // Inner darker spots/bubbles for organic texture
+    for (let i = 0; i < 5; i++) {
+      const angle = (i / 5) * Math.PI * 2 + this.morphTime * 0.3;
+      const dist = this.size * 0.3 * (0.8 + Math.sin(this.morphTime * 2 + i) * 0.2);
+      const spotX = Math.cos(angle) * dist;
+      const spotY = Math.sin(angle) * dist;
+      const spotSize = this.size * 0.25 * (0.9 + Math.sin(this.morphTime * 1.5 + i * 1.3) * 0.1);
+      
+      p.fill(...COLORS.creatureDark, 180);
+      p.noStroke();
+      p.ellipse(spotX, spotY, spotSize * 1.2, spotSize * 0.9);
+    }
+    
+    // Add some surface tension "bubbles"
+    for (let i = 0; i < 3; i++) {
+      const angle = (i / 3) * Math.PI * 2 + this.morphTime * 0.5 + Math.PI;
+      const dist = this.size * 0.6;
+      const bubbleX = Math.cos(angle) * dist;
+      const bubbleY = Math.sin(angle) * dist;
+      const bubbleSize = this.size * 0.15;
+      
+      p.fill(...COLORS.creature, 100);
+      p.noStroke();
+      p.ellipse(bubbleX, bubbleY, bubbleSize);
+    }
+    
+    p.pop();
+    
+    // Draw blood trail effect
+    if (gameState.bloodTrailActive) {
+      for (let i = 0; i < 3; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const dist = this.size * Math.random();
+        gameState.particles.push(new BloodParticle(
+          this.x + Math.cos(angle) * dist,
+          this.y + Math.sin(angle) * dist,
+          (Math.random() - 0.5) * 2,
+          (Math.random() - 0.5) * 2
+        ));
+      }
+    }
+  }
+}
+
+// Human NPC class
+export class Human {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.vx = 0;
+    this.vy = 0;
+    this.size = 12;
+    this.speed = 2;
+    
+    // AI state
+    this.state = "PATROL"; // "PATROL", "ALERT", "FLEE"
+    this.detectionRange = 120;
+    this.fleeRange = 80;
+    this.patrolAngle = Math.random() * Math.PI * 2;
+    this.patrolTimer = 0;
+    this.patrolChangeInterval = 120;
+    
+    // Animation
+    this.walkPhase = Math.random() * Math.PI * 2;
+    this.facing = 1;
+    
+    // Add to entities
+    gameState.humans.push(this);
+    gameState.entities.push(this);
+  }
+  
+  update(p) {
+    if (!gameState.player) return;
+    
+    const distToPlayer = distance(this.x, this.y, gameState.player.x, gameState.player.y);
+    
+    // Update AI state
+    if (distToPlayer < this.fleeRange) {
+      this.state = "FLEE";
+    } else if (distToPlayer < this.detectionRange) {
+      this.state = "ALERT";
+    } else {
+      this.state = "PATROL";
+    }
+    
+    // Execute AI behavior
+    switch (this.state) {
+      case "PATROL":
+        this.patrol(p);
+        break;
+      case "ALERT":
+        this.alert();
+        break;
+      case "FLEE":
+        this.flee();
+        break;
+    }
+    
+    // Apply friction
+    this.vx *= 0.9;
+    this.vy *= 0.9;
+    
+    // Update position
+    this.x += this.vx;
+    this.y += this.vy;
+    
+    // Constrain to level bounds
+    this.x = clamp(this.x, this.size, gameState.levelWidth - this.size);
+    this.y = clamp(this.y, this.size, gameState.levelHeight - this.size);
+    
+    // Check collisions with walls
+    this.checkWallCollisions();
+    
+    // Update animation
+    this.walkPhase += 0.2;
+    if (this.vx !== 0) {
+      this.facing = this.vx > 0 ? 1 : -1;
+    }
+    
+    // Check if caught by creature
+    if (distToPlayer < gameState.player.size + this.size) {
+      this.beCaught();
+    }
+    
+    // Check if caught by tentacle
+    for (let tentacle of gameState.tentacles) {
+      if (tentacle.target === this && tentacle.hasGrabbed) {
+        this.beCaught();
+        break;
+      }
+    }
+  }
+  
+  patrol(p) {
+    this.patrolTimer++;
+    if (this.patrolTimer >= this.patrolChangeInterval) {
+      this.patrolAngle = Math.random() * Math.PI * 2;
+      this.patrolTimer = 0;
+    }
+    
+    this.vx = Math.cos(this.patrolAngle) * this.speed * 0.5;
+    this.vy = Math.sin(this.patrolAngle) * this.speed * 0.5;
+  }
+  
+  alert() {
+    // Stand still and look around
+    this.vx *= 0.8;
+    this.vy *= 0.8;
+  }
+  
+  flee() {
+    const angle = angleBetween(gameState.player.x, gameState.player.y, this.x, this.y);
+    this.vx = Math.cos(angle) * this.speed * 1.5;
+    this.vy = Math.sin(angle) * this.speed * 1.5;
+  }
+  
+  checkWallCollisions() {
+    for (let wall of gameState.walls) {
+      const closestX = clamp(this.x, wall.x, wall.x + wall.width);
+      const closestY = clamp(this.y, wall.y, wall.y + wall.height);
+      const dist = distance(this.x, this.y, closestX, closestY);
+      
+      if (dist < this.size) {
+        const angle = angleBetween(closestX, closestY, this.x, this.y);
+        const overlap = this.size - dist;
+        this.x += Math.cos(angle) * overlap;
+        this.y += Math.sin(angle) * overlap;
+      }
+    }
+  }
+  
+  beCaught() {
+    // Remove from game
+    const index = gameState.humans.indexOf(this);
+    if (index > -1) {
+      gameState.humans.splice(index, 1);
+    }
+    const entityIndex = gameState.entities.indexOf(this);
+    if (entityIndex > -1) {
+      gameState.entities.splice(entityIndex, 1);
+    }
+    
+    // Creature consumes this human
+    if (gameState.player) {
+      gameState.player.consume(this);
+    }
+  }
+  
+  render(p) {
+    const screenX = this.x - gameState.cameraX;
+    const screenY = this.y - gameState.cameraY;
+    
+    p.push();
+    p.translate(screenX, screenY);
+    
+    // Draw alert indicator if alerted
+    if (this.state === "ALERT" || this.state === "FLEE") {
+      p.stroke(...COLORS.alert);
+      p.strokeWeight(2);
+      p.noFill();
+      p.circle(0, -this.size - 10, 8);
+    }
+    
+    // Draw human body
+    const bobAmount = Math.sin(this.walkPhase) * 2;
+    
+    // Head
+    p.fill(...COLORS.human);
+    p.noStroke();
+    p.circle(0, -this.size - 5 + bobAmount, this.size * 0.8);
+    
+    // Body
+    p.fill(...COLORS.humanClothes);
+    p.rect(-this.size * 0.4, -this.size * 0.5 + bobAmount, this.size * 0.8, this.size * 1.2);
+    
+    // Arms
+    const armSwing = Math.sin(this.walkPhase) * 0.3;
+    p.stroke(...COLORS.human);
+    p.strokeWeight(3);
+    p.line(-this.size * 0.4, -this.size * 0.3 + bobAmount, 
+           -this.size * 0.6, this.size * 0.3 + bobAmount + armSwing * 10);
+    p.line(this.size * 0.4, -this.size * 0.3 + bobAmount, 
+           this.size * 0.6, this.size * 0.3 + bobAmount - armSwing * 10);
+    
+    // Legs
+    p.line(-this.size * 0.2, this.size * 0.7 + bobAmount, 
+           -this.size * 0.3, this.size * 1.5 - armSwing * 10);
+    p.line(this.size * 0.2, this.size * 0.7 + bobAmount, 
+           this.size * 0.3, this.size * 1.5 + armSwing * 10);
+    
+    p.pop();
+  }
+}
+
+// Tentacle attack class
+export class Tentacle {
+  constructor(x, y, target) {
+    this.startX = x;
+    this.startY = y;
+    this.x = x;
+    this.y = y;
+    this.target = target;
+    this.length = 0;
+    this.maxLength = 150;
+    this.growthSpeed = 15;
+    this.hasGrabbed = false;
+    this.lifetime = 60;
+    this.age = 0;
+    
+    // Animation
+    this.segments = 8;
+    this.segmentPositions = [];
+    for (let i = 0; i < this.segments; i++) {
+      this.segmentPositions.push({ x: x, y: y });
+    }
+  }
+  
+  update(p) {
+    this.age++;
+    
+    if (!this.target || this.age > this.lifetime) {
+      this.destroy();
+      return;
+    }
+    
+    // Grow towards target
+    if (this.length < this.maxLength) {
+      this.length += this.growthSpeed;
+    }
+    
+    // Calculate target position
+    const angle = angleBetween(this.startX, this.startY, this.target.x, this.target.y);
+    const dist = distance(this.startX, this.startY, this.target.x, this.target.y);
+    const actualLength = Math.min(this.length, dist);
+    
+    this.x = this.startX + Math.cos(angle) * actualLength;
+    this.y = this.startY + Math.sin(angle) * actualLength;
+    
+    // Update segments
+    for (let i = 0; i < this.segments; i++) {
+      const t = i / this.segments;
+      const targetX = this.startX + (this.x - this.startX) * t;
+      const targetY = this.startY + (this.y - this.startY) * t;
+      
+      this.segmentPositions[i].x = p.lerp(this.segmentPositions[i].x, targetX, 0.2);
+      this.segmentPositions[i].y = p.lerp(this.segmentPositions[i].y, targetY, 0.2);
+    }
+    
+    // Check if reached target
+    if (dist < actualLength + 20 && !this.hasGrabbed) {
+      this.hasGrabbed = true;
+      this.lifetime = this.age + 20; // Grab for a moment
+    }
+  }
+  
+  destroy() {
+    const index = gameState.tentacles.indexOf(this);
+    if (index > -1) {
+      gameState.tentacles.splice(index, 1);
+    }
+    const entityIndex = gameState.entities.indexOf(this);
+    if (entityIndex > -1) {
+      gameState.entities.splice(entityIndex, 1);
+    }
+  }
+  
+  render(p) {
+    p.push();
+    
+    // Draw tentacle
+    p.stroke(...COLORS.tentacle, 200);
+    p.strokeWeight(6);
+    p.noFill();
+    
+    p.beginShape();
+    p.vertex(this.startX - gameState.cameraX, this.startY - gameState.cameraY);
+    
+    for (let segment of this.segmentPositions) {
+      p.vertex(segment.x - gameState.cameraX, segment.y - gameState.cameraY);
+    }
+    
+    p.vertex(this.x - gameState.cameraX, this.y - gameState.cameraY);
+    p.endShape();
+    
+    // Draw tip
+    if (this.hasGrabbed) {
+      p.fill(...COLORS.blood);
+      p.noStroke();
+      p.circle(this.x - gameState.cameraX, this.y - gameState.cameraY, 12);
+    }
+    
+    p.pop();
+  }
+}
+
+// Blood particle effect
+export class BloodParticle {
+  constructor(x, y, vx, vy) {
+    this.x = x;
+    this.y = y;
+    this.vx = vx;
+    this.vy = vy;
+    this.size = Math.random() * 4 + 2;
+    this.lifetime = 30 + Math.random() * 20;
+    this.age = 0;
+    this.gravity = 0.2;
+    
+    gameState.particles.push(this);
+  }
+  
+  update() {
+    this.x += this.vx;
+    this.y += this.vy;
+    this.vy += this.gravity;
+    this.vx *= 0.95;
+    this.age++;
+  }
+  
+  isDead() {
+    return this.age >= this.lifetime;
+  }
+  
+  render(p) {
+    const alpha = (1 - this.age / this.lifetime) * 255;
+    p.fill(...COLORS.blood, alpha);
+    p.noStroke();
+    p.circle(this.x - gameState.cameraX, this.y - gameState.cameraY, this.size);
+  }
+}
+
+// Wall obstacle
+export class Wall {
+  constructor(x, y, width, height) {
+    this.x = x;
+    this.y = y;
+    this.width = width;
+    this.height = height;
+    
+    gameState.walls.push(this);
+  }
+  
+  render(p) {
+    const screenX = this.x - gameState.cameraX;
+    const screenY = this.y - gameState.cameraY;
+    
+    // Only render if on screen
+    if (screenX + this.width < 0 || screenX > CANVAS_WIDTH ||
+        screenY + this.height < 0 || screenY > CANVAS_HEIGHT) {
+      return;
+    }
+    
+    p.fill(...COLORS.wall);
+    p.stroke(...COLORS.wallHighlight);
+    p.strokeWeight(2);
+    p.rect(screenX, screenY, this.width, this.height);
+    
+    // Add texture lines
+    p.stroke(...COLORS.wallHighlight, 50);
+    p.strokeWeight(1);
+    for (let i = 10; i < this.width; i += 20) {
+      p.line(screenX + i, screenY, screenX + i, screenY + this.height);
+    }
+    for (let i = 10; i < this.height; i += 20) {
+      p.line(screenX, screenY + i, screenX + this.width, screenY + i);
+    }
+  }
+}

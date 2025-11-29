@@ -1,0 +1,393 @@
+<analysis>
+- Issue identified: The game fails to load due to invalid ES module import in physics.js. The p5.collide2d library is loaded via script tag (which adds methods to p5 instances), but physics.js tries to import it as an ESM module, causing a module resolution error. Additionally, the collision detection functions need access to the p5 instance to use collision methods.
+- Files affected: physics.js, game.js, input.js
+- Changes needed: 
+  1. Remove invalid ESM import from physics.js
+  2. Modify checkCollision to accept p5 instance parameter
+  3. Update game.js to pass p5 instance to collision functions
+  4. Fix import order and add missing imports in input.js
+</analysis>
+
+<code filename="physics.js">
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export class AABB {
+    constructor(x, y, w, h) {
+        this.x = x;
+        this.y = y;
+        this.w = w;
+        this.h = h;
+    }
+}
+
+export function checkCollision(p, entityA, entityB) {
+    // Simple AABB collision using p5.collide2d methods
+    // p5.collide2d is loaded globally via script tag in index.html
+    
+    if (entityA.radius && entityB.radius) {
+        return p.collideCircleCircle(entityA.x, entityA.y, entityA.radius * 2, entityB.x, entityB.y, entityB.radius * 2);
+    }
+    
+    if (entityA.width && entityB.width) {
+        // Center-based rect collision
+        // Convert to corner for collideRectRect
+        const aX = entityA.x - entityA.width/2;
+        const aY = entityA.y - entityA.height/2;
+        const bX = entityB.x - entityB.width/2;
+        const bY = entityB.y - entityB.height/2;
+        
+        return p.collideRectRect(aX, aY, entityA.width, entityA.height, bX, bY, entityB.width, entityB.height);
+    }
+    
+    // Mixed Rect (A) and Circle (B)
+    if (entityA.width && entityB.radius) {
+         const aX = entityA.x - entityA.width/2;
+         const aY = entityA.y - entityA.height/2;
+         return p.collideRectCircle(aX, aY, entityA.width, entityA.height, entityB.x, entityB.y, entityB.radius * 2);
+    }
+    
+    // Mixed Circle (A) and Rect (B)
+    if (entityA.radius && entityB.width) {
+         const bX = entityB.x - entityB.width/2;
+         const bY = entityB.y - entityB.height/2;
+         return p.collideRectCircle(bX, bY, entityB.width, entityB.height, entityA.x, entityA.y, entityA.radius * 2);
+    }
+    
+    return false;
+}
+
+export function applyPhysics(entity) {
+    // Apply Gravity
+    entity.vy += gameState.gravity;
+    
+    // Apply Friction
+    if (entity.onGround) {
+        entity.vx *= gameState.groundFriction;
+    } else {
+        entity.vx *= gameState.airResistance;
+    }
+    
+    // Update Position
+    entity.x += entity.vx;
+    entity.y += entity.vy;
+    
+    // Screen Bounds (Horizontal)
+    if (entity.x < entity.width/2) {
+        entity.x = entity.width/2;
+        entity.vx = 0;
+    }
+    if (entity.x > CANVAS_WIDTH - entity.width/2) {
+        entity.x = CANVAS_WIDTH - entity.width/2;
+        entity.vx = 0;
+    }
+}
+</code>
+
+<code filename="game.js">
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, GROUND_Y, getGameState } from './globals.js';
+import { renderUI, renderStartScreen, renderGameOver, renderPauseScreen, renderFilmGrain, drawVintageBackground } from './ui.js';
+import { setupInputHandlers, handleInput } from './input.js';
+import { checkCollision } from './physics.js';
+import { get_automated_testing_action } from './automated_testing_controller.js';
+
+const p5 = window.p5;
+
+// Global Game Instance
+let gameInstance = new p5(p => {
+    
+    // Initialize Logs
+    p.logs = {
+        "game_info": [],
+        "inputs": [],
+        "player_info": []
+    };
+    
+    // Add star helper for p5
+    p.star = function(x, y, radius1, radius2, npoints) {
+        let angle = p.TWO_PI / npoints;
+        let halfAngle = angle / 2.0;
+        p.beginShape();
+        for (let a = 0; a < p.TWO_PI; a += angle) {
+            let sx = x + p.cos(a) * radius2;
+            let sy = y + p.sin(a) * radius2;
+            p.vertex(sx, sy);
+            sx = x + p.cos(a + halfAngle) * radius1;
+            sy = y + p.sin(a + halfAngle) * radius1;
+            p.vertex(sx, sy);
+        }
+        p.endShape(p.CLOSE);
+    };
+
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(60);
+        p.randomSeed(42);
+        
+        gameState.gamePhase = "START";
+        
+        // Log start
+        p.logs.game_info.push({
+            event: "Game Initialized",
+            timestamp: Date.now()
+        });
+        
+        setupInputHandlers(p);
+    };
+
+    p.draw = function() {
+        // Time management
+        const currentTime = p.millis();
+        gameState.deltaTime = (currentTime - gameState.lastFrameTime) / 1000;
+        gameState.lastFrameTime = currentTime;
+        gameState.frameCount = p.frameCount;
+        
+        // Global screen shake effect
+        p.push();
+        if (gameState.screenShake > 0) {
+            const rx = p.random(-gameState.screenShake, gameState.screenShake);
+            const ry = p.random(-gameState.screenShake, gameState.screenShake);
+            p.translate(rx, ry);
+            gameState.screenShake *= 0.9; // Decay
+            if (gameState.screenShake < 0.5) gameState.screenShake = 0;
+        }
+        
+        // State Machine
+        switch(gameState.gamePhase) {
+            case "START":
+                renderStartScreen(p);
+                break;
+            case "PLAYING":
+                updateGame(p);
+                renderGame(p);
+                renderUI(p);
+                break;
+            case "PAUSED":
+                renderGame(p); // Render underlying game frozen
+                renderUI(p);
+                renderPauseScreen(p);
+                break;
+            case "GAME_OVER_WIN":
+            case "GAME_OVER_LOSE":
+                renderGame(p);
+                renderUI(p);
+                renderGameOver(p, gameState.gamePhase === "GAME_OVER_WIN");
+                break;
+        }
+        
+        // Post-processing
+        renderFilmGrain(p);
+        
+        p.pop(); // End Screen Shake
+        
+        // Logging Player info
+        if (gameState.player && gameState.gamePhase === "PLAYING" && p.frameCount % 10 === 0) {
+            p.logs.player_info.push({
+                x: gameState.player.x,
+                y: gameState.player.y,
+                health: gameState.player.health,
+                frame: p.frameCount
+            });
+        }
+    };
+});
+
+function updateGame(p) {
+    // Input
+    handleInput(p);
+    
+    // Update Entities
+    gameState.entities.forEach(e => e.update(p));
+    
+    // Projectiles
+    gameState.projectiles.forEach(proj => proj.update(p));
+    
+    // Particles
+    gameState.particles.forEach(part => part.update());
+    
+    // Collision Detection
+    checkCollisions(p);
+    
+    // Cleanup
+    gameState.entities = gameState.entities.filter(e => !e.markedForDeletion);
+    gameState.projectiles = gameState.projectiles.filter(p => !p.markedForDeletion);
+    gameState.particles = gameState.particles.filter(p => p.life > 0);
+}
+
+function checkCollisions(p) {
+    const player = gameState.player;
+    const boss = gameState.boss;
+    
+    if (!player || !boss) return;
+    
+    // Player vs Boss Body
+    if (checkCollision(p, player, boss)) {
+        if (player.invulnerable <= 0) {
+            player.takeDamage(1);
+            // Knockback
+            player.vx = -10 * player.facing;
+            player.vy = -5;
+        }
+    }
+    
+    // Projectiles
+    gameState.projectiles.forEach(proj => {
+        if (proj.markedForDeletion) return;
+        
+        if (proj.type === 'PLAYER') {
+            // Hit Boss
+            if (checkCollision(p, proj, boss)) {
+                boss.takeDamage(proj.damage);
+                proj.markedForDeletion = true;
+                gameState.score += 10;
+            }
+        } else {
+            // Hit Player
+            if (checkCollision(p, proj, player)) {
+                player.takeDamage(proj.damage);
+                proj.markedForDeletion = true;
+            }
+        }
+    });
+}
+
+function renderGame(p) {
+    drawVintageBackground(p);
+    
+    // Draw Floor
+    p.noStroke();
+    p.fill(30, 20, 10);
+    p.rect(0, GROUND_Y, CANVAS_WIDTH, CANVAS_HEIGHT - GROUND_Y);
+    // Grass/Top
+    p.fill(40, 60, 30);
+    p.rect(0, GROUND_Y, CANVAS_WIDTH, 10);
+    
+    // Render Order: Boss (Back), Player, Projectiles, Particles
+    if (gameState.boss) gameState.boss.render(p);
+    if (gameState.player) gameState.player.render(p);
+    
+    gameState.projectiles.forEach(proj => proj.render(p));
+    gameState.particles.forEach(part => part.render(p));
+}
+
+// Window Globals for External Control
+window.setControlMode = (mode) => {
+    gameState.controlMode = mode;
+    console.log("Control Mode set to:", mode);
+    
+    // Auto restart for testing convenience if in menu
+    if (gameState.gamePhase === "START" && mode !== "HUMAN") {
+        // Trigger start key manually or just set phase
+        // Let's rely on user pressing Enter or implementing auto-start logic
+        // But the constraint says "start on pressing ENTER". 
+        // We will respect that. The Controller just overrides inputs when playing.
+    }
+};
+
+window.gameInstance = gameInstance;
+</code>
+
+<code filename="input.js">
+import { gameState, CANVAS_WIDTH } from './globals.js';
+import { Player, Boss } from './entities.js';
+
+export const keys = {};
+
+export function handleInput(p) {
+    if (gameState.gamePhase !== "PLAYING") return;
+    
+    const player = gameState.player;
+    if (!player) return;
+
+    // Automated Testing Override
+    if (gameState.controlMode !== "HUMAN") {
+        if (window.get_automated_testing_action) {
+            const action = window.get_automated_testing_action(gameState);
+            if (action) {
+                // Simulate input
+                if (action.moveLeft) player.moveLeft();
+                if (action.moveRight) player.moveRight();
+                if (action.jump) player.jump();
+                if (action.shoot) player.shoot(p);
+                if (action.dash) player.dash();
+                if (action.duck) player.duck();
+                else player.standUp();
+            }
+        }
+        return;
+    }
+
+    // Human Input
+    if (keys[p.LEFT_ARROW]) player.moveLeft();
+    if (keys[p.RIGHT_ARROW]) player.moveRight();
+    if (keys[p.UP_ARROW]) { /* Maybe look up? */ }
+    if (keys[p.DOWN_ARROW]) player.duck();
+    else player.standUp();
+    
+    if (keys[32]) player.jump(); // Space
+    if (keys[90]) player.shoot(p); // Z
+    if (keys[16]) player.dash(); // Shift
+}
+
+export function setupInputHandlers(p) {
+    p.keyPressed = function() {
+        keys[p.keyCode] = true;
+        
+        // Log input
+        p.logs.inputs.push({
+            type: 'press',
+            key: p.key,
+            keyCode: p.keyCode,
+            frame: p.frameCount,
+            time: Date.now()
+        });
+        
+        // Phase Controls
+        if (p.keyCode === 13) { // ENTER
+            if (gameState.gamePhase === "START") {
+                gameState.gamePhase = "PLAYING";
+                // Reset/Init game objects here
+                initGameObjects(p);
+            }
+        }
+        
+        if (p.keyCode === 27) { // ESC
+            if (gameState.gamePhase === "PLAYING") gameState.gamePhase = "PAUSED";
+            else if (gameState.gamePhase === "PAUSED") gameState.gamePhase = "PLAYING";
+        }
+        
+        if (p.keyCode === 82) { // R
+            if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") {
+                gameState.gamePhase = "START";
+                gameState.score = 0;
+            }
+        }
+    };
+    
+    p.keyReleased = function() {
+        keys[p.keyCode] = false;
+        
+        p.logs.inputs.push({
+            type: 'release',
+            key: p.key,
+            keyCode: p.keyCode,
+            frame: p.frameCount,
+            time: Date.now()
+        });
+    };
+}
+
+// Helper to initialize game objects cleanly on start/restart
+function initGameObjects(p) {
+    gameState.entities = [];
+    gameState.projectiles = [];
+    gameState.particles = [];
+    
+    // Create Player
+    gameState.player = new Player(100, 300);
+    gameState.entities.push(gameState.player);
+    
+    // Create Boss
+    gameState.boss = new Boss(CANVAS_WIDTH - 100, 250);
+    gameState.entities.push(gameState.boss);
+}
+</code>

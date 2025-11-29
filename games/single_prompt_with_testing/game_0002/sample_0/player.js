@@ -95,7 +95,7 @@ export class Player {
     if (this.y > maxY) this.y = maxY;
   }
   
-  move(dx, dy) {
+  move(dx, dy, gameState) {
     if (this.dashing) return;
     
     this.vx = dx * (this.speed + gameState.speedBonus * 0.5);
@@ -108,7 +108,7 @@ export class Player {
     else if (dy < 0) this.facing = 3;
   }
   
-  dash() {
+  dash(gameState) {
     if (this.dashCooldown > 0 || this.dashing) return;
     
     // Dash in facing direction

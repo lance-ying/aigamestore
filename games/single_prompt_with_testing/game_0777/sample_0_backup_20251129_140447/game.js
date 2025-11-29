@@ -1,0 +1,180 @@
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { Track } from './track.js';
+import { Player, Opponent, ItemBox } from './entities.js';
+import { updateCamera } from './camera.js';
+import { initUI, renderUI } from './ui.js';
+import { randomRange } from './utils.js';
+
+function init() {
+    // 1. Setup Container
+    const container = document.createElement('div');
+    container.id = 'game-container';
+    container.style.width = `${CANVAS_WIDTH}px`;
+    container.style.height = `${CANVAS_HEIGHT}px`;
+    container.style.position = 'relative';
+    container.style.overflow = 'hidden';
+    document.body.appendChild(container);
+    gameState.gameContainer = container;
+
+    // 2. Setup Renderer
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(CANVAS_WIDTH, CANVAS_HEIGHT);
+    renderer.shadowMap.enabled = true;
+    container.appendChild(renderer.domElement);
+    gameState.renderer = renderer;
+
+    // 3. Setup Scene & Camera
+    gameState.scene = new THREE.Scene();
+    gameState.scene.background = new THREE.Color(0x87CEEB);
+    gameState.scene.fog = new THREE.Fog(0x87CEEB, 20, 150);
+
+    gameState.camera = new THREE.PerspectiveCamera(60, CANVAS_WIDTH / CANVAS_HEIGHT, 0.1, 500);
+    
+    // 4. Lights
+    const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+    gameState.scene.add(ambient);
+    
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
+    dirLight.position.set(50, 100, 50);
+    dirLight.castShadow = true;
+    dirLight.shadow.camera.left = -50;
+    dirLight.shadow.camera.right = 50;
+    dirLight.shadow.camera.top = 50;
+    dirLight.shadow.camera.bottom = -50;
+    dirLight.shadow.mapSize.width = 2048;
+    dirLight.shadow.mapSize.height = 2048;
+    gameState.scene.add(dirLight);
+
+    // 5. Initialize Game Objects
+    setupGame();
+    initUI();
+    
+    // 6. Events
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    
+    // 7. Start Loop
+    requestAnimationFrame(gameLoop);
+}
+
+function setupGame() {
+    // Clear existing
+    if (gameState.track) gameState.scene.remove(gameState.track.mesh);
+    // Remove entities logic (simplified cleanup)
+    gameState.scene.children = gameState.scene.children.filter(c => c.type === 'Light' || c.type === 'Camera'); 
+    
+    gameState.player = null;
+    gameState.opponents = [];
+    gameState.itemBoxes = [];
+    gameState.projectiles = [];
+    
+    // Seed random
+    Math.seedrandom('42');
+    
+    // Create Track
+    gameState.track = new Track();
+    
+    // Spawn Player
+    const startPos = gameState.track.points[0];
+    // Offset slightly
+    gameState.player = new Player(startPos.x + 3, startPos.y + 1, startPos.z);
+    // Face track direction
+    const t0 = gameState.track.points[1];
+    gameState.player.mesh.lookAt(t0.x, t0.y, t0.z);
+    
+    // Spawn Opponents
+    const colors = [0x0000FF, 0x00FF00, 0xFFA500];
+    for (let i = 0; i < 3; i++) {
+        const offX = (i % 2 === 0 ? -1 : 1) * (4 + i);
+        const zOff = -5 * (Math.floor(i/2) + 1);
+        // Simple positioning relative to start - rough approx
+        const opp = new Opponent(startPos.x + offX, startPos.y + 1, startPos.z + zOff, colors[i]);
+        opp.mesh.lookAt(t0.x, t0.y, t0.z);
+        gameState.opponents.push(opp);
+    }
+    
+    // Spawn Item Boxes
+    for (let i = 0; i < gameState.track.points.length; i += 20) {
+        if (i === 0) continue; // Skip start
+        const pt = gameState.track.points[i];
+        const box = new ItemBox(pt.x, pt.y + 1, pt.z);
+        gameState.itemBoxes.push(box);
+    }
+}
+
+let lastTime = performance.now();
+function gameLoop(now) {
+    requestAnimationFrame(gameLoop);
+    
+    const dt = Math.min((now - lastTime) / 1000, 0.1); // Cap dt
+    lastTime = now;
+    
+    gameState.deltaTime = dt;
+    gameState.elapsedTime += dt;
+    gameState.frameCount++;
+    
+    if (gameState.gamePhase === "PLAYING") {
+        // Update Entities
+        if (gameState.player) gameState.player.update(dt);
+        gameState.opponents.forEach(o => o.update(dt));
+        gameState.itemBoxes.forEach(b => b.update(dt));
+        gameState.projectiles.forEach(p => p.update(dt));
+        
+        updateRankings();
+    }
+    
+    // Camera always updates (orbit in start, follow in play)
+    updateCamera(dt);
+    
+    // Render
+    gameState.renderer.render(gameState.scene, gameState.camera);
+    renderUI();
+}
+
+function updateRankings() {
+    // Simple ranking based on lap + checkpoint index
+    const racers = [gameState.player, ...gameState.opponents];
+    racers.sort((a, b) => {
+        const scoreA = a.lap * 10000 + a.checkpointIndex;
+        const scoreB = b.lap * 10000 + b.checkpointIndex;
+        return scoreB - scoreA; // Descending
+    });
+    
+    const playerRank = racers.indexOf(gameState.player) + 1;
+    gameState.player.rank = playerRank;
+}
+
+function onKeyDown(e) {
+    const key = e.key;
+    if (gameState.keys.hasOwnProperty(key)) gameState.keys[key] = true;
+    if (e.code === 'Space') gameState.keys[" "] = true; // Fix space mapping
+    
+    // Phase controls
+    if (key === 'Enter' && gameState.gamePhase === "START") {
+        gameState.gamePhase = "PLAYING";
+    }
+    if (key === 'Escape') {
+        if (gameState.gamePhase === "PLAYING") gameState.gamePhase = "PAUSED";
+        else if (gameState.gamePhase === "PAUSED") gameState.gamePhase = "PLAYING";
+    }
+    if (key.toLowerCase() === 'r' && gameState.gamePhase.startsWith("GAME_OVER")) {
+        setupGame();
+        gameState.gamePhase = "START";
+    }
+}
+
+function onKeyUp(e) {
+    const key = e.key;
+    if (gameState.keys.hasOwnProperty(key)) gameState.keys[key] = false;
+    if (e.code === 'Space') gameState.keys[" "] = false;
+}
+
+// Global hook for controls
+window.setControlMode = (mode) => {
+    gameState.controlMode = mode;
+    console.log("Control Mode set to:", mode);
+};
+
+// Init
+init();

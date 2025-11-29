@@ -42,6 +42,7 @@ export const gameState = {
   platforms: [],
   abilities: [],
   bosses: [],
+  exits: [],
   currentRoom: 0,
   rooms: [],
   score: 0,

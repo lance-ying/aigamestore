@@ -1,0 +1,1467 @@
+<analysis>
+- Issue identified: The game currently uses a multi-room grid system where the player can move between adjacent rooms in any direction. The user wants a linear 9-level progression system with 3 easy, 3 medium, and 3 hard levels, with crew members distributed across levels instead of clustered.
+
+- Files affected: 
+  - `levelgen.js` - needs complete redesign from room-based to level-based system
+  - `globals.js` - change state from room coordinates to current level number
+  - `entities.js` - remove room transition logic, add level exit detection
+  - `ui.js` - display current level instead of room coordinates
+  - `game.js` - update reset and progression logic
+
+- Changes needed:
+  - Replace room grid system with sequential level progression (1-9)
+  - Create 9 distinct level templates with increasing difficulty
+  - Add level exit/completion triggers (e.g., doors or portals)
+  - Distribute 6 crew members across the 9 levels
+  - Remove multi-directional room transitions
+  - Add level completion logic to advance to next level
+  - Update UI to show "Level X of 9"
+</analysis>
+
+<code filename="globals.js">
+// Global constants and game state
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+// Level size
+export const LEVEL_WIDTH = 600;
+export const LEVEL_HEIGHT = 400;
+export const TILE_SIZE = 20;
+
+// Game state object
+export const gameState = {
+  player: null,
+  entities: [],
+  
+  // Level data
+  currentLevel: 1,
+  totalLevels: 9,
+  levels: new Map(),
+  platforms: [],
+  spikes: [],
+  checkpoints: [],
+  crewMembers: [],
+  levelExit: null,
+  
+  // Game progress
+  collectedCrew: 0,
+  totalCrew: 6,
+  lastCheckpoint: { x: 50, y: 350, level: 1 },
+  deathCount: 0,
+  
+  // Physics
+  gravity: 0.6,
+  friction: 0.85,
+  maxVelocity: 8,
+  
+  // Game state
+  score: 0,
+  gamePhase: "START",
+  controlMode: "HUMAN",
+  
+  // Performance tracking
+  frameCount: 0,
+  lastFrameTime: 0,
+  deltaTime: 0,
+  
+  // Camera
+  cameraX: 0,
+  cameraY: 0,
+  cameraTargetX: 0,
+  cameraTargetY: 0,
+  
+  // Transition state
+  transitioning: false,
+  transitionTimer: 0,
+  
+  // Visual effects
+  particles: [],
+  screenShake: 0
+};
+
+// Expose getGameState globally
+export function getGameState() {
+  return gameState;
+}
+
+window.getGameState = getGameState;
+
+// Key codes
+export const KEY_LEFT = 37;
+export const KEY_UP = 38;
+export const KEY_RIGHT = 39;
+export const KEY_DOWN = 40;
+export const KEY_SPACE = 32;
+export const KEY_SHIFT = 16;
+export const KEY_Z = 90;
+export const KEY_ENTER = 13;
+export const KEY_ESC = 27;
+export const KEY_R = 82;
+
+// Color palette (VVVVVV style)
+export const COLORS = {
+  background: [0, 0, 0],
+  player: [0, 191, 243],
+  platform: [255, 255, 255],
+  spike: [255, 0, 0],
+  checkpoint: [255, 255, 0],
+  crew: [255, 165, 0],
+  exit: [0, 255, 100],
+  gridLine: [40, 40, 60]
+};
+</code>
+
+<code filename="levelgen.js">
+// Level generation and management
+import { gameState, LEVEL_WIDTH, LEVEL_HEIGHT, TILE_SIZE } from './globals.js';
+import { Platform, Spike, Checkpoint, CrewMember, MovingPlatform, LevelExit } from './entities.js';
+
+// Level templates with difficulty progression
+const levelTemplates = [
+  // EASY LEVELS (1-3)
+  {
+    difficulty: 'easy',
+    platforms: [
+      { x: 0, y: 380, width: 600, height: 20 }, // Floor
+      { x: 200, y: 280, width: 150, height: 20 },
+      { x: 450, y: 200, width: 150, height: 20 }
+    ],
+    spikes: [
+      { x: 350, y: 360, width: 50, height: 20, direction: 'up' }
+    ],
+    checkpoints: [{ x: 220, y: 240 }],
+    crew: { x: 480, y: 160, name: 'Violet' },
+    exit: { x: 550, y: 160 }
+  },
+  {
+    difficulty: 'easy',
+    platforms: [
+      { x: 0, y: 380, width: 200, height: 20 },
+      { x: 250, y: 320, width: 100, height: 20 },
+      { x: 400, y: 260, width: 200, height: 20 },
+      { x: 0, y: 0, width: 600, height: 20 }
+    ],
+    spikes: [
+      { x: 200, y: 360, width: 50, height: 20, direction: 'up' }
+    ],
+    checkpoints: [{ x: 420, y: 220 }],
+    crew: null,
+    exit: { x: 550, y: 220 }
+  },
+  {
+    difficulty: 'easy',
+    platforms: [
+      { x: 0, y: 380, width: 150, height: 20 },
+      { x: 200, y: 280, width: 100, height: 20 },
+      { x: 350, y: 200, width: 100, height: 20 },
+      { x: 500, y: 280, width: 100, height: 20 },
+      { x: 0, y: 0, width: 600, height: 20 }
+    ],
+    spikes: [
+      { x: 150, y: 360, width: 50, height: 20, direction: 'up' },
+      { x: 300, y: 260, width: 50, height: 20, direction: 'up' }
+    ],
+    checkpoints: [{ x: 370, y: 160 }],
+    crew: { x: 520, y: 240, name: 'Vitellary' },
+    exit: { x: 50, y: 340 }
+  },
+  
+  // MEDIUM LEVELS (4-6)
+  {
+    difficulty: 'medium',
+    platforms: [
+      { x: 0, y: 380, width: 100, height: 20 },
+      { x: 500, y: 380, width: 100, height: 20 },
+      { x: 0, y: 0, width: 600, height: 20 }
+    ],
+    movingPlatforms: [
+      { x: 150, y: 320, width: 80, height: 10, startX: 150, endX: 370, startY: 320, endY: 320, speed: 0.025 }
+    ],
+    spikes: [
+      { x: 100, y: 360, width: 400, height: 20, direction: 'up' },
+      { x: 150, y: 20, width: 300, height: 20, direction: 'down' }
+    ],
+    checkpoints: [{ x: 520, y: 340 }],
+    crew: { x: 30, y: 340, name: 'Vermillion' },
+    exit: { x: 550, y: 340 }
+  },
+  {
+    difficulty: 'medium',
+    platforms: [
+      { x: 0, y: 380, width: 600, height: 20 },
+      { x: 0, y: 0, width: 600, height: 20 },
+      { x: 100, y: 280, width: 80, height: 20 },
+      { x: 420, y: 280, width: 80, height: 20 }
+    ],
+    spikes: [
+      { x: 180, y: 360, width: 60, height: 20, direction: 'up' },
+      { x: 280, y: 20, width: 60, height: 20, direction: 'down' },
+      { x: 360, y: 360, width: 60, height: 20, direction: 'up' }
+    ],
+    checkpoints: [{ x: 440, y: 240 }],
+    crew: null,
+    exit: { x: 550, y: 340 }
+  },
+  {
+    difficulty: 'medium',
+    platforms: [
+      { x: 0, y: 380, width: 120, height: 20 },
+      { x: 200, y: 300, width: 100, height: 20 },
+      { x: 380, y: 220, width: 100, height: 20 },
+      { x: 200, y: 140, width: 100, height: 20 },
+      { x: 480, y: 380, width: 120, height: 20 }
+    ],
+    spikes: [
+      { x: 120, y: 360, width: 80, height: 20, direction: 'up' },
+      { x: 300, y: 280, width: 80, height: 20, direction: 'up' },
+      { x: 200, y: 120, width: 100, height: 20, direction: 'up' }
+    ],
+    checkpoints: [{ x: 400, y: 180 }],
+    crew: { x: 520, y: 340, name: 'Victoria' },
+    exit: { x: 50, y: 340 }
+  },
+  
+  // HARD LEVELS (7-9)
+  {
+    difficulty: 'hard',
+    platforms: [
+      { x: 0, y: 380, width: 80, height: 20 },
+      { x: 140, y: 340, width: 60, height: 20 },
+      { x: 260, y: 300, width: 60, height: 20 },
+      { x: 380, y: 260, width: 60, height: 20 },
+      { x: 500, y: 220, width: 100, height: 20 },
+      { x: 0, y: 0, width: 600, height: 20 }
+    ],
+    spikes: [
+      { x: 80, y: 360, width: 60, height: 20, direction: 'up' },
+      { x: 200, y: 320, width: 60, height: 20, direction: 'up' },
+      { x: 320, y: 280, width: 60, height: 20, direction: 'up' },
+      { x: 440, y: 240, width: 60, height: 20, direction: 'up' },
+      { x: 500, y: 20, width: 100, height: 20, direction: 'down' }
+    ],
+    checkpoints: [{ x: 520, y: 180 }],
+    crew: { x: 30, y: 340, name: 'Verdigris' },
+    exit: { x: 550, y: 180 }
+  },
+  {
+    difficulty: 'hard',
+    platforms: [
+      { x: 0, y: 380, width: 100, height: 20 },
+      { x: 500, y: 380, width: 100, height: 20 },
+      { x: 0, y: 0, width: 600, height: 20 },
+      { x: 250, y: 200, width: 100, height: 20 }
+    ],
+    movingPlatforms: [
+      { x: 120, y: 340, width: 60, height: 10, startX: 120, endX: 420, startY: 340, endY: 340, speed: 0.035 },
+      { x: 120, y: 100, width: 60, height: 10, startX: 120, endX: 420, startY: 100, endY: 100, speed: 0.04 }
+    ],
+    spikes: [
+      { x: 100, y: 360, width: 400, height: 20, direction: 'up' },
+      { x: 100, y: 20, width: 400, height: 20, direction: 'down' },
+      { x: 250, y: 180, width: 100, height: 20, direction: 'up' }
+    ],
+    checkpoints: [{ x: 520, y: 340 }],
+    crew: null,
+    exit: { x: 550, y: 340 }
+  },
+  {
+    difficulty: 'hard',
+    platforms: [
+      { x: 0, y: 380, width: 600, height: 20 },
+      { x: 0, y: 0, width: 600, height: 20 }
+    ],
+    spikes: [
+      { x: 100, y: 360, width: 40, height: 20, direction: 'up' },
+      { x: 180, y: 20, width: 40, height: 20, direction: 'down' },
+      { x: 260, y: 360, width: 40, height: 20, direction: 'up' },
+      { x: 340, y: 20, width: 40, height: 20, direction: 'down' },
+      { x: 420, y: 360, width: 40, height: 20, direction: 'up' },
+      { x: 500, y: 20, width: 40, height: 20, direction: 'down' }
+    ],
+    checkpoints: [{ x: 550, y: 340 }],
+    crew: { x: 30, y: 340, name: 'Violet' },
+    exit: { x: 550, y: 340 }
+  }
+];
+
+export function generateLevel() {
+  // Clear existing level data
+  gameState.platforms = [];
+  gameState.spikes = [];
+  gameState.checkpoints = [];
+  gameState.crewMembers = [];
+  gameState.levels.clear();
+  gameState.levelExit = null;
+  
+  // Generate all 9 levels
+  for (let i = 0; i < gameState.totalLevels; i++) {
+    const levelNum = i + 1;
+    createLevel(levelNum, levelTemplates[i]);
+  }
+  
+  // Set initial level
+  gameState.currentLevel = 1;
+}
+
+function createLevel(levelNum, template) {
+  const level = {
+    number: levelNum,
+    difficulty: template.difficulty,
+    platforms: [],
+    spikes: [],
+    checkpoints: [],
+    crew: null,
+    movingPlatforms: [],
+    exit: null
+  };
+  
+  // Create platforms
+  for (const p of template.platforms) {
+    const platform = new Platform(p.x, p.y, p.width, p.height);
+    level.platforms.push(platform);
+  }
+  
+  // Create moving platforms
+  if (template.movingPlatforms) {
+    for (const mp of template.movingPlatforms) {
+      const movingPlatform = new MovingPlatform(
+        mp.x, mp.y, mp.width, mp.height,
+        mp.startX, mp.endX, mp.startY, mp.endY, mp.speed
+      );
+      level.movingPlatforms.push(movingPlatform);
+    }
+  }
+  
+  // Create spikes
+  for (const s of template.spikes) {
+    const spike = new Spike(s.x, s.y, s.width, s.height, s.direction);
+    level.spikes.push(spike);
+  }
+  
+  // Create checkpoints
+  for (const c of template.checkpoints) {
+    const checkpoint = new Checkpoint(c.x, c.y);
+    level.checkpoints.push(checkpoint);
+  }
+  
+  // Create crew member
+  if (template.crew) {
+    const crew = new CrewMember(template.crew.x, template.crew.y, template.crew.name);
+    level.crew = crew;
+  }
+  
+  // Create level exit
+  if (template.exit) {
+    const exit = new LevelExit(template.exit.x, template.exit.y);
+    level.exit = exit;
+  }
+  
+  gameState.levels.set(levelNum, level);
+}
+
+export function loadLevel(levelNum) {
+  const level = gameState.levels.get(levelNum);
+  
+  if (!level) {
+    console.error(`Level ${levelNum} not found`);
+    return;
+  }
+  
+  // Clear current entities
+  gameState.platforms = [];
+  gameState.spikes = [];
+  gameState.checkpoints = [];
+  gameState.crewMembers = [];
+  gameState.levelExit = null;
+  
+  // Load level entities
+  gameState.platforms = [...level.platforms];
+  gameState.spikes = [...level.spikes];
+  gameState.checkpoints = [...level.checkpoints];
+  
+  // Add moving platforms
+  for (const mp of level.movingPlatforms) {
+    gameState.platforms.push(mp);
+  }
+  
+  // Load crew member
+  if (level.crew && !level.crew.collected) {
+    gameState.crewMembers.push(level.crew);
+  }
+  
+  // Load exit
+  if (level.exit) {
+    gameState.levelExit = level.exit;
+  }
+  
+  gameState.currentLevel = levelNum;
+}
+
+export function advanceToNextLevel() {
+  if (gameState.currentLevel < gameState.totalLevels) {
+    gameState.currentLevel++;
+    loadLevel(gameState.currentLevel);
+    
+    // Reset player position
+    if (gameState.player) {
+      gameState.player.x = 50;
+      gameState.player.y = 350;
+      gameState.player.vx = 0;
+      gameState.player.vy = 0;
+      gameState.player.gravityDirection = 1;
+      
+      // Update last checkpoint
+      gameState.lastCheckpoint = {
+        x: 50,
+        y: 350,
+        level: gameState.currentLevel
+      };
+    }
+    
+    // Transition effect
+    gameState.transitioning = true;
+    gameState.transitionTimer = 30;
+  } else {
+    // All levels completed
+    gameState.gamePhase = "GAME_OVER_WIN";
+  }
+}
+
+export function getCurrentLevel() {
+  return gameState.levels.get(gameState.currentLevel);
+}
+</code>
+
+<code filename="entities.js">
+// Entity classes for the game
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, TILE_SIZE, COLORS, LEVEL_WIDTH, LEVEL_HEIGHT } from './globals.js';
+import { advanceToNextLevel } from './levelgen.js';
+
+export class Player {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.width = 12;
+    this.height = 20;
+    
+    // Physics
+    this.vx = 0;
+    this.vy = 0;
+    this.speed = 3;
+    this.gravityDirection = 1; // 1 = down, -1 = up
+    this.onGround = false;
+    
+    // Animation
+    this.animFrame = 0;
+    this.animSpeed = 0.15;
+    this.facing = 1; // 1 = right, -1 = left
+    
+    // State
+    this.invulnerable = false;
+    this.invulnerableTimer = 0;
+    this.canFlipGravity = true;
+    this.flipCooldown = 0;
+    
+    gameState.player = this;
+    gameState.entities.push(this);
+  }
+  
+  update(p) {
+    // Apply gravity
+    this.vy += gameState.gravity * this.gravityDirection;
+    
+    // Apply friction
+    this.vx *= gameState.friction;
+    
+    // Clamp velocity
+    const maxVel = gameState.maxVelocity;
+    this.vx = p.constrain(this.vx, -maxVel, maxVel);
+    this.vy = p.constrain(this.vy, -maxVel * 1.5, maxVel * 1.5);
+    
+    // Update position
+    this.x += this.vx;
+    this.y += this.vy;
+    
+    // Constrain to level bounds (left and right)
+    this.x = p.constrain(this.x, 10, LEVEL_WIDTH - 10);
+    
+    // Check collisions
+    this.checkPlatformCollisions(p);
+    this.checkSpikeCollisions(p);
+    this.checkCheckpointCollisions(p);
+    this.checkCrewCollisions(p);
+    this.checkExitCollision(p);
+    
+    // Update animation
+    if (Math.abs(this.vx) > 0.5) {
+      this.animFrame += this.animSpeed;
+    }
+    
+    // Update timers
+    if (this.invulnerable) {
+      this.invulnerableTimer--;
+      if (this.invulnerableTimer <= 0) {
+        this.invulnerable = false;
+      }
+    }
+    
+    if (this.flipCooldown > 0) {
+      this.flipCooldown--;
+    }
+    
+    // Log position
+    if (p.frameCount % 10 === 0) {
+      this.logPosition(p);
+    }
+  }
+  
+  checkPlatformCollisions(p) {
+    this.onGround = false;
+    
+    for (const platform of gameState.platforms) {
+      if (this.collidesWith(platform)) {
+        // Determine collision side
+        const playerBottom = this.y + this.height / 2;
+        const playerTop = this.y - this.height / 2;
+        const playerLeft = this.x - this.width / 2;
+        const playerRight = this.x + this.width / 2;
+        
+        const platformTop = platform.y;
+        const platformBottom = platform.y + platform.height;
+        const platformLeft = platform.x;
+        const platformRight = platform.x + platform.width;
+        
+        // Calculate overlap on each side
+        const overlapTop = playerBottom - platformTop;
+        const overlapBottom = platformBottom - playerTop;
+        const overlapLeft = playerRight - platformLeft;
+        const overlapRight = platformRight - playerLeft;
+        
+        // Find minimum overlap
+        const minOverlap = Math.min(overlapTop, overlapBottom, overlapLeft, overlapRight);
+        
+        if (minOverlap === overlapTop && this.vy > 0 && this.gravityDirection === 1) {
+          // Collision from top (standing on platform)
+          this.y = platformTop - this.height / 2;
+          this.vy = 0;
+          this.onGround = true;
+        } else if (minOverlap === overlapBottom && this.vy < 0 && this.gravityDirection === -1) {
+          // Collision from bottom (standing on ceiling)
+          this.y = platformBottom + this.height / 2;
+          this.vy = 0;
+          this.onGround = true;
+        } else if (minOverlap === overlapLeft) {
+          // Collision from left
+          this.x = platformLeft - this.width / 2;
+          this.vx = 0;
+        } else if (minOverlap === overlapRight) {
+          // Collision from right
+          this.x = platformRight + this.width / 2;
+          this.vx = 0;
+        }
+      }
+    }
+  }
+  
+  checkSpikeCollisions(p) {
+    if (this.invulnerable) return;
+    
+    for (const spike of gameState.spikes) {
+      if (this.collidesWith(spike)) {
+        this.die(p);
+        return;
+      }
+    }
+    
+    // Check if fell off screen
+    if (this.y < -50 || this.y > CANVAS_HEIGHT + 50) {
+      this.die(p);
+    }
+  }
+  
+  checkCheckpointCollisions(p) {
+    for (const checkpoint of gameState.checkpoints) {
+      if (!checkpoint.activated && this.collidesWith(checkpoint)) {
+        checkpoint.activate(p);
+        gameState.lastCheckpoint = {
+          x: checkpoint.x + checkpoint.width / 2,
+          y: checkpoint.y + checkpoint.height / 2,
+          level: gameState.currentLevel
+        };
+      }
+    }
+  }
+  
+  checkCrewCollisions(p) {
+    for (const crew of gameState.crewMembers) {
+      if (!crew.collected && this.collidesWith(crew)) {
+        crew.collect(p);
+      }
+    }
+  }
+  
+  checkExitCollision(p) {
+    if (gameState.levelExit && !gameState.transitioning) {
+      if (this.collidesWith(gameState.levelExit)) {
+        advanceToNextLevel();
+      }
+    }
+  }
+  
+  collidesWith(other) {
+    return (
+      this.x - this.width / 2 < other.x + other.width &&
+      this.x + this.width / 2 > other.x &&
+      this.y - this.height / 2 < other.y + other.height &&
+      this.y + this.height / 2 > other.y
+    );
+  }
+  
+  die(p) {
+    gameState.deathCount++;
+    this.invulnerable = true;
+    this.invulnerableTimer = 30;
+    
+    // Create death particles
+    for (let i = 0; i < 20; i++) {
+      const angle = (Math.PI * 2 * i) / 20;
+      gameState.particles.push(new Particle(
+        this.x,
+        this.y,
+        Math.cos(angle) * 3,
+        Math.sin(angle) * 3,
+        COLORS.player
+      ));
+    }
+    
+    // Respawn at last checkpoint
+    this.x = gameState.lastCheckpoint.x;
+    this.y = gameState.lastCheckpoint.y;
+    
+    // If checkpoint is from a different level, reload that level
+    if (gameState.lastCheckpoint.level !== gameState.currentLevel) {
+      const { loadLevel } = require('./levelgen.js');
+      loadLevel(gameState.lastCheckpoint.level);
+    }
+    
+    this.vx = 0;
+    this.vy = 0;
+    this.gravityDirection = 1;
+    
+    // Screen shake
+    gameState.screenShake = 10;
+  }
+  
+  moveLeft() {
+    this.vx = -this.speed;
+    this.facing = -1;
+  }
+  
+  moveRight() {
+    this.vx = this.speed;
+    this.facing = 1;
+  }
+  
+  flipGravity(p) {
+    if (!this.canFlipGravity || this.flipCooldown > 0) return;
+    
+    this.gravityDirection *= -1;
+    this.vy = 0;
+    this.flipCooldown = 5;
+    
+    // Create flip particles
+    for (let i = 0; i < 10; i++) {
+      const angle = (Math.PI * 2 * i) / 10;
+      gameState.particles.push(new Particle(
+        this.x,
+        this.y,
+        Math.cos(angle) * 2,
+        Math.sin(angle) * 2,
+        COLORS.player
+      ));
+    }
+  }
+  
+  logPosition(p) {
+    if (p.logs && p.logs.player_info) {
+      p.logs.player_info.push({
+        screen_x: this.x,
+        screen_y: this.y,
+        level: gameState.currentLevel,
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  }
+  
+  render(p) {
+    if (this.invulnerable && Math.floor(gameState.frameCount / 3) % 2 === 0) {
+      return; // Flashing effect
+    }
+    
+    p.push();
+    p.translate(this.x, this.y);
+    
+    // Flip sprite based on gravity
+    if (this.gravityDirection === -1) {
+      p.scale(1, -1);
+    }
+    
+    // Flip horizontally based on facing
+    if (this.facing === -1) {
+      p.scale(-1, 1);
+    }
+    
+    // Draw player body
+    p.fill(...COLORS.player);
+    p.noStroke();
+    p.rectMode(p.CENTER);
+    p.rect(0, 0, this.width, this.height);
+    
+    // Draw simple animation (legs)
+    const legOffset = Math.sin(this.animFrame) * 2;
+    p.rect(-3, this.height / 2 - 2, 3, 4 + legOffset);
+    p.rect(3, this.height / 2 - 2, 3, 4 - legOffset);
+    
+    // Draw visor
+    p.fill(0);
+    p.rect(0, -this.height / 4, this.width - 4, 4);
+    
+    p.pop();
+  }
+}
+
+export class Platform {
+  constructor(x, y, width, height) {
+    this.x = x;
+    this.y = y;
+    this.width = width;
+    this.height = height;
+    this.type = 'static';
+  }
+  
+  render(p) {
+    p.fill(...COLORS.platform);
+    p.noStroke();
+    p.rect(this.x, this.y, this.width, this.height);
+  }
+}
+
+export class MovingPlatform extends Platform {
+  constructor(x, y, width, height, startX, endX, startY, endY, speed) {
+    super(x, y, width, height);
+    this.startX = startX;
+    this.endX = endX;
+    this.startY = startY;
+    this.endY = endY;
+    this.speed = speed;
+    this.progress = 0;
+    this.type = 'moving';
+  }
+  
+  update(p) {
+    this.progress += this.speed;
+    const t = (Math.sin(this.progress) + 1) / 2; // Oscillate between 0 and 1
+    
+    this.x = this.startX + (this.endX - this.startX) * t;
+    this.y = this.startY + (this.endY - this.startY) * t;
+  }
+}
+
+export class Spike {
+  constructor(x, y, width, height, direction = 'up') {
+    this.x = x;
+    this.y = y;
+    this.width = width;
+    this.height = height;
+    this.direction = direction; // 'up', 'down', 'left', 'right'
+  }
+  
+  render(p) {
+    p.fill(...COLORS.spike);
+    p.noStroke();
+    
+    p.push();
+    p.translate(this.x, this.y);
+    
+    // Draw spikes based on direction
+    const numSpikes = Math.floor(this.width / 10);
+    for (let i = 0; i < numSpikes; i++) {
+      const spikeX = i * (this.width / numSpikes);
+      const spikeWidth = this.width / numSpikes;
+      
+      p.beginShape();
+      if (this.direction === 'up') {
+        p.vertex(spikeX, this.height);
+        p.vertex(spikeX + spikeWidth / 2, 0);
+        p.vertex(spikeX + spikeWidth, this.height);
+      } else if (this.direction === 'down') {
+        p.vertex(spikeX, 0);
+        p.vertex(spikeX + spikeWidth / 2, this.height);
+        p.vertex(spikeX + spikeWidth, 0);
+      }
+      p.endShape(p.CLOSE);
+    }
+    
+    p.pop();
+  }
+}
+
+export class Checkpoint {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.width = 20;
+    this.height = 40;
+    this.activated = false;
+    this.pulseTimer = 0;
+  }
+  
+  activate(p) {
+    this.activated = true;
+    
+    // Create activation particles
+    for (let i = 0; i < 15; i++) {
+      const angle = (Math.PI * 2 * i) / 15;
+      gameState.particles.push(new Particle(
+        this.x + this.width / 2,
+        this.y + this.height / 2,
+        Math.cos(angle) * 2,
+        Math.sin(angle) * 2,
+        COLORS.checkpoint
+      ));
+    }
+  }
+  
+  update(p) {
+    this.pulseTimer += 0.1;
+  }
+  
+  render(p) {
+    const alpha = this.activated ? 255 : 100;
+    const pulse = this.activated ? Math.sin(this.pulseTimer) * 10 : 0;
+    
+    p.fill(...COLORS.checkpoint, alpha);
+    p.noStroke();
+    p.rectMode(p.CORNER);
+    p.rect(this.x, this.y, this.width, this.height);
+    
+    // Draw checkpoint marker
+    p.fill(255, 255, 255, alpha);
+    p.circle(this.x + this.width / 2, this.y + this.height / 2 + pulse, 5);
+  }
+}
+
+export class CrewMember {
+  constructor(x, y, name) {
+    this.x = x;
+    this.y = y;
+    this.width = 15;
+    this.height = 25;
+    this.name = name;
+    this.collected = false;
+    this.bobTimer = Math.random() * Math.PI * 2;
+    this.bobSpeed = 0.05;
+    this.initialY = y;
+  }
+  
+  collect(p) {
+    this.collected = true;
+    gameState.collectedCrew++;
+    gameState.score += 100;
+    
+    // Create collection particles
+    for (let i = 0; i < 30; i++) {
+      const angle = (Math.PI * 2 * i) / 30;
+      gameState.particles.push(new Particle(
+        this.x + this.width / 2,
+        this.y + this.height / 2,
+        Math.cos(angle) * 4,
+        Math.sin(angle) * 4,
+        COLORS.crew
+      ));
+    }
+  }
+  
+  update(p) {
+    this.bobTimer += this.bobSpeed;
+    this.y = this.initialY + Math.sin(this.bobTimer) * 5;
+  }
+  
+  render(p) {
+    if (this.collected) return;
+    
+    p.push();
+    p.translate(this.x + this.width / 2, this.y + this.height / 2);
+    
+    // Draw crew member
+    p.fill(...COLORS.crew);
+    p.noStroke();
+    p.rectMode(p.CENTER);
+    p.rect(0, 0, this.width, this.height);
+    
+    // Draw face
+    p.fill(0);
+    p.circle(-3, -3, 3);
+    p.circle(3, -3, 3);
+    p.rect(0, 3, 8, 2);
+    
+    // Draw name above
+    p.fill(255);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(8);
+    p.text(this.name, 0, -this.height / 2 - 10);
+    
+    p.pop();
+  }
+}
+
+export class LevelExit {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.width = 30;
+    this.height = 50;
+    this.pulseTimer = 0;
+  }
+  
+  update(p) {
+    this.pulseTimer += 0.1;
+  }
+  
+  render(p) {
+    const pulse = Math.sin(this.pulseTimer) * 5;
+    const alpha = 200 + Math.sin(this.pulseTimer * 2) * 55;
+    
+    p.push();
+    p.translate(this.x, this.y);
+    
+    // Draw exit portal
+    p.fill(...COLORS.exit, alpha);
+    p.noStroke();
+    p.rectMode(p.CORNER);
+    p.rect(0, 0, this.width, this.height);
+    
+    // Draw glow effect
+    p.fill(255, 255, 255, alpha * 0.5);
+    p.rect(5, 5, this.width - 10, this.height - 10);
+    
+    // Draw arrow pointing to exit
+    p.fill(0);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(20);
+    p.text('→', this.width / 2, this.height / 2);
+    
+    p.pop();
+  }
+}
+
+export class Particle {
+  constructor(x, y, vx, vy, color) {
+    this.x = x;
+    this.y = y;
+    this.vx = vx;
+    this.vy = vy;
+    this.color = color;
+    this.lifetime = 30;
+    this.age = 0;
+    this.size = 3;
+    
+    gameState.particles.push(this);
+  }
+  
+  update() {
+    this.x += this.vx;
+    this.y += this.vy;
+    this.vy += 0.2; // Gravity
+    this.age++;
+  }
+  
+  isDead() {
+    return this.age >= this.lifetime;
+  }
+  
+  render(p) {
+    const alpha = (1 - this.age / this.lifetime) * 255;
+    p.fill(...this.color, alpha);
+    p.noStroke();
+    p.circle(this.x, this.y, this.size);
+  }
+}
+</code>
+
+<code filename="ui.js">
+// UI rendering
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, COLORS } from './globals.js';
+
+export function renderStartScreen(p) {
+  p.background(...COLORS.background);
+  
+  // Draw grid background
+  drawGrid(p);
+  
+  // Title with animation
+  const titleY = CANVAS_HEIGHT / 2 - 80;
+  const titlePulse = Math.sin(p.frameCount * 0.05) * 5;
+  
+  p.fill(255);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text('VVVVVV', CANVAS_WIDTH / 2, titleY + titlePulse);
+  
+  // Subtitle
+  p.textSize(16);
+  p.fill(100, 200, 255);
+  p.text('GRAVITY FLIP ADVENTURE', CANVAS_WIDTH / 2, titleY + 50);
+  
+  // Instructions
+  p.fill(255);
+  p.textSize(14);
+  p.text('9 Levels - 3 Easy, 3 Medium, 3 Hard', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 10);
+  p.text('Rescue 6 crew members across the levels!', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 10);
+  
+  // Controls
+  p.textSize(12);
+  p.fill(200);
+  p.text('Arrow Keys: Move', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 40);
+  p.text('Space: Flip Gravity', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 60);
+  p.text('ESC: Pause  |  R: Restart', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 80);
+  
+  // Start prompt
+  const promptAlpha = (Math.sin(p.frameCount * 0.1) + 1) / 2 * 255;
+  p.fill(255, 255, 0, promptAlpha);
+  p.textSize(20);
+  p.text('PRESS ENTER TO START', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 120);
+}
+
+export function renderUI(p) {
+  // Score
+  p.fill(255);
+  p.textAlign(p.LEFT, p.TOP);
+  p.textSize(14);
+  p.text(`Score: ${gameState.score}`, 10, 10);
+  
+  // Level indicator
+  const levelColor = gameState.currentLevel <= 3 ? [100, 255, 100] :
+                     gameState.currentLevel <= 6 ? [255, 200, 100] :
+                     [255, 100, 100];
+  p.fill(...levelColor);
+  p.textAlign(p.CENTER, p.TOP);
+  p.textSize(16);
+  const difficulty = gameState.currentLevel <= 3 ? 'EASY' :
+                     gameState.currentLevel <= 6 ? 'MEDIUM' : 'HARD';
+  p.text(`LEVEL ${gameState.currentLevel}/${gameState.totalLevels} - ${difficulty}`, CANVAS_WIDTH / 2, 10);
+  
+  // Crew counter
+  p.textAlign(p.RIGHT, p.TOP);
+  const crewColor = gameState.collectedCrew === gameState.totalCrew ? [0, 255, 0] : [255, 255, 255];
+  p.fill(...crewColor);
+  p.textSize(14);
+  p.text(`Crew: ${gameState.collectedCrew}/${gameState.totalCrew}`, CANVAS_WIDTH - 10, 10);
+  
+  // Death counter
+  p.fill(200);
+  p.textSize(12);
+  p.text(`Deaths: ${gameState.deathCount}`, CANVAS_WIDTH - 10, 30);
+}
+
+export function renderPausedOverlay(p) {
+  // Semi-transparent overlay
+  p.fill(0, 0, 0, 200);
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  // Paused text
+  p.fill(255);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text('PAUSED', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 20);
+  
+  p.textSize(16);
+  p.text('Press ESC to Resume', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 20);
+}
+
+export function renderGameOver(p) {
+  // Background overlay
+  p.fill(0, 0, 0, 220);
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  const isWin = gameState.gamePhase === "GAME_OVER_WIN";
+  
+  // Game over text
+  p.fill(isWin ? 0 : 255, isWin ? 255 : 100, isWin ? 100 : 100);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text(isWin ? 'MISSION COMPLETE!' : 'GAME OVER', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 80);
+  
+  // Stats
+  p.fill(255);
+  p.textSize(20);
+  p.text(`All 9 Levels Completed!`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 30);
+  p.text(`Crew Rescued: ${gameState.collectedCrew}/${gameState.totalCrew}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+  p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 30);
+  p.text(`Deaths: ${gameState.deathCount}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 60);
+  
+  // Restart instruction
+  p.textSize(16);
+  const promptAlpha = (Math.sin(p.frameCount * 0.1) + 1) / 2 * 255;
+  p.fill(255, 255, 0, promptAlpha);
+  p.text('Press R to Restart', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 100);
+}
+
+function drawGrid(p) {
+  p.stroke(...COLORS.gridLine);
+  p.strokeWeight(1);
+  
+  // Vertical lines
+  for (let x = 0; x < CANVAS_WIDTH; x += CANVAS_WIDTH / 20) {
+    p.line(x, 0, x, CANVAS_HEIGHT);
+  }
+  
+  // Horizontal lines
+  for (let y = 0; y < CANVAS_HEIGHT; y += CANVAS_HEIGHT / 20) {
+    p.line(0, y, CANVAS_WIDTH, y);
+  }
+}
+
+export function renderGame(p) {
+  // Apply screen shake
+  if (gameState.screenShake > 0) {
+    p.translate(
+      (Math.random() - 0.5) * gameState.screenShake,
+      (Math.random() - 0.5) * gameState.screenShake
+    );
+  }
+  
+  // Draw grid background
+  drawGrid(p);
+  
+  // Draw platforms
+  for (const platform of gameState.platforms) {
+    platform.render(p);
+  }
+  
+  // Draw spikes
+  for (const spike of gameState.spikes) {
+    spike.render(p);
+  }
+  
+  // Draw checkpoints
+  for (const checkpoint of gameState.checkpoints) {
+    checkpoint.render(p);
+  }
+  
+  // Draw crew members
+  for (const crew of gameState.crewMembers) {
+    crew.render(p);
+  }
+  
+  // Draw level exit
+  if (gameState.levelExit) {
+    gameState.levelExit.render(p);
+  }
+  
+  // Draw player
+  if (gameState.player) {
+    gameState.player.render(p);
+  }
+  
+  // Draw particles
+  for (const particle of gameState.particles) {
+    particle.render(p);
+  }
+  
+  // Draw transition effect
+  if (gameState.transitioning) {
+    const alpha = (gameState.transitionTimer / 30) * 255;
+    p.fill(0, 0, 0, alpha);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  }
+}
+</code>
+
+<code filename="game.js">
+// Main game file
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, getGameState } from './globals.js';
+import { Player } from './entities.js';
+import { generateLevel, loadLevel } from './levelgen.js';
+import { updatePhysics } from './physics.js';
+import { setupInput, handlePlayerInput } from './input.js';
+import { renderStartScreen, renderUI, renderPausedOverlay, renderGameOver, renderGame } from './ui.js';
+import { get_automated_testing_action } from './automated_testing_controller.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+  // Initialize logs
+  p.logs = {
+    "game_info": [],
+    "inputs": [],
+    "player_info": []
+  };
+  
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(60);
+    p.randomSeed(42);
+    
+    // Initialize game state
+    gameState.gamePhase = "START";
+    gameState.controlMode = "HUMAN";
+    gameState.lastFrameTime = p.millis();
+    
+    // Setup input handlers
+    setupInput(p);
+    
+    // Log initial state
+    p.logs.game_info.push({
+      data: { gamePhase: gameState.gamePhase },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  };
+  
+  p.draw = function() {
+    // Update frame count
+    gameState.frameCount = p.frameCount;
+    
+    // Update delta time
+    const currentTime = p.millis();
+    gameState.deltaTime = (currentTime - gameState.lastFrameTime) / 1000;
+    gameState.lastFrameTime = currentTime;
+    
+    // Clear background
+    p.background(...gameState.background || [0, 0, 0]);
+    
+    // Handle game phases
+    switch (gameState.gamePhase) {
+      case "START":
+        renderStartScreen(p);
+        break;
+        
+      case "PLAYING":
+        updateGame(p);
+        renderGame(p);
+        renderUI(p);
+        break;
+        
+      case "PAUSED":
+        renderGame(p);
+        renderUI(p);
+        renderPausedOverlay(p);
+        break;
+        
+      case "GAME_OVER_WIN":
+      case "GAME_OVER_LOSE":
+        renderGame(p);
+        renderUI(p);
+        renderGameOver(p);
+        break;
+    }
+  };
+});
+
+function updateGame(p) {
+  // Handle automated testing
+  if (gameState.controlMode !== "HUMAN") {
+    const action = get_automated_testing_action(gameState);
+    if (action && action.keyCode) {
+      // Simulate key press
+      p.keyCode = action.keyCode;
+      if (p.keyPressed) p.keyPressed();
+      
+      // Simulate key release after a few frames
+      setTimeout(() => {
+        if (p.keyReleased) p.keyReleased();
+      }, 100);
+    }
+  }
+  
+  // Handle player input
+  handlePlayerInput(p);
+  
+  // Update player
+  if (gameState.player) {
+    gameState.player.update(p);
+  }
+  
+  // Update physics
+  updatePhysics(p);
+  
+  // Update level exit
+  if (gameState.levelExit) {
+    gameState.levelExit.update(p);
+  }
+}
+
+export function resetGame(p) {
+  // Clear entities
+  gameState.entities = [];
+  gameState.platforms = [];
+  gameState.spikes = [];
+  gameState.checkpoints = [];
+  gameState.crewMembers = [];
+  gameState.particles = [];
+  gameState.levelExit = null;
+  
+  // Reset game state
+  gameState.collectedCrew = 0;
+  gameState.deathCount = 0;
+  gameState.score = 0;
+  gameState.currentLevel = 1;
+  gameState.lastCheckpoint = { x: 50, y: 350, level: 1 };
+  
+  // Generate all levels
+  generateLevel();
+  
+  // Create player
+  gameState.player = new Player(50, 350);
+  
+  // Load first level
+  loadLevel(1);
+  
+  // Log reset
+  if (p && p.logs && p.logs.game_info) {
+    p.logs.game_info.push({
+      data: { event: "game_reset" },
+      framecount: gameState.frameCount,
+      timestamp: Date.now()
+    });
+  }
+}
+
+// Expose game instance globally
+window.gameInstance = gameInstance;
+
+// Control mode setter
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  
+  // Update button states
+  const buttons = ['humanModeBtn', 'test_1_ModeBtn', 'test_2_ModeBtn'];
+  buttons.forEach(btnId => {
+    const btn = document.getElementById(btnId);
+    if (btn) {
+      btn.classList.remove('active');
+    }
+  });
+  
+  const activeBtn = document.getElementById(mode === 'HUMAN' ? 'humanModeBtn' : 
+                                           mode === 'TEST_1' ? 'test_1_ModeBtn' : 
+                                           'test_2_ModeBtn');
+  if (activeBtn) {
+    activeBtn.classList.add('active');
+  }
+  
+  // Reset game when changing mode
+  if (gameState.gamePhase === "PLAYING" || 
+      gameState.gamePhase === "GAME_OVER_WIN" || 
+      gameState.gamePhase === "GAME_OVER_LOSE") {
+    resetGame(gameInstance);
+    gameState.gamePhase = "START";
+  }
+};
+</code>
+
+<code filename="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>VVVVVV - Gravity Flip Adventure</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      
+      html, body {
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #000;
+        font-family: 'Courier New', monospace;
+      }
+      
+      body {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+      }
+      
+      canvas {
+        display: block;
+        border: 2px solid #333;
+        image-rendering: pixelated;
+        image-rendering: crisp-edges;
+      }
+      
+      .control-buttons {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 10px;
+        flex-wrap: wrap;
+        justify-content: center;
+      }
+      
+      .control-button {
+        padding: 8px 16px;
+        cursor: pointer;
+        background: #444;
+        color: #fff;
+        border: none;
+        border-radius: 4px;
+        font-family: 'Courier New', monospace;
+        font-size: 12px;
+        transition: background 0.2s;
+      }
+      
+      .control-button:hover {
+        background: #555;
+      }
+      
+      .control-button.active {
+        background: #007bff;
+      }
+      
+      #gameTitle {
+        color: #fff;
+        font-family: 'Courier New', monospace;
+        margin-bottom: 10px;
+        letter-spacing: 3px;
+        text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+      }
+      
+      #gameDescription,
+      #gameControls {
+        color: #ccc;
+        font-family: 'Courier New', monospace;
+        max-width: 600px;
+        margin: 0 auto 15px auto;
+        line-height: 1.6;
+        font-size: 13px;
+      }
+      
+      .info-container {
+        text-align: center;
+        margin-bottom: 20px;
+      }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/p5@1.7.0/lib/p5.min.js"></script>
+  </head>
+  <body>
+    <div class="info-container">
+      <h1 id="gameTitle">VVVVVV: GRAVITY FLIP ADVENTURE</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Random Actions)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Optimal Win)</button>
+      </div>
+      <p id="gameDescription">You are Captain Viridian! Navigate through 9 challenging levels - 3 easy, 3 medium, and 3 hard. Each level tests your gravity-flipping skills with increasingly difficult obstacles. Rescue your scattered crew members across the levels and reach the exit to progress. Use checkpoints to save your progress in each level!</p>
+      <p id="gameControls"><strong>Arrow Left:</strong> Move left | <strong>Arrow Right:</strong> Move right | <strong>Space:</strong> Flip gravity | <strong>Enter:</strong> Start game | <strong>Esc:</strong> Pause/Unpause | <strong>R:</strong> Restart from start screen</p>
+    </div>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</code>

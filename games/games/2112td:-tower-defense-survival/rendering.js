@@ -1,4 +1,5 @@
-import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, TOWER_TYPES } from './globals.js';
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, TOWER_TYPES, MAPS } from './globals.js';
+import { canStartWave } from './waveManager.js';
 
 export function renderStartScreen(p) {
   p.background(20, 20, 40);
@@ -10,30 +11,46 @@ export function renderStartScreen(p) {
   
   p.textSize(14);
   p.fill(200, 200, 220);
-  p.text("Defend your command center against alien waves!", CANVAS_WIDTH / 2, 110);
+  p.text("Defend your command center against waves of alien invaders!", CANVAS_WIDTH / 2, 110);
   p.text("Deploy towers strategically along the path.", CANVAS_WIDTH / 2, 130);
-  p.text("Upgrade towers to increase their power.", CANVAS_WIDTH / 2, 150);
-  p.text("Survive 10 waves to win!", CANVAS_WIDTH / 2, 170);
+  p.text("Survive 5 waves on each map to progress!", CANVAS_WIDTH / 2, 150);
+  p.text("Complete EASY, MEDIUM, and HARD maps to win!", CANVAS_WIDTH / 2, 170);
   
-  p.textSize(12);
-  p.fill(150, 150, 170);
-  p.textAlign(p.LEFT, p.CENTER);
-  const instructionsX = 100;
-  let y = 210;
-  p.text("Arrow Keys: Navigate tower selection", instructionsX, y);
-  y += 20;
-  p.text("Space: Place/Upgrade tower", instructionsX, y);
-  y += 20;
-  p.text("Z: Cancel selection", instructionsX, y);
-  y += 20;
-  p.text("Shift: Speed up (hold)", instructionsX, y);
-  y += 20;
-  p.text("ESC: Pause", instructionsX, y);
-  
-  p.textAlign(p.CENTER, p.CENTER);
   p.textSize(20);
   p.fill(255, 255, 100);
-  p.text("PRESS ENTER TO START", CANVAS_WIDTH / 2, 350);
+  p.text("PRESS ENTER TO BEGIN", CANVAS_WIDTH / 2, 350);
+}
+
+export function renderMapSelection(p) {
+  // This function is no longer used but kept for compatibility
+}
+
+export function renderMapComplete(p) {
+  const mapData = MAPS[gameState.currentMap];
+  p.background(...mapData.bgColor);
+  
+  p.fill(100, 255, 100);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text("MAP COMPLETE!", CANVAS_WIDTH / 2, 100);
+  
+  p.textSize(20);
+  p.fill(200, 200, 220);
+  p.text(`${mapData.name} - ${mapData.difficulty}`, CANVAS_WIDTH / 2, 160);
+  p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, 190);
+  p.text(`Money: $${gameState.money}`, CANVAS_WIDTH / 2, 220);
+  
+  p.textSize(16);
+  p.fill(255, 255, 100);
+  
+  if (gameState.currentMap === "HARD") {
+    p.text("ALL MAPS COMPLETE!", CANVAS_WIDTH / 2, 260);
+    p.text("PRESS ENTER to claim victory", CANVAS_WIDTH / 2, 290);
+  } else {
+    const nextMap = gameState.currentMap === "EASY" ? "MEDIUM" : "HARD";
+    p.text(`PRESS ENTER to continue to ${nextMap}`, CANVAS_WIDTH / 2, 280);
+  }
+  p.text("PRESS R to restart game", CANVAS_WIDTH / 2, 310);
 }
 
 export function renderPauseIndicator(p) {
@@ -57,14 +74,19 @@ export function renderGameOverScreen(p) {
   
   p.textSize(20);
   p.fill(200, 200, 220);
-  p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, 160);
-  p.text(`Waves Completed: ${gameState.wave}`, CANVAS_WIDTH / 2, 190);
-  p.text(`Money: $${gameState.money}`, CANVAS_WIDTH / 2, 220);
+  
+  if (isWin) {
+    p.text("All maps completed!", CANVAS_WIDTH / 2, 140);
+  }
+  
+  p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, 170);
+  p.text(`Waves Completed: ${gameState.wave}`, CANVAS_WIDTH / 2, 200);
+  p.text(`Money: $${gameState.money}`, CANVAS_WIDTH / 2, 230);
   
   if (!isWin) {
     p.textSize(16);
     p.fill(255, 150, 150);
-    p.text(`Command Center Destroyed`, CANVAS_WIDTH / 2, 260);
+    p.text(`Command Center Destroyed`, CANVAS_WIDTH / 2, 270);
   }
   
   p.textSize(20);
@@ -78,7 +100,9 @@ export function renderUI(p) {
   p.textAlign(p.LEFT, p.TOP);
   p.textSize(12);
   p.text(`Money: $${gameState.money}`, 10, 10);
-  p.text(`Wave: ${gameState.wave}/10`, 10, 25);
+  
+  const maxWaves = MAPS[gameState.currentMap].maxWaves;
+  p.text(`Wave: ${gameState.wave}/${maxWaves}`, 10, 25);
   p.text(`Score: ${gameState.score}`, 10, 40);
   
   const healthPercent = Math.max(0, gameState.commandCenterHealth / 100);
@@ -89,6 +113,12 @@ export function renderUI(p) {
   p.fill(255);
   p.text(`Base: ${Math.floor(gameState.commandCenterHealth)}%`, 10, 70);
   
+  const mapData = MAPS[gameState.currentMap];
+  p.textAlign(p.RIGHT, p.TOP);
+  p.fill(200, 200, 255);
+  p.text(mapData.name, CANVAS_WIDTH - 10, 10);
+  p.text(mapData.difficulty, CANVAS_WIDTH - 10, 25);
+  
   if (gameState.placementMode && gameState.selectedTowerType) {
     const towerData = TOWER_TYPES[gameState.selectedTowerType];
     p.fill(255, 255, 100);
@@ -96,6 +126,22 @@ export function renderUI(p) {
     p.textSize(14);
     p.text(`Placing: ${towerData.name} ($${towerData.cost})`, CANVAS_WIDTH / 2, 10);
     p.text(`Range: ${towerData.range} | Damage: ${towerData.damage}`, CANVAS_WIDTH / 2, 28);
+  }
+  
+  // Wave start button
+  if (canStartWave()) {
+    p.fill(100, 255, 100, 200);
+    p.stroke(100, 255, 100);
+    p.strokeWeight(2);
+    p.rect(CANVAS_WIDTH / 2 - 80, CANVAS_HEIGHT - 70, 160, 30, 5);
+    p.fill(0);
+    p.noStroke();
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(14);
+    p.text(`START WAVE ${gameState.wave + 1}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT - 55);
+    p.fill(200, 200, 200);
+    p.textSize(10);
+    p.text("(Press W)", CANVAS_WIDTH / 2, CANVAS_HEIGHT - 38);
   }
   
   renderTowerSelector(p);
@@ -108,7 +154,7 @@ export function renderTowerSelector(p) {
   const boxHeight = 50;
   const spacing = 5;
   const startX = CANVAS_WIDTH - (boxWidth + spacing) * types.length - 10;
-  const startY = CANVAS_HEIGHT - boxHeight - 10;
+  const startY = CANVAS_HEIGHT - boxHeight - 10; // Moved to absolute bottom
   
   for (let i = 0; i < types.length; i++) {
     const type = types[i];
@@ -140,8 +186,9 @@ export function renderTowerSelector(p) {
 }
 
 export function renderPath(p) {
+  const mapData = MAPS[gameState.currentMap];
   p.push();
-  p.stroke(80, 80, 100);
+  p.stroke(...mapData.pathColor);
   p.strokeWeight(30);
   p.noFill();
   p.beginShape();

@@ -1,0 +1,1564 @@
+<analysis>
+- Issue identified: The game currently uses p5.js for 2D/pseudo-3D rendering and needs to be completely recoded to use three.js for proper 3D graphics
+- Files affected: All files need to be rewritten - index.html, globals.js, game.js, entities.js (new), physics.js (new), camera.js (new), lighting.js (new), renderer.js, input_handler.js, automated_testing_controller.js, building.js, enemy.js, player.js
+- Changes needed: 
+  1. Replace p5.js with three.js imports
+  2. Create 3D scene with proper camera, lighting, and renderer
+  3. Convert all entities to 3D meshes (Player, Enemy, Building, EvacPoint)
+  4. Implement canvas-based UI overlay for HUD
+  5. Add third-person camera following player
+  6. Implement 3D collision detection
+  7. Maintain all existing game mechanics (survival stats, combat, scavenging)
+  8. Ensure proper iframe containment
+</analysis>
+
+<code filename="index.html">
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>RADIATION CITY</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        html, body {
+            width: 600px;
+            height: 400px;
+            overflow: hidden;
+            margin: 0;
+            padding: 0;
+            background: #000;
+        }
+        
+        #game-container {
+            width: 600px;
+            height: 400px;
+            position: relative;
+            overflow: hidden;
+            margin: 0;
+            padding: 0;
+        }
+        
+        canvas {
+            display: block;
+            margin: 0;
+            padding: 0;
+        }
+        
+        .control-buttons {
+            position: absolute;
+            top: -60px;
+            left: 0;
+            right: 0;
+            display: flex;
+            gap: 5px;
+            flex-wrap: wrap;
+            justify-content: center;
+            padding: 5px;
+        }
+        
+        .control-button {
+            padding: 6px 12px;
+            cursor: pointer;
+            background: #444;
+            color: #fff;
+            border: none;
+            border-radius: 4px;
+            font-size: 11px;
+        }
+        
+        .control-button.active {
+            background: #007bff;
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/seedrandom@3.0.5/seedrandom.min.js"></script>
+</head>
+<body>
+    <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST 1</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST 2</button>
+        <button id="test_3_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_3')">TEST 3</button>
+        <button id="test_4_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_4')">TEST 4</button>
+        <button id="test_5_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_5')">TEST 5</button>
+    </div>
+    <script type="module" src="game.js"></script>
+</body>
+</html>
+</code>
+
+<code filename="globals.js">
+// globals.js
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+// Game phases
+export const PHASE_START = "START";
+export const PHASE_PLAYING = "PLAYING";
+export const PHASE_PAUSED = "PAUSED";
+export const PHASE_GAME_OVER_WIN = "GAME_OVER_WIN";
+export const PHASE_GAME_OVER_LOSE = "GAME_OVER_LOSE";
+
+// World settings
+export const WORLD_SIZE = 300; // 3D world size
+export const BUILDING_COUNT = 15;
+export const ENEMY_COUNT = 8;
+
+// Player settings
+export const PLAYER_SPEED = 0.15;
+export const PLAYER_SPRINT_SPEED = 0.25;
+export const PLAYER_TURN_SPEED = 0.05;
+export const PLAYER_MAX_HEALTH = 100;
+export const PLAYER_MAX_HUNGER = 100;
+export const PLAYER_MAX_THIRST = 100;
+export const PLAYER_MAX_RADIATION = 100;
+
+// Depletion rates (per second)
+export const HUNGER_DEPLETION = 100 / 60;
+export const THIRST_DEPLETION = 100 / 60;
+export const RADIATION_INCREASE = 100 / 120;
+export const SPRINT_HUNGER_MULTIPLIER = 2.5;
+
+// Combat
+export const PLAYER_ATTACK_RANGE = 6;
+export const PLAYER_ATTACK_DAMAGE = 25;
+export const PLAYER_ATTACK_COOLDOWN = 30;
+
+// Enemy settings
+export const ENEMY_SPEED = 0.08;
+export const ENEMY_ATTACK_RANGE = 4;
+export const ENEMY_ATTACK_DAMAGE = 15;
+export const ENEMY_HEALTH = 50;
+export const ENEMY_DETECTION_RANGE = 20;
+
+// Item settings
+export const ITEM_FOOD_RESTORE = 30;
+export const ITEM_WATER_RESTORE = 35;
+export const ITEM_ANTIRAD_RESTORE = 40;
+
+// Building settings
+export const BUILDING_SIZE = 8;
+export const BUILDING_INTERACTION_RANGE = 10;
+
+// Evacuation point
+export const EVAC_SIZE = 10;
+
+// Game state
+export const gameState = {
+    player: null,
+    entities: [],
+    buildings: [],
+    enemies: [],
+    score: 0,
+    gamePhase: PHASE_START,
+    controlMode: "HUMAN",
+    lastTime: 0,
+    evacuationPoint: null,
+    
+    // Three.js objects
+    scene: null,
+    camera: null,
+    renderer: null,
+    lights: [],
+    
+    // Tracking
+    frameCount: 0,
+    deltaTime: 0,
+    buildingsScavenged: 0,
+    enemiesDefeated: 0
+};
+
+// Logs (write-only)
+export const logs = {
+    "game_info": [],
+    "player_info": [],
+    "inputs": []
+};
+
+// Expose globally
+if (typeof window !== 'undefined') {
+    window.getGameState = () => gameState;
+    window.logs = logs;
+}
+</code>
+
+<code filename="entities.js">
+// entities.js
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { 
+    gameState, 
+    PLAYER_SPEED, 
+    PLAYER_SPRINT_SPEED, 
+    PLAYER_TURN_SPEED,
+    PLAYER_MAX_HEALTH,
+    PLAYER_MAX_HUNGER,
+    PLAYER_MAX_THIRST,
+    PLAYER_MAX_RADIATION,
+    HUNGER_DEPLETION,
+    THIRST_DEPLETION,
+    RADIATION_INCREASE,
+    SPRINT_HUNGER_MULTIPLIER,
+    PLAYER_ATTACK_RANGE,
+    PLAYER_ATTACK_COOLDOWN,
+    ITEM_FOOD_RESTORE,
+    ITEM_WATER_RESTORE,
+    ITEM_ANTIRAD_RESTORE,
+    WORLD_SIZE,
+    ENEMY_SPEED,
+    ENEMY_ATTACK_RANGE,
+    ENEMY_ATTACK_DAMAGE,
+    ENEMY_HEALTH,
+    ENEMY_DETECTION_RANGE,
+    BUILDING_SIZE,
+    BUILDING_INTERACTION_RANGE,
+    EVAC_SIZE
+} from './globals.js';
+
+export class Player {
+    constructor(x, z) {
+        // Create player mesh
+        const geometry = new THREE.CylinderGeometry(0.5, 0.5, 2, 8);
+        const material = new THREE.MeshStandardMaterial({ 
+            color: 0x00ff00,
+            roughness: 0.7,
+            metalness: 0.3
+        });
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.position.set(x, 1, z);
+        this.mesh.castShadow = true;
+        this.mesh.receiveShadow = true;
+        
+        // Physics
+        this.velocity = new THREE.Vector3(0, 0, 0);
+        this.angle = 0;
+        
+        // Stats
+        this.health = PLAYER_MAX_HEALTH;
+        this.hunger = PLAYER_MAX_HUNGER;
+        this.thirst = PLAYER_MAX_THIRST;
+        this.radiation = 0;
+        
+        // Inventory
+        this.inventory = {
+            food: 0,
+            water: 0,
+            antirad: 0,
+            scrap: 0
+        };
+        
+        // Combat
+        this.attacking = false;
+        this.attackCooldown = 0;
+        this.currentConsumable = 0;
+        
+        gameState.scene.add(this.mesh);
+    }
+    
+    update(deltaTime, inputs) {
+        // Movement
+        let speed = PLAYER_SPEED;
+        let sprintActive = false;
+        
+        if (inputs.shift && this.hunger > 0) {
+            speed = PLAYER_SPRINT_SPEED;
+            sprintActive = true;
+        }
+        
+        if (inputs.up) {
+            const moveX = Math.sin(this.angle) * speed;
+            const moveZ = Math.cos(this.angle) * speed;
+            const newX = this.mesh.position.x + moveX;
+            const newZ = this.mesh.position.z + moveZ;
+            
+            if (newX >= -WORLD_SIZE/2 && newX <= WORLD_SIZE/2 && 
+                newZ >= -WORLD_SIZE/2 && newZ <= WORLD_SIZE/2) {
+                this.mesh.position.x = newX;
+                this.mesh.position.z = newZ;
+            }
+        }
+        
+        if (inputs.down) {
+            const moveX = Math.sin(this.angle) * speed * 0.6;
+            const moveZ = Math.cos(this.angle) * speed * 0.6;
+            const newX = this.mesh.position.x - moveX;
+            const newZ = this.mesh.position.z - moveZ;
+            
+            if (newX >= -WORLD_SIZE/2 && newX <= WORLD_SIZE/2 && 
+                newZ >= -WORLD_SIZE/2 && newZ <= WORLD_SIZE/2) {
+                this.mesh.position.x = newX;
+                this.mesh.position.z = newZ;
+            }
+        }
+        
+        if (inputs.left) {
+            this.angle -= PLAYER_TURN_SPEED;
+        }
+        
+        if (inputs.right) {
+            this.angle += PLAYER_TURN_SPEED;
+        }
+        
+        // Update mesh rotation
+        this.mesh.rotation.y = -this.angle;
+        
+        // Attack
+        if (inputs.space && this.attackCooldown === 0) {
+            this.attacking = true;
+            this.attackCooldown = PLAYER_ATTACK_COOLDOWN;
+        }
+        
+        if (this.attackCooldown > 0) {
+            this.attackCooldown--;
+        } else {
+            this.attacking = false;
+        }
+        
+        // Consumables
+        if (inputs.z) {
+            this.useConsumable();
+            inputs.z = false;
+        }
+        
+        // Deplete survival stats
+        const hungerRate = sprintActive ? HUNGER_DEPLETION * SPRINT_HUNGER_MULTIPLIER : HUNGER_DEPLETION;
+        this.hunger -= hungerRate * deltaTime;
+        this.thirst -= THIRST_DEPLETION * deltaTime;
+        this.radiation += RADIATION_INCREASE * deltaTime;
+        
+        // Clamp values
+        this.hunger = Math.max(0, this.hunger);
+        this.thirst = Math.max(0, this.thirst);
+        this.radiation = Math.min(PLAYER_MAX_RADIATION, this.radiation);
+        
+        // Take damage from low stats
+        if (this.hunger <= 0) this.health -= 0.5;
+        if (this.thirst <= 0) this.health -= 0.8;
+        if (this.radiation >= PLAYER_MAX_RADIATION) this.health -= 1.0;
+        
+        this.health = Math.max(0, this.health);
+    }
+    
+    useConsumable() {
+        const types = ['food', 'water', 'antirad'];
+        const type = types[this.currentConsumable];
+        
+        if (this.inventory[type] > 0) {
+            this.inventory[type]--;
+            
+            if (type === 'food') {
+                this.hunger = Math.min(PLAYER_MAX_HUNGER, this.hunger + ITEM_FOOD_RESTORE);
+            } else if (type === 'water') {
+                this.thirst = Math.min(PLAYER_MAX_THIRST, this.thirst + ITEM_WATER_RESTORE);
+            } else if (type === 'antirad') {
+                this.radiation = Math.max(0, this.radiation - ITEM_ANTIRAD_RESTORE);
+            }
+        }
+        
+        this.currentConsumable = (this.currentConsumable + 1) % 3;
+    }
+    
+    takeDamage(amount) {
+        this.health -= amount;
+        this.health = Math.max(0, this.health);
+    }
+    
+    getAttackPoint() {
+        return {
+            x: this.mesh.position.x + Math.sin(this.angle) * PLAYER_ATTACK_RANGE,
+            z: this.mesh.position.z + Math.cos(this.angle) * PLAYER_ATTACK_RANGE
+        };
+    }
+}
+
+export class Enemy {
+    constructor(x, z) {
+        // Create enemy mesh
+        const geometry = new THREE.SphereGeometry(0.5, 16, 16);
+        const material = new THREE.MeshStandardMaterial({ 
+            color: 0x00ff00,
+            emissive: 0x003300,
+            roughness: 0.6
+        });
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.position.set(x, 0.5, z);
+        this.mesh.castShadow = true;
+        
+        // Stats
+        this.health = ENEMY_HEALTH;
+        this.angle = Math.random() * Math.PI * 2;
+        this.state = 'idle';
+        this.attackCooldown = 0;
+        this.dead = false;
+        this.wanderTimer = 0;
+        this.wanderAngle = 0;
+        
+        gameState.scene.add(this.mesh);
+    }
+    
+    update(player) {
+        if (this.dead) return;
+        
+        const dx = player.mesh.position.x - this.mesh.position.x;
+        const dz = player.mesh.position.z - this.mesh.position.z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        
+        // State machine
+        if (dist < ENEMY_DETECTION_RANGE) {
+            if (dist < ENEMY_ATTACK_RANGE) {
+                this.state = 'attack';
+            } else {
+                this.state = 'chase';
+            }
+        } else {
+            this.state = 'idle';
+        }
+        
+        // Behavior
+        if (this.state === 'chase') {
+            this.angle = Math.atan2(dx, dz);
+            this.mesh.position.x += Math.sin(this.angle) * ENEMY_SPEED;
+            this.mesh.position.z += Math.cos(this.angle) * ENEMY_SPEED;
+        } else if (this.state === 'idle') {
+            this.wanderTimer--;
+            if (this.wanderTimer <= 0) {
+                this.wanderAngle = Math.random() * Math.PI * 2;
+                this.wanderTimer = Math.floor(Math.random() * 60 + 60);
+            }
+            this.mesh.position.x += Math.sin(this.wanderAngle) * ENEMY_SPEED * 0.3;
+            this.mesh.position.z += Math.cos(this.wanderAngle) * ENEMY_SPEED * 0.3;
+        } else if (this.state === 'attack') {
+            if (this.attackCooldown === 0) {
+                player.takeDamage(ENEMY_ATTACK_DAMAGE);
+                this.attackCooldown = 60;
+            }
+        }
+        
+        if (this.attackCooldown > 0) {
+            this.attackCooldown--;
+        }
+        
+        // Update rotation
+        this.mesh.rotation.y = -this.angle;
+    }
+    
+    takeDamage(amount) {
+        this.health -= amount;
+        if (this.health <= 0) {
+            this.health = 0;
+            this.dead = true;
+            this.mesh.visible = false;
+        }
+    }
+    
+    checkHit(attackX, attackZ, range) {
+        const dx = this.mesh.position.x - attackX;
+        const dz = this.mesh.position.z - attackZ;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        return dist < range;
+    }
+}
+
+export class Building {
+    constructor(x, z, type) {
+        this.type = type; // 0: apartments, 1: shop, 2: warehouse
+        this.scavenged = false;
+        
+        // Create building mesh
+        const width = BUILDING_SIZE;
+        const height = BUILDING_SIZE * (1.5 + Math.random() * 0.5);
+        const depth = BUILDING_SIZE;
+        
+        const geometry = new THREE.BoxGeometry(width, height, depth);
+        let color;
+        if (type === 0) color = 0x505a64;
+        else if (type === 1) color = 0x645046;
+        else color = 0x465064;
+        
+        const material = new THREE.MeshStandardMaterial({ 
+            color: color,
+            roughness: 0.9,
+            metalness: 0.1
+        });
+        
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.position.set(x, height / 2, z);
+        this.mesh.castShadow = true;
+        this.mesh.receiveShadow = true;
+        
+        gameState.scene.add(this.mesh);
+    }
+    
+    canScavenge(playerX, playerZ) {
+        const dx = this.mesh.position.x - playerX;
+        const dz = this.mesh.position.z - playerZ;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        return !this.scavenged && dist < BUILDING_INTERACTION_RANGE;
+    }
+    
+    scavenge(player) {
+        if (this.scavenged) return null;
+        
+        this.scavenged = true;
+        
+        // Change material to indicate scavenged
+        this.mesh.material = new THREE.MeshStandardMaterial({ 
+            color: 0x3c3c3c,
+            roughness: 0.9,
+            metalness: 0.1
+        });
+        
+        // Generate loot
+        const loot = {
+            food: 0,
+            water: 0,
+            antirad: 0,
+            scrap: 0
+        };
+        
+        switch(this.type) {
+            case 0: // apartments
+                loot.food = Math.floor(Math.random() * 2 + 1);
+                loot.water = Math.floor(Math.random() * 2 + 1);
+                loot.scrap = Math.floor(Math.random() * 2);
+                break;
+            case 1: // shop
+                loot.food = Math.floor(Math.random() * 2 + 2);
+                loot.water = Math.floor(Math.random() * 2 + 2);
+                loot.antirad = Math.floor(Math.random() * 2);
+                break;
+            case 2: // warehouse
+                loot.scrap = Math.floor(Math.random() * 3 + 3);
+                loot.antirad = Math.floor(Math.random() * 2 + 1);
+                break;
+        }
+        
+        player.inventory.food += loot.food;
+        player.inventory.water += loot.water;
+        player.inventory.antirad += loot.antirad;
+        player.inventory.scrap += loot.scrap;
+        
+        return loot;
+    }
+}
+
+export class EvacuationPoint {
+    constructor(x, z) {
+        // Create evacuation platform
+        const geometry = new THREE.CylinderGeometry(EVAC_SIZE, EVAC_SIZE, 0.5, 32);
+        const material = new THREE.MeshStandardMaterial({ 
+            color: 0x00ff00,
+            emissive: 0x00ff00,
+            emissiveIntensity: 0.5,
+            roughness: 0.5,
+            metalness: 0.3
+        });
+        
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.position.set(x, 0.25, z);
+        this.mesh.receiveShadow = true;
+        
+        gameState.scene.add(this.mesh);
+    }
+    
+    update() {
+        // Pulse effect
+        const pulse = 0.3 + Math.sin(gameState.frameCount * 0.05) * 0.2;
+        this.mesh.material.emissiveIntensity = pulse;
+    }
+}
+</code>
+
+<code filename="camera.js">
+// camera.js
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export function setupCamera() {
+    gameState.camera = new THREE.PerspectiveCamera(
+        60,
+        CANVAS_WIDTH / CANVAS_HEIGHT,
+        0.1,
+        1000
+    );
+    
+    gameState.camera.position.set(0, 15, 20);
+    gameState.camera.lookAt(0, 0, 0);
+}
+
+export function updateCamera() {
+    if (!gameState.player) return;
+    
+    const player = gameState.player;
+    const offsetDistance = 15;
+    const offsetHeight = 10;
+    
+    // Position camera behind and above player
+    const targetX = player.mesh.position.x - Math.sin(player.angle) * offsetDistance;
+    const targetZ = player.mesh.position.z - Math.cos(player.angle) * offsetDistance;
+    const targetY = player.mesh.position.y + offsetHeight;
+    
+    // Smooth camera follow
+    gameState.camera.position.lerp(
+        new THREE.Vector3(targetX, targetY, targetZ),
+        0.1
+    );
+    
+    // Look at player
+    gameState.camera.lookAt(player.mesh.position);
+}
+</code>
+
+<code filename="lighting.js">
+// lighting.js
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState } from './globals.js';
+
+export function setupLighting() {
+    // Ambient light
+    const ambientLight = new THREE.AmbientLight(0x404040, 0.6);
+    gameState.scene.add(ambientLight);
+    gameState.lights.push(ambientLight);
+    
+    // Directional light (sun)
+    const directionalLight = new THREE.DirectionalLight(0xffd080, 0.8);
+    directionalLight.position.set(50, 100, 30);
+    directionalLight.castShadow = true;
+    
+    // Shadow settings
+    directionalLight.shadow.mapSize.width = 2048;
+    directionalLight.shadow.mapSize.height = 2048;
+    directionalLight.shadow.camera.near = 0.5;
+    directionalLight.shadow.camera.far = 500;
+    directionalLight.shadow.camera.left = -150;
+    directionalLight.shadow.camera.right = 150;
+    directionalLight.shadow.camera.top = 150;
+    directionalLight.shadow.camera.bottom = -150;
+    
+    gameState.scene.add(directionalLight);
+    gameState.lights.push(directionalLight);
+    
+    // Hemisphere light for ambient atmosphere
+    const hemiLight = new THREE.HemisphereLight(0x606040, 0x302820, 0.4);
+    gameState.scene.add(hemiLight);
+    gameState.lights.push(hemiLight);
+}
+</code>
+
+<code filename="renderer.js">
+// renderer.js
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { 
+    gameState,
+    CANVAS_WIDTH, 
+    CANVAS_HEIGHT,
+    PHASE_START,
+    PHASE_PLAYING,
+    PHASE_PAUSED,
+    PHASE_GAME_OVER_WIN,
+    PHASE_GAME_OVER_LOSE
+} from './globals.js';
+
+let uiCanvas, uiContext;
+
+export function setupRenderer() {
+    // Create game container
+    const gameContainer = document.createElement('div');
+    gameContainer.id = 'game-container';
+    gameContainer.style.width = CANVAS_WIDTH + 'px';
+    gameContainer.style.height = CANVAS_HEIGHT + 'px';
+    gameContainer.style.position = 'relative';
+    gameContainer.style.overflow = 'hidden';
+    gameContainer.style.margin = '0';
+    gameContainer.style.padding = '0';
+    document.body.appendChild(gameContainer);
+    
+    // Set body styles
+    document.body.style.margin = '0';
+    document.body.style.padding = '0';
+    document.body.style.overflow = 'hidden';
+    
+    // Create WebGL renderer
+    gameState.renderer = new THREE.WebGLRenderer({ 
+        antialias: true,
+        alpha: false
+    });
+    
+    gameState.renderer.setSize(CANVAS_WIDTH, CANVAS_HEIGHT);
+    gameState.renderer.shadowMap.enabled = true;
+    gameState.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    gameState.renderer.setClearColor(0x2a2f36);
+    
+    gameContainer.appendChild(gameState.renderer.domElement);
+    
+    // Create UI canvas overlay
+    uiCanvas = document.createElement('canvas');
+    uiCanvas.width = CANVAS_WIDTH;
+    uiCanvas.height = CANVAS_HEIGHT;
+    uiCanvas.style.position = 'absolute';
+    uiCanvas.style.top = '0';
+    uiCanvas.style.left = '0';
+    uiCanvas.style.pointerEvents = 'none';
+    uiCanvas.style.zIndex = '1000';
+    
+    gameContainer.appendChild(uiCanvas);
+    uiContext = uiCanvas.getContext('2d');
+}
+
+export function render() {
+    // Render 3D scene
+    gameState.renderer.render(gameState.scene, gameState.camera);
+    
+    // Render UI
+    renderUI();
+}
+
+function renderUI() {
+    uiContext.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    switch(gameState.gamePhase) {
+        case PHASE_START:
+            renderStartScreen();
+            break;
+        case PHASE_PLAYING:
+            renderHUD();
+            break;
+        case PHASE_PAUSED:
+            renderHUD();
+            renderPauseOverlay();
+            break;
+        case PHASE_GAME_OVER_WIN:
+        case PHASE_GAME_OVER_LOSE:
+            renderGameOver();
+            break;
+    }
+}
+
+function renderStartScreen() {
+    uiContext.fillStyle = 'rgba(0, 0, 0, 0.8)';
+    uiContext.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    uiContext.fillStyle = '#dc5032';
+    uiContext.font = 'bold 36px Arial';
+    uiContext.textAlign = 'center';
+    uiContext.fillText('RADIATION CITY', CANVAS_WIDTH / 2, 60);
+    
+    uiContext.fillStyle = '#c8c8c8';
+    uiContext.font = '12px Arial';
+    
+    const instructions = [
+        'SURVIVE THE WASTELAND',
+        '',
+        'Navigate the irradiated ruins and reach the evacuation point.',
+        'Scavenge buildings for supplies and manage your survival stats.',
+        'Fight mutated creatures that roam the wasteland.',
+        '',
+        'CONTROLS:',
+        'Arrow Keys - Move and turn | Space - Attack',
+        'Shift - Sprint | Z - Use consumable',
+        '',
+        'Keep all your stats above zero or you will die!',
+        '',
+        'PRESS ENTER TO START'
+    ];
+    
+    let yPos = 100;
+    for (let line of instructions) {
+        uiContext.fillText(line, CANVAS_WIDTH / 2, yPos);
+        yPos += 16;
+    }
+}
+
+function renderHUD() {
+    const player = gameState.player;
+    if (!player) return;
+    
+    // Stats panel
+    const panelX = 10;
+    const panelY = 10;
+    const panelWidth = 180;
+    const barHeight = 18;
+    const spacing = 23;
+    
+    uiContext.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    uiContext.fillRect(panelX, panelY, panelWidth, 100);
+    
+    drawBar(panelX + 5, panelY + 5, panelWidth - 10, barHeight, 
+            player.health, 100, '#c83232', 'HEALTH');
+    
+    drawBar(panelX + 5, panelY + 5 + spacing, panelWidth - 10, barHeight,
+            player.hunger, 100, '#ffb432', 'HUNGER');
+    
+    drawBar(panelX + 5, panelY + 5 + spacing * 2, panelWidth - 10, barHeight,
+            player.thirst, 100, '#64b4ff', 'THIRST');
+    
+    drawBar(panelX + 5, panelY + 5 + spacing * 3, panelWidth - 10, barHeight,
+            player.radiation, 100, '#32ff32', 'RAD', true);
+    
+    // Inventory panel
+    const invX = CANVAS_WIDTH - 190;
+    const invY = 10;
+    
+    uiContext.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    uiContext.fillRect(invX, invY, 180, 85);
+    
+    uiContext.fillStyle = '#ffffff';
+    uiContext.font = '11px Arial';
+    uiContext.textAlign = 'left';
+    
+    const consumables = ['food', 'water', 'antirad'];
+    const labels = ['FOOD', 'WATER', 'ANTI-RAD'];
+    let yPos = invY + 8;
+    
+    uiContext.fillText('INVENTORY (Z):', invX + 5, yPos);
+    yPos += 16;
+    
+    for (let i = 0; i < consumables.length; i++) {
+        const type = consumables[i];
+        const selected = player.currentConsumable === i;
+        
+        uiContext.fillStyle = selected ? '#ffff64' : '#c8c8c8';
+        uiContext.fillText(`${selected ? '>' : ' '} ${labels[i]}: ${player.inventory[type]}`, 
+                          invX + 5, yPos);
+        yPos += 15;
+    }
+    
+    uiContext.fillStyle = '#b4b4b4';
+    uiContext.fillText(`Scrap: ${player.inventory.scrap}`, invX + 5, yPos);
+    
+    // Compass
+    const compassX = CANVAS_WIDTH / 2;
+    const compassY = 25;
+    
+    const evac = gameState.evacuationPoint;
+    const dx = evac.mesh.position.x - player.mesh.position.x;
+    const dz = evac.mesh.position.z - player.mesh.position.z;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+    const dirAngle = Math.atan2(dx, dz) - player.angle;
+    
+    uiContext.save();
+    uiContext.translate(compassX, compassY);
+    uiContext.rotate(dirAngle);
+    uiContext.fillStyle = '#64ff96';
+    uiContext.beginPath();
+    uiContext.moveTo(0, -12);
+    uiContext.lineTo(-6, 4);
+    uiContext.lineTo(6, 4);
+    uiContext.closePath();
+    uiContext.fill();
+    uiContext.restore();
+    
+    uiContext.fillStyle = '#64ff96';
+    uiContext.font = '11px Arial';
+    uiContext.textAlign = 'center';
+    uiContext.fillText(`EVAC: ${Math.floor(dist)}m`, compassX, compassY + 20);
+}
+
+function drawBar(x, y, width, height, value, maxValue, color, label, invert = false) {
+    const percent = Math.max(0, Math.min(1, value / maxValue));
+    
+    uiContext.fillStyle = '#282828';
+    uiContext.fillRect(x, y, width, height);
+    
+    let barColor = color;
+    if (invert) {
+        if (percent > 0.7) barColor = '#ff6464';
+        else if (percent > 0.4) barColor = '#ffc864';
+    } else {
+        if (percent < 0.3) barColor = '#ff6464';
+        else if (percent < 0.6) barColor = '#ffc864';
+    }
+    
+    uiContext.fillStyle = barColor;
+    uiContext.fillRect(x, y, width * percent, height);
+    
+    uiContext.fillStyle = '#ffffff';
+    uiContext.font = '10px Arial';
+    uiContext.textAlign = 'left';
+    uiContext.fillText(label, x + 3, y + 12);
+    
+    uiContext.textAlign = 'right';
+    uiContext.fillText(Math.floor(value), x + width - 3, y + 12);
+}
+
+function renderPauseOverlay() {
+    uiContext.fillStyle = 'rgba(0, 0, 0, 0.5)';
+    uiContext.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    uiContext.fillStyle = '#ffffff';
+    uiContext.font = 'bold 32px Arial';
+    uiContext.textAlign = 'center';
+    uiContext.fillText('PAUSED', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+    
+    uiContext.font = '16px Arial';
+    uiContext.fillText('Press ESC to Resume', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 40);
+}
+
+function renderGameOver() {
+    uiContext.fillStyle = 'rgba(0, 0, 0, 0.85)';
+    uiContext.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    const isWin = gameState.gamePhase === PHASE_GAME_OVER_WIN;
+    
+    uiContext.fillStyle = isWin ? '#64ff64' : '#ff6464';
+    uiContext.font = 'bold 42px Arial';
+    uiContext.textAlign = 'center';
+    uiContext.fillText(isWin ? 'EVACUATED!' : 'GAME OVER', CANVAS_WIDTH / 2, 80);
+    
+    uiContext.fillStyle = '#c8c8c8';
+    uiContext.font = '16px Arial';
+    
+    if (isWin) {
+        uiContext.fillText('You reached the evacuation point!', CANVAS_WIDTH / 2, 130);
+        uiContext.fillText('You survived the radiation zone!', CANVAS_WIDTH / 2, 155);
+    } else {
+        uiContext.fillText('You succumbed to the wasteland...', CANVAS_WIDTH / 2, 130);
+        
+        const player = gameState.player;
+        if (player.health <= 0) {
+            uiContext.fillText('Cause: Health depleted', CANVAS_WIDTH / 2, 155);
+        } else if (player.hunger <= 0) {
+            uiContext.fillText('Cause: Starvation', CANVAS_WIDTH / 2, 155);
+        } else if (player.thirst <= 0) {
+            uiContext.fillText('Cause: Dehydration', CANVAS_WIDTH / 2, 155);
+        } else if (player.radiation >= 100) {
+            uiContext.fillText('Cause: Radiation poisoning', CANVAS_WIDTH / 2, 155);
+        }
+    }
+    
+    uiContext.fillStyle = '#b4b4b4';
+    uiContext.font = '14px Arial';
+    const player = gameState.player;
+    uiContext.fillText(`Buildings Scavenged: ${gameState.buildingsScavenged}`, CANVAS_WIDTH / 2, 200);
+    uiContext.fillText(`Enemies Defeated: ${gameState.enemiesDefeated}`, CANVAS_WIDTH / 2, 220);
+    uiContext.fillText(`Scrap Collected: ${player.inventory.scrap}`, CANVAS_WIDTH / 2, 240);
+    
+    uiContext.fillStyle = '#ffff64';
+    uiContext.font = '18px Arial';
+    uiContext.fillText('PRESS R TO RESTART', CANVAS_WIDTH / 2, 300);
+}
+</code>
+
+<code filename="input_handler.js">
+// input_handler.js
+export class InputHandler {
+    constructor() {
+        this.keys = {
+            up: false,
+            down: false,
+            left: false,
+            right: false,
+            space: false,
+            shift: false,
+            z: false
+        };
+        
+        this.zPressed = false;
+        this.setupEventListeners();
+    }
+    
+    setupEventListeners() {
+        document.addEventListener('keydown', (e) => {
+            this.handleKeyDown(e.keyCode);
+        });
+        
+        document.addEventListener('keyup', (e) => {
+            this.handleKeyUp(e.keyCode);
+        });
+    }
+    
+    handleKeyDown(keyCode) {
+        switch(keyCode) {
+            case 38: this.keys.up = true; break;
+            case 40: this.keys.down = true; break;
+            case 37: this.keys.left = true; break;
+            case 39: this.keys.right = true; break;
+            case 32: this.keys.space = true; break;
+            case 16: this.keys.shift = true; break;
+            case 90: // Z key
+                if (!this.zPressed) {
+                    this.keys.z = true;
+                    this.zPressed = true;
+                }
+                break;
+        }
+    }
+    
+    handleKeyUp(keyCode) {
+        switch(keyCode) {
+            case 38: this.keys.up = false; break;
+            case 40: this.keys.down = false; break;
+            case 37: this.keys.left = false; break;
+            case 39: this.keys.right = false; break;
+            case 32: this.keys.space = false; break;
+            case 16: this.keys.shift = false; break;
+            case 90:
+                this.keys.z = false;
+                this.zPressed = false;
+                break;
+        }
+    }
+    
+    updateFromAutomatedTesting(action) {
+        this.keys.up = action.up || false;
+        this.keys.down = action.down || false;
+        this.keys.left = action.left || false;
+        this.keys.right = action.right || false;
+        this.keys.space = action.space || false;
+        this.keys.shift = action.shift || false;
+        this.keys.z = action.z || false;
+    }
+    
+    getInputs() {
+        return { ...this.keys };
+    }
+}
+</code>
+
+<code filename="game.js">
+// game.js
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { 
+    gameState, 
+    logs,
+    CANVAS_WIDTH,
+    CANVAS_HEIGHT,
+    PHASE_START,
+    PHASE_PLAYING,
+    PHASE_PAUSED,
+    PHASE_GAME_OVER_WIN,
+    PHASE_GAME_OVER_LOSE,
+    WORLD_SIZE,
+    BUILDING_COUNT,
+    ENEMY_COUNT,
+    EVAC_SIZE
+} from './globals.js';
+import { Player, Enemy, Building, EvacuationPoint } from './entities.js';
+import { setupCamera, updateCamera } from './camera.js';
+import { setupLighting } from './lighting.js';
+import { setupRenderer, render } from './renderer.js';
+import { InputHandler } from './input_handler.js';
+import get_automated_testing_action from './automated_testing_controller.js';
+
+let inputHandler;
+
+// Seed random
+Math.seedrandom(42);
+
+function init() {
+    // Create scene
+    gameState.scene = new THREE.Scene();
+    gameState.scene.background = new THREE.Color(0x2a2f36);
+    gameState.scene.fog = new THREE.Fog(0x2a2f36, 50, 200);
+    
+    // Setup renderer
+    setupRenderer();
+    
+    // Setup camera
+    setupCamera();
+    
+    // Setup lighting
+    setupLighting();
+    
+    // Create ground
+    const groundGeometry = new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE);
+    const groundMaterial = new THREE.MeshStandardMaterial({ 
+        color: 0x2d3238,
+        roughness: 0.9
+    });
+    const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+    ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
+    gameState.scene.add(ground);
+    
+    // Setup input
+    inputHandler = new InputHandler();
+    
+    // Initialize game
+    initGame();
+    
+    // Log initial state
+    logs.game_info.push({
+        data: { phase: PHASE_START },
+        framecount: 0,
+        timestamp: Date.now()
+    });
+    
+    // Start game loop
+    gameLoop();
+}
+
+function initGame() {
+    // Clear existing entities
+    gameState.entities = [];
+    gameState.buildings = [];
+    gameState.enemies = [];
+    
+    // Create player
+    gameState.player = new Player(0, 0);
+    
+    // Create buildings
+    for (let i = 0; i < BUILDING_COUNT; i++) {
+        const x = (Math.random() - 0.5) * (WORLD_SIZE - 40);
+        const z = (Math.random() - 0.5) * (WORLD_SIZE - 40);
+        const type = Math.floor(Math.random() * 3);
+        gameState.buildings.push(new Building(x, z, type));
+    }
+    
+    // Create enemies
+    for (let i = 0; i < ENEMY_COUNT; i++) {
+        const x = (Math.random() - 0.5) * (WORLD_SIZE - 80);
+        const z = (Math.random() - 0.5) * (WORLD_SIZE - 80);
+        gameState.enemies.push(new Enemy(x, z));
+    }
+    
+    // Create evacuation point
+    const evacX = WORLD_SIZE / 2 - 20;
+    const evacZ = WORLD_SIZE / 2 - 20;
+    gameState.evacuationPoint = new EvacuationPoint(evacX, evacZ);
+    
+    // Reset counters
+    gameState.buildingsScavenged = 0;
+    gameState.enemiesDefeated = 0;
+    gameState.score = 0;
+    gameState.frameCount = 0;
+    gameState.lastTime = Date.now();
+}
+
+function updateGame() {
+    gameState.frameCount++;
+    
+    const currentTime = Date.now();
+    const deltaTime = Math.min((currentTime - gameState.lastTime) / 1000, 0.1);
+    gameState.lastTime = currentTime;
+    gameState.deltaTime = deltaTime;
+    
+    // Get inputs
+    let inputs;
+    if (gameState.controlMode === "HUMAN") {
+        inputs = inputHandler.getInputs();
+    } else {
+        const action = get_automated_testing_action(gameState);
+        inputHandler.updateFromAutomatedTesting(action);
+        inputs = inputHandler.getInputs();
+    }
+    
+    // Update player
+    gameState.player.update(deltaTime, inputs);
+    
+    // Update enemies
+    for (let enemy of gameState.enemies) {
+        if (!enemy.dead) {
+            enemy.update(gameState.player);
+        }
+    }
+    
+    // Check player attacks
+    if (gameState.player.attacking) {
+        const attackPoint = gameState.player.getAttackPoint();
+        
+        for (let enemy of gameState.enemies) {
+            if (enemy.dead) continue;
+            
+            if (enemy.checkHit(attackPoint.x, attackPoint.z, 3)) {
+                enemy.takeDamage(25);
+                if (enemy.dead) {
+                    gameState.enemiesDefeated++;
+                    gameState.score += 100;
+                }
+            }
+        }
+    }
+    
+    // Check building scavenging
+    for (let building of gameState.buildings) {
+        if (building.canScavenge(gameState.player.mesh.position.x, 
+                                 gameState.player.mesh.position.z)) {
+            const loot = building.scavenge(gameState.player);
+            if (loot) {
+                gameState.buildingsScavenged++;
+                gameState.score += 50;
+            }
+        }
+    }
+    
+    // Update evacuation point
+    gameState.evacuationPoint.update();
+    
+    // Check win condition
+    const dx = gameState.evacuationPoint.mesh.position.x - gameState.player.mesh.position.x;
+    const dz = gameState.evacuationPoint.mesh.position.z - gameState.player.mesh.position.z;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+    
+    if (dist < EVAC_SIZE) {
+        gameState.gamePhase = PHASE_GAME_OVER_WIN;
+        logs.game_info.push({
+            data: { phase: PHASE_GAME_OVER_WIN, reason: "evacuation" },
+            framecount: gameState.frameCount,
+            timestamp: Date.now()
+        });
+        return;
+    }
+    
+    // Check lose conditions
+    if (gameState.player.health <= 0 || 
+        gameState.player.hunger <= 0 || 
+        gameState.player.thirst <= 0 || 
+        gameState.player.radiation >= 100) {
+        gameState.gamePhase = PHASE_GAME_OVER_LOSE;
+        logs.game_info.push({
+            data: { 
+                phase: PHASE_GAME_OVER_LOSE,
+                health: gameState.player.health,
+                hunger: gameState.player.hunger,
+                thirst: gameState.player.thirst,
+                radiation: gameState.player.radiation
+            },
+            framecount: gameState.frameCount,
+            timestamp: Date.now()
+        });
+    }
+    
+    // Update camera
+    updateCamera();
+}
+
+function gameLoop() {
+    requestAnimationFrame(gameLoop);
+    
+    if (gameState.gamePhase === PHASE_PLAYING) {
+        updateGame();
+    }
+    
+    render();
+}
+
+// Handle phase transitions
+document.addEventListener('keydown', (e) => {
+    logs.inputs.push({
+        input_type: "keydown",
+        data: { key: e.key, keyCode: e.keyCode },
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+    });
+    
+    if (e.keyCode === 13) { // ENTER
+        if (gameState.gamePhase === PHASE_START) {
+            gameState.gamePhase = PHASE_PLAYING;
+            gameState.lastTime = Date.now();
+            logs.game_info.push({
+                data: { phase: PHASE_PLAYING },
+                framecount: gameState.frameCount,
+                timestamp: Date.now()
+            });
+        }
+    } else if (e.keyCode === 27) { // ESC
+        if (gameState.gamePhase === PHASE_PLAYING) {
+            gameState.gamePhase = PHASE_PAUSED;
+            logs.game_info.push({
+                data: { phase: PHASE_PAUSED },
+                framecount: gameState.frameCount,
+                timestamp: Date.now()
+            });
+        } else if (gameState.gamePhase === PHASE_PAUSED) {
+            gameState.gamePhase = PHASE_PLAYING;
+            gameState.lastTime = Date.now();
+            logs.game_info.push({
+                data: { phase: PHASE_PLAYING },
+                framecount: gameState.frameCount,
+                timestamp: Date.now()
+            });
+        }
+    } else if (e.keyCode === 82) { // R
+        if (gameState.gamePhase === PHASE_GAME_OVER_WIN || 
+            gameState.gamePhase === PHASE_GAME_OVER_LOSE) {
+            gameState.gamePhase = PHASE_START;
+            initGame();
+            logs.game_info.push({
+                data: { phase: PHASE_START },
+                framecount: gameState.frameCount,
+                timestamp: Date.now()
+            });
+        }
+    }
+});
+
+document.addEventListener('keyup', (e) => {
+    logs.inputs.push({
+        input_type: "keyup",
+        data: { key: e.key, keyCode: e.keyCode },
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+    });
+});
+
+// Control mode switching
+window.setControlMode = function(mode) {
+    gameState.controlMode = mode;
+    
+    const buttons = ['humanModeBtn', 'test_1_ModeBtn', 'test_2_ModeBtn', 
+                     'test_3_ModeBtn', 'test_4_ModeBtn', 'test_5_ModeBtn'];
+    
+    buttons.forEach(btnId => {
+        const btn = document.getElementById(btnId);
+        if (btn) btn.classList.remove('active');
+    });
+    
+    const modeMap = {
+        'HUMAN': 'humanModeBtn',
+        'TEST_1': 'test_1_ModeBtn',
+        'TEST_2': 'test_2_ModeBtn',
+        'TEST_3': 'test_3_ModeBtn',
+        'TEST_4': 'test_4_ModeBtn',
+        'TEST_5': 'test_5_ModeBtn'
+    };
+    
+    const activeBtn = document.getElementById(modeMap[mode]);
+    if (activeBtn) activeBtn.classList.add('active');
+};
+
+// Start game
+init();
+</code>
+
+<code filename="automated_testing_controller.js">
+// automated_testing_controller.js
+import { 
+    EVAC_SIZE,
+    BUILDING_INTERACTION_RANGE,
+    PLAYER_ATTACK_RANGE,
+    ENEMY_DETECTION_RANGE
+} from './globals.js';
+
+function getTestWinAction(gameState) {
+    const player = gameState.player;
+    const evac = gameState.evacuationPoint;
+    
+    // Priority 1: Manage stats
+    if (player.hunger < 30 && player.inventory.food > 0) {
+        return { z: true };
+    }
+    if (player.thirst < 30 && player.inventory.water > 0) {
+        return { z: true };
+    }
+    if (player.radiation > 70 && player.inventory.antirad > 0) {
+        return { z: true };
+    }
+    
+    // Priority 2: Combat
+    for (let enemy of gameState.enemies) {
+        if (enemy.dead) continue;
+        
+        const dx = enemy.mesh.position.x - player.mesh.position.x;
+        const dz = enemy.mesh.position.z - player.mesh.position.z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        
+        if (dist < ENEMY_DETECTION_RANGE) {
+            const angleToEnemy = Math.atan2(dx, dz);
+            let angleDiff = angleToEnemy - player.angle;
+            
+            while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+            while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+            
+            if (Math.abs(angleDiff) > 0.1) {
+                return { [angleDiff > 0 ? 'right' : 'left']: true };
+            } else if (dist < PLAYER_ATTACK_RANGE) {
+                return { space: true };
+            } else {
+                return { up: true };
+            }
+        }
+    }
+    
+    // Priority 3: Scavenge if needed
+    const needsSupplies = player.inventory.food < 3 || 
+                          player.inventory.water < 3 || 
+                          player.inventory.antirad < 2;
+    
+    if (needsSupplies) {
+        let closestBuilding = null;
+        let closestDist = Infinity;
+        
+        for (let building of gameState.buildings) {
+            if (building.scavenged) continue;
+            
+            const dx = building.mesh.position.x - player.mesh.position.x;
+            const dz = building.mesh.position.z - player.mesh.position.z;
+            const dist = Math.sqrt(dx * dx + dz * dz);
+            
+            if (dist < closestDist && dist < 40) {
+                closestDist = dist;
+                closestBuilding = building;
+            }
+        }
+        
+        if (closestBuilding) {
+            const dx = closestBuilding.mesh.position.x - player.mesh.position.x;
+            const dz = closestBuilding.mesh.position.z - player.mesh.position.z;
+            const angleToBuilding = Math.atan2(dx, dz);
+            let angleDiff = angleToBuilding - player.angle;
+            
+            while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+            while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+            
+            if (Math.abs(angleDiff) > 0.1) {
+                return { [angleDiff > 0 ? 'right' : 'left']: true };
+            } else {
+                return { up: true };
+            }
+        }
+    }
+    
+    // Priority 4: Navigate to evac
+    const dx = evac.mesh.position.x - player.mesh.position.x;
+    const dz = evac.mesh.position.z - player.mesh.position.z;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+    
+    if (dist > 5) {
+        const angleToEvac = Math.atan2(dx, dz);
+        let angleDiff = angleToEvac - player.angle;
+        
+        while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+        while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+        
+        if (Math.abs(angleDiff) > 0.1) {
+            return { [angleDiff > 0 ? 'right' : 'left']: true };
+        } else {
+            const useSprint = player.hunger > 50;
+            return { up: true, shift: useSprint };
+        }
+    }
+    
+    return { up: true };
+}
+
+function getTestMovementAction(gameState) {
+    if (!gameState.testState) {
+        gameState.testState = { phase: 0, timer: 0 };
+    }
+    
+    gameState.testState.timer++;
+    
+    if (gameState.testState.timer > 60) {
+        gameState.testState.timer = 0;
+        gameState.testState.phase = (gameState.testState.phase + 1) % 4;
+    }
+    
+    switch (gameState.testState.phase) {
+        case 0: return { up: true };
+        case 1: return { right: true };
+        case 2: return { down: true };
+        case 3: return { left: true };
+    }
+    
+    return { up: true };
+}
+
+function getTestCombatAction(gameState) {
+    const player = gameState.player;
+    
+    for (let enemy of gameState.enemies) {
+        if (enemy.dead) continue;
+        
+        const dx = enemy.mesh.position.x - player.mesh.position.x;
+        const dz = enemy.mesh.position.z - player.mesh.position.z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        
+        if (dist < 50) {
+            const angleToEnemy = Math.atan2(dx, dz);
+            let angleDiff = angleToEnemy - player.angle;
+            
+            while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+            while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+            
+            if (Math.abs(angleDiff) > 0.1) {
+                return { [angleDiff > 0 ? 'right' : 'left']: true };
+            } else if (dist < PLAYER_ATTACK_RANGE) {
+                return { space: true };
+            } else {
+                return { up: true };
+            }
+        }
+    }
+    
+    return getTestMovementAction(gameState);
+}
+
+function getTestSurvivalAction(gameState) {
+    const player = gameState.player;
+    
+    if (player.hunger < 50 && player.inventory.food > 0) {
+        return { z: true };
+    }
+    if (player.thirst < 50 && player.inventory.water > 0) {
+        return { z: true };
+    }
+    if (player.radiation > 50 && player.inventory.antirad > 0) {
+        return { z: true };
+    }
+    
+    let closestBuilding = null;
+    let closestDist = Infinity;
+    
+    for (let building of gameState.buildings) {
+        if (building.scavenged) continue;
+        
+        const dx = building.mesh.position.x - player.mesh.position.x;
+        const dz = building.mesh.position.z - player.mesh.position.z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        
+        if (dist < closestDist) {
+            closestDist = dist;
+            closestBuilding = building;
+        }
+    }
+    
+    if (closestBuilding) {
+        const dx = closestBuilding.mesh.position.x - player.mesh.position.x;
+        const dz = closestBuilding.mesh.position.z - player.mesh.position.z;
+        const angleToBuilding = Math.atan2(dx, dz);
+        let angleDiff = angleToBuilding - player.angle;
+        
+        while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+        while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+        
+        if (Math.abs(angleDiff) > 0.1) {
+            return { [angleDiff > 0 ? 'right' : 'left']: true };
+        } else {
+            return { up: true };
+        }
+    }
+    
+    return { up: true };
+}
+
+function getTestGameOverAction(gameState) {
+    return { up: true, shift: true };
+}
+
+export function get_automated_testing_action(gameState) {
+    switch (gameState.controlMode) {
+        case "TEST_1":
+            return getTestMovementAction(gameState);
+        case "TEST_2":
+            return getTestWinAction(gameState);
+        case "TEST_3":
+            return getTestCombatAction(gameState);
+        case "TEST_4":
+            return getTestSurvivalAction(gameState);
+        case "TEST_5":
+            return getTestGameOverAction(gameState);
+        default:
+            return { up: true };
+    }
+}
+
+if (typeof window !== 'undefined') {
+    window.get_automated_testing_action = get_automated_testing_action;
+}
+
+export default get_automated_testing_action;
+</code>
