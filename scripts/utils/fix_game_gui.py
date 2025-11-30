@@ -164,11 +164,11 @@ def start_game_server(games_dir: str = "games/games"):
     if game_server is not None:
         return  # Already running
     
-    # Change to the games directory (base directory for serving)
-    games_base_dir = PROJECT_ROOT / "games"
-    if not games_base_dir.exists():
-        raise FileNotFoundError(f"Games directory not found: {games_base_dir}")
-    os.chdir(games_base_dir)
+    # Change to the project root directory (base directory for serving)
+    # This allows serving both games/ and archive/games/ directories
+    if not PROJECT_ROOT.exists():
+        raise FileNotFoundError(f"Project root not found: {PROJECT_ROOT}")
+    os.chdir(PROJECT_ROOT)
     
     class QuietHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         def log_message(self, format, *args):
@@ -515,13 +515,13 @@ def get_game_metadata(game_path: str) -> Dict[str, str]:
     return result
 
 
-def get_game_iframe_html(game_relative_path_from_games: str, cache_bust: bool = False, level: int = None) -> str:
+def get_game_iframe_html(game_relative_path_from_root: str, cache_bust: bool = False, level: int = None) -> str:
     """
     Generate HTML for game iframe with aggressive cache busting.
     
     Args:
-        game_relative_path_from_games: The path of the game directory relative to the 'games' folder.
-                                      e.g., "games/snake-io" or "archive/games_gen_halloween/bounce-and-collect-s0"
+        game_relative_path_from_root: The path of the game directory relative to the project root.
+                                      e.g., "games/games/snake-io" or "archive/games/games_platform/game_name"
         cache_bust: If True, adds timestamp to force reload
         
     Returns:
@@ -533,8 +533,8 @@ def get_game_iframe_html(game_relative_path_from_games: str, cache_bust: bool = 
     # Generate unique ID for the iframe
     iframe_id = f"game-iframe-{timestamp}"
     
-    # Construct game_url using the provided relative path from games
-    game_url = f"http://localhost:{GAME_SERVER_PORT}/{game_relative_path_from_games}/index.html"
+    # Construct game_url using the provided relative path from project root
+    game_url = f"http://localhost:{GAME_SERVER_PORT}/{game_relative_path_from_root}/index.html"
     
     # Add level parameter if specified
     params = []
@@ -785,6 +785,33 @@ def get_game_iframe_html(game_relative_path_from_games: str, cache_bust: bool = 
     </script>
     """
     
+    # Auto-focus script to ensure iframe receives arrow key events
+    autofocus_script = f"""
+    <script>
+    (function() {{
+        function focusIframe() {{
+            var iframe = document.getElementById('{iframe_id}');
+            if (iframe) {{
+                iframe.focus();
+            }}
+        }}
+        // Focus when iframe loads
+        var iframe = document.getElementById('{iframe_id}');
+        if (iframe) {{
+            iframe.addEventListener('load', function() {{
+                setTimeout(focusIframe, 100);
+            }});
+            // Also try to focus immediately if already loaded
+            if (iframe.contentDocument && iframe.contentDocument.readyState === 'complete') {{
+                setTimeout(focusIframe, 100);
+            }}
+        }}
+        // Initial focus attempt
+        setTimeout(focusIframe, 200);
+    }})();
+    </script>
+    """
+    
     html = f"""
     <div style="width: 100%; position: relative;" id="game-container-{timestamp}">
         <div style="width: 100%; height: 1000px; border: 1px solid #333; border-radius: 4px; overflow: hidden; background: #000;">
@@ -797,6 +824,7 @@ def get_game_iframe_html(game_relative_path_from_games: str, cache_bust: bool = 
                 tabindex="0"
             ></iframe>
         </div>
+        {autofocus_script}
         {reload_script}
         {postmessage_script}
     </div>
@@ -891,17 +919,25 @@ def on_game_selected_minimal(game_path: str) -> Tuple[str, gr.Dropdown, str]:
     
     game_dir = Path(game_path)
     
-    # Calculate the path relative to the 'games' directory for the HTTP server
-    games_root = SCRIPT_DIR / "games"
+    # Calculate the path relative to the project root for the HTTP server
+    # The server now serves from PROJECT_ROOT, so we need paths relative to that
     try:
-        game_relative_path_from_games = game_dir.relative_to(games_root)
+        game_relative_path_from_root = game_dir.relative_to(SCRIPT_DIR)
     except ValueError:
-        # If game_dir is not under games_root, fallback to just the name
-        # (this shouldn't happen in normal usage, but handle gracefully)
-        game_relative_path_from_games = Path(game_dir.name)
+        # If game_dir is not under SCRIPT_DIR, try to use it as-is if it's absolute
+        if game_dir.is_absolute():
+            # For absolute paths, try to make them relative to project root
+            try:
+                game_relative_path_from_root = game_dir.relative_to(PROJECT_ROOT)
+            except ValueError:
+                # Fallback: use just the name (shouldn't happen in normal usage)
+                game_relative_path_from_root = Path(game_dir.name)
+        else:
+            # For relative paths, assume they're already relative to project root
+            game_relative_path_from_root = game_dir
     
     # Get iframe HTML
-    iframe_html = get_game_iframe_html(str(game_relative_path_from_games))
+    iframe_html = get_game_iframe_html(str(game_relative_path_from_root))
     
     # Get backups
     backups = list_backups(game_path)
@@ -947,16 +983,21 @@ def refresh_game_preview(game_path: str) -> str:
     
     game_dir = Path(game_path)
     
-    # Calculate the path relative to the 'games' directory for the HTTP server
-    games_root = SCRIPT_DIR / "games"
+    # Calculate the path relative to the project root for the HTTP server
     try:
-        game_relative_path_from_games = game_dir.relative_to(games_root)
+        game_relative_path_from_root = game_dir.relative_to(SCRIPT_DIR)
     except ValueError:
-        # If game_dir is not under games_root, fallback to just the name
-        game_relative_path_from_games = Path(game_dir.name)
+        # If game_dir is not under SCRIPT_DIR, try to use it as-is if it's absolute
+        if game_dir.is_absolute():
+            try:
+                game_relative_path_from_root = game_dir.relative_to(PROJECT_ROOT)
+            except ValueError:
+                game_relative_path_from_root = Path(game_dir.name)
+        else:
+            game_relative_path_from_root = game_dir
     
     # Get iframe HTML with cache busting enabled
-    return get_game_iframe_html(str(game_relative_path_from_games), cache_bust=True)
+    return get_game_iframe_html(str(game_relative_path_from_root), cache_bust=True)
 
 
 def fix_game_action(game_path: str, feedback: str, model: str = "anthropic:claude-4.5-sonnet") -> Tuple[str, gr.Dropdown, str]:
@@ -1188,12 +1229,17 @@ def fix_game_action(game_path: str, feedback: str, model: str = "anthropic:claud
     
     # Generate updated iframe with cache busting to force reload
     game_dir = Path(game_path)
-    games_root = SCRIPT_DIR / "games"
     try:
-        game_relative_path_from_games = game_dir.relative_to(games_root)
+        game_relative_path_from_root = game_dir.relative_to(SCRIPT_DIR)
     except ValueError:
-        game_relative_path_from_games = Path(game_dir.name)
-    updated_iframe = get_game_iframe_html(str(game_relative_path_from_games), cache_bust=True)
+        if game_dir.is_absolute():
+            try:
+                game_relative_path_from_root = game_dir.relative_to(PROJECT_ROOT)
+            except ValueError:
+                game_relative_path_from_root = Path(game_dir.name)
+        else:
+            game_relative_path_from_root = game_dir
+    updated_iframe = get_game_iframe_html(str(game_relative_path_from_root), cache_bust=True)
     
     return "\n".join(status_lines), gr.Dropdown(choices=backup_choices), updated_iframe
 
@@ -1237,12 +1283,17 @@ def restore_backup_action(game_path: str, backup_path: str) -> Tuple[str, str]:
         
         # Generate updated iframe with cache busting to force reload
         game_dir = Path(game_path)
-        games_root = SCRIPT_DIR / "games"
         try:
-            game_relative_path_from_games = game_dir.relative_to(games_root)
+            game_relative_path_from_root = game_dir.relative_to(SCRIPT_DIR)
         except ValueError:
-            game_relative_path_from_games = Path(game_dir.name)
-        updated_iframe = get_game_iframe_html(str(game_relative_path_from_games), cache_bust=True)
+            if game_dir.is_absolute():
+                try:
+                    game_relative_path_from_root = game_dir.relative_to(PROJECT_ROOT)
+                except ValueError:
+                    game_relative_path_from_root = Path(game_dir.name)
+            else:
+                game_relative_path_from_root = game_dir
+        updated_iframe = get_game_iframe_html(str(game_relative_path_from_root), cache_bust=True)
         
         return "\n".join(status_lines), updated_iframe
     
@@ -1377,6 +1428,8 @@ def build_interface():
     }
     body {
         background-color: #0d1117 !important;
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
     }
     .dark, .dark * {
         background-color: #0d1117 !important;

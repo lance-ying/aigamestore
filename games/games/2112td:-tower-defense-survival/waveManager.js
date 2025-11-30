@@ -27,56 +27,77 @@ function generateWaveConfig(waveNumber, mapKey) {
     difficultyMultiplier = 1.6;
   }
   
-  // Wave progression within the map (1-5)
-  if (waveNumber === 1) {
-    config.totalEnemies = Math.floor(5 * difficultyMultiplier);
-    config.composition = [
-      { type: 'BASIC', count: config.totalEnemies }
-    ];
-  } else if (waveNumber === 2) {
-    const total = Math.floor(8 * difficultyMultiplier);
-    const basicCount = Math.floor(total * 0.7);
-    const fastCount = total - basicCount; // Ensure they sum correctly
-    config.totalEnemies = total;
-    config.composition = [
-      { type: 'BASIC', count: basicCount },
-      { type: 'FAST', count: fastCount }
-    ];
-  } else if (waveNumber === 3) {
-    const total = Math.floor(10 * difficultyMultiplier);
-    const basicCount = Math.floor(total * 0.5);
-    const fastCount = Math.floor(total * 0.3);
-    const tankCount = total - basicCount - fastCount; // Ensure they sum correctly
-    config.totalEnemies = total;
-    config.composition = [
-      { type: 'BASIC', count: basicCount },
-      { type: 'FAST', count: fastCount },
-      { type: 'TANK', count: tankCount }
-    ];
-  } else if (waveNumber === 4) {
-    const total = Math.floor(12 * difficultyMultiplier);
-    const basicCount = Math.floor(total * 0.4);
-    const fastCount = Math.floor(total * 0.3);
-    const tankCount = total - basicCount - fastCount; // Ensure they sum correctly
-    config.totalEnemies = total;
-    config.composition = [
-      { type: 'BASIC', count: basicCount },
-      { type: 'FAST', count: fastCount },
-      { type: 'TANK', count: tankCount }
-    ];
-  } else if (waveNumber === 5) {
-    const total = Math.floor(15 * difficultyMultiplier);
-    const basicCount = Math.floor(total * 0.3);
-    const fastCount = Math.floor(total * 0.3);
-    const tankCount = Math.floor(total * 0.2);
-    const eliteCount = total - basicCount - fastCount - tankCount; // Ensure they sum correctly
-    config.totalEnemies = total;
-    config.composition = [
-      { type: 'BASIC', count: basicCount },
-      { type: 'FAST', count: fastCount },
-      { type: 'TANK', count: tankCount },
-      { type: 'ELITE', count: eliteCount }
-    ];
+  // Calculate total enemies based on wave and difficulty
+  const baseEnemies = 5 + (waveNumber * 2);
+  config.totalEnemies = Math.floor(baseEnemies * difficultyMultiplier);
+  const total = config.totalEnemies;
+  
+  // Wave composition based on map difficulty
+  if (mapKey === "EASY") {
+    if (waveNumber === 1) {
+      config.composition = [{ type: 'BASIC', count: total }];
+    } else if (waveNumber === 2) {
+      const fast = Math.floor(total * 0.3);
+      config.composition = [{ type: 'BASIC', count: total - fast }, { type: 'FAST', count: fast }];
+    } else if (waveNumber === 3) {
+      const tank = Math.floor(total * 0.2);
+      const fast = Math.floor(total * 0.3);
+      config.composition = [{ type: 'BASIC', count: total - tank - fast }, { type: 'FAST', count: fast }, { type: 'TANK', count: tank }];
+    } else if (waveNumber === 4) {
+      const tank = Math.floor(total * 0.3);
+      const fast = Math.floor(total * 0.3);
+      config.composition = [{ type: 'BASIC', count: total - tank - fast }, { type: 'FAST', count: fast }, { type: 'TANK', count: tank }];
+    } else {
+      const elite = Math.floor(total * 0.1);
+      const tank = Math.floor(total * 0.3);
+      const fast = Math.floor(total * 0.3);
+      config.composition = [{ type: 'BASIC', count: total - elite - tank - fast }, { type: 'FAST', count: fast }, { type: 'TANK', count: tank }, { type: 'ELITE', count: elite }];
+    }
+  } else if (mapKey === "MEDIUM") {
+    // Medium: Introduce tougher enemies earlier
+    if (waveNumber === 1) {
+      const fast = Math.floor(total * 0.4);
+      config.composition = [{ type: 'BASIC', count: total - fast }, { type: 'FAST', count: fast }];
+    } else if (waveNumber === 2) {
+      const tank = Math.floor(total * 0.2);
+      const fast = Math.floor(total * 0.4);
+      config.composition = [{ type: 'BASIC', count: total - tank - fast }, { type: 'FAST', count: fast }, { type: 'TANK', count: tank }];
+    } else if (waveNumber === 3) {
+      const elite = Math.floor(total * 0.1);
+      const tank = Math.floor(total * 0.3);
+      config.composition = [{ type: 'FAST', count: total - elite - tank }, { type: 'TANK', count: tank }, { type: 'ELITE', count: elite }];
+    } else if (waveNumber === 4) {
+      const mech = Math.floor(total * 0.1);
+      const elite = Math.floor(total * 0.2);
+      const tank = Math.floor(total * 0.3);
+      config.composition = [{ type: 'FAST', count: total - mech - elite - tank }, { type: 'TANK', count: tank }, { type: 'ELITE', count: elite }, { type: 'MECH', count: mech }];
+    } else {
+      const mech = Math.floor(total * 0.2);
+      const elite = Math.floor(total * 0.3);
+      const tank = Math.floor(total * 0.3);
+      config.composition = [{ type: 'FAST', count: total - mech - elite - tank }, { type: 'TANK', count: tank }, { type: 'ELITE', count: elite }, { type: 'MECH', count: mech }];
+    }
+  } else if (mapKey === "HARD") {
+    // Hard: High difficulty from the start, heavy use of Elite and Mech
+    if (waveNumber === 1) {
+      const fast = Math.floor(total * 0.8);
+      config.composition = [{ type: 'BASIC', count: total - fast }, { type: 'FAST', count: fast }];
+    } else if (waveNumber === 2) {
+      const tank = Math.floor(total * 0.4);
+      config.composition = [{ type: 'FAST', count: total - tank }, { type: 'TANK', count: tank }];
+    } else if (waveNumber === 3) {
+      const elite = Math.floor(total * 0.3);
+      const tank = Math.floor(total * 0.4);
+      config.composition = [{ type: 'FAST', count: total - elite - tank }, { type: 'TANK', count: tank }, { type: 'ELITE', count: elite }];
+    } else if (waveNumber === 4) {
+      const mech = Math.floor(total * 0.2);
+      const elite = Math.floor(total * 0.4);
+      config.composition = [{ type: 'TANK', count: total - mech - elite }, { type: 'ELITE', count: elite }, { type: 'MECH', count: mech }];
+    } else {
+      const mech = Math.floor(total * 0.4);
+      const elite = Math.floor(total * 0.4);
+      config.composition = [{ type: 'TANK', count: total - mech - elite }, { type: 'ELITE', count: elite }, { type: 'MECH', count: mech }];
+    }
   }
   
   return config;
@@ -123,7 +144,22 @@ function spawnNextEnemy(p) {
   
   if (typeToSpawn) {
     const waveMultiplier = 1 + (gameState.wave - 1) * 0.15;
-    const enemy = new Enemy(typeToSpawn, gameState.path, waveMultiplier);
+    
+    // Map difficulty multipliers
+    let mapHealthMult = 1;
+    let mapSpeedMult = 1;
+    
+    if (gameState.currentMap === "MEDIUM") {
+      mapHealthMult = 1.5;
+      mapSpeedMult = 1.2;
+    } else if (gameState.currentMap === "HARD") {
+      mapHealthMult = 2.0;
+      mapSpeedMult = 1.4;
+    }
+    
+    const finalHealthMult = waveMultiplier * mapHealthMult;
+    
+    const enemy = new Enemy(typeToSpawn, gameState.path, finalHealthMult, mapSpeedMult);
     gameState.enemies.push(enemy);
     gameState.entities.push(enemy);
     gameState.waveEnemiesSpawned++;

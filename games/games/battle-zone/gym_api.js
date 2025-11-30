@@ -589,7 +589,9 @@ const gymAPI = {
     );
     
     // Mission state
-    const missionType = gameState.mission === "elimination" ? 0 : 1;
+    // Now mission is always combined, so we return 2 to indicate new mode
+    const missionType = 2; 
+    
     const extractionDistance = gameState.extractionPointObj && gameState.player ? 
       Math.sqrt(
         Math.pow(gameState.extractionPoint.x - gameState.player.x, 2) +
@@ -637,6 +639,7 @@ const gymAPI = {
       score: gameState.score,
       playerHealth: gameState.player ? gameState.player.health : 0,
       playerAmmo: gameState.player ? gameState.player.ammo : 0,
+      playerReserveAmmo: gameState.player ? gameState.player.reserveAmmo : 0,
       enemyCount: gameState.enemies.length,
       enemiesKilled: gameState.enemiesKilled,
       requiredKills: gameState.requiredKills,

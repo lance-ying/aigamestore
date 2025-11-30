@@ -92,6 +92,11 @@ export function checkStrawberryCollection(p, level) {
             gameState.collectedStrawberries.add(key);
             gameState.score += 100;
             
+            // Refill dash on strawberry collection
+            if (gameState.player) {
+              gameState.player.dashesRemaining = 1;
+            }
+            
             p.logs.game_info.push({
               data: { event: "strawberry_collected", score: gameState.score },
               framecount: p.frameCount,

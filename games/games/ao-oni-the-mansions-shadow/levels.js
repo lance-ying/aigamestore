@@ -285,10 +285,11 @@ export function createLevel6() {
   ];
 
   gameState.items = [
-    new Item(48, 48, "key", "key6a", false),
+    new Item(190, 135, "key", "key6a", false),
     new Item(328, 280, "key", "key6b", false),
     new Item(304, 280, "objective", "obj6_1", true),
-    new Item(496, 48, "objective", "obj6_2", true)
+    // Moved obj6_2 closer to middle wall and farther from monster
+    new Item(440, 100, "objective", "obj6_2", true)
   ];
 
   gameState.requiredItemIds = ["obj6_1", "obj6_2"];
@@ -307,150 +308,17 @@ export function createLevel6() {
   // Monsters patrol TOP areas (far from player spawn!)
   gameState.aoOnis = [
     new AoOni(104, 80, 1.2, [
-      [104, 80],
-      [104, 60],
-      [176, 60],
-      [176, 80]
+      [64, 60],
+      [180, 60],
+      [180, 100],
+      [64, 100]
     ]),
-    new AoOni(520, 80, 1.2, [
-      [520, 80],
-      [560, 80],
-      [560, 60],
-      [456, 60]
-    ])
-  ];
-  
-  gameState.entities = [gameState.player, ...gameState.aoOnis];
-}
-
-export function createLevel7() {
-  // Level 7: Dark level with flashlight (3 objectives)
-  // Scaled to 640x400 canvas
-  
-  gameState.walls = [
-    // Outer walls
-    { x: 0, y: 0, w: CANVAS_WIDTH, h: 16 },
-    { x: 0, y: 0, w: 16, h: CANVAS_HEIGHT },
-    { x: CANVAS_WIDTH - 16, y: 0, w: 16, h: CANVAS_HEIGHT },
-    { x: 0, y: CANVAS_HEIGHT - 16, w: CANVAS_WIDTH, h: 16 },
-    
-    // Corridor system
-    { x: 16, y: 100, w: 176, h: 16 },
-    { x: 16, y: 280, w: 176, h: 16 },
-    { x: 448, y: 100, w: 176, h: 16 },
-    { x: 448, y: 280, w: 176, h: 16 },
-    
-    // Vertical barriers
-    { x: 192, y: 16, w: 16, h: 80 },
-    { x: 304, y: 116, w: 16, h: 160 },
-    { x: 432, y: 16, w: 16, h: 80 },
-    { x: 432, y: 300, w: 16, h: 84 }
-  ];
-
-  gameState.doors = [
-    new Door(192, 96, 16, 40, false)
-  ];
-
-  gameState.items = [
-    new Item(80, 48, "flashlight", "flashlight", false),
-    new Item(368, 48, "objective", "obj7_1", true),
-    new Item(128, 340, "objective", "obj7_2", true),
-    new Item(560, 340, "objective", "obj7_3", true)
-  ];
-
-  gameState.requiredItemIds = ["obj7_1", "obj7_2", "obj7_3"];
-
-  gameState.hidingSpots = [
-    new HidingSpot(240, 40, 32, 24, "closet"),
-    new HidingSpot(368, 320, 48, 16, "table"),
-    new HidingSpot(520, 40, 32, 24, "closet")
-  ];
-
-  gameState.exitZone = new ExitZone(368, 160, 64, 80);
-
-  gameState.player = new Player(40, 180);
-
-  gameState.aoOnis = [
-    new AoOni(328, 200, 1.4, [
-      [328, 200],
-      [216, 200],
-      [216, 140],
-      [384, 140],
-      [384, 260],
-      [216, 260]
-    ])
-  ];
-  
-  gameState.entities = [gameState.player, ...gameState.aoOnis];
-}
-
-export function createLevel8() {
-  // Level 8: Final challenge with 2 keys, 3 objectives, 2 fast enemies
-  // Scaled to 640x400 canvas
-  
-  gameState.walls = [
-    // Outer walls
-    { x: 0, y: 0, w: CANVAS_WIDTH, h: 16 },
-    { x: 0, y: 0, w: 16, h: CANVAS_HEIGHT },
-    { x: CANVAS_WIDTH - 16, y: 0, w: 16, h: CANVAS_HEIGHT },
-    { x: 0, y: CANVAS_HEIGHT - 16, w: CANVAS_WIDTH, h: 16 },
-    
-    // Multi-room structure
-    { x: 168, y: 16, w: 16, h: 120 },
-    { x: 168, y: 200, w: 16, h: 184 },
-    { x: 448, y: 16, w: 16, h: 120 },
-    { x: 448, y: 200, w: 16, h: 184 },
-    
-    // Horizontal divisions
-    { x: 16, y: 140, w: 152, h: 16 },
-    { x: 184, y: 100, w: 264, h: 16 },
-    { x: 464, y: 140, w: 160, h: 16 },
-    
-    // Central barriers
-    { x: 280, y: 200, w: 16, h: 100 },
-    { x: 344, y: 240, w: 16, h: 144 }
-  ];
-
-  gameState.doors = [
-    new Door(168, 136, 16, 64, true, "key8a"),
-    new Door(448, 136, 16, 64, true, "key8b")
-  ];
-
-  gameState.items = [
-    new Item(80, 48, "key", "key8a", false),
-    new Item(560, 48, "key", "key8b", false),
-    new Item(328, 48, "objective", "obj8_1", true),
-    new Item(80, 320, "objective", "obj8_2", true),
-    new Item(560, 320, "objective", "obj8_3", true)
-  ];
-
-  gameState.requiredItemIds = ["obj8_1", "obj8_2", "obj8_3"];
-
-  gameState.hidingSpots = [
-    new HidingSpot(40, 240, 32, 24, "closet"),
-    new HidingSpot(240, 260, 48, 16, "table"),
-    new HidingSpot(392, 260, 48, 16, "table"),
-    new HidingSpot(544, 240, 32, 24, "closet")
-  ];
-
-  gameState.exitZone = new ExitZone(272, 24, 96, 60);
-
-  gameState.player = new Player(40, 180);
-
-  gameState.aoOnis = [
-    new AoOni(216, 260, 1.5, [
-      [216, 260],
-      [216, 320],
-      [128, 320],
-      [128, 180],
-      [256, 180]
-    ]),
-    new AoOni(520, 260, 1.5, [
-      [520, 260],
-      [520, 320],
-      [392, 320],
-      [392, 180],
-      [496, 180]
+    // Right monster - larger patrol path to avoid camping objective
+    new AoOni(550, 60, 1.2, [
+      [600, 60],
+      [600, 340],
+      [440, 340],
+      [440, 60]
     ])
   ];
   
@@ -491,12 +359,6 @@ export function loadLevel(levelNum) {
       break;
     case 6:
       createLevel6();
-      break;
-    case 7:
-      createLevel7();
-      break;
-    case 8:
-      createLevel8();
       break;
   }
 }

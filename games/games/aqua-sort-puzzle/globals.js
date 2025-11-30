@@ -131,11 +131,11 @@ export const LEVELS = [
     tubes: [
       { capacity: 4, colors: ['red', 'blue', 'yellow', 'purple'] },
       { capacity: 4, colors: ['blue', 'green', 'orange', 'red'] },
-      { capacity: 4, colors: ['green', 'yellow', 'purple', 'orange'] },
+      { capacity: 4, colors: ['green', 'yellow', 'purple', 'pink'] },
       { capacity: 4, colors: ['yellow', 'red', 'green', 'orange'] },
-      { capacity: 4, colors: ['purple', 'orange', 'green', 'yellow'] },
-      { capacity: 4, colors: ['blue', 'red', 'purple', 'blue'] },
-      { capacity: 4, colors: ['orange', 'purple', 'blue', 'green'] },
+      { capacity: 4, colors: ['purple', 'orange', 'pink', 'yellow'] },
+      { capacity: 4, colors: ['blue', 'red', 'purple', 'pink'] },
+      { capacity: 4, colors: ['orange', 'pink', 'blue', 'green'] },
       { capacity: 4, colors: [] },
       { capacity: 4, colors: [] }
     ]
@@ -162,13 +162,13 @@ export const LEVELS = [
     maxMoves: 60,
     tubes: [
       { capacity: 4, colors: ['red', 'blue', 'yellow', 'purple'] },
-      { capacity: 4, colors: ['blue', 'green', 'orange', 'red'] },
+      { capacity: 4, colors: ['blue', 'green', 'cyan', 'red'] },
       { capacity: 4, colors: ['green', 'yellow', 'pink', 'orange'] },
       { capacity: 4, colors: ['yellow', 'red', 'green', 'pink'] },
-      { capacity: 4, colors: ['purple', 'orange', 'pink', 'yellow'] },
+      { capacity: 4, colors: ['purple', 'orange', 'cyan', 'yellow'] },
       { capacity: 4, colors: ['blue', 'red', 'purple', 'pink'] },
-      { capacity: 4, colors: ['orange', 'purple', 'green', 'blue'] },
-      { capacity: 4, colors: ['pink', 'orange', 'blue', 'green'] },
+      { capacity: 4, colors: ['orange', 'purple', 'cyan', 'blue'] },
+      { capacity: 4, colors: ['pink', 'orange', 'cyan', 'green'] },
       { capacity: 4, colors: [] },
       { capacity: 4, colors: [] }
     ]
@@ -182,7 +182,8 @@ export const COLOR_MAP = {
   'yellow': [240, 200, 30],
   'purple': [180, 60, 200],
   'orange': [255, 140, 30],
-  'pink': [255, 120, 180]
+  'pink': [255, 120, 180],
+  'cyan': [0, 220, 220]
 };
 
 export function getGameState() {

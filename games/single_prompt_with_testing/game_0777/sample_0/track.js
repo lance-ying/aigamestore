@@ -85,6 +85,9 @@ export class Track {
         geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
         geometry.setIndex(indices);
         
+        // Fix: Compute bounding sphere so frustum culling works correctly
+        geometry.computeBoundingSphere();
+        
         // Material - Asphalt with simple striping pattern texture generated in code
         const canvas = document.createElement('canvas');
         canvas.width = 64;
@@ -103,7 +106,8 @@ export class Track {
         const material = new THREE.MeshStandardMaterial({ 
             map: texture,
             roughness: 0.8,
-            metalness: 0.1
+            metalness: 0.1,
+            side: THREE.DoubleSide // Fix: Ensure road is visible from all angles
         });
         
         this.mesh = new THREE.Mesh(geometry, material);

@@ -35,7 +35,13 @@ let gameInstance = new p5(p => {
   };
   
   p.draw = function() {
-    p.background(40);
+    // Render distinct floor color per level
+    const levelConfig = LEVEL_CONFIGS[gameState.currentLevel];
+    if (levelConfig && levelConfig.floorColor) {
+      p.background(...levelConfig.floorColor);
+    } else {
+      p.background(40);
+    }
     
     const currentTime = Date.now();
     
@@ -291,6 +297,7 @@ window.setControlMode = function(mode) {
       gameState.enemies = [];
       gameState.score = 0;
       gameState.currentLevel = 1;
+      gameState.levelKills = 0;
       gameState.levelStartTime = Date.now();
       gameState.levelDuration = LEVEL_CONFIGS[1].duration;
       gameState.lastEnemySpawn = 0;

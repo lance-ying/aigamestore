@@ -548,6 +548,7 @@ function explodeProjectile(p, projectile, particles) {
 
 export function handleEnemyDeath(p, enemy, particles) {
   gameState.score += enemy.pointsValue;
+  gameState.levelKills++; // Increment kills for level progression
   
   // Drop exp gem
   const gem = new ExpGem(enemy.x, enemy.y, enemy.expValue);

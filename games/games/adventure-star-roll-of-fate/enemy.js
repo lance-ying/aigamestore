@@ -26,40 +26,40 @@ export class Enemy {
   setStats() {
     switch (this.type) {
       case "FAST":
-        this.damage = 4 + this.level * 1; // Reduced from 6 + level * 1
+        this.damage = 4 + this.level * 1; 
         this.hp = 1;
         this.maxHp = 1;
-        this.moveChance = 0.7; // Reduced from 0.8 - moves 70% of turns
-        this.baseSpeed = 25; // Increased from 15 - slower movement
+        this.moveChance = 0.7; 
+        this.baseSpeed = 45; // Slower movement (was 25)
         this.color = [255, 150, 50];
         this.name = "Fast";
         break;
       case "TANK":
-        this.damage = 12 + this.level * 2; // Reduced from 20 + level * 4
+        this.damage = 12 + this.level * 2; 
         this.hp = 4;
         this.maxHp = 4;
-        this.moveChance = 0.3; // Moves 30% of turns
-        this.baseSpeed = 50; // Frames between moves (slower)
+        this.moveChance = 0.3; 
+        this.baseSpeed = 90; // Slower movement (was 50)
         this.color = [100, 255, 100];
         this.name = "Tank";
         break;
       case "RANGED":
-        this.damage = 7 + this.level * 2; // Reduced from 12 + level * 3
+        this.damage = 7 + this.level * 2; 
         this.hp = 2;
         this.maxHp = 2;
-        this.moveChance = 0.4; // Moves 40% of turns
-        this.baseSpeed = 35; // Frames between moves
+        this.moveChance = 0.4; 
+        this.baseSpeed = 70; // Slower movement (was 35)
         this.color = [150, 100, 255];
         this.name = "Ranged";
         this.shootCooldown = 0;
         this.shootDelay = 180; // Shoots every 180 frames (3 seconds at 60fps)
         break;
       default: // NORMAL
-        this.damage = 9 + this.level * 2; // Reduced from 15 + level * 3
+        this.damage = 9 + this.level * 2; 
         this.hp = 2;
         this.maxHp = 2;
-        this.moveChance = 0.5; // Moves 50% of turns
-        this.baseSpeed = 30; // Frames between moves
+        this.moveChance = 0.5; 
+        this.baseSpeed = 60; // Slower movement (was 30)
         this.color = [255, 50, 50];
         this.name = "Normal";
         break;
@@ -278,7 +278,7 @@ export class EnemyProjectile {
     this.damage = damage;
     this.active = true;
     this.moveDelay = 0;
-    this.moveSpeed = 4;
+    this.moveSpeed = 6; // Slower projectile speed (was 4)
     this.isEnemyProjectile = true;
   }
 

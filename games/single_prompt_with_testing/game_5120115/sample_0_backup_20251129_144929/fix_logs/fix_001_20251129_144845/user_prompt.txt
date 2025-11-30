@@ -1,0 +1,1139 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+the game crashes when I try to run sim, can you fix that, and it seems like I can't create very long roads for some reason, can you fix that as well? 
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Poly Bridge: Structural Engineer</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">Poly Bridge: Structural Engineer</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="setControlMode('TEST_1')">TEST (Win Strategy)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="setControlMode('TEST_2')">TEST (Stress)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">
+        Design and build a bridge to help the car cross the canyon. Balance budget and structural integrity.
+      </p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">
+        <strong>Controls:</strong> Arrows: Move Cursor | Space: Build/Connect | Shift: Change Material | Z: Delete | Enter: Start/Stop Sim | R: Reset
+      </p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script>
+      window.setControlMode = function(mode) {
+        const state = window.getGameState();
+        if(state) state.controlMode = mode;
+        
+        document.querySelectorAll('.control-button').forEach(btn => btn.classList.remove('active'));
+        if(mode === 'HUMAN') document.getElementById('humanModeBtn').classList.add('active');
+        if(mode === 'TEST_1') document.getElementById('test_1_ModeBtn').classList.add('active');
+        if(mode === 'TEST_2') document.getElementById('test_2_ModeBtn').classList.add('active');
+      };
+    </script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="globals.js">
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+export const gameState = {
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    subPhase: "BUILD",  // BUILD, SIMULATE
+    controlMode: "HUMAN",
+    
+    // Level Data
+    budget: 12000,
+    currentCost: 0,
+    
+    // Entities
+    entities: [],
+    nodes: [],
+    constraints: [],
+    cars: [],
+    
+    // Editor State
+    cursorX: 100,
+    cursorY: 300,
+    cursorSnap: 20,
+    selectedNode: null,
+    hoveredNode: null,
+    selectedMaterial: "ROAD", // ROAD, WOOD, STEEL, SPRING
+    
+    // Physics State
+    gravity: 0.2,
+    friction: 0.98,
+    groundFriction: 0.8,
+    simFrame: 0,
+    
+    // Performance
+    frameCount: 0,
+    lastFrameTime: 0,
+    deltaTime: 0,
+    
+    // Logs
+    logs: null
+};
+
+export const MATERIALS = {
+    ROAD: { cost: 200, strength: 100, weight: 1.0, color: [50, 50, 50], maxLen: 100 },
+    WOOD: { cost: 100, strength: 60, weight: 0.5, color: [160, 82, 45], maxLen: 120 },
+    STEEL: { cost: 400, strength: 200, weight: 2.0, color: [192, 192, 192], maxLen: 180 },
+    SPRING: { cost: 300, strength: 80, weight: 0.5, color: [255, 100, 100], maxLen: 100, stiffness: 0.05 }
+};
+
+export const LEVEL_CONFIG = {
+    groundLevel: 350,
+    gapStart: 100,
+    gapEnd: 500,
+    anchorPoints: [
+        {x: 100, y: 300},
+        {x: 100, y: 200}, // Higher anchor for support
+        {x: 500, y: 300},
+        {x: 500, y: 200}
+    ],
+    winX: 550
+};
+
+export function getGameState() {
+    return gameState;
+}
+
+// Expose globally
+window.getGameState = getGameState;
+</file>
+
+<file name="game.js">
+import { CANVAS_WIDTH, CANVAS_HEIGHT, gameState, LEVEL_CONFIG, getGameState } from './globals.js';
+import { handleInput, handleKeyPress } from './input.js';
+import { updatePhysics, checkBreakage } from './physics.js';
+import { renderGame, renderUI, renderStartScreen, renderGameOver, renderPausedOverlay } from './ui.js';
+import { resetLevel } from './input.js'; // Helper import
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+    
+    p.logs = {
+        "game_info": [],
+        "inputs": [],
+        "player_info": []
+    };
+
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(60);
+        p.randomSeed(42);
+        
+        gameState.gamePhase = "START";
+        
+        // Initial Log
+        p.logs.game_info.push({
+            event: "initialized",
+            timestamp: Date.now()
+        });
+        
+        // Automated Testing Hook
+        window.get_automated_testing_action = get_automated_testing_action;
+    };
+
+    p.draw = function() {
+        // Time management
+        const now = p.millis();
+        gameState.deltaTime = (now - gameState.lastFrameTime) / 1000;
+        gameState.lastFrameTime = now;
+        gameState.frameCount = p.frameCount;
+        
+        // State Machine
+        switch(gameState.gamePhase) {
+            case "START":
+                renderStartScreen(p);
+                break;
+            case "PLAYING":
+                if (gameState.gamePhase !== "PAUSED") {
+                    updateGameLogic(p);
+                }
+                renderGame(p);
+                renderUI(p);
+                break;
+            case "PAUSED":
+                renderGame(p);
+                renderPausedOverlay(p);
+                break;
+            case "GAME_OVER_WIN":
+            case "GAME_OVER_LOSE":
+                renderGame(p);
+                renderGameOver(p);
+                break;
+        }
+        
+        // Handle Automated Testing Inputs
+        if (gameState.controlMode.startsWith("TEST")) {
+            const action = window.get_automated_testing_action(gameState);
+            if (action) {
+                // Mock key press
+                p.keyCode = action.keyCode;
+                p.key = action.key || '';
+                handleKeyPress(p);
+            }
+        }
+    };
+
+    p.keyPressed = function() {
+        if (gameState.controlMode === "HUMAN") {
+            handleKeyPress(p);
+        }
+    };
+});
+
+function updateGameLogic(p) {
+    if (gameState.subPhase === "SIMULATE") {
+        updatePhysics(p);
+        
+        // Update Cars
+        gameState.cars.forEach(car => car.update());
+        
+        // Check Win/Lose
+        // 1. Breakage
+        if (checkBreakage()) {
+            gameState.gamePhase = "GAME_OVER_LOSE";
+        }
+        
+        // 2. Car Success
+        let allCarsFinished = true;
+        let anyCarDied = false;
+        
+        gameState.cars.forEach(car => {
+            if (car.x > LEVEL_CONFIG.winX) {
+                // Success
+            } else {
+                allCarsFinished = false;
+            }
+            
+            if (car.y > CANVAS_HEIGHT) {
+                anyCarDied = true;
+            }
+        });
+        
+        if (anyCarDied) {
+            gameState.gamePhase = "GAME_OVER_LOSE";
+        } else if (allCarsFinished) {
+            gameState.gamePhase = "GAME_OVER_WIN";
+        }
+    }
+}
+
+// Automated Testing Logic
+let testStep = 0;
+let testTimer = 0;
+
+function get_automated_testing_action(gs) {
+    if (gs.gamePhase === "START") return { keyCode: 13 }; // Enter
+    if (gs.gamePhase !== "PLAYING") return null;
+    
+    testTimer++;
+    if (testTimer < 10) return null; // Delay
+    testTimer = 0;
+    
+    if (gs.controlMode === "TEST_1") {
+        // Build a bridge
+        // Strategy: 
+        // 1. Start at 100, 300 (Left Anchor)
+        // 2. Build Road to 500, 300 (Right Anchor) in steps
+        // 3. Start Sim
+        
+        const actions = [
+            // Ensure ROAD material (Default is ROAD)
+            
+            // Move to anchor 1 (100, 300) is start pos
+            { keyCode: 32 }, // Select Anchor 1
+            
+            // Move Right 4 times (80px), Place
+            { keyCode: 39 }, { keyCode: 39 }, { keyCode: 39 }, { keyCode: 39 }, 
+            { keyCode: 32 },
+            
+            // Move Right 4 times, Place
+            { keyCode: 39 }, { keyCode: 39 }, { keyCode: 39 }, { keyCode: 39 }, 
+            { keyCode: 32 },
+            
+            // Move Right 4 times, Place
+            { keyCode: 39 }, { keyCode: 39 }, { keyCode: 39 }, { keyCode: 39 }, 
+            { keyCode: 32 },
+            
+             // Move Right 4 times, Place
+            { keyCode: 39 }, { keyCode: 39 }, { keyCode: 39 }, { keyCode: 39 }, 
+            { keyCode: 32 },
+            
+            // Move Right 4 times (Reach 500, 300), Connect
+            { keyCode: 39 }, { keyCode: 39 }, { keyCode: 39 }, { keyCode: 39 }, 
+            { keyCode: 32 },
+            
+            // Deselect
+            { keyCode: 32 }, 
+            
+            // Start Sim
+            { keyCode: 13 }
+        ];
+        
+        if (testStep < actions.length) {
+            return actions[testStep++];
+        }
+    }
+    
+    if (gs.controlMode === "TEST_2") {
+        // Random Chaos
+        const keys = [37, 38, 39, 40, 32, 16, 90];
+        return { keyCode: keys[Math.floor(Math.random() * keys.length)] };
+    }
+    
+    return null;
+}
+</file>
+
+<file name="ui.js">
+import { gameState, MATERIALS, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export function renderUI(p) {
+    // HUD
+    p.push();
+    p.fill(255);
+    p.noStroke();
+    p.textAlign(p.LEFT, p.TOP);
+    p.textSize(16);
+    
+    // Budget
+    p.text(`Budget: $${gameState.budget - gameState.currentCost}`, 10, 10);
+    p.text(`Used: $${gameState.currentCost}`, 10, 30);
+    
+    // Material
+    p.textAlign(p.RIGHT, p.TOP);
+    const matName = gameState.selectedMaterial;
+    const matColor = MATERIALS[matName].color;
+    
+    p.fill(matColor);
+    p.rect(CANVAS_WIDTH - 100, 10, 90, 30);
+    p.fill(255); // Text color
+    if (matName === "STEEL") p.fill(0); 
+    p.textAlign(p.CENTER, p.CENTER);
+    p.text(matName, CANVAS_WIDTH - 55, 25);
+    
+    p.textAlign(p.RIGHT, p.TOP);
+    p.fill(255);
+    p.textSize(12);
+    p.text("[Shift] to change", CANVAS_WIDTH - 10, 45);
+    
+    // Controls Hint
+    p.textAlign(p.CENTER, p.BOTTOM);
+    p.text(gameState.subPhase === "BUILD" ? "[Arrows] Move  [Space] Build  [Enter] Sim  [Z] Del" : "[Enter] Stop Sim", CANVAS_WIDTH/2, CANVAS_HEIGHT - 10);
+    
+    p.pop();
+}
+
+export function renderGame(p) {
+    // Background
+    p.background(135, 206, 235); // Sky blue
+    
+    // Draw Terrain
+    p.fill(34, 139, 34); // Forest Green
+    p.noStroke();
+    p.rect(0, 350, 100, 50); // Left Bank
+    p.rect(500, 350, 100, 50); // Right Bank
+    
+    // Draw Water
+    p.fill(0, 105, 148);
+    p.rect(100, 380, 400, 20);
+    
+    // Draw Goal Flag
+    p.fill(255, 215, 0);
+    p.triangle(550, 350, 550, 320, 570, 335);
+    p.stroke(0);
+    p.line(550, 350, 550, 320);
+    
+    // Draw Constraints (Back)
+    gameState.constraints.forEach(c => c.render(p));
+    
+    // Draw Nodes
+    gameState.nodes.forEach(n => n.render(p));
+    
+    // Draw Cars
+    gameState.cars.forEach(car => car.render(p));
+    
+    // Draw Editor Cursor (if Build mode)
+    if (gameState.subPhase === "BUILD") {
+        p.push();
+        p.stroke(255, 255, 0);
+        p.strokeWeight(2);
+        p.noFill();
+        p.circle(gameState.cursorX, gameState.cursorY, 15);
+        p.line(gameState.cursorX - 10, gameState.cursorY, gameState.cursorX + 10, gameState.cursorY);
+        p.line(gameState.cursorX, gameState.cursorY - 10, gameState.cursorX, gameState.cursorY + 10);
+        
+        // Draw drag line if selecting
+        if (gameState.selectedNode) {
+            p.stroke(255, 255, 255, 150);
+            p.strokeWeight(1);
+            p.line(gameState.selectedNode.x, gameState.selectedNode.y, gameState.cursorX, gameState.cursorY);
+            
+            // Draw Distance/Cost tooltip
+            const dist = Math.hypot(gameState.cursorX - gameState.selectedNode.x, gameState.cursorY - gameState.selectedNode.y);
+            const matProp = MATERIALS[gameState.selectedMaterial];
+            const validLen = dist <= matProp.maxLen;
+            
+            p.fill(validLen ? 255 : 255, 0, 0);
+            p.noStroke();
+            p.textAlign(p.CENTER, p.BOTTOM);
+            p.text(`${Math.round(dist)}px`, gameState.cursorX, gameState.cursorY - 20);
+        }
+        p.pop();
+    }
+}
+
+export function renderStartScreen(p) {
+    p.background(30);
+    p.fill(255);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(40);
+    p.text("POLY BRIDGE: ENGINEER", CANVAS_WIDTH/2, CANVAS_HEIGHT/3);
+    p.textSize(18);
+    p.text("Build a bridge to get the car across!", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+    p.text("Press ENTER to Start", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 50);
+}
+
+export function renderGameOver(p) {
+    p.push();
+    p.fill(0, 0, 0, 150);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    const win = gameState.gamePhase === "GAME_OVER_WIN";
+    p.fill(win ? 0 : 255, win ? 255 : 0, 0);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(50);
+    p.text(win ? "BRIDGE SECURE!" : "BRIDGE COLLAPSED!", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 20);
+    
+    p.fill(255);
+    p.textSize(20);
+    p.text("Press R to Restart", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 40);
+    p.pop();
+}
+
+export function renderPausedOverlay(p) {
+    p.push();
+    p.fill(0, 0, 0, 100);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.fill(255);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(40);
+    p.text("PAUSED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+    p.pop();
+}
+</file>
+
+<file name="entities.js">
+import { gameState, MATERIALS, LEVEL_CONFIG, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { Vec2 } from './physics.js';
+
+export class Node {
+    constructor(x, y, fixed = false) {
+        this.x = x;
+        this.y = y;
+        this.oldX = x;
+        this.oldY = y;
+        this.fixed = fixed;
+        this.mass = fixed ? 0 : 1.0;
+        this.radius = 4;
+        this.joints = []; // Connected constraints
+    }
+    
+    render(p) {
+        p.push();
+        p.translate(this.x, this.y);
+        p.noStroke();
+        if (this.fixed) {
+            p.fill(200, 50, 50); // Red anchor
+            p.rectMode(p.CENTER);
+            p.rect(0, 0, 12, 12);
+        } else {
+            p.fill(255); // White joint
+            p.circle(0, 0, this.radius * 2);
+        }
+        p.pop();
+    }
+}
+
+export class Constraint {
+    constructor(nodeA, nodeB, material) {
+        this.nodeA = nodeA;
+        this.nodeB = nodeB;
+        this.material = material;
+        
+        const matProps = MATERIALS[material];
+        this.restLength = Math.sqrt((nodeA.x - nodeB.x)**2 + (nodeA.y - nodeB.y)**2);
+        this.strength = matProps.strength;
+        this.stiffness = matProps.stiffness || 1.0; // 1.0 is rigid, <1 is springy
+        this.color = matProps.color;
+        
+        // For stress visualization
+        this.currentStress = 0;
+    }
+    
+    resolve() {
+        const dx = this.nodeB.x - this.nodeA.x;
+        const dy = this.nodeB.y - this.nodeA.y;
+        const currentLen = Math.sqrt(dx*dx + dy*dy);
+        
+        if (currentLen === 0) return;
+        
+        // Calculate stress (deformation)
+        const diff = (currentLen - this.restLength) / currentLen;
+        
+        this.currentStress = Math.abs((currentLen - this.restLength) / this.restLength) * 100; // purely visual metric scaling
+        
+        // Spring vs Rigid
+        let scalar = diff * 0.5;
+        if (this.material === "SPRING") {
+            scalar *= this.stiffness;
+        }
+        
+        const offsetX = dx * scalar;
+        const offsetY = dy * scalar;
+        
+        if (!this.nodeA.fixed) {
+            this.nodeA.x += offsetX;
+            this.nodeA.y += offsetY;
+        }
+        if (!this.nodeB.fixed) {
+            this.nodeB.x -= offsetX;
+            this.nodeB.y -= offsetY;
+        }
+    }
+    
+    getStress() {
+        const dx = this.nodeB.x - this.nodeA.x;
+        const dy = this.nodeB.y - this.nodeA.y;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        // Stress is force / strength. Roughly proportional to stretch for rigid bodies.
+        // We'll approximate stress as % deviation from rest length scaled by material factor
+        const strain = Math.abs(dist - this.restLength);
+        
+        // This is a simplified stress model
+        // Threshold is roughly 20% stretch for failure for normal mats
+        // Steel stronger, Wood weaker.
+        const maxStrain = this.strength * 0.2; 
+        
+        return strain / maxStrain; // > 1.0 means break
+    }
+    
+    render(p) {
+        p.push();
+        
+        // Color based on stress in simulation
+        let c = p.color(this.color);
+        if (gameState.subPhase === "SIMULATE") {
+            const stress = Math.min(this.getStress(), 1.0);
+            c = p.lerpColor(p.color(this.color), p.color(255, 0, 0), stress);
+        }
+        
+        p.stroke(c);
+        
+        if (this.material === "ROAD") {
+            p.strokeWeight(6);
+            p.line(this.nodeA.x, this.nodeA.y, this.nodeB.x, this.nodeB.y);
+            p.stroke(255);
+            p.strokeWeight(1);
+            p.line(this.nodeA.x, this.nodeA.y, this.nodeB.x, this.nodeB.y); // Lane marking
+        } else if (this.material === "SPRING") {
+            p.strokeWeight(2);
+            // Draw zig zag
+            this.drawZigZag(p, this.nodeA, this.nodeB);
+        } else {
+            // Wood/Steel
+            p.strokeWeight(this.material === "STEEL" ? 4 : 3);
+            p.line(this.nodeA.x, this.nodeA.y, this.nodeB.x, this.nodeB.y);
+        }
+        p.pop();
+    }
+    
+    drawZigZag(p, n1, n2) {
+        const segs = 10;
+        const dx = (n2.x - n1.x) / segs;
+        const dy = (n2.y - n1.y) / segs;
+        const nx = -(n2.y - n1.y) * 0.1; // Normal for amplitude
+        const ny = (n2.x - n1.x) * 0.1;
+        
+        p.noFill();
+        p.beginShape();
+        p.vertex(n1.x, n1.y);
+        for(let i=1; i<segs; i++) {
+            let amp = (i % 2 === 0) ? 1 : -1;
+            p.vertex(n1.x + dx*i + nx*amp, n1.y + dy*i + ny*amp);
+        }
+        p.vertex(n2.x, n2.y);
+        p.endShape();
+    }
+}
+
+export class Car {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.width = 40;
+        this.height = 20;
+        
+        // Car Parts
+        // Wheels
+        this.wheels = [
+            new Node(x - 15, y + 15),
+            new Node(x + 15, y + 15)
+        ];
+        this.wheels.forEach(w => { w.radius = 8; w.mass = 5; });
+        
+        // Chassis (top body)
+        this.chassis = [
+            new Node(x - 15, y - 5),
+            new Node(x + 15, y - 5)
+        ];
+        this.chassis.forEach(c => c.mass = 10);
+        
+        // Assemble all points
+        this.nodes = [...this.wheels, ...this.chassis];
+        
+        // Internal Constraints (Rigid Body)
+        this.constraints = [];
+        const addRod = (n1, n2) => {
+            this.constraints.push({
+                n1, n2, 
+                len: Math.sqrt((n1.x-n2.x)**2 + (n1.y-n2.y)**2)
+            });
+        };
+        
+        addRod(this.wheels[0], this.wheels[1]);
+        addRod(this.chassis[0], this.chassis[1]);
+        addRod(this.wheels[0], this.chassis[0]);
+        addRod(this.wheels[1], this.chassis[1]);
+        addRod(this.wheels[0], this.chassis[1]); // Cross bracing
+        addRod(this.wheels[1], this.chassis[0]);
+        
+        this.speed = 2; // Motor speed
+    }
+    
+    update() {
+        // Move car logic (apply torque/force to wheels if grounded)
+        this.wheels.forEach(w => {
+            if (w.onGround) {
+                w.x += this.speed;
+            }
+        });
+        
+        // Calculate Center of Mass
+        let sumX = 0, sumY = 0;
+        this.nodes.forEach(n => { sumX += n.x; sumY += n.y; });
+        this.x = sumX / this.nodes.length;
+        this.y = sumY / this.nodes.length;
+    }
+    
+    resolveConstraints() {
+        // Maintain rigid body shape
+        this.constraints.forEach(c => {
+            const dx = c.n2.x - c.n1.x;
+            const dy = c.n2.y - c.n1.y;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            const diff = (dist - c.len) / dist;
+            const ox = dx * diff * 0.5;
+            const oy = dy * diff * 0.5;
+            
+            c.n1.x += ox;
+            c.n1.y += oy;
+            c.n2.x -= ox;
+            c.n2.y -= oy;
+        });
+    }
+    
+    render(p) {
+        // Draw Chassis
+        p.push();
+        p.fill(0, 100, 200);
+        p.stroke(0);
+        p.beginShape();
+        p.vertex(this.chassis[0].x, this.chassis[0].y);
+        p.vertex(this.chassis[1].x, this.chassis[1].y);
+        p.vertex(this.wheels[1].x, this.wheels[1].y);
+        p.vertex(this.wheels[0].x, this.wheels[0].y);
+        p.endShape(p.CLOSE);
+        
+        // Draw Wheels
+        p.fill(50);
+        this.wheels.forEach(w => {
+            p.circle(w.x, w.y, w.radius * 2);
+            // Draw spoke to show rotation
+            p.stroke(200);
+            p.line(w.x, w.y, w.x + Math.cos(w.x * 0.1)*w.radius, w.y + Math.sin(w.x * 0.1)*w.radius);
+        });
+        p.pop();
+    }
+}
+</file>
+
+<file name="physics.js">
+import { gameState, MATERIALS, CANVAS_HEIGHT } from './globals.js';
+
+// Simple Vector helper to avoid overhead of p5.Vector for massive particle counts
+export class Vec2 {
+    constructor(x, y) { this.x = x; this.y = y; }
+    add(v) { this.x += v.x; this.y += v.y; return this; }
+    sub(v) { this.x -= v.x; this.y -= v.y; return this; }
+    mult(n) { this.x *= n; this.y *= n; return this; }
+    mag() { return Math.sqrt(this.x * this.x + this.y * this.y); }
+    normalize() {
+        const m = this.mag();
+        if (m > 0) this.mult(1/m);
+        return this;
+    }
+    dist(v) { return Math.sqrt((this.x-v.x)**2 + (this.y-v.y)**2); }
+    copy() { return new Vec2(this.x, this.y); }
+}
+
+export function updatePhysics(p) {
+    gameState.simFrame++;
+
+    // 1. Verlet Integration for Particles (Nodes & Car parts)
+    gameState.nodes.forEach(node => {
+        if (!node.fixed) {
+            let tempX = node.x;
+            let tempY = node.y;
+            
+            // Velocity approximation
+            let vx = (node.x - node.oldX) * gameState.friction;
+            let vy = (node.y - node.oldY) * gameState.friction;
+            
+            // Apply Forces
+            vy += gameState.gravity * node.mass;
+            
+            node.x += vx;
+            node.y += vy;
+            
+            node.oldX = tempX;
+            node.oldY = tempY;
+        }
+    });
+
+    // 2. Constraint Solving (Relaxation Loop)
+    const iterations = 5;
+    for (let i = 0; i < iterations; i++) {
+        // Resolve Structural Constraints
+        gameState.constraints.forEach(c => c.resolve());
+        
+        // Resolve Car Constraints (Chassis rigidity)
+        gameState.cars.forEach(car => car.resolveConstraints());
+        
+        // Resolve Collisions
+        resolveCollisions();
+    }
+}
+
+export function checkBreakage() {
+    // Check if any constraint exceeds max stress
+    for (let i = gameState.constraints.length - 1; i >= 0; i--) {
+        const c = gameState.constraints[i];
+        const stress = c.getStress();
+        if (stress > 1.0 && c.material !== "SPRING") {
+            // Break!
+            return true;
+        }
+    }
+    return false;
+}
+
+function resolveCollisions() {
+    // Keep nodes above ground (outside gap)
+    gameState.nodes.forEach(node => {
+        if (!node.fixed) {
+            // Ground collision check
+            const isOverGap = node.x > gameState.level.gapStart && node.x < gameState.level.gapEnd;
+            if (!isOverGap) {
+                if (node.y > gameState.level.groundLevel) {
+                    node.y = gameState.level.groundLevel;
+                    // Ground friction impulse
+                    let vx = node.x - node.oldX;
+                    node.oldX = node.x - (vx * gameState.groundFriction);
+                }
+            } else {
+                // Water/Abyss collision - if too deep, maybe fail? 
+                // For now, let them fall.
+                if (node.y > CANVAS_HEIGHT + 100) {
+                    // Node fell off world
+                }
+            }
+        }
+    });
+    
+    // Car Wheel vs Road Collision
+    gameState.cars.forEach(car => {
+        car.wheels.forEach(wheel => {
+            let collided = false;
+            
+            // 1. Check Terrain
+            const isOverGap = wheel.x > gameState.level.gapStart && wheel.x < gameState.level.gapEnd;
+            if (!isOverGap) {
+                if (wheel.y + wheel.radius > gameState.level.groundLevel) {
+                    const pen = (wheel.y + wheel.radius) - gameState.level.groundLevel;
+                    wheel.y -= pen;
+                    // Simple friction
+                    let vx = wheel.x - wheel.oldX;
+                    wheel.oldX = wheel.x - (vx * 0.9);
+                    collided = true;
+                    wheel.onGround = true;
+                }
+            }
+            
+            // 2. Check Road Segments (Line-Circle Collision)
+            if (!collided) {
+                wheel.onGround = false;
+                gameState.constraints.forEach(c => {
+                    if (c.material === "ROAD") {
+                        if (checkLineCircle(c.nodeA, c.nodeB, wheel)) {
+                            wheel.onGround = true;
+                        }
+                    }
+                });
+            }
+        });
+    });
+}
+
+function checkLineCircle(p1, p2, circle) {
+    // Vector from p1 to p2
+    let dx = p2.x - p1.x;
+    let dy = p2.y - p1.y;
+    let lenSq = dx*dx + dy*dy;
+    
+    // Project circle center onto line segment
+    let t = ((circle.x - p1.x) * dx + (circle.y - p1.y) * dy) / lenSq;
+    
+    // Clamp t to segment [0, 1]
+    t = Math.max(0, Math.min(1, t));
+    
+    // Closest point on segment
+    let closestX = p1.x + t * dx;
+    let closestY = p1.y + t * dy;
+    
+    // Distance check
+    let distX = circle.x - closestX;
+    let distY = circle.y - closestY;
+    let dist = Math.sqrt(distX*distX + distY*distY);
+    
+    if (dist < circle.radius) {
+        // Collision response: push circle out along normal
+        let nx = distX / dist;
+        let ny = distY / dist;
+        let pen = circle.radius - dist;
+        
+        // Push wheel
+        circle.x += nx * pen;
+        circle.y += ny * pen;
+        
+        // Push bridge nodes slightly (Newton's 3rd law approximation)
+        // Distribute impulse based on t (closer node takes more)
+        if (!p1.fixed) {
+            p1.x -= nx * pen * 0.2 * (1-t);
+            p1.y -= ny * pen * 0.2 * (1-t);
+        }
+        if (!p2.fixed) {
+            p2.x -= nx * pen * 0.2 * t;
+            p2.y -= ny * pen * 0.2 * t;
+        }
+        
+        return true;
+    }
+    return false;
+}
+</file>
+
+<file name="input.js">
+import { gameState, MATERIALS, LEVEL_CONFIG, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { Node, Constraint } from './entities.js';
+
+export function handleInput(p) {
+    // Only handle inputs if key is pressed this frame (using keyReleased or keyPressed events in game.js is better, 
+    // but for continuous movement we might check keys here. 
+    // However, the constraint says "gameplay must be responsive to player inputs".
+    // We will use p.keyPressed in game.js for discreet actions and checkDown for holds if needed.
+    // Here we implement the logic called by those events.
+}
+
+export function handleKeyPress(p) {
+    // Phase Transitions
+    if (p.keyCode === 13) { // ENTER
+        if (gameState.gamePhase === "START") {
+            gameState.gamePhase = "PLAYING";
+            gameState.subPhase = "BUILD";
+            resetLevel();
+            return;
+        }
+        if (gameState.gamePhase === "PLAYING") {
+            if (gameState.subPhase === "BUILD") {
+                startSimulation();
+            } else {
+                // In Sim, Enter goes back to Build
+                gameState.subPhase = "BUILD";
+                resetSimulation();
+            }
+        }
+        if (gameState.gamePhase.startsWith("GAME_OVER")) {
+            // Enter usually confirms, but constraint says R restarts.
+            // We'll let Enter do nothing or restart. Let's stick to R for restart.
+        }
+    }
+    
+    if (p.keyCode === 27) { // ESC
+        if (gameState.gamePhase === "PLAYING") {
+            gameState.gamePhase = "PAUSED";
+        } else if (gameState.gamePhase === "PAUSED") {
+            gameState.gamePhase = "PLAYING";
+        }
+    }
+
+    if (p.keyCode === 82) { // R
+        if (gameState.gamePhase !== "START") {
+            gameState.gamePhase = "START";
+            resetLevel();
+        }
+    }
+
+    // Gameplay Controls
+    if (gameState.gamePhase === "PLAYING" && gameState.subPhase === "BUILD") {
+        handleBuildControls(p);
+    }
+    
+    // Log
+    p.logs.inputs.push({
+        key: p.key,
+        keyCode: p.keyCode,
+        frame: p.frameCount
+    });
+}
+
+function handleBuildControls(p) {
+    const MOVE_AMT = gameState.cursorSnap;
+    
+    // Arrow Keys: Move Cursor
+    if (p.keyCode === p.LEFT_ARROW) gameState.cursorX = Math.max(0, gameState.cursorX - MOVE_AMT);
+    if (p.keyCode === p.RIGHT_ARROW) gameState.cursorX = Math.min(CANVAS_WIDTH, gameState.cursorX + MOVE_AMT);
+    if (p.keyCode === p.UP_ARROW) gameState.cursorY = Math.max(0, gameState.cursorY - MOVE_AMT);
+    if (p.keyCode === p.DOWN_ARROW) gameState.cursorY = Math.min(CANVAS_HEIGHT, gameState.cursorY + MOVE_AMT);
+    
+    // Shift: Cycle Material
+    if (p.keyCode === 16) { // Shift
+        const mats = Object.keys(MATERIALS);
+        let idx = mats.indexOf(gameState.selectedMaterial);
+        idx = (idx + 1) % mats.length;
+        gameState.selectedMaterial = mats[idx];
+    }
+    
+    // Space: Action
+    if (p.keyCode === 32) {
+        performBuildSpaceAction();
+    }
+    
+    // Z: Delete / Undo
+    if (p.keyCode === 90) {
+        performDeleteAction();
+    }
+}
+
+function performBuildSpaceAction() {
+    // 1. Check if cursor is on an existing node
+    const hover = findNodeAt(gameState.cursorX, gameState.cursorY);
+    
+    if (gameState.selectedNode) {
+        // We are dragging a line from selectedNode
+        
+        let targetNode = hover;
+        
+        // If no node exists at cursor, try to create one
+        if (!targetNode) {
+            // Check max length
+            const dist = Math.hypot(gameState.cursorX - gameState.selectedNode.x, gameState.cursorY - gameState.selectedNode.y);
+            const matProp = MATERIALS[gameState.selectedMaterial];
+            
+            if (dist <= matProp.maxLen) {
+                // Check budget
+                // Node cost (if new) + Edge cost
+                const edgeCost = Math.ceil(dist * 0.1 * (matProp.cost / 10)); // approximate cost calc
+                if (gameState.currentCost + edgeCost <= gameState.budget) {
+                    targetNode = new Node(gameState.cursorX, gameState.cursorY);
+                    gameState.nodes.push(targetNode);
+                } else {
+                    // Budget exceeded
+                    return;
+                }
+            } else {
+                // Too long
+                return;
+            }
+        }
+        
+        // Try to connect selectedNode to targetNode
+        if (targetNode && targetNode !== gameState.selectedNode) {
+            // Check if connection already exists
+            const exists = gameState.constraints.some(c => 
+                (c.nodeA === gameState.selectedNode && c.nodeB === targetNode) ||
+                (c.nodeB === gameState.selectedNode && c.nodeA === targetNode)
+            );
+            
+            if (!exists) {
+                const dist = Math.hypot(targetNode.x - gameState.selectedNode.x, targetNode.y - gameState.selectedNode.y);
+                const matProp = MATERIALS[gameState.selectedMaterial];
+                if (dist <= matProp.maxLen) {
+                    const edgeCost = Math.ceil(dist * 0.1 * (matProp.cost / 10)); // Simplified cost logic
+                    if (gameState.currentCost + edgeCost <= gameState.budget) {
+                        gameState.constraints.push(new Constraint(gameState.selectedNode, targetNode, gameState.selectedMaterial));
+                        gameState.currentCost += edgeCost;
+                        
+                        // Move selection to new node for chain building
+                        gameState.selectedNode = targetNode;
+                    }
+                }
+            } else {
+                // If exists, just move selection
+                gameState.selectedNode = targetNode;
+            }
+        } else if (targetNode === gameState.selectedNode) {
+            // Deselect
+            gameState.selectedNode = null;
+        }
+        
+    } else {
+        // No node selected
+        if (hover) {
+            // Select it
+            gameState.selectedNode = hover;
+        } else {
+            // Create standalone node? Not usually useful, but allowed if free? 
+            // Poly Bridge usually requires starting from an existing node or anchor.
+            // We'll allow starting from existing nodes only to prevent floating structures.
+        }
+    }
+}
+
+function performDeleteAction() {
+    // 1. If dragging (selectedNode), cancel drag
+    if (gameState.selectedNode) {
+        gameState.selectedNode = null;
+        return;
+    }
+    
+    // 2. Delete item under cursor
+    const hoverNode = findNodeAt(gameState.cursorX, gameState.cursorY);
+    if (hoverNode && !hoverNode.fixed) {
+        // Remove node and all attached constraints
+        // Re-calculate cost? Simplifying: No refund on delete for this version? 
+        // Better: Refund.
+        
+        // Find constraints
+        const attached = gameState.constraints.filter(c => c.nodeA === hoverNode || c.nodeB === hoverNode);
+        attached.forEach(c => {
+            // refund logic would go here
+        });
+        
+        gameState.constraints = gameState.constraints.filter(c => c.nodeA !== hoverNode && c.nodeB !== hoverNode);
+        gameState.nodes = gameState.nodes.filter(n => n !== hoverNode);
+    } else {
+        // Check if edge is under cursor? (Harder with point cursor)
+        // Skip for now.
+    }
+}
+
+function findNodeAt(x, y) {
+    return gameState.nodes.find(n => Math.hypot(n.x - x, n.y - y) < 10);
+}
+
+export function resetLevel() {
+    gameState.nodes = [];
+    gameState.constraints = [];
+    gameState.cars = [];
+    gameState.currentCost = 0;
+    
+    // Add Anchors
+    LEVEL_CONFIG.anchorPoints.forEach(pt => {
+        gameState.nodes.push(new Node(pt.x, pt.y, true));
+    });
+    
+    // Reset Car (but don't spawn until sim?)
+    // Actually, usually car is part of the level definition.
+}
+
+export function startSimulation() {
+    gameState.subPhase = "SIMULATE";
+    gameState.simFrame = 0;
+    
+    // Save backup of positions to restore later
+    gameState.nodes.forEach(n => {
+        n.savedX = n.x;
+        n.savedY = n.y;
+        n.oldX = n.x;
+        n.oldY = n.y;
+    });
+    
+    // Spawn Car
+    gameState.cars = [new Car(LEVEL_CONFIG.anchorPoints[0].x, LEVEL_CONFIG.anchorPoints[0].y - 30)];
+}
+
+export function resetSimulation() {
+    gameState.subPhase = "BUILD";
+    gameState.cars = [];
+    gameState.nodes.forEach(n => {
+        n.x = n.savedX;
+        n.y = n.savedY;
+        n.oldX = n.savedX;
+        n.oldY = n.savedY;
+    });
+    // Reset stress colors
+    gameState.constraints.forEach(c => c.currentStress = 0);
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

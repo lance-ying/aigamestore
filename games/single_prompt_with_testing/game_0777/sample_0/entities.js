@@ -338,8 +338,13 @@ export class ItemBox extends Entity {
 
 export class Projectile extends Entity {
     constructor(pos, dir, owner) {
-        super(pos.x, pos.y, pos.z);
-        this.velocity = dir.normalize().multiplyScalar(60); // fast
+        // Fix: Ensure projectile starts above ground to prevent clipping
+        super(pos.x, Math.max(pos.y, 0.5), pos.z);
+        
+        // Fix: Flatten direction to prevent shooting into ground if kart is tilted
+        const flatDir = new THREE.Vector3(dir.x, 0, dir.z).normalize();
+        this.velocity = flatDir.multiplyScalar(60); 
+        
         this.owner = owner;
         this.life = 3.0; // seconds
         
@@ -362,6 +367,32 @@ export class Projectile extends Entity {
         }
         
         this.mesh.position.add(this.velocity.clone().multiplyScalar(dt));
+        
+        // Fix: Snap to track height and follow track curvature
+        if (gameState.track) {
+            const { point, index } = gameState.track.getClosestPoint(this.mesh.position);
+            
+            // Prevent sinking
+            const groundY = point.y + 0.5;
+            if (this.mesh.position.y < groundY) {
+                this.mesh.position.y = groundY;
+            }
+            
+            // Guide along track (steer velocity towards track direction)
+            const points = gameState.track.points;
+            // Look ahead to find track direction
+            const nextIdx = (index + 5) % points.length;
+            const currentPt = points[index];
+            const nextPt = points[nextIdx];
+            const trackDir = new THREE.Vector3().subVectors(nextPt, currentPt).normalize();
+            
+            // Blend velocity towards track direction
+            const speed = this.velocity.length();
+            const currentDir = this.velocity.clone().normalize();
+            // Lerp factor controls how strongly it follows the track
+            const newDir = new THREE.Vector3().lerpVectors(currentDir, trackDir, 10 * dt).normalize();
+            this.velocity = newDir.multiplyScalar(speed);
+        }
         
         // Check collisions with karts
         const targets = [gameState.player, ...gameState.opponents];

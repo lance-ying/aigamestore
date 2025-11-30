@@ -1,4 +1,4 @@
-import { GRID_SIZE, BLOCK_SHAPES, gameState } from './globals.js';
+import { GRID_SIZE, BLOCK_SHAPES, gameState, LEVELS } from './globals.js';
 
 // Generate a random block shape
 export function generateRandomBlock() {
@@ -154,10 +154,20 @@ export function canPlaceAnyBlock() {
 }
 
 // Reset the game state for a new game
-export function resetGameState() {
-  gameState.player.score = 0;
+export function resetGameState(resetLevel = true) {
+  if (resetLevel) {
+    gameState.player.score = 0;
+    gameState.player.highScore = gameState.player.highScore; // Preserve high score
+    gameState.level.currentIndex = 0;
+  }
+  
   gameState.player.comboCount = 0;
   gameState.player.lastClearedLines = 0;
+  
+  // Reset level progress
+  gameState.level.linesCleared = 0;
+  gameState.level.blocksPlaced = 0;
+  
   gameState.grid = Array(GRID_SIZE).fill().map(() => Array(GRID_SIZE).fill(0));
   gameState.availableBlocks = generateBlocks(3);
   gameState.selectedBlockIndex = 0;
@@ -169,6 +179,7 @@ export function resetGameState() {
   gameState.framesSinceLastAction = 0;
   gameState.lastActionTaken = null;
   gameState.actionHistory = [];
+  gameState.animations = [];
 }
 
 // Get the dimensions of a block shape

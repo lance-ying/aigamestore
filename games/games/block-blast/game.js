@@ -1,5 +1,5 @@
 import { 
-  gameState, GRID_SIZE, BLOCK_SHAPES, BLOCK_COLORS, MIN_SCORE_TO_WIN
+  gameState, GRID_SIZE, BLOCK_SHAPES, BLOCK_COLORS, MIN_SCORE_TO_WIN, LEVELS
 } from './globals.js';
 import { 
   generateBlocks, canPlaceBlock, placeBlock, checkForCompletedLines, 
@@ -30,7 +30,7 @@ let gameInstance = new p5(p => {
     p.randomSeed(42);
     
     // Initialize game state
-    resetGameState();
+    resetGameState(true);
     
     // Log initial game state
     p.logs.game_info.push({
@@ -128,8 +128,11 @@ let gameInstance = new p5(p => {
       placeBlock(grid, block, currentBlock.x, currentBlock.y);
 
       // Add a short "pop" animation for the placed cells
-      gameState.animations.push({ type: 'place', cells: placedCells, frame: 0, duration: 10 }); // Reduced duration for a snappier animation
+      gameState.animations.push({ type: 'place', cells: placedCells, frame: 0, duration: 10 }); 
       
+      // Increment moves used for this level
+      gameState.level.blocksPlaced++;
+
       // Check for completed lines
       const { completedRows, completedCols } = checkForCompletedLines(grid);
       const totalLinesCleared = completedRows.length + completedCols.length;
@@ -173,6 +176,9 @@ let gameInstance = new p5(p => {
         if (gameState.player.score > gameState.player.highScore) {
           gameState.player.highScore = gameState.player.score;
         }
+
+        // Update Level Progress
+        gameState.level.linesCleared += totalLinesCleared;
       }
       
       // Replace the used block with a new one
@@ -182,24 +188,50 @@ let gameInstance = new p5(p => {
       currentBlock.x = Math.floor(GRID_SIZE / 2);
       currentBlock.y = Math.floor(GRID_SIZE / 2);
       
-      // Check for win condition
-      if (gameState.player.score >= MIN_SCORE_TO_WIN) {
-        gameState.gamePhase = "GAME_OVER_WIN";
+      // --- Level Logic Checks ---
+      const currentLevel = LEVELS[gameState.level.currentIndex];
+      
+      // 1. Check for Level Win
+      if (gameState.level.linesCleared >= currentLevel.linesTarget) {
+        // Level Complete!
+        gameState.level.currentIndex++;
+        
+        // Check if all levels completed
+        if (gameState.level.currentIndex >= LEVELS.length) {
+          gameState.gamePhase = "GAME_OVER_WIN";
+          p.logs.game_info.push({
+            "game_status": gameState.gamePhase,
+            "data": { score: gameState.player.score },
+            "framecount": p.frameCount,
+            "timestamp": Date.now()
+          });
+          return;
+        } else {
+          // Move to next level - Reset grid for distinct level feel
+          resetGameState(false); // false = don't reset score/level index, just grid/blocks
+          // Maybe add a small visual indication or pause here, but immediate transition keeps flow
+          return;
+        }
+      }
+      
+      // 2. Check for Level Loss (Out of moves)
+      if (gameState.level.blocksPlaced >= currentLevel.maxBlocks) {
+        gameState.gamePhase = "GAME_OVER_LOSE";
         p.logs.game_info.push({
           "game_status": gameState.gamePhase,
-          "data": { score: gameState.player.score },
+          "data": { score: gameState.player.score, reason: "out_of_moves" },
           "framecount": p.frameCount,
           "timestamp": Date.now()
         });
         return;
       }
       
-      // Check if any of the available blocks can be placed
+      // 3. Check for Game Over (Cannot place blocks)
       if (!canPlaceAnyBlock()) {
         gameState.gamePhase = "GAME_OVER_LOSE";
         p.logs.game_info.push({
           "game_status": gameState.gamePhase,
-          "data": { score: gameState.player.score },
+          "data": { score: gameState.player.score, reason: "no_placement" },
           "framecount": p.frameCount,
           "timestamp": Date.now()
         });
@@ -223,7 +255,7 @@ function setControlMode(mode) {
   // Reset game when switching modes
   if (gameState.gamePhase === "PLAYING") {
     gameState.gamePhase = "START";
-    resetGameState();
+    resetGameState(true);
   }
 }
 
@@ -234,15 +266,12 @@ window.gameInstance = gameInstance;
 window.loadLevel = function(levelNum) {
   const state = window.getGameState ? window.getGameState() : (window.gameState || (window.gameInstance && window.gameInstance.gameState));
   if (state) {
-    state.currentLevel = levelNum;
-    // Try common reset/start patterns
-    if (typeof resetGame === 'function') {
-      resetGame();
-    }
-    if (typeof startGame === 'function') {
-      startGame();
-    } else if (state.gamePhase !== undefined) {
-      state.gamePhase = "PLAYING";
+    // Ensure levelNum is within bounds (0 to LEVELS.length - 1)
+    if (levelNum >= 1 && levelNum <= LEVELS.length) {
+        state.level.currentIndex = levelNum - 1;
+        // Reset grid for the new level
+        resetGameState(false);
+        state.gamePhase = "PLAYING";
     }
   }
 };

@@ -45,9 +45,11 @@ export function generateLevel(p) {
     gameState.obstacles.push(new Obstacle(x, y, obstacleWidth, obstacleHeight));
   }
   
-  // Generate enemies with variety - more enemies and harder types at higher levels
-  const numEnemies = gameState.requiredKills + 5 + gameState.currentLevel;
-  const enemyTypes = ["regular", "elite", "heavy", "scout", "sniper", "tank"];
+  // Generate enemies - ensure enough to meet kill requirement plus extras
+  // Reduced the multiplier for high levels to make it less hard
+  const minEnemies = gameState.requiredKills + 2;
+  const extraEnemies = Math.floor(gameState.currentLevel * 1.0); // Reduced from 1.5
+  const numEnemies = minEnemies + extraEnemies;
   
   for (let i = 0; i < numEnemies; i++) {
     let x, y;
@@ -73,36 +75,46 @@ export function generateLevel(p) {
       }
     }
     
-    // Higher level = more difficult enemy types
-    let enemyType;
+    // Enemy type distribution based on 6-level progression
+    let enemyType = "regular";
     const rand = p.random();
-    if (gameState.currentLevel === 1) {
-      // Level 1: mostly regular enemies
+    const currentLevel = gameState.currentLevel;
+    
+    if (currentLevel === 1) {
+      // Easy 1: Mostly regular, rare scout
+      if (rand < 0.9) enemyType = "regular";
+      else enemyType = "scout"; 
+    } else if (currentLevel === 2) {
+      // Easy 2: Intro Elite
       if (rand < 0.7) enemyType = "regular";
-      else if (rand < 0.9) enemyType = "elite";
-      else enemyType = "scout";
-    } else if (gameState.currentLevel === 2) {
-      // Level 2: introduce heavy and more elites
+      else if (rand < 0.9) enemyType = "scout";
+      else enemyType = "elite";
+    } else if (currentLevel === 3) {
+      // Medium 1: More Elites, Intro Heavy
       if (rand < 0.5) enemyType = "regular";
-      else if (rand < 0.7) enemyType = "elite";
-      else if (rand < 0.85) enemyType = "scout";
-      else if (rand < 0.95) enemyType = "heavy";
-      else enemyType = "tank";
-    } else if (gameState.currentLevel === 3) {
-      // Level 3: introduce snipers and tanks
+      else if (rand < 0.75) enemyType = "scout";
+      else if (rand < 0.9) enemyType = "elite";
+      else enemyType = "heavy";
+    } else if (currentLevel === 4) {
+      // Medium 2: More Heavies
+      if (rand < 0.4) enemyType = "regular";
+      else if (rand < 0.6) enemyType = "scout";
+      else if (rand < 0.8) enemyType = "elite";
+      else enemyType = "heavy";
+    } else if (currentLevel === 5) {
+      // Hard 1: Intro Sniper
       if (rand < 0.3) enemyType = "regular";
-      else if (rand < 0.5) enemyType = "elite";
-      else if (rand < 0.65) enemyType = "scout";
-      else if (rand < 0.8) enemyType = "heavy";
-      else if (rand < 0.92) enemyType = "sniper";
-      else enemyType = "tank";
+      else if (rand < 0.5) enemyType = "scout";
+      else if (rand < 0.7) enemyType = "elite";
+      else if (rand < 0.85) enemyType = "heavy";
+      else enemyType = "sniper";
     } else {
-      // Level 4+: all enemy types with more challenging distribution
+      // Hard 2 (Level 6+): Intro Tank, Chaos
       if (rand < 0.2) enemyType = "regular";
-      else if (rand < 0.4) enemyType = "elite";
-      else if (rand < 0.55) enemyType = "scout";
-      else if (rand < 0.7) enemyType = "heavy";
-      else if (rand < 0.85) enemyType = "sniper";
+      else if (rand < 0.4) enemyType = "scout";
+      else if (rand < 0.6) enemyType = "elite";
+      else if (rand < 0.75) enemyType = "heavy";
+      else if (rand < 0.9) enemyType = "sniper";
       else enemyType = "tank";
     }
     
@@ -116,47 +128,46 @@ export function generateLevel(p) {
   }
   
   // Generate ammo pickups
-  const numAmmoPickups = 10 + gameState.currentLevel * 2;
+  const numAmmoPickups = 4 + Math.floor(gameState.currentLevel);
   for (let i = 0; i < numAmmoPickups; i++) {
     placePickup(p, "ammo");
   }
   
   // Generate weapon pickups - more weapons at higher levels
-  const weaponTypes = ["rifle", "shotgun", "sniper"];
-  const numWeaponPickups = Math.min(gameState.currentLevel, 3);
+  const weaponTypes = ["rifle", "shotgun", "sniper", "rocket_launcher"];
+  const numWeaponPickups = Math.min(gameState.currentLevel, 4);
   for (let i = 0; i < numWeaponPickups; i++) {
-    const weaponType = weaponTypes[i];
+    // Cycle through weapon types
+    const weaponType = weaponTypes[i % weaponTypes.length];
     placeWeaponPickup(p, weaponType);
   }
   
-  // Place extraction point if mission type is extraction
-  if (gameState.mission === "extraction") {
-    let x, y;
-    let validPosition = false;
+  // ALWAYS generate extraction point now
+  let x, y;
+  let validPosition = false;
+  
+  while (!validPosition) {
+    x = p.random(100, level.width - 100);
+    y = p.random(100, level.height - 100);
     
-    while (!validPosition) {
-      x = p.random(100, level.width - 100);
-      y = p.random(100, level.height - 100);
-      
-      const centerDist = p.dist(x, y, level.width/2, level.height/2);
-      if (centerDist > 500) {
-        let collides = false;
-        for (const obstacle of gameState.obstacles) {
-          if (checkCollisionWithRect(x, y, 20, obstacle.x, obstacle.y, obstacle.width, obstacle.height)) {
-            collides = true;
-            break;
-          }
-        }
-        
-        if (!collides) {
-          validPosition = true;
+    const centerDist = p.dist(x, y, level.width/2, level.height/2);
+    if (centerDist > 500) {
+      let collides = false;
+      for (const obstacle of gameState.obstacles) {
+        if (checkCollisionWithRect(x, y, 20, obstacle.x, obstacle.y, obstacle.width, obstacle.height)) {
+          collides = true;
+          break;
         }
       }
+      
+      if (!collides) {
+        validPosition = true;
+      }
     }
-    
-    gameState.extractionPoint = { x, y };
-    gameState.extractionPointObj = new ExtractionPoint(x, y);
   }
+  
+  gameState.extractionPoint = { x, y };
+  gameState.extractionPointObj = new ExtractionPoint(x, y);
 }
 
 function placePickup(p, type) {

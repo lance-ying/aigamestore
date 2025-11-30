@@ -17,7 +17,7 @@ export const AOI_ONI_SIZE = 28;
 
 export const PLAYER_SPEED = 2.5;
 export const PLAYER_SPRINT_SPEED = 4.5;
-export const AOI_ONI_BASE_SPEED = 1.8;
+export const AOI_ONI_BASE_SPEED = 1.5;
 
 export const gameState = {
   player: null,

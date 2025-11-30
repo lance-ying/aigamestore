@@ -22,12 +22,17 @@ export function drawUI(p) {
     p.rect(20, 45, 150 * ammoPercentage, 15);
     p.fill(255);
     p.textAlign(p.CENTER, p.CENTER);
-    p.text(`AMMO: ${gameState.player.ammo}/${gameState.player.maxAmmo}`, 95, 52);
+    // Display clip ammo and reserve ammo
+    p.text(`AMMO: ${gameState.player.ammo} / ${gameState.player.reserveAmmo}`, 95, 52);
     
     if (gameState.player.reloading) {
       p.fill(255, 200, 0);
       p.textAlign(p.LEFT, p.CENTER);
       p.text("RELOADING...", 180, 52);
+    } else if (gameState.player.ammo === 0 && gameState.player.reserveAmmo === 0) {
+      p.fill(255, 50, 50);
+      p.textAlign(p.LEFT, p.CENTER);
+      p.text("NO AMMO!", 180, 52);
     }
     
     // Current weapon display
@@ -37,7 +42,7 @@ export function drawUI(p) {
     const weaponName = gameState.player.weapons[gameState.player.currentWeapon].name;
     p.text(`WEAPON: ${weaponName}`, 20, 70);
     
-    // Available weapons (1-4 keys)
+    // Available weapons (1-5 keys)
     p.textSize(10);
     p.textAlign(p.LEFT, p.TOP);
     let yPos = 90;
@@ -59,6 +64,11 @@ export function drawUI(p) {
     if (gameState.player.weapons.sniper) {
       p.fill(gameState.player.currentWeapon === "sniper" ? 255 : 150);
       p.text("4: Sniper", 20, yPos);
+      yPos += 15;
+    }
+    if (gameState.player.weapons.rocket_launcher) {
+      p.fill(gameState.player.currentWeapon === "rocket_launcher" ? 255 : 150);
+      p.text("5: RPG", 20, yPos);
     }
   }
   
@@ -74,13 +84,9 @@ export function drawUI(p) {
   p.textSize(14);
   p.text(`SCORE: ${gameState.score}`, CANVAS_WIDTH - 20, 20);
   
-  // Mission objective
+  // Mission objective - Updated to show both requirements
   p.textAlign(p.CENTER, p.TOP);
-  if (gameState.mission === "elimination") {
-    p.text(`ELIMINATE ENEMIES: ${gameState.enemiesKilled}/${gameState.requiredKills}`, CANVAS_WIDTH / 2, 20);
-  } else {
-    p.text("REACH EXTRACTION POINT", CANVAS_WIDTH / 2, 20);
-  }
+  p.text(`MISSION: ELIMINATE ${gameState.enemiesKilled}/${gameState.requiredKills} AND EXTRACT`, CANVAS_WIDTH / 2, 20);
   
   // Time elapsed
   const minutes = Math.floor(gameState.timeElapsed / 60);
@@ -125,8 +131,8 @@ export function drawStartScreen(p) {
   p.textAlign(p.CENTER, p.CENTER);
   const description = [
     "You are an elite soldier on a critical mission.",
-    "Eliminate enemies or reach the extraction point to complete your objective.",
-    "Collect different weapons and manage your resources.",
+    "ELIMINATE ENEMIES AND REACH EXTRACTION to complete your objective.",
+    "Manage your AMMO carefully - reloading is slow and ammo is scarce.",
     "Progress through increasingly difficult levels."
   ];
   
@@ -135,9 +141,9 @@ export function drawStartScreen(p) {
   }
   
   p.textSize(14);
-  p.text("CONTROLS:", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 60);
-  p.text("Arrow Keys: Move | Z: Shoot | SPACE: Sprint | SHIFT: Take Cover", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 80);
-  p.text("1-4: Switch Weapons | ESC: Pause | R: Restart", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 100);
+  p.text("CONTROLS:", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 80);
+  p.text("Arrow Keys: Move | Z: Shoot | SPACE: Sprint | SHIFT: Take Cover", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 100);
+  p.text("1-5: Switch Weapons | ESC: Pause | R: Restart", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 120);
   
   p.textSize(20);
   if (Math.floor(p.frameCount / 30) % 2 === 0) {

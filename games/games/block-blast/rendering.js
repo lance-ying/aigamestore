@@ -1,7 +1,7 @@
 import { 
   GRID_SIZE, CELL_SIZE, GRID_OFFSET_X, GRID_OFFSET_Y, 
   BLOCK_PREVIEW_X, BLOCK_PREVIEW_Y, PREVIEW_SIZE, 
-  BLOCK_COLORS, gameState, MIN_SCORE_TO_WIN
+  BLOCK_COLORS, gameState, LEVELS
 } from './globals.js';
 import { canPlaceBlock, getBlockDimensions } from './utils.js';
 
@@ -46,9 +46,15 @@ function trimShape(shape) {
 
 export function drawGrid(p) {
   p.push();
+  
+  // Get current level background color
+  const level = LEVELS[gameState.level.currentIndex] || LEVELS[0];
+  const bgColor = level.bgColor;
+  
+  // Draw grid background container
   p.stroke(100);
   p.strokeWeight(1);
-  p.fill(40);
+  p.fill(bgColor[0], bgColor[1], bgColor[2]);
   p.rect(
     GRID_OFFSET_X - 1,
     GRID_OFFSET_Y - 1,
@@ -65,7 +71,8 @@ export function drawGrid(p) {
       // cell background
       p.noStroke();
       if (gameState.grid[row][col] === 0) {
-        p.fill(20);
+        // Slightly darker version of level bg for empty cells
+        p.fill(bgColor[0] * 0.7, bgColor[1] * 0.7, bgColor[2] * 0.7);
       } else {
         const colorIndex = gameState.grid[row][col] - 1;
         fillColor(p, colorIndex, 255);
@@ -73,7 +80,7 @@ export function drawGrid(p) {
       p.rect(x, y, CELL_SIZE, CELL_SIZE);
 
       // cell border
-      p.stroke(60);
+      p.stroke(bgColor[0] + 30, bgColor[1] + 30, bgColor[2] + 30);
       p.strokeWeight(1);
       p.noFill();
       p.rect(x, y, CELL_SIZE, CELL_SIZE);
@@ -160,7 +167,11 @@ export function drawCurrentBlock(p) {
         const y = GRID_OFFSET_Y + (currentBlock.y + row) * CELL_SIZE;
 
         if (canPlace) {
-          fillColor(p, colorIndex, 180); // ghost alpha
+          // Increased opacity to 255 to make it "properly colorful" and not dimmed
+          fillColor(p, colorIndex, 255); 
+          // Add a subtle stroke to distinguish it from placed blocks if needed
+          p.stroke(255, 255, 255, 100);
+          p.strokeWeight(1);
         } else {
           p.fill(255, 0, 0, 180);        // red for invalid
         }
@@ -272,17 +283,38 @@ export function drawGameInfo(p) {
   p.fill(255);
   p.textAlign(p.LEFT);
 
-  // You can re-anchor this if you want it beside the grid dynamically:
-  // const hudX = GRID_OFFSET_X + GRID_SIZE * CELL_SIZE + 24;
-  // p.text(`Score: ${gameState.player.score}`, hudX, 30);
-  // p.text(`High Score: ${gameState.player.highScore}`, hudX, 60);
+  const hudX = 450;
+  let hudY = 30;
 
-  p.text(`Score: ${gameState.player.score}`, 450, 30);
-  p.text(`High Score: ${gameState.player.highScore}`, 450, 60);
+  // Level Info
+  const level = LEVELS[gameState.level.currentIndex];
+  if (level) {
+    p.fill(255, 200, 100);
+    p.text(`Level: ${level.name}`, hudX, hudY);
+    hudY += 25;
+    
+    p.fill(255);
+    p.text(`Lines: ${gameState.level.linesCleared} / ${level.linesTarget}`, hudX, hudY);
+    hudY += 25;
+    
+    // Moves left (Blocks remaining to place)
+    const movesLeft = level.maxBlocks - gameState.level.blocksPlaced;
+    // Color warning if low on moves
+    if (movesLeft <= 5) p.fill(255, 100, 100);
+    else p.fill(255);
+    p.text(`Moves Left: ${movesLeft}`, hudX, hudY);
+    hudY += 35; // Gap
+  }
+
+  p.fill(255);
+  p.text(`Score: ${gameState.player.score}`, hudX, hudY);
+  hudY += 25;
+  p.text(`High Score: ${gameState.player.highScore}`, hudX, hudY);
+  hudY += 25;
 
   if (gameState.player.comboCount > 1) {
     p.fill(255, 255, 0);
-    p.text(`Combo: x${gameState.player.comboCount}`, 450, 90);
+    p.text(`Combo: x${gameState.player.comboCount}`, hudX, hudY);
   }
 
   p.pop();
@@ -295,13 +327,14 @@ export function drawStartScreen(p) {
   p.textSize(40);
   p.fill(255, 255, 0);
   p.textAlign(p.CENTER);
-  p.text("Block Blast!", p.width / 2, 100);
+  p.text("Block Blast!", p.width / 2, 80);
 
   p.textSize(16);
   p.fill(255);
   p.textAlign(p.CENTER);
-  p.text("Place blocks on the grid to fill rows and columns.", p.width / 2, 150);
-  p.text("Clear lines to earn points and aim for a high score!", p.width / 2, 180);
+  p.text("Adventure Mode", p.width / 2, 120);
+  p.text("Clear TARGET lines within LIMITED moves.", p.width / 2, 150);
+  p.text("Complete 6 distinct levels to win!", p.width / 2, 180);
 
   p.textSize(14);
   p.textAlign(p.CENTER);
@@ -337,20 +370,28 @@ export function drawGameOverScreen(p) {
 
   if (gameState.gamePhase === "GAME_OVER_WIN") {
     p.fill(0, 255, 0);
-    p.text("YOU WIN!", p.width / 2, p.height / 2 - 40);
+    p.text("VICTORY!", p.width / 2, p.height / 2 - 40);
+    p.textSize(20);
+    p.fill(255);
+    p.text("You completed all levels!", p.width / 2, p.height / 2);
   } else {
     p.fill(255, 0, 0);
     p.text("GAME OVER", p.width / 2, p.height / 2 - 40);
+    p.textSize(20);
+    p.fill(255);
+    
+    // Show why they lost
+    const level = LEVELS[gameState.level.currentIndex];
+    if (level && gameState.level.blocksPlaced >= level.maxBlocks) {
+      p.text("Out of moves!", p.width / 2, p.height / 2);
+    } else {
+      p.text("No more moves possible!", p.width / 2, p.height / 2);
+    }
   }
 
   p.textSize(20);
   p.fill(255);
-  p.text(`Final Score: ${gameState.player.score}`, p.width / 2, p.height / 2 + 10);
-
-  if (gameState.player.score > gameState.player.highScore) {
-    p.fill(255, 255, 0);
-    p.text("NEW HIGH SCORE!", p.width / 2, p.height / 2 + 40);
-  }
+  p.text(`Final Score: ${gameState.player.score}`, p.width / 2, p.height / 2 + 40);
 
   p.fill(255);
   p.text("PRESS R TO RESTART", p.width / 2, p.height / 2 + 80);

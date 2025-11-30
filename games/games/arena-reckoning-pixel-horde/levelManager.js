@@ -1,29 +1,19 @@
 // levelManager.js - Level progression and transitions
 
-import { gameState, LEVEL_CONFIGS, GAME_PHASES } from './globals.js';
+import { gameState, LEVEL_CONFIGS, GAME_PHASES, PLAYER_CONFIG } from './globals.js';
+import { Player } from './player.js';
 
 export function checkLevelCompletion(p, currentTime) {
   if (gameState.gamePhase !== GAME_PHASES.PLAYING) return;
   
-  const levelTime = currentTime - gameState.levelStartTime;
   const config = LEVEL_CONFIGS[gameState.currentLevel];
-  
   if (!config) return;
   
-  // Check if level time has expired
-  const timeExpired = levelTime >= config.duration;
-  
-  // Check if required bosses are defeated
-  let bossRequirementMet = true;
-  
-  if (gameState.currentLevel === 2) {
-    bossRequirementMet = !gameState.miniBossSpawned || gameState.bossDefeated;
-  } else if (gameState.currentLevel === 3) {
-    bossRequirementMet = !gameState.bossSpawned || gameState.bossDefeated;
-  }
+  // Check if kill target is met
+  const killsMet = gameState.levelKills >= config.killTarget;
   
   // Level complete
-  if (timeExpired && bossRequirementMet) {
+  if (killsMet) {
     // Award completion bonus
     gameState.score += config.completionBonus;
     
@@ -33,7 +23,7 @@ export function checkLevelCompletion(p, currentTime) {
     }
     
     // Check if this was the final level
-    if (gameState.currentLevel === 3) {
+    if (gameState.currentLevel === 6) {
       gameState.gamePhase = GAME_PHASES.GAME_OVER_WIN;
       p.logs.game_info.push({
         data: { phase: "GAME_OVER_WIN", finalScore: gameState.score },
@@ -62,11 +52,18 @@ export function updateLevelTransition(p, currentTime) {
     // Start next level
     gameState.currentLevel++;
     gameState.levelStartTime = Date.now();
-    gameState.levelDuration = LEVEL_CONFIGS[gameState.currentLevel].duration;
+    gameState.levelKills = 0;
     gameState.lastEnemySpawn = 0;
     gameState.bossSpawned = false;
     gameState.miniBossSpawned = false;
     gameState.bossDefeated = false;
+    
+    // Reset player upgrades (start fresh but keep level progression)
+    gameState.player = new Player(PLAYER_CONFIG.startX, PLAYER_CONFIG.startY);
+    gameState.entities = [gameState.player];
+    gameState.projectiles = [];
+    gameState.expGems = [];
+    gameState.enemies = [];
     
     gameState.gamePhase = GAME_PHASES.PLAYING;
     

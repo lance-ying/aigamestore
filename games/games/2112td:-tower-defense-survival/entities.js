@@ -1,13 +1,13 @@
 import { ENEMY_TYPES } from './globals.js';
 
 export class Enemy {
-  constructor(type, path, waveMultiplier = 1) {
+  constructor(type, path, healthMultiplier = 1, speedMultiplier = 1) {
     this.type = type;
     this.typeData = ENEMY_TYPES[type];
-    this.health = this.typeData.health * waveMultiplier;
+    this.health = this.typeData.health * healthMultiplier;
     this.maxHealth = this.health;
-    this.speed = this.typeData.speed;
-    this.reward = Math.floor(this.typeData.reward * waveMultiplier);
+    this.speed = this.typeData.speed * speedMultiplier;
+    this.reward = Math.floor(this.typeData.reward * healthMultiplier);
     this.color = this.typeData.color;
     this.size = this.typeData.size;
     this.path = path;

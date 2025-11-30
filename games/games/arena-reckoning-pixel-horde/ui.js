@@ -1,6 +1,6 @@
 // ui.js - UI rendering
 
-import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, GAME_PHASES } from './globals.js';
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, GAME_PHASES, LEVEL_CONFIGS } from './globals.js';
 
 export function renderUI(p) {
   if (gameState.gamePhase === GAME_PHASES.START) {
@@ -36,9 +36,9 @@ function renderStartScreen(p) {
   // Description
   p.textSize(12);
   p.fill(200);
-  p.text("Survive three levels of increasing monster hordes!", CANVAS_WIDTH / 2, 160);
+  p.text("Survive 6 levels of increasing monster hordes!", CANVAS_WIDTH / 2, 160);
   p.text("Collect EXP gems to level up and choose upgrades.", CANVAS_WIDTH / 2, 180);
-  p.text("Defeat bosses and survive to claim victory!", CANVAS_WIDTH / 2, 200);
+  p.text("Kill enemies to progress. Upgrades reset each level!", CANVAS_WIDTH / 2, 200);
   
   // Instructions
   p.textSize(14);
@@ -111,18 +111,16 @@ function renderGameUI(p) {
   p.textSize(12);
   p.text(`SCORE: ${gameState.score}`, CANVAS_WIDTH - 10, 10);
   
-  // Time
+  // Kill Progress
   if (gameState.gamePhase === GAME_PHASES.PLAYING) {
-    const currentTime = Date.now();
-    const elapsed = currentTime - gameState.levelStartTime;
-    const seconds = Math.floor(elapsed / 1000);
-    const minutes = Math.floor(seconds / 60);
-    const secs = seconds % 60;
+    const config = LEVEL_CONFIGS[gameState.currentLevel];
+    const kills = gameState.levelKills;
+    const target = config ? config.killTarget : 999;
     
     p.textAlign(p.CENTER, p.TOP);
     p.textSize(12);
-    p.text(`TIME: ${minutes}:${secs.toString().padStart(2, '0')}`, CANVAS_WIDTH / 2, 30);
-    p.text(`Level ${gameState.currentLevel}/3`, CANVAS_WIDTH / 2, 50);
+    p.text(`KILLS: ${kills} / ${target}`, CANVAS_WIDTH / 2, 30);
+    p.text(`Stage ${gameState.currentLevel}/6`, CANVAS_WIDTH / 2, 50);
   }
   
   p.pop();
@@ -258,7 +256,7 @@ function renderGameOver(p) {
     
     p.textSize(16);
     p.fill(255);
-    p.text("You survived the Pixel Horde!", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 20);
+    p.text("You survived all 6 levels!", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 20);
   } else {
     p.textSize(36);
     p.fill(255, 100, 100);

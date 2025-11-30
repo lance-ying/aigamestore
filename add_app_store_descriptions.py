@@ -86,6 +86,7 @@ def main():
         "temp_concept_crossy_road.txt",
         "temp_concept_hill_climb_racing.txt",
         "temp_concept_ridiculous_fishing.txt",
+        "temp_concept_poly_bridge_2.txt",
     ]
     
     project_root = Path(__file__).parent

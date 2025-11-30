@@ -32,6 +32,7 @@ export const gameState = {
   
   // Level system
   currentLevel: 1,
+  levelKills: 0,
   levelStartTime: 0,
   levelDuration: 0,
   
@@ -178,64 +179,76 @@ export const ENEMY_TYPES = {
   }
 };
 
-// Level configurations - Increased spawn rates and enemy variety
+// Level configurations - 6 distinct levels
 export const LEVEL_CONFIGS = {
   1: {
-    duration: 120000, // 120 seconds
-    name: "The Training Grounds",
-    clearMessage: "Level 1 Cleared! Prepare for the Swarm.",
-    completionBonus: 500,
+    killTarget: 10,
+    floorColor: [40, 60, 40], // Dark Green
+    name: "Easy: The Outskirts",
+    clearMessage: "Level 1 Cleared!",
+    completionBonus: 100,
     spawnConfig: [
-      { time: 0, type: "GOBLIN", rate: 1200, maxEnemies: 10 },
-      { time: 0, type: "SPIDER", rate: 5000, maxEnemies: 10, groupSize: 2 },
-      { time: 10000, type: "IMP", rate: 6000, maxEnemies: 12 },
-      { time: 15000, type: "BRUTE", rate: 8000, maxEnemies: 14 },
-      { time: 30000, type: "SPIDER", rate: 3500, maxEnemies: 16, groupSize: 3 },
-      { time: 40000, type: "GOBLIN", rate: 900, maxEnemies: 18, speedMultiplier: 1.1 },
-      { time: 60000, type: "IMP", rate: 4500, maxEnemies: 20 },
-      { time: 80000, type: "BRUTE", rate: 6000, maxEnemies: 22 }
+      { time: 0, type: "GOBLIN", rate: 2000, maxEnemies: 5, speedMultiplier: 0.5, healthMultiplier: 0.5 }
     ]
   },
   2: {
-    duration: 180000, // 180 seconds
-    name: "The Swarm Plains",
-    clearMessage: "Level 2 Cleared! The Boss Approaches...",
-    completionBonus: 1000,
+    killTarget: 15,
+    floorColor: [40, 50, 60], // Dark Slate Blue
+    name: "Easy: Spider Caverns",
+    clearMessage: "Level 2 Cleared!",
+    completionBonus: 150,
     spawnConfig: [
-      { time: 0, type: "GOBLIN", rate: 1000, maxEnemies: 18 },
-      { time: 0, type: "SPIDER", rate: 5000, maxEnemies: 18, groupSize: 3 },
-      { time: 0, type: "IMP", rate: 7000, maxEnemies: 18 },
-      { time: 5000, type: "BRUTE", rate: 5000, maxEnemies: 20 },
-      { time: 10000, type: "WRAITH", rate: 6000, maxEnemies: 22 },
-      { time: 20000, type: "SPIDER", rate: 3500, maxEnemies: 25, groupSize: 4 },
-      { time: 30000, type: "GOBLIN", rate: 700, maxEnemies: 28, speedMultiplier: 1.2 },
-      { time: 45000, type: "IMP", rate: 4500, maxEnemies: 30 },
-      { time: 60000, type: "WRAITH", rate: 4000, maxEnemies: 32 },
-      { time: 90000, type: "BRUTE", rate: 4000, maxEnemies: 35, healthMultiplier: 1.2 },
-      { time: 120000, type: "NECROMANCER", rate: 8000, maxEnemies: 38 },
-      { time: 150000, type: "MINIBOSS", rate: 999999, maxEnemies: 40, once: true }
+      { time: 0, type: "GOBLIN", rate: 1800, maxEnemies: 6, speedMultiplier: 0.6, healthMultiplier: 0.6 },
+      { time: 5000, type: "SPIDER", rate: 3000, maxEnemies: 6, speedMultiplier: 0.6, healthMultiplier: 0.6 }
     ]
   },
   3: {
-    duration: 240000, // 240 seconds
-    name: "The Dark Sanctum",
-    clearMessage: "Level 3 Cleared! You are a Monster Survivor!",
-    completionBonus: 2000,
+    killTarget: 25,
+    floorColor: [60, 40, 40], // Dark Red
+    name: "Medium: The Badlands",
+    clearMessage: "Level 3 Cleared!",
+    completionBonus: 200,
     spawnConfig: [
-      { time: 0, type: "GOBLIN", rate: 800, maxEnemies: 35, speedMultiplier: 1.2, healthMultiplier: 1.5 },
-      { time: 0, type: "SPIDER", rate: 3500, maxEnemies: 35, groupSize: 4, speedMultiplier: 1.1 },
-      { time: 0, type: "IMP", rate: 6000, maxEnemies: 35 },
-      { time: 0, type: "BRUTE", rate: 5500, maxEnemies: 35, healthMultiplier: 1.3 },
-      { time: 5000, type: "WRAITH", rate: 4500, maxEnemies: 38, speedMultiplier: 1.1 },
-      { time: 10000, type: "NECROMANCER", rate: 7000, maxEnemies: 40 },
-      { time: 20000, type: "GOLEM", rate: 9000, maxEnemies: 42 },
-      { time: 30000, type: "SPIDER", rate: 2500, maxEnemies: 45, groupSize: 5 },
-      { time: 45000, type: "GOBLIN", rate: 600, maxEnemies: 48, speedMultiplier: 1.3 },
-      { time: 60000, type: "IMP", rate: 4000, maxEnemies: 50 },
-      { time: 75000, type: "WRAITH", rate: 3500, maxEnemies: 52 },
-      { time: 90000, type: "BRUTE", rate: 4000, maxEnemies: 55, healthMultiplier: 1.5 },
-      { time: 105000, type: "NECROMANCER", rate: 5500, maxEnemies: 58 },
-      { time: 120000, type: "BOSS", rate: 999999, maxEnemies: 60, once: true }
+      { time: 0, type: "IMP", rate: 2000, maxEnemies: 8 },
+      { time: 5000, type: "BRUTE", rate: 4000, maxEnemies: 8 },
+      { time: 10000, type: "GOBLIN", rate: 1500, maxEnemies: 10 }
+    ]
+  },
+  4: {
+    killTarget: 35,
+    floorColor: [60, 50, 30], // Dark Yellow/Brown
+    name: "Medium: Desert Ruins",
+    clearMessage: "Level 4 Cleared!",
+    completionBonus: 250,
+    spawnConfig: [
+      { time: 0, type: "IMP", rate: 1500, maxEnemies: 12 },
+      { time: 0, type: "SPIDER", rate: 2000, maxEnemies: 12 },
+      { time: 10000, type: "BRUTE", rate: 3500, maxEnemies: 12 }
+    ]
+  },
+  5: {
+    killTarget: 50,
+    floorColor: [30, 50, 50], // Dark Cyan
+    name: "Hard: The Crypt",
+    clearMessage: "Level 5 Cleared!",
+    completionBonus: 300,
+    spawnConfig: [
+      { time: 0, type: "WRAITH", rate: 2000, maxEnemies: 15 },
+      { time: 0, type: "NECROMANCER", rate: 5000, maxEnemies: 15 },
+      { time: 10000, type: "GOLEM", rate: 6000, maxEnemies: 15 }
+    ]
+  },
+  6: {
+    killTarget: 75,
+    floorColor: [40, 20, 40], // Dark Purple
+    name: "Hard: The Void",
+    clearMessage: "Victory!",
+    completionBonus: 500,
+    spawnConfig: [
+      { time: 0, type: "WRAITH", rate: 1500, maxEnemies: 20 },
+      { time: 0, type: "IMP", rate: 1200, maxEnemies: 20 },
+      { time: 10000, type: "NECROMANCER", rate: 4000, maxEnemies: 20 },
+      { time: 20000, type: "BOSS", rate: 999999, maxEnemies: 20, once: true }
     ]
   }
 };

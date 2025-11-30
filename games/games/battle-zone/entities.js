@@ -12,42 +12,57 @@ export class Player {
       pistol: { ...WEAPONS.pistol },
       rifle: null,
       shotgun: null,
-      sniper: null
+      sniper: null,
+      rocket_launcher: null
     };
-    this.ammo = this.weapons.pistol.ammo;
-    this.maxAmmo = this.weapons.pistol.maxAmmo;
-    this.reloadTime = this.weapons.pistol.reloadTime;
+    // Initialize current weapon stats
+    this.updateCurrentWeaponStats();
+    
     this.reloading = false;
     this.reloadStart = 0;
     this.lastShot = 0;
-    this.fireRate = this.weapons.pistol.fireRate;
     this.isSprinting = false;
     this.isCrouching = false;
     this.direction = 0;
-    this.accuracy = this.weapons.pistol.accuracy;
-    this.sprintAccuracy = this.weapons.pistol.sprintAccuracy;
-    this.crouchAccuracy = this.weapons.pistol.crouchAccuracy;
     this.invincibilityTime = 0;
     this.lastHit = 0;
   }
   
+  updateCurrentWeaponStats() {
+    const weapon = this.weapons[this.currentWeapon];
+    this.ammo = weapon.ammo;
+    this.maxAmmo = weapon.maxAmmo;
+    this.reserveAmmo = weapon.reserveAmmo;
+    this.fireRate = weapon.fireRate;
+    this.reloadTime = weapon.reloadTime;
+    this.accuracy = weapon.accuracy;
+    this.sprintAccuracy = weapon.sprintAccuracy;
+    this.crouchAccuracy = weapon.crouchAccuracy;
+  }
+  
   switchWeapon(weaponType) {
     if (this.weapons[weaponType] && !this.reloading) {
+      // Save current weapon state
+      this.weapons[this.currentWeapon].ammo = this.ammo;
+      this.weapons[this.currentWeapon].reserveAmmo = this.reserveAmmo;
+      
       this.currentWeapon = weaponType;
-      const weapon = this.weapons[weaponType];
-      this.ammo = weapon.ammo;
-      this.maxAmmo = weapon.maxAmmo;
-      this.fireRate = weapon.fireRate;
-      this.reloadTime = weapon.reloadTime;
-      this.accuracy = weapon.accuracy;
-      this.sprintAccuracy = weapon.sprintAccuracy;
-      this.crouchAccuracy = weapon.crouchAccuracy;
+      this.updateCurrentWeaponStats();
     }
   }
   
   pickupWeapon(weaponType) {
-    this.weapons[weaponType] = { ...WEAPONS[weaponType] };
-    this.switchWeapon(weaponType);
+    if (!this.weapons[weaponType]) {
+      this.weapons[weaponType] = { ...WEAPONS[weaponType] };
+      this.switchWeapon(weaponType);
+    } else {
+      // If already have weapon, add ammo
+      const weapon = this.weapons[weaponType];
+      weapon.reserveAmmo = Math.min(weapon.maxReserveAmmo, weapon.reserveAmmo + weapon.maxAmmo * 2);
+      if (this.currentWeapon === weaponType) {
+        this.reserveAmmo = weapon.reserveAmmo;
+      }
+    }
   }
   
   // Helper method for collision detection
@@ -125,15 +140,23 @@ export class Player {
       this.weapons[this.currentWeapon].ammo = this.ammo;
     }
 
-    if (this.ammo === 0 && !this.reloading) {
+    // Auto-reload when empty if we have reserve ammo
+    if (this.ammo === 0 && !this.reloading && this.reserveAmmo > 0) {
       this.reloading = true;
       this.reloadStart = p.millis();
     }
 
     if (this.reloading && p.millis() - this.reloadStart > this.reloadTime) {
       this.reloading = false;
-      this.ammo = this.maxAmmo;
+      
+      const needed = this.maxAmmo - this.ammo;
+      const amount = Math.min(needed, this.reserveAmmo);
+      
+      this.ammo += amount;
+      this.reserveAmmo -= amount;
+      
       this.weapons[this.currentWeapon].ammo = this.ammo;
+      this.weapons[this.currentWeapon].reserveAmmo = this.reserveAmmo;
     }
 
     if (p.millis() - this.lastHit < this.invincibilityTime) {
@@ -160,11 +183,29 @@ export class Player {
           bulletDirection,
           true,
           weapon.damage,
-          weapon.bulletSpeed
+          weapon.bulletSpeed,
+          "bullet"
         );
         
         gameState.bullets.push(bullet);
       }
+    } else if (this.currentWeapon === "rocket_launcher") {
+      const spread = (Math.random() - 0.5) * accuracy;
+      const bulletDirection = this.direction + spread;
+      
+      const bullet = new Bullet(
+        this.x + Math.cos(this.direction) * (this.radius + 5),
+        this.y + Math.sin(this.direction) * (this.radius + 5),
+        bulletDirection,
+        true,
+        weapon.damage,
+        weapon.bulletSpeed,
+        "rocket",
+        weapon.explosionRadius,
+        weapon.explosionDamage
+      );
+      
+      gameState.bullets.push(bullet);
     } else {
       const spread = (Math.random() - 0.5) * accuracy;
       const bulletDirection = this.direction + spread;
@@ -175,7 +216,8 @@ export class Player {
         bulletDirection,
         true,
         weapon.damage,
-        weapon.bulletSpeed
+        weapon.bulletSpeed,
+        "bullet"
       );
       
       gameState.bullets.push(bullet);
@@ -291,6 +333,26 @@ export class Enemy {
       this.detectionRange = 250;
     }
     
+    // Apply level scaling for difficulty progression
+    const level = gameState.currentLevel || 1;
+    let speedMult = 1.0;
+    let healthMult = 1.0;
+    
+    if (level <= 2) {
+      speedMult = 1.0;
+      healthMult = 1.0;
+    } else if (level <= 4) {
+      speedMult = 1.1 + (level - 2) * 0.05;
+      healthMult = 1.2 + (level - 2) * 0.1;
+    } else {
+      // Hard Levels (5+): Slower scaling
+      speedMult = 1.2 + (level - 4) * 0.05; // Reduced from 0.1
+      healthMult = 1.4 + (level - 4) * 0.1; // Reduced from 0.2
+    }
+    
+    this.speed *= speedMult;
+    this.health = Math.ceil(this.health * healthMult);
+    
     this.direction = Math.random() * Math.PI * 2;
     this.lastShot = 0;
     this.state = "patrol";
@@ -313,7 +375,6 @@ export class Enemy {
     return (distanceX * distanceX + distanceY * distanceY) < (circleRadius * circleRadius);
   }
   
-  // Check if there's a clear line of sight to the player
   hasLineOfSight(player) {
     const steps = 20;
     const dx = (player.x - this.x) / steps;
@@ -333,11 +394,9 @@ export class Enemy {
     return true;
   }
   
-  // Find a path around obstacles
   findPathDirection(targetX, targetY) {
     const directAngle = Math.atan2(targetY - this.y, targetX - this.x);
     
-    // Check if direct path is clear
     const checkDist = 50;
     const checkX = this.x + Math.cos(directAngle) * checkDist;
     const checkY = this.y + Math.sin(directAngle) * checkDist;
@@ -354,7 +413,6 @@ export class Enemy {
       return directAngle;
     }
     
-    // Try angles to the left and right
     const testAngles = [
       directAngle + Math.PI / 4,
       directAngle - Math.PI / 4,
@@ -389,13 +447,10 @@ export class Enemy {
     const distToPlayer = p.dist(this.x, this.y, player.x, player.y);
     const hasLOS = this.hasLineOfSight(player);
     
-    // Adjust detection range based on player's cover status
     let effectiveDetectionRange = this.detectionRange;
     if (player.isCrouching && !hasLOS) {
-      // If player is crouching and there's no line of sight, reduce detection range significantly
       effectiveDetectionRange *= 0.3;
     } else if (player.isCrouching) {
-      // Even with line of sight, crouching reduces detection
       effectiveDetectionRange *= 0.7;
     }
     
@@ -409,7 +464,6 @@ export class Enemy {
         const patrolX = this.x + Math.cos(this.direction) * this.speed * 0.5;
         const patrolY = this.y + Math.sin(this.direction) * this.speed * 0.5;
         
-        // Check for obstacles in patrol path
         let patrolBlocked = false;
         for (const obstacle of gameState.obstacles) {
           if (this.checkCollisionWithRect(patrolX, patrolY, this.radius, obstacle.x, obstacle.y, obstacle.width, obstacle.height)) {
@@ -422,7 +476,6 @@ export class Enemy {
           this.x = patrolX;
           this.y = patrolY;
         } else {
-          // Change direction if blocked
           this.direction += Math.PI / 2 + (Math.random() - 0.5) * Math.PI / 4;
           this.patrolTimer = now;
         }
@@ -437,20 +490,17 @@ export class Enemy {
         
       case "chase":
         if (!hasLOS || distToPlayer > effectiveDetectionRange * 1.8) {
-          // Lost sight of player
           this.state = "patrol";
           this.lastStateChange = now;
           break;
         }
         
-        // Use smart pathfinding
         this.direction = this.findPathDirection(player.x, player.y);
         
         if (!this.takingCover && this.type !== "sniper" && this.type !== "tank") {
           this.x += Math.cos(this.direction) * this.speed;
           this.y += Math.sin(this.direction) * this.speed;
         } else if (this.type === "tank") {
-          // Tanks move slowly but steadily
           this.x += Math.cos(this.direction) * this.speed;
           this.y += Math.sin(this.direction) * this.speed;
         }
@@ -465,7 +515,6 @@ export class Enemy {
         
       case "attack":
         if (!hasLOS || distToPlayer > effectiveDetectionRange * 1.5) {
-          // Lost sight of player
           this.state = "chase";
           this.lastStateChange = now;
           break;
@@ -482,13 +531,11 @@ export class Enemy {
           this.takingCover = false;
         }
         
-        // Strafe behavior for most enemies
         if (!this.takingCover && this.type !== "sniper" && this.type !== "heavy" && this.type !== "tank") {
           const strafeAngle = this.direction + (Math.random() > 0.5 ? Math.PI/2 : -Math.PI/2);
           const strafeX = this.x + Math.cos(strafeAngle) * this.speed * 0.3;
           const strafeY = this.y + Math.sin(strafeAngle) * this.speed * 0.3;
           
-          // Check if strafe is safe
           let safeToStrafe = true;
           for (const obstacle of gameState.obstacles) {
             if (this.checkCollisionWithRect(strafeX, strafeY, this.radius, obstacle.x, obstacle.y, obstacle.width, obstacle.height)) {
@@ -505,7 +552,6 @@ export class Enemy {
         
         this.handleCollisions(p);
         
-        // Only shoot if has line of sight
         if (now - this.lastShot > this.fireRate && !this.takingCover && hasLOS) {
           this.shoot(p);
           this.lastShot = now;
@@ -525,7 +571,6 @@ export class Enemy {
     
     for (const obstacle of gameState.obstacles) {
       if (this.checkCollisionWithRect(this.x, this.y, this.radius, obstacle.x, obstacle.y, obstacle.width, obstacle.height)) {
-        // Push away from obstacle
         this.x -= Math.cos(this.direction) * this.speed * 2;
         this.y -= Math.sin(this.direction) * this.speed * 2;
         break;
@@ -537,20 +582,35 @@ export class Enemy {
     const spread = this.type === "sniper" ? 0.05 : this.type === "tank" ? 0.15 : (Math.random() - 0.5) * 0.2;
     const bulletDirection = this.direction + spread;
     
+    // Determine bullet type based on enemy type
+    let bulletType = "bullet";
+    let speed = ENEMY_BULLET_SPEED;
+    
+    if (this.type === "sniper") {
+      bulletType = "sniper_bullet";
+      speed = ENEMY_BULLET_SPEED * 1.5;
+    } else if (this.type === "tank") {
+      bulletType = "heavy_bullet";
+      speed = ENEMY_BULLET_SPEED * 0.8;
+    } else if (this.type === "scout") {
+      bulletType = "fast_bullet";
+      speed = ENEMY_BULLET_SPEED * 1.2;
+    }
+    
     const bullet = new Bullet(
       this.x + Math.cos(this.direction) * (this.radius + 5),
       this.y + Math.sin(this.direction) * (this.radius + 5),
       bulletDirection,
       false,
       this.damage,
-      this.type === "sniper" ? ENEMY_BULLET_SPEED * 1.5 : this.type === "tank" ? ENEMY_BULLET_SPEED * 0.8 : ENEMY_BULLET_SPEED
+      speed,
+      bulletType
     );
     
     gameState.enemyBullets.push(bullet);
   }
 
   takeDamage(amount) {
-    // Tanks have armor - reduce damage
     if (this.type === "tank") {
       amount = Math.ceil(amount * 0.6);
     }
@@ -585,7 +645,6 @@ export class Enemy {
     
     p.circle(this.x - gameState.level.cameraX, this.y - gameState.level.cameraY, this.radius * 2);
     
-    // Draw armor indicator for tanks
     if (this.type === "tank") {
       p.noFill();
       p.stroke(150, 150, 150);
@@ -619,19 +678,28 @@ export class Enemy {
 }
 
 export class Bullet {
-  constructor(x, y, direction, isPlayerBullet, damage = 1, speed = BULLET_SPEED) {
+  constructor(x, y, direction, isPlayerBullet, damage = 1, speed = BULLET_SPEED, type = "bullet", explosionRadius = 0, explosionDamage = 0) {
     this.x = x;
     this.y = y;
     this.direction = direction;
     this.speed = speed;
-    this.radius = 3;
+    this.radius = type === "rocket" ? 5 : type === "heavy_bullet" ? 5 : 3;
     this.isPlayerBullet = isPlayerBullet;
     this.damage = damage;
+    this.type = type; // "bullet", "rocket", "sniper_bullet", "heavy_bullet", "fast_bullet"
+    this.explosionRadius = explosionRadius;
+    this.explosionDamage = explosionDamage;
+    this.trail = []; // For visual effects
   }
 
   update() {
     this.x += Math.cos(this.direction) * this.speed;
     this.y += Math.sin(this.direction) * this.speed;
+    
+    // Add trail effect for rockets
+    if (this.type === "rocket" && Math.random() < 0.5) {
+      this.trail.push({x: this.x, y: this.y, life: 10});
+    }
     
     if (this.x < 0 || this.x > gameState.level.width ||
         this.y < 0 || this.y > gameState.level.height) {
@@ -643,7 +711,38 @@ export class Bullet {
 
   draw(p) {
     p.push();
-    p.fill(this.isPlayerBullet ? 255 : 255, 200, 0);
+    
+    // Draw trail
+    if (this.trail.length > 0) {
+      for (let i = this.trail.length - 1; i >= 0; i--) {
+        const t = this.trail[i];
+        p.fill(200, 200, 200, t.life * 20);
+        p.noStroke();
+        p.circle(t.x - gameState.level.cameraX, t.y - gameState.level.cameraY, 3);
+        t.life--;
+        if (t.life <= 0) this.trail.splice(i, 1);
+      }
+    }
+    
+    if (this.isPlayerBullet) {
+      if (this.type === "rocket") {
+        p.fill(255, 100, 0);
+      } else {
+        p.fill(255, 200, 0);
+      }
+    } else {
+      // Enemy bullet variety
+      if (this.type === "sniper_bullet") {
+        p.fill(200, 0, 255); // Purple
+      } else if (this.type === "heavy_bullet") {
+        p.fill(255, 100, 0); // Orange
+      } else if (this.type === "fast_bullet") {
+        p.fill(255, 255, 0); // Yellow
+      } else {
+        p.fill(255, 200, 0); // Standard
+      }
+    }
+    
     p.noStroke();
     p.circle(this.x - gameState.level.cameraX, this.y - gameState.level.cameraY, this.radius * 2);
     p.pop();
@@ -745,6 +844,8 @@ export class WeaponPickup {
       p.fill(255, 100, 100);
     } else if (this.weaponType === "sniper") {
       p.fill(150, 100, 255);
+    } else if (this.weaponType === "rocket_launcher") {
+      p.fill(255, 150, 50);
     }
     
     p.rect(
@@ -758,7 +859,8 @@ export class WeaponPickup {
     p.fill(255);
     p.textSize(14);
     p.textAlign(p.CENTER, p.CENTER);
-    const initial = this.weaponType.charAt(0).toUpperCase();
+    let initial = this.weaponType.charAt(0).toUpperCase();
+    if (this.weaponType === "rocket_launcher") initial = "R";
     p.text(initial, this.x - gameState.level.cameraX, this.y - gameState.level.cameraY);
     
     p.pop();
