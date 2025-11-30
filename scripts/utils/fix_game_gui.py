@@ -785,33 +785,6 @@ def get_game_iframe_html(game_relative_path_from_root: str, cache_bust: bool = F
     </script>
     """
     
-    # Auto-focus script to ensure iframe receives arrow key events
-    autofocus_script = f"""
-    <script>
-    (function() {{
-        function focusIframe() {{
-            var iframe = document.getElementById('{iframe_id}');
-            if (iframe) {{
-                iframe.focus();
-            }}
-        }}
-        // Focus when iframe loads
-        var iframe = document.getElementById('{iframe_id}');
-        if (iframe) {{
-            iframe.addEventListener('load', function() {{
-                setTimeout(focusIframe, 100);
-            }});
-            // Also try to focus immediately if already loaded
-            if (iframe.contentDocument && iframe.contentDocument.readyState === 'complete') {{
-                setTimeout(focusIframe, 100);
-            }}
-        }}
-        // Initial focus attempt
-        setTimeout(focusIframe, 200);
-    }})();
-    </script>
-    """
-    
     html = f"""
     <div style="width: 100%; position: relative;" id="game-container-{timestamp}">
         <div style="width: 100%; height: 1000px; border: 1px solid #333; border-radius: 4px; overflow: hidden; background: #000;">
@@ -824,7 +797,6 @@ def get_game_iframe_html(game_relative_path_from_root: str, cache_bust: bool = F
                 tabindex="0"
             ></iframe>
         </div>
-        {autofocus_script}
         {reload_script}
         {postmessage_script}
     </div>
@@ -1428,8 +1400,6 @@ def build_interface():
     }
     body {
         background-color: #0d1117 !important;
-        overflow-y: auto !important;
-        overflow-x: hidden !important;
     }
     .dark, .dark * {
         background-color: #0d1117 !important;
@@ -1460,9 +1430,14 @@ def build_interface():
     with gr.Blocks(title="Game Fix", theme=gr.themes.Monochrome(), css=custom_css) as app:
         
         with gr.Row():
-            # Left: Flag Counts Sidebar (narrow)
-            with gr.Column(scale=1, min_width=200):
+            # Left: Flag Counts and Status (narrow)
+            with gr.Column(scale=1, min_width=250):
                 flag_counts_html = gr.HTML(value=update_flag_counts(initial_dir))
+                status_output = gr.Textbox(
+                    label="Status",
+                    lines=12,
+                    interactive=False
+                )
             
             # Middle: Game Preview (wider)
             with gr.Column(scale=5):
@@ -1531,12 +1506,6 @@ def build_interface():
                     placeholder="Describe the issue..."
                 )
                 fix_btn = gr.Button("Apply Fix")
-                
-                status_output = gr.Textbox(
-                    label="Status",
-                    lines=12,
-                    interactive=False
-                )
                 
                 with gr.Accordion("Backups", open=False):
                     backup_list = gr.Dropdown(
