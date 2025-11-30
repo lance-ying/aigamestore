@@ -145,11 +145,7 @@ let gameInstance = new p5(p => {
   };
 
   function handlePlayerInput(p) {
-    if (p.keyCode === 37) { // LEFT
-      gameState.dropperX = Math.max(50, gameState.dropperX - 10);
-    } else if (p.keyCode === 39) { // RIGHT
-      gameState.dropperX = Math.min(CANVAS_WIDTH - 50, gameState.dropperX + 10);
-    } else if (p.keyCode === 32) { // SPACE
+    if (p.keyCode === 32) { // SPACE
       dropBall(p);
     }
   }
@@ -300,6 +296,17 @@ let gameInstance = new p5(p => {
   }
 
   function updateGame(p) {
+    // Handle continuous player input
+    if (gameState.controlMode === CONTROL_MODES.HUMAN) {
+      const moveSpeed = 5;
+      if (p.keyIsDown(37)) { // LEFT_ARROW
+        gameState.dropperX = Math.max(50, gameState.dropperX - moveSpeed);
+      }
+      if (p.keyIsDown(39)) { // RIGHT_ARROW
+        gameState.dropperX = Math.min(CANVAS_WIDTH - 50, gameState.dropperX + moveSpeed);
+      }
+    }
+
     // Update all entities
     gameState.entities.forEach(entity => {
       if (entity.update) {

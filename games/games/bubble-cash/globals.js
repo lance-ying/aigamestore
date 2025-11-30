@@ -1,7 +1,7 @@
 // globals.js - Global state and constants
 
 export const CANVAS_WIDTH = 600;
-export const CANVAS_HEIGHT = 400;
+export const CANVAS_HEIGHT = 600;
 
 export const BUBBLE_RADIUS = 20;
 export const BUBBLE_DIAMETER = BUBBLE_RADIUS * 2;
@@ -25,7 +25,7 @@ export const gameState = {
   entities: [],
   score: 0,
   currentLevel: 1,
-  timerRemaining: 0,
+  shotsRemaining: 0,
   bubbleGrid: [],
   projectileBubble: null,
   nextBubble: null,

@@ -1,10 +1,10 @@
 // Game constants
 export const GRID_SIZE = 9;
 export const CELL_SIZE = 30;
-export const GRID_OFFSET_X = 150;
+export const GRID_OFFSET_X = 180; // Shifted right to make room for left UI
 export const GRID_OFFSET_Y = 50;
 export const BLOCK_PREVIEW_X = 50; // Adjusted to shift preview blocks slightly to the right
-export const BLOCK_PREVIEW_Y = 120; // Adjusted for more vertical space
+export const BLOCK_PREVIEW_Y = 50; // Moved upward
 export const PREVIEW_SIZE = 20;
 export const MIN_SCORE_TO_WIN = 999999; // Effectively disabled in favor of level progression
 

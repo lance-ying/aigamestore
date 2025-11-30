@@ -112,6 +112,35 @@ let gameInstance = new p5(p => {
       }
     });
   }
+  
+  // Function to add effectiveness text
+  function addEffectivenessText(x, y, text, color) {
+    gameState.animations.push({
+      x: x,
+      y: y,
+      text: text,
+      color: color,
+      life: 60,
+      update: function() {
+        this.y -= 1.5;
+        this.life--;
+      },
+      isDone: function() {
+        return this.life <= 0;
+      },
+      draw: function(p) {
+        p.push();
+        p.fill(this.color[0], this.color[1], this.color[2], (this.life / 60) * 255);
+        p.textAlign(p.CENTER, p.CENTER);
+        p.textSize(18);
+        p.textStyle(p.BOLD);
+        p.strokeWeight(3);
+        p.stroke(0, 0, 0, (this.life / 60) * 200);
+        p.text(this.text, this.x, this.y);
+        p.pop();
+      }
+    });
+  }
 
   // Function to add block gained animation
   function addBlockNumber(x, y, value) {
@@ -258,6 +287,7 @@ let gameInstance = new p5(p => {
     gameState.enemies = createEnemies();
     gameState.currentEnemyIndex = 0;
     gameState.currentEnemy = gameState.enemies[0];
+    gameState.totalEnemies = gameState.enemies.length;
     gameState.deck = createStarterDeck();
     gameState.hand = [];
     gameState.drawPile = [...gameState.deck];
@@ -329,40 +359,52 @@ let gameInstance = new p5(p => {
   }
 
   // Function to create enemies with progressive difficulty
+  // 6 Levels, 3 Battles each = 18 Battles
   function createEnemies() {
     const enemies = [];
     
-    // Define difficulty tiers
-    const difficultyTiers = [
-      // Battles 1-2: Easy (Slime only)
-      { enemies: ['slime'], count: 2 },
-      // Battles 3-4: Easy-Medium (Slime, Cultist)
-      { enemies: ['slime', 'cultist'], count: 2 },
-      // Battles 5-6: Medium (Cultist, Thief)
-      { enemies: ['cultist', 'thief'], count: 2 },
-      // Battles 7-8: Medium-Hard (Thief, Jaw Worm)
-      { enemies: ['thief', 'jaw_worm'], count: 2 },
-      // Battle 9: Hard (Jaw Worm only)
-      { enemies: ['jaw_worm'], count: 1 }
-    ];
+    // Pools for difficulty levels
+    const easyPool = ['slime', 'cultist'];
+    const mediumPool = ['thief', 'jaw_worm'];
+    const hardPool = ['thief', 'jaw_worm', 'cultist']; // Scaled up versions
     
-    let battleNum = 0;
-    
-    // Create enemies for each tier
-    for (let tier of difficultyTiers) {
-      for (let i = 0; i < tier.count; i++) {
-        // Select a random enemy from the tier
-        const enemyId = tier.enemies[Math.floor(p.random(tier.enemies.length))];
-        const enemyTemplate = ENEMY_TEMPLATES.find(e => e.id === enemyId);
-        
-        // Create enemy with scaling based on battle number
-        const scaledEnemy = createScaledEnemy(enemyTemplate, battleNum);
-        enemies.push(scaledEnemy);
-        battleNum++;
-      }
+    // Level 1: Easy (Battles 1-3)
+    for (let i = 0; i < 3; i++) {
+      const enemyId = easyPool[Math.floor(p.random(easyPool.length))];
+      enemies.push(createScaledEnemy(ENEMY_TEMPLATES.find(e => e.id === enemyId), 0));
     }
     
-    // Add boss as the final enemy
+    // Level 2: Easy (Battles 4-6)
+    for (let i = 0; i < 3; i++) {
+      const enemyId = easyPool[Math.floor(p.random(easyPool.length))];
+      enemies.push(createScaledEnemy(ENEMY_TEMPLATES.find(e => e.id === enemyId), 1));
+    }
+    
+    // Level 3: Medium (Battles 7-9)
+    for (let i = 0; i < 3; i++) {
+      const enemyId = mediumPool[Math.floor(p.random(mediumPool.length))];
+      enemies.push(createScaledEnemy(ENEMY_TEMPLATES.find(e => e.id === enemyId), 3));
+    }
+    
+    // Level 4: Medium (Battles 10-12)
+    for (let i = 0; i < 3; i++) {
+      const enemyId = mediumPool[Math.floor(p.random(mediumPool.length))];
+      enemies.push(createScaledEnemy(ENEMY_TEMPLATES.find(e => e.id === enemyId), 4));
+    }
+    
+    // Level 5: Hard (Battles 13-15)
+    for (let i = 0; i < 3; i++) {
+      const enemyId = hardPool[Math.floor(p.random(hardPool.length))];
+      enemies.push(createScaledEnemy(ENEMY_TEMPLATES.find(e => e.id === enemyId), 6));
+    }
+    
+    // Level 6: Hard (Battles 16-18)
+    for (let i = 0; i < 2; i++) {
+      const enemyId = hardPool[Math.floor(p.random(hardPool.length))];
+      enemies.push(createScaledEnemy(ENEMY_TEMPLATES.find(e => e.id === enemyId), 8));
+    }
+    
+    // Final Boss (Battle 18)
     const bossTemplate = ENEMY_TEMPLATES.find(e => e.id === "boss");
     enemies.push(new Enemy(bossTemplate));
     
@@ -370,13 +412,18 @@ let gameInstance = new p5(p => {
   }
 
   // Function to create a scaled enemy based on progression
-  function createScaledEnemy(template, battleNum) {
+  function createScaledEnemy(template, difficultyLevel) {
     // Create a copy of the template
     const scaledTemplate = JSON.parse(JSON.stringify(template));
     
-    // Apply scaling factor based on battle number (0-8)
-    // Increase health and damage by 5% per battle after battle 0
-    const scaleFactor = 1 + (battleNum * 0.05);
+    // Restore element reference (JSON.parse/stringify breaks object references)
+    // We need to find the matching element from the original template or reassign
+    const originalTemplate = ENEMY_TEMPLATES.find(e => e.id === template.id);
+    scaledTemplate.element = originalTemplate.element;
+
+    // Apply scaling factor based on difficulty level
+    // Increase health and damage by 10% per difficulty level
+    const scaleFactor = 1 + (difficultyLevel * 0.1);
     
     scaledTemplate.health = Math.floor(template.health * scaleFactor);
     scaledTemplate.maxHealth = Math.floor(template.maxHealth * scaleFactor);
@@ -427,16 +474,25 @@ let gameInstance = new p5(p => {
     const oldPlayerBlock = gameState.player.block;
     
     // Apply card effect
+    // We pass the card itself so the effect can use the card's element
     if (card.type.name === "Attack") {
-      card.effect(gameState.currentEnemy, gameState.player);
+      card.effect(gameState.currentEnemy, gameState.player, card);
+      
       // Show damage number
       const damage = oldEnemyHealth - gameState.currentEnemy.health;
       if (damage > 0) {
         addDamageNumber(gameState.currentEnemy.x, gameState.currentEnemy.y - 20, damage);
         gameState.currentEnemy.hitFlash = 10;
+        
+        // Show effectiveness text
+        if (gameState.currentEnemy.lastHitEffectiveness === "SUPER") {
+            addEffectivenessText(gameState.currentEnemy.x, gameState.currentEnemy.y - 50, "SUPER EFFECTIVE!", [255, 215, 0]);
+        } else if (gameState.currentEnemy.lastHitEffectiveness === "RESIST") {
+            addEffectivenessText(gameState.currentEnemy.x, gameState.currentEnemy.y - 50, "RESISTED", [150, 150, 150]);
+        }
       }
     } else {
-      card.effect(gameState.player, gameState);
+      card.effect(gameState.player, gameState, card);
       // Show block gained
       const blockGained = gameState.player.block - oldPlayerBlock;
       if (blockGained > 0) {

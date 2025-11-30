@@ -43,7 +43,8 @@ export class Cannon {
   fire() {
     if (this.fireDelay > 0 || gameState.ballsRemaining <= 0) return;
     
-    const speed = 8;
+    // Increased speed to compensate for lower position and reach further targets
+    const speed = 12;
     const vx = Math.cos(this.angle) * speed;
     const vy = Math.sin(this.angle) * speed;
     
@@ -290,6 +291,35 @@ export class MovableObject {
       this.p.fill(c[0] + 30, c[1] + 30, c[2] + 30);
       this.p.noStroke();
       this.p.circle(0, 0, Math.min(this.width, this.height) / 2);
+    }
+    
+    // Visual feedback for selection
+    if (this.selected) {
+      this.p.push();
+      this.p.noFill();
+      
+      if (gameState.isGrabbing) {
+        // Grabbed state - Green, solid, distinct
+        this.p.stroke(50, 255, 50);
+        this.p.strokeWeight(3);
+        // Box around object
+        this.p.rect(-this.width/2 - 5, -this.height/2 - 5, this.width + 10, this.height + 10);
+        
+        // Movement indicators (arrows)
+        this.p.stroke(50, 255, 50, 150);
+        this.p.strokeWeight(2);
+        this.p.line(0, 0, 30, 0); // Right
+        this.p.line(0, 0, -30, 0); // Left
+        this.p.line(0, 0, 0, 30); // Down
+        this.p.line(0, 0, 0, -30); // Up
+      } else {
+        // Selected but not grabbed - Yellow, pulsating
+        const alpha = 150 + Math.sin(this.p.frameCount * 0.15) * 105;
+        this.p.stroke(255, 255, 50, alpha);
+        this.p.strokeWeight(3);
+        this.p.rect(-this.width/2 - 5, -this.height/2 - 5, this.width + 10, this.height + 10);
+      }
+      this.p.pop();
     }
     
     this.p.pop();

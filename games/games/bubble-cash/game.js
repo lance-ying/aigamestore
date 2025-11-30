@@ -2,7 +2,7 @@
 
 import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, SHOOTER_Y } from './globals.js';
 import { createShooter, generateNextBubble, drawAimingGuide } from './shooter.js';
-import { initializeLevel, updateTimer, calculateTimeBonus } from './levels.js';
+import { initializeLevel, calculateShotBonus } from './levels.js';
 import { checkProjectileCollision, checkLoseCondition, checkWinCondition } from './collision.js';
 import { drawUI, drawStartScreen, drawPausedIndicator, drawGameOverScreen, drawLevelTransition } from './ui.js';
 import { handleKeyPressed, handleContinuousInput } from './input.js';
@@ -81,13 +81,6 @@ let gameInstance = new p5(p => {
     handleContinuousInput(p);
     executeTestAction(p);
 
-    // Update timer
-    if (updateTimer(p)) {
-      // Time's up - lose condition
-      transitionToGameOver(false, p);
-      return;
-    }
-
     // Update bubbles
     gameState.bubbleGrid = gameState.bubbleGrid.filter(bubble => {
       const shouldRemove = bubble.update();
@@ -130,9 +123,17 @@ let gameInstance = new p5(p => {
       return;
     }
 
+    // Check shot limit lose condition
+    // We lose if no shots remaining, no active projectiles, and no bubbles currently popping/falling
+    const isGridStable = gameState.bubbleGrid.every(b => !b.popping && !b.falling);
+    if (gameState.shotsRemaining <= 0 && gameState.entities.length === 0 && isGridStable && gameState.bubbleGrid.length > 0) {
+      transitionToGameOver(false, p);
+      return;
+    }
+
     if (checkWinCondition() && gameState.bubbleGrid.length === 0) {
-      // Add time bonus
-      const bonus = calculateTimeBonus();
+      // Add shot bonus
+      const bonus = calculateShotBonus();
       gameState.score += bonus;
 
       // Check if more levels

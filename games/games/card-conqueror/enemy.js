@@ -1,7 +1,10 @@
+import { ELEMENTS } from './globals.js';
+
 export class Enemy {
   constructor(template) {
     this.id = template.id;
     this.name = template.name;
+    this.element = template.element || ELEMENTS.NONE;
     this.health = template.health;
     this.maxHealth = template.maxHealth;
     this.intentions = [...template.intentions];
@@ -17,13 +20,38 @@ export class Enemy {
     this.x = 700;
     this.y = 280;
     this.hitFlash = 0;
+    this.lastHitEffectiveness = null; // "SUPER", "RESIST", "NORMAL"
   }
 
   getCurrentIntention() {
     return this.intentions[this.currentIntentionIndex];
   }
 
-  takeDamage(amount) {
+  takeDamage(amount, sourceElement = ELEMENTS.NONE) {
+    // Calculate elemental effectiveness
+    let multiplier = 1.0;
+    this.lastHitEffectiveness = "NORMAL";
+
+    if (sourceElement && sourceElement !== ELEMENTS.NONE && this.element !== ELEMENTS.NONE) {
+      if (
+        (sourceElement === ELEMENTS.FIRE && this.element === ELEMENTS.NATURE) ||
+        (sourceElement === ELEMENTS.NATURE && this.element === ELEMENTS.WATER) ||
+        (sourceElement === ELEMENTS.WATER && this.element === ELEMENTS.FIRE)
+      ) {
+        multiplier = 1.5;
+        this.lastHitEffectiveness = "SUPER";
+      } else if (
+        (sourceElement === ELEMENTS.FIRE && this.element === ELEMENTS.WATER) ||
+        (sourceElement === ELEMENTS.NATURE && this.element === ELEMENTS.FIRE) ||
+        (sourceElement === ELEMENTS.WATER && this.element === ELEMENTS.NATURE)
+      ) {
+        multiplier = 0.5;
+        this.lastHitEffectiveness = "RESIST";
+      }
+    }
+
+    amount = Math.floor(amount * multiplier);
+
     if (this.vulnerable > 0) {
       amount = Math.floor(amount * 1.5);
     }
@@ -119,6 +147,21 @@ export class Enemy {
       p.endShape(p.CLOSE);
     } else {
       p.ellipse(this.x, this.y, 90, 90);
+    }
+    
+    // Draw Element Icon
+    if (this.element && this.element !== ELEMENTS.NONE) {
+      p.push();
+      p.fill(this.element.color);
+      p.stroke(255);
+      p.strokeWeight(2);
+      p.circle(this.x + 35, this.y + 35, 30);
+      p.textAlign(p.CENTER, p.CENTER);
+      p.textSize(16);
+      p.noStroke();
+      p.fill(255);
+      p.text(this.element.icon, this.x + 35, this.y + 35);
+      p.pop();
     }
     
     // Draw enemy name

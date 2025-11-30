@@ -1,6 +1,7 @@
 // ui.js - UI rendering
 
 import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, LOSE_LINE_Y } from './globals.js';
+import { calculateShotBonus } from './levels.js';
 
 export function drawUI(p) {
   p.push();
@@ -12,12 +13,9 @@ export function drawUI(p) {
   // Score
   p.text(`SCORE: ${gameState.score}`, 10, 10);
 
-  // Timer
+  // Shots
   p.textAlign(p.CENTER, p.TOP);
-  const minutes = Math.floor(gameState.timerRemaining / 60);
-  const seconds = Math.floor(gameState.timerRemaining % 60);
-  const timeStr = `${minutes}:${seconds.toString().padStart(2, '0')}`;
-  p.text(`TIME: ${timeStr}`, CANVAS_WIDTH / 2, 10);
+  p.text(`SHOTS: ${gameState.shotsRemaining}`, CANVAS_WIDTH / 2, 10);
 
   // Level
   p.textAlign(p.RIGHT, p.TOP);
@@ -45,7 +43,7 @@ export function drawStartScreen(p) {
   // Instructions
   p.fill(255);
   p.textSize(16);
-  p.text('Clear all bubbles before time runs out!', CANVAS_WIDTH / 2, 150);
+  p.text('Clear all bubbles before you run out of shots!', CANVAS_WIDTH / 2, 150);
   p.text('Match 3+ bubbles of the same color to pop them', CANVAS_WIDTH / 2, 180);
 
   // Controls
@@ -110,8 +108,8 @@ export function drawLevelTransition(p) {
 
   p.fill(255);
   p.textSize(24);
-  const bonus = calculateTimeBonusForDisplay();
-  p.text(`Time Bonus: +${bonus}`, CANVAS_WIDTH / 2, 200);
+  const bonus = calculateShotBonus();
+  p.text(`Shot Bonus: +${bonus}`, CANVAS_WIDTH / 2, 200);
   p.text(`Score: ${gameState.score}`, CANVAS_WIDTH / 2, 230);
 
   p.fill(255, 255, 100);
@@ -119,8 +117,4 @@ export function drawLevelTransition(p) {
   p.text(`GET READY FOR LEVEL ${gameState.currentLevel}!`, CANVAS_WIDTH / 2, 280);
 
   p.pop();
-}
-
-function calculateTimeBonusForDisplay() {
-  return Math.floor(gameState.timerRemaining * 5);
 }

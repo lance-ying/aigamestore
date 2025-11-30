@@ -31,8 +31,8 @@ function initializeGame(p) {
   gameState.ballsFired = 0;
   gameState.bucketsFilledCount = 0;
   
-  // Create cannon
-  gameState.cannon = new Cannon(p, 100, 100);
+  // Create cannon - Position adjusted lower for better trajectory visibility
+  gameState.cannon = new Cannon(p, 80, 200);
   
   // Create boundaries (walls)
   const wallThickness = 20;
@@ -297,12 +297,19 @@ function renderUI(p) {
   p.textAlign(p.RIGHT, p.CENTER);
   p.text(`Score: ${gameState.score}`, CANVAS_WIDTH - 10, 20);
   
-  // Edit mode indicator
+  // Edit mode indicator - Improved feedback
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(14);
+  
   if (gameState.isGrabbing && gameState.selectedObjectIndex >= 0) {
+    p.fill(100, 255, 100);
+    p.text("GRAB MODE: Arrows to move, A/D to rotate, SPACE to drop", CANVAS_WIDTH / 2, 55);
+  } else if (gameState.selectedObjectIndex >= 0) {
     p.fill(255, 255, 100);
-    p.textAlign(p.CENTER, p.CENTER);
-    p.textSize(14);
-    p.text("EDITING - Arrows to move, A/D to rotate, SPACE to drop", CANVAS_WIDTH / 2, 55);
+    p.text("SELECT MODE: Arrows to choose object, SPACE to grab", CANVAS_WIDTH / 2, 55);
+  } else if (gameState.movableObjects.length > 0) {
+    p.fill(200, 200, 200);
+    p.text("Use Left/Right Arrows to select an object", CANVAS_WIDTH / 2, 55);
   }
 }
 

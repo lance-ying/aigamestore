@@ -16,7 +16,7 @@ export const gameState = {
   enemies: [],
   currentEnemy: null,
   currentEnemyIndex: 0,
-  totalEnemies: 10,
+  totalEnemies: 18, // 6 levels * 3 battles
   deck: [],
   hand: [],
   drawPile: [],
@@ -41,6 +41,14 @@ export const gameState = {
   }
 };
 
+// Elemental Types
+export const ELEMENTS = {
+  NONE: { name: "None", color: [150, 150, 150], icon: "⚪" },
+  FIRE: { name: "Fire", color: [220, 80, 40], icon: "🔥" },
+  WATER: { name: "Water", color: [60, 120, 220], icon: "💧" },
+  NATURE: { name: "Nature", color: [80, 180, 60], icon: "🌿" }
+};
+
 // Card types
 export const CARD_TYPES = {
   ATTACK: {
@@ -63,19 +71,21 @@ export const CARD_TEMPLATES = [
     id: "strike",
     name: "Strike",
     type: CARD_TYPES.ATTACK,
+    element: ELEMENTS.NONE,
     energy: 1,
     description: "Deal 4 damage",
-    effect: (target) => {
-      target.takeDamage(4);
+    effect: (target, player, card) => {
+      target.takeDamage(4, card.element);
     }
   },
   {
     id: "defend",
     name: "Defend",
     type: CARD_TYPES.SKILL,
+    element: ELEMENTS.NONE,
     energy: 1,
     description: "Gain 4 block",
-    effect: (player) => {
+    effect: (player, gameState, card) => {
       player.block += 4;
     }
   },
@@ -83,10 +93,11 @@ export const CARD_TEMPLATES = [
     id: "bash",
     name: "Bash",
     type: CARD_TYPES.ATTACK,
+    element: ELEMENTS.FIRE,
     energy: 2,
-    description: "Deal 5 damage and apply 2 vulnerable",
-    effect: (target) => {
-      target.takeDamage(5);
+    description: "Deal 5 Fire dmg, apply 2 Vuln",
+    effect: (target, player, card) => {
+      target.takeDamage(5, card.element);
       target.vulnerable = (target.vulnerable || 0) + 2;
     }
   },
@@ -94,20 +105,22 @@ export const CARD_TEMPLATES = [
     id: "cleave",
     name: "Cleave",
     type: CARD_TYPES.ATTACK,
+    element: ELEMENTS.NATURE,
     energy: 1,
-    description: "Deal 5 damage",
-    effect: (target) => {
-      target.takeDamage(5);
+    description: "Deal 5 Nature damage",
+    effect: (target, player, card) => {
+      target.takeDamage(5, card.element);
     }
   },
   {
     id: "iron_wave",
     name: "Iron Wave",
     type: CARD_TYPES.ATTACK,
+    element: ELEMENTS.NONE,
     energy: 1,
-    description: "Deal 3 damage and gain 4 block",
-    effect: (target, player) => {
-      target.takeDamage(3);
+    description: "Deal 3 dmg, gain 4 block",
+    effect: (target, player, card) => {
+      target.takeDamage(3, card.element);
       player.block += 4;
     }
   },
@@ -115,9 +128,10 @@ export const CARD_TEMPLATES = [
     id: "shrug_it_off",
     name: "Shrug It Off",
     type: CARD_TYPES.SKILL,
+    element: ELEMENTS.NONE,
     energy: 1,
-    description: "Gain 6 block and draw a card",
-    effect: (player, gameState) => {
+    description: "Gain 6 block, draw 1",
+    effect: (player, gameState, card) => {
       player.block += 6;
       drawCard(gameState, 1);
     }
@@ -126,19 +140,21 @@ export const CARD_TEMPLATES = [
     id: "uppercut",
     name: "Uppercut",
     type: CARD_TYPES.ATTACK,
+    element: ELEMENTS.WATER,
     energy: 2,
-    description: "Deal 8 damage",
-    effect: (target) => {
-      target.takeDamage(8);
+    description: "Deal 8 Water damage",
+    effect: (target, player, card) => {
+      target.takeDamage(8, card.element);
     }
   },
   {
     id: "inflame",
     name: "Inflame",
     type: CARD_TYPES.POWER,
+    element: ELEMENTS.FIRE,
     energy: 1,
     description: "Gain 2 strength",
-    effect: (player) => {
+    effect: (player, gameState, card) => {
       player.strength = (player.strength || 0) + 2;
     }
   },
@@ -146,9 +162,10 @@ export const CARD_TEMPLATES = [
     id: "true_grit",
     name: "True Grit",
     type: CARD_TYPES.SKILL,
+    element: ELEMENTS.NONE,
     energy: 1,
     description: "Gain 5 block",
-    effect: (player) => {
+    effect: (player, gameState, card) => {
       player.block += 5;
     }
   },
@@ -156,10 +173,44 @@ export const CARD_TEMPLATES = [
     id: "battle_trance",
     name: "Battle Trance",
     type: CARD_TYPES.SKILL,
+    element: ELEMENTS.NONE,
     energy: 0,
     description: "Draw 3 cards",
-    effect: (player, gameState) => {
+    effect: (player, gameState, card) => {
       drawCard(gameState, 3);
+    }
+  },
+  {
+    id: "fireball",
+    name: "Fireball",
+    type: CARD_TYPES.ATTACK,
+    element: ELEMENTS.FIRE,
+    energy: 2,
+    description: "Deal 12 Fire damage",
+    effect: (target, player, card) => {
+      target.takeDamage(12, card.element);
+    }
+  },
+  {
+    id: "tidal_wave",
+    name: "Tidal Wave",
+    type: CARD_TYPES.ATTACK,
+    element: ELEMENTS.WATER,
+    energy: 2,
+    description: "Deal 10 Water damage",
+    effect: (target, player, card) => {
+      target.takeDamage(10, card.element);
+    }
+  },
+  {
+    id: "vine_whip",
+    name: "Vine Whip",
+    type: CARD_TYPES.ATTACK,
+    element: ELEMENTS.NATURE,
+    energy: 1,
+    description: "Deal 6 Nature damage",
+    effect: (target, player, card) => {
+      target.takeDamage(6, card.element);
     }
   }
 ];
@@ -169,36 +220,40 @@ export const ENEMY_TEMPLATES = [
   {
     id: "slime",
     name: "Slime",
+    element: ELEMENTS.WATER,
     health: 35,
     maxHealth: 35,
     intentions: ["ATTACK", "DEFEND", "ATTACK"],
     attackDamage: 8,
     blockAmount: 5,
-    color: [120, 200, 100]
+    color: [120, 200, 255]
   },
   {
     id: "cultist",
     name: "Cultist",
+    element: ELEMENTS.NATURE,
     health: 50,
     maxHealth: 50,
     intentions: ["BUFF", "ATTACK", "ATTACK"],
     attackDamage: 7,
     blockAmount: 0,
-    color: [150, 50, 200]
+    color: [100, 200, 100]
   },
   {
     id: "jaw_worm",
     name: "Jaw Worm",
+    element: ELEMENTS.FIRE,
     health: 90,
     maxHealth: 90,
     intentions: ["ATTACK", "DEFEND", "ATTACK", "BUFF"],
     attackDamage: 13,
     blockAmount: 6,
-    color: [220, 120, 50]
+    color: [220, 100, 50]
   },
   {
     id: "thief",
     name: "Thief",
+    element: ELEMENTS.NATURE,
     health: 60,
     maxHealth: 60,
     intentions: ["ATTACK", "DEBUFF", "ATTACK"],
@@ -209,12 +264,13 @@ export const ENEMY_TEMPLATES = [
   {
     id: "boss",
     name: "The Guardian",
-    health: 150,
-    maxHealth: 150,
+    element: ELEMENTS.FIRE,
+    health: 200,
+    maxHealth: 200,
     intentions: ["DEFEND", "ATTACK", "ATTACK", "DEFEND", "HEAVY_ATTACK"],
-    attackDamage: 10,
-    heavyAttackDamage: 20,
-    blockAmount: 9,
+    attackDamage: 12,
+    heavyAttackDamage: 25,
+    blockAmount: 15,
     color: [200, 60, 60]
   }
 ];

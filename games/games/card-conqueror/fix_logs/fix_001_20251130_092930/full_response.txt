@@ -1,0 +1,1708 @@
+<analysis>
+- Issue identified: The current game lacks the requested 6-level structure (with 3 battles each) and does not have the requested elemental strategy mechanics.
+- Files affected: `globals.js`, `game.js`, `enemy.js`, `card.js`, `player.js`.
+- Changes needed:
+    1.  **globals.js**: Add `ELEMENTS` constants. Update `CARD_TEMPLATES` to include elemental types and pass the card instance to effects. Update `ENEMY_TEMPLATES` with elemental affinities.
+    2.  **enemy.js**: Update `takeDamage` to handle elemental weaknesses/resistances (Fire > Nature > Water > Fire). Update `draw` to display the enemy's element.
+    3.  **card.js**: Update `draw` to visually indicate the card's element.
+    4.  **player.js**: Update `takeDamage` signature to match the new interface.
+    5.  **game.js**: Rewrite `createEnemies` to generate 18 battles across 6 levels (2 Easy, 2 Medium, 2 Hard). Update `playCard` to handle elemental interactions and display effectiveness text. Update UI to show current level and battle number.
+</analysis>
+
+<code filename="globals.js">
+// Game constants
+export const CANVAS_WIDTH = 900;
+export const CANVAS_HEIGHT = 650;
+export const CARD_WIDTH = 110;
+export const CARD_HEIGHT = 120;
+export const MAX_ENERGY = 3;
+export const STARTING_HAND_SIZE = 5;
+export const MAX_HAND_SIZE = 10;
+export const PLAYER_MAX_HEALTH = 50;
+
+// Game state object
+export const gameState = {
+  gamePhase: "START",  // "START", "PLAYING", "PAUSED", "GAME_OVER_WIN", "GAME_OVER_LOSE"
+  controlMode: "HUMAN", // "HUMAN", "TEST_1", "TEST_2", "TEST_3", etc.
+  player: null,
+  enemies: [],
+  currentEnemy: null,
+  currentEnemyIndex: 0,
+  totalEnemies: 18, // 6 levels * 3 battles
+  deck: [],
+  hand: [],
+  drawPile: [],
+  discardPile: [],
+  energy: MAX_ENERGY,
+  turn: "PLAYER", // "PLAYER" or "ENEMY"
+  selectedCardIndex: 0,
+  viewingPile: null, // "DRAW" or "DISCARD" or null
+  battleState: "SELECT_CARD", // "SELECT_CARD", "SELECT_TARGET", "ENEMY_TURN", "REWARD"
+  availableRewards: [],
+  selectedRewardIndex: 0,
+  battleCount: 0,
+  animations: [],
+  keyStates: {
+    up: false,
+    down: false,
+    left: false,
+    right: false,
+    space: false,
+    shift: false,
+    z: false
+  }
+};
+
+// Elemental Types
+export const ELEMENTS = {
+  NONE: { name: "None", color: [150, 150, 150], icon: "⚪" },
+  FIRE: { name: "Fire", color: [220, 80, 40], icon: "🔥" },
+  WATER: { name: "Water", color: [60, 120, 220], icon: "💧" },
+  NATURE: { name: "Nature", color: [80, 180, 60], icon: "🌿" }
+};
+
+// Card types
+export const CARD_TYPES = {
+  ATTACK: {
+    name: "Attack",
+    color: [220, 60, 60]
+  },
+  SKILL: {
+    name: "Skill",
+    color: [60, 180, 220]
+  },
+  POWER: {
+    name: "Power",
+    color: [180, 100, 220]
+  }
+};
+
+// Card templates
+export const CARD_TEMPLATES = [
+  {
+    id: "strike",
+    name: "Strike",
+    type: CARD_TYPES.ATTACK,
+    element: ELEMENTS.NONE,
+    energy: 1,
+    description: "Deal 4 damage",
+    effect: (target, player, card) => {
+      target.takeDamage(4, card.element);
+    }
+  },
+  {
+    id: "defend",
+    name: "Defend",
+    type: CARD_TYPES.SKILL,
+    element: ELEMENTS.NONE,
+    energy: 1,
+    description: "Gain 4 block",
+    effect: (player, gameState, card) => {
+      player.block += 4;
+    }
+  },
+  {
+    id: "bash",
+    name: "Bash",
+    type: CARD_TYPES.ATTACK,
+    element: ELEMENTS.FIRE,
+    energy: 2,
+    description: "Deal 5 Fire dmg, apply 2 Vuln",
+    effect: (target, player, card) => {
+      target.takeDamage(5, card.element);
+      target.vulnerable = (target.vulnerable || 0) + 2;
+    }
+  },
+  {
+    id: "cleave",
+    name: "Cleave",
+    type: CARD_TYPES.ATTACK,
+    element: ELEMENTS.NATURE,
+    energy: 1,
+    description: "Deal 5 Nature damage",
+    effect: (target, player, card) => {
+      target.takeDamage(5, card.element);
+    }
+  },
+  {
+    id: "iron_wave",
+    name: "Iron Wave",
+    type: CARD_TYPES.ATTACK,
+    element: ELEMENTS.NONE,
+    energy: 1,
+    description: "Deal 3 dmg, gain 4 block",
+    effect: (target, player, card) => {
+      target.takeDamage(3, card.element);
+      player.block += 4;
+    }
+  },
+  {
+    id: "shrug_it_off",
+    name: "Shrug It Off",
+    type: CARD_TYPES.SKILL,
+    element: ELEMENTS.NONE,
+    energy: 1,
+    description: "Gain 6 block, draw 1",
+    effect: (player, gameState, card) => {
+      player.block += 6;
+      drawCard(gameState, 1);
+    }
+  },
+  {
+    id: "uppercut",
+    name: "Uppercut",
+    type: CARD_TYPES.ATTACK,
+    element: ELEMENTS.WATER,
+    energy: 2,
+    description: "Deal 8 Water damage",
+    effect: (target, player, card) => {
+      target.takeDamage(8, card.element);
+    }
+  },
+  {
+    id: "inflame",
+    name: "Inflame",
+    type: CARD_TYPES.POWER,
+    element: ELEMENTS.FIRE,
+    energy: 1,
+    description: "Gain 2 strength",
+    effect: (player, gameState, card) => {
+      player.strength = (player.strength || 0) + 2;
+    }
+  },
+  {
+    id: "true_grit",
+    name: "True Grit",
+    type: CARD_TYPES.SKILL,
+    element: ELEMENTS.NONE,
+    energy: 1,
+    description: "Gain 5 block",
+    effect: (player, gameState, card) => {
+      player.block += 5;
+    }
+  },
+  {
+    id: "battle_trance",
+    name: "Battle Trance",
+    type: CARD_TYPES.SKILL,
+    element: ELEMENTS.NONE,
+    energy: 0,
+    description: "Draw 3 cards",
+    effect: (player, gameState, card) => {
+      drawCard(gameState, 3);
+    }
+  },
+  {
+    id: "fireball",
+    name: "Fireball",
+    type: CARD_TYPES.ATTACK,
+    element: ELEMENTS.FIRE,
+    energy: 2,
+    description: "Deal 12 Fire damage",
+    effect: (target, player, card) => {
+      target.takeDamage(12, card.element);
+    }
+  },
+  {
+    id: "tidal_wave",
+    name: "Tidal Wave",
+    type: CARD_TYPES.ATTACK,
+    element: ELEMENTS.WATER,
+    energy: 2,
+    description: "Deal 10 Water damage",
+    effect: (target, player, card) => {
+      target.takeDamage(10, card.element);
+    }
+  },
+  {
+    id: "vine_whip",
+    name: "Vine Whip",
+    type: CARD_TYPES.ATTACK,
+    element: ELEMENTS.NATURE,
+    energy: 1,
+    description: "Deal 6 Nature damage",
+    effect: (target, player, card) => {
+      target.takeDamage(6, card.element);
+    }
+  }
+];
+
+// Enemy templates
+export const ENEMY_TEMPLATES = [
+  {
+    id: "slime",
+    name: "Slime",
+    element: ELEMENTS.WATER,
+    health: 35,
+    maxHealth: 35,
+    intentions: ["ATTACK", "DEFEND", "ATTACK"],
+    attackDamage: 8,
+    blockAmount: 5,
+    color: [120, 200, 255]
+  },
+  {
+    id: "cultist",
+    name: "Cultist",
+    element: ELEMENTS.NATURE,
+    health: 50,
+    maxHealth: 50,
+    intentions: ["BUFF", "ATTACK", "ATTACK"],
+    attackDamage: 7,
+    blockAmount: 0,
+    color: [100, 200, 100]
+  },
+  {
+    id: "jaw_worm",
+    name: "Jaw Worm",
+    element: ELEMENTS.FIRE,
+    health: 90,
+    maxHealth: 90,
+    intentions: ["ATTACK", "DEFEND", "ATTACK", "BUFF"],
+    attackDamage: 13,
+    blockAmount: 6,
+    color: [220, 100, 50]
+  },
+  {
+    id: "thief",
+    name: "Thief",
+    element: ELEMENTS.NATURE,
+    health: 60,
+    maxHealth: 60,
+    intentions: ["ATTACK", "DEBUFF", "ATTACK"],
+    attackDamage: 10,
+    blockAmount: 0,
+    color: [70, 130, 180]
+  },
+  {
+    id: "boss",
+    name: "The Guardian",
+    element: ELEMENTS.FIRE,
+    health: 200,
+    maxHealth: 200,
+    intentions: ["DEFEND", "ATTACK", "ATTACK", "DEFEND", "HEAVY_ATTACK"],
+    attackDamage: 12,
+    heavyAttackDamage: 25,
+    blockAmount: 15,
+    color: [200, 60, 60]
+  }
+];
+
+// Helper function to draw cards
+export function drawCard(gameState, count = 1) {
+  for (let i = 0; i < count; i++) {
+    if (gameState.drawPile.length === 0) {
+      // Shuffle discard pile into draw pile
+      gameState.drawPile = [...gameState.discardPile];
+      gameState.discardPile = [];
+      shuffleArray(gameState.drawPile);
+    }
+    
+    if (gameState.drawPile.length > 0 && gameState.hand.length < MAX_HAND_SIZE) {
+      const card = gameState.drawPile.pop();
+      gameState.hand.push(card);
+    }
+  }
+}
+
+// Shuffle array helper
+export function shuffleArray(array) {
+  for (let i = array.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [array[i], array[j]] = [array[j], array[i]];
+  }
+}
+
+// Function to get game state
+export function getGameState() {
+  return gameState;
+}
+
+// Expose the getGameState function globally
+window.getGameState = getGameState;
+</code>
+
+<code filename="enemy.js">
+import { ELEMENTS } from './globals.js';
+
+export class Enemy {
+  constructor(template) {
+    this.id = template.id;
+    this.name = template.name;
+    this.element = template.element || ELEMENTS.NONE;
+    this.health = template.health;
+    this.maxHealth = template.maxHealth;
+    this.intentions = [...template.intentions];
+    this.currentIntentionIndex = 0;
+    this.attackDamage = template.attackDamage;
+    this.heavyAttackDamage = template.heavyAttackDamage || template.attackDamage * 2;
+    this.blockAmount = template.blockAmount;
+    this.color = template.color;
+    this.block = 0;
+    this.strength = 0;
+    this.vulnerable = 0;
+    this.weak = 0;
+    this.x = 700;
+    this.y = 280;
+    this.hitFlash = 0;
+    this.lastHitEffectiveness = null; // "SUPER", "RESIST", "NORMAL"
+  }
+
+  getCurrentIntention() {
+    return this.intentions[this.currentIntentionIndex];
+  }
+
+  takeDamage(amount, sourceElement = ELEMENTS.NONE) {
+    // Calculate elemental effectiveness
+    let multiplier = 1.0;
+    this.lastHitEffectiveness = "NORMAL";
+
+    if (sourceElement && sourceElement !== ELEMENTS.NONE && this.element !== ELEMENTS.NONE) {
+      if (
+        (sourceElement === ELEMENTS.FIRE && this.element === ELEMENTS.NATURE) ||
+        (sourceElement === ELEMENTS.NATURE && this.element === ELEMENTS.WATER) ||
+        (sourceElement === ELEMENTS.WATER && this.element === ELEMENTS.FIRE)
+      ) {
+        multiplier = 1.5;
+        this.lastHitEffectiveness = "SUPER";
+      } else if (
+        (sourceElement === ELEMENTS.FIRE && this.element === ELEMENTS.WATER) ||
+        (sourceElement === ELEMENTS.NATURE && this.element === ELEMENTS.FIRE) ||
+        (sourceElement === ELEMENTS.WATER && this.element === ELEMENTS.NATURE)
+      ) {
+        multiplier = 0.5;
+        this.lastHitEffectiveness = "RESIST";
+      }
+    }
+
+    amount = Math.floor(amount * multiplier);
+
+    if (this.vulnerable > 0) {
+      amount = Math.floor(amount * 1.5);
+    }
+    
+    if (this.block >= amount) {
+      this.block -= amount;
+    } else {
+      const remainingDamage = amount - this.block;
+      this.block = 0;
+      this.health -= remainingDamage;
+    }
+
+    if (this.health < 0) {
+      this.health = 0;
+    }
+  }
+
+  takeTurn(player) {
+    const intention = this.getCurrentIntention();
+    
+    switch (intention) {
+      case "ATTACK":
+        let damage = this.attackDamage;
+        if (this.strength > 0) {
+          damage += this.strength;
+        }
+        if (this.weak > 0) {
+          damage = Math.floor(damage * 0.75);
+        }
+        player.takeDamage(damage);
+        break;
+      case "HEAVY_ATTACK":
+        let heavyDamage = this.heavyAttackDamage;
+        if (this.strength > 0) {
+          heavyDamage += this.strength;
+        }
+        if (this.weak > 0) {
+          heavyDamage = Math.floor(heavyDamage * 0.75);
+        }
+        player.takeDamage(heavyDamage);
+        break;
+      case "DEFEND":
+        this.block += this.blockAmount;
+        break;
+      case "BUFF":
+        this.strength += 2;
+        break;
+      case "DEBUFF":
+        player.weak = (player.weak || 0) + 1;
+        break;
+    }
+
+    // Move to next intention
+    this.currentIntentionIndex = (this.currentIntentionIndex + 1) % this.intentions.length;
+    
+    // Reset status effects
+    if (this.vulnerable > 0) {
+      this.vulnerable--;
+    }
+    
+    if (this.weak > 0) {
+      this.weak--;
+    }
+  }
+
+  draw(p) {
+    p.push();
+    
+    // Update hit flash
+    if (this.hitFlash > 0) {
+      this.hitFlash--;
+    }
+    
+    // Draw enemy character with hit flash
+    if (this.hitFlash > 0) {
+      p.fill(255, 200, 200);
+      p.stroke(255, 150, 150);
+    } else {
+      p.fill(this.color);
+      p.stroke(this.color[0] * 0.7, this.color[1] * 0.7, this.color[2] * 0.7);
+    }
+    p.strokeWeight(3);
+    
+    if (this.id === "boss") {
+      // Draw a more complex shape for the boss
+      p.beginShape();
+      p.vertex(this.x, this.y - 50);
+      p.vertex(this.x + 40, this.y - 10);
+      p.vertex(this.x + 40, this.y + 30);
+      p.vertex(this.x, this.y + 50);
+      p.vertex(this.x - 40, this.y + 30);
+      p.vertex(this.x - 40, this.y - 10);
+      p.endShape(p.CLOSE);
+    } else {
+      p.ellipse(this.x, this.y, 90, 90);
+    }
+    
+    // Draw Element Icon
+    if (this.element && this.element !== ELEMENTS.NONE) {
+      p.push();
+      p.fill(this.element.color);
+      p.stroke(255);
+      p.strokeWeight(2);
+      p.circle(this.x + 35, this.y + 35, 30);
+      p.textAlign(p.CENTER, p.CENTER);
+      p.textSize(16);
+      p.noStroke();
+      p.fill(255);
+      p.text(this.element.icon, this.x + 35, this.y + 35);
+      p.pop();
+    }
+    
+    // Draw enemy name
+    p.fill(200, 200, 200);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(14);
+    p.text(this.name, this.x, this.y - 70);
+    
+    // Draw health bar with better visuals
+    const healthBarWidth = 120;
+    const healthPercent = this.health / this.maxHealth;
+    
+    p.noStroke();
+    p.fill(40, 40, 40);
+    p.rect(this.x - healthBarWidth/2, this.y + 55, healthBarWidth, 16, 8);
+    
+    p.fill(220, 60, 60);
+    p.rect(this.x - healthBarWidth/2 + 2, this.y + 57, (healthBarWidth - 4) * healthPercent, 12, 6);
+    
+    // Draw health text
+    p.fill(255);
+    p.stroke(0);
+    p.strokeWeight(3);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(13);
+    p.text(`${this.health}/${this.maxHealth}`, this.x, this.y + 63);
+    
+    // Draw block if any
+    if (this.block > 0) {
+      p.push();
+      p.drawingContext.shadowBlur = 10;
+      p.drawingContext.shadowColor = 'rgba(100, 180, 255, 0.6)';
+      p.fill(100, 180, 255, 200);
+      p.stroke(50, 100, 200);
+      p.strokeWeight(3);
+      p.ellipse(this.x - 35, this.y - 25, 40, 40);
+      
+      p.fill(255);
+      p.noStroke();
+      p.textAlign(p.CENTER, p.CENTER);
+      p.textSize(18);
+      p.textStyle(p.BOLD);
+      p.text(this.block, this.x - 35, this.y - 25);
+      p.textStyle(p.NORMAL);
+      
+      p.textSize(10);
+      p.text("BLOCK", this.x - 35, this.y - 10);
+      p.pop();
+    }
+    
+    // Draw intention with better visuals
+    const intention = this.getCurrentIntention();
+    p.push();
+    p.drawingContext.shadowBlur = 10;
+    p.drawingContext.shadowColor = 'rgba(220, 220, 220, 0.5)';
+    p.fill(220, 220, 220, 230);
+    p.stroke(180, 180, 180);
+    p.strokeWeight(2);
+    p.ellipse(this.x, this.y - 100, 50, 50);
+    p.pop();
+    
+    p.textSize(24);
+    p.fill(0);
+    p.noStroke();
+    p.textAlign(p.CENTER, p.CENTER);
+    
+    switch (intention) {
+      case "ATTACK":
+        p.text("⚔️", this.x, this.y - 100);
+        p.textSize(14);
+        p.text(this.attackDamage, this.x, this.y - 75);
+        break;
+      case "HEAVY_ATTACK":
+        p.text("⚔️", this.x, this.y - 100);
+        p.textSize(14);
+        p.fill(200, 0, 0);
+        p.text(this.heavyAttackDamage, this.x, this.y - 75);
+        break;
+      case "DEFEND":
+        p.text("🛡️", this.x, this.y - 100);
+        break;
+      case "BUFF":
+        p.text("💪", this.x, this.y - 100);
+        break;
+      case "DEBUFF":
+        p.text("⚡", this.x, this.y - 100);
+        break;
+    }
+    
+    // Draw status effects
+    let statusX = this.x + 35;
+    if (this.strength > 0) {
+      p.fill(200, 60, 60);
+      p.stroke(150, 30, 30);
+      p.strokeWeight(2);
+      p.ellipse(statusX, this.y - 25, 28, 28);
+      p.fill(255);
+      p.noStroke();
+      p.textSize(11);
+      p.text("💪" + this.strength, statusX, this.y - 25);
+      statusX += 32;
+    }
+    
+    if (this.vulnerable > 0) {
+      p.fill(200, 120, 50);
+      p.stroke(150, 80, 30);
+      p.strokeWeight(2);
+      p.ellipse(statusX, this.y - 25, 28, 28);
+      p.fill(255);
+      p.noStroke();
+      p.textSize(11);
+      p.text("V" + this.vulnerable, statusX, this.y - 25);
+      statusX += 32;
+    }
+    
+    if (this.weak > 0) {
+      p.fill(150, 150, 50);
+      p.stroke(100, 100, 30);
+      p.strokeWeight(2);
+      p.ellipse(statusX, this.y - 25, 28, 28);
+      p.fill(255);
+      p.noStroke();
+      p.textSize(11);
+      p.text("W" + this.weak, statusX, this.y - 25);
+    }
+    
+    p.pop();
+  }
+}
+</code>
+
+<code filename="card.js">
+import { CARD_WIDTH, CARD_HEIGHT, ELEMENTS } from './globals.js';
+
+export class Card {
+  constructor(template) {
+    this.id = template.id;
+    this.name = template.name;
+    this.type = template.type;
+    this.element = template.element || ELEMENTS.NONE;
+    this.energy = template.energy;
+    this.description = template.description;
+    this.effect = template.effect;
+  }
+
+  draw(p, x, y, isSelected = false) {
+    p.push();
+    
+    // Card shadow
+    if (isSelected) {
+      p.drawingContext.shadowBlur = 20;
+      p.drawingContext.shadowColor = 'rgba(255, 255, 255, 0.5)';
+    }
+    
+    // Card background with gradient effect
+    p.fill(40, 40, 45);
+    p.stroke(isSelected ? [255, 255, 100] : [120, 120, 130]);
+    p.strokeWeight(isSelected ? 4 : 2);
+    p.rect(x, y, CARD_WIDTH, CARD_HEIGHT, 12);
+    
+    // Card type color bar (top)
+    p.noStroke();
+    const typeColor = this.type.color;
+    p.fill(typeColor[0], typeColor[1], typeColor[2]);
+    p.rect(x + 3, y + 3, CARD_WIDTH - 6, 28, 8, 8, 0, 0);
+    
+    // Card name
+    p.fill(255);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(13);
+    p.textStyle(p.BOLD);
+    p.text(this.name, x + CARD_WIDTH / 2, y + 17);
+    p.textStyle(p.NORMAL);
+    
+    // Card art placeholder (colored rectangle based on element if present, else type)
+    if (this.element && this.element !== ELEMENTS.NONE) {
+        p.fill(this.element.color[0], this.element.color[1], this.element.color[2]);
+    } else {
+        p.fill(typeColor[0] * 0.5, typeColor[1] * 0.5, typeColor[2] * 0.5);
+    }
+    p.noStroke();
+    p.rect(x + 10, y + 40, CARD_WIDTH - 20, 40, 5);
+    
+    // Element Icon in center of art
+    if (this.element && this.element !== ELEMENTS.NONE) {
+        p.fill(255);
+        p.textAlign(p.CENTER, p.CENTER);
+        p.textSize(24);
+        p.text(this.element.icon, x + CARD_WIDTH / 2, y + 60);
+    }
+
+    // Energy cost orb with glow - centered in the middle of the card
+    p.push();
+    if (isSelected) {
+      p.drawingContext.shadowBlur = 10;
+      p.drawingContext.shadowColor = 'rgba(60, 100, 220, 0.8)';
+    }
+    p.fill(60, 100, 220);
+    p.stroke(30, 60, 140);
+    p.strokeWeight(2);
+    p.ellipse(x + CARD_WIDTH / 2, y + 55, 28, 28);
+    p.pop();
+    
+    p.fill(255);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(18);
+    p.textStyle(p.BOLD);
+    p.text(this.energy, x + CARD_WIDTH / 2, y + 55);
+    p.textStyle(p.NORMAL);
+    
+    // Card description with better formatting
+    p.fill(220, 220, 220);
+    p.textAlign(p.CENTER, p.TOP);
+    p.textSize(11);
+    const words = this.description.split(' ');
+    let line = '';
+    let yPos = y + 88;
+    const lineHeight = 14;
+    
+    for (let word of words) {
+      const testLine = line + word + ' ';
+      const testWidth = p.textWidth(testLine);
+      
+      if (testWidth > CARD_WIDTH - 14 && line.length > 0) {
+        p.text(line, x + CARD_WIDTH / 2, yPos);
+        line = word + ' ';
+        yPos += lineHeight;
+      } else {
+        line = testLine;
+      }
+    }
+    p.text(line, x + CARD_WIDTH / 2, yPos);
+    
+    // Card border highlight for type
+    p.noFill();
+    p.stroke(typeColor[0], typeColor[1], typeColor[2], 100);
+    p.strokeWeight(2);
+    p.rect(x + 1, y + 1, CARD_WIDTH - 2, CARD_HEIGHT - 2, 12);
+    
+    p.pop();
+  }
+}
+</code>
+
+<code filename="player.js">
+import { PLAYER_MAX_HEALTH } from './globals.js';
+
+export class Player {
+  constructor() {
+    this.health = PLAYER_MAX_HEALTH;
+    this.maxHealth = PLAYER_MAX_HEALTH;
+    this.block = 0;
+    this.strength = 0;
+    this.vulnerable = 0;
+    this.weak = 0;
+    this.x = 200;
+    this.y = 280;
+    this.hitFlash = 0;
+  }
+
+  takeDamage(amount, sourceElement = null) {
+    // Player currently doesn't have elemental weaknesses
+    if (this.vulnerable > 0) {
+      amount = Math.floor(amount * 1.5);
+    }
+    
+    if (this.block >= amount) {
+      this.block -= amount;
+    } else {
+      const remainingDamage = amount - this.block;
+      this.block = 0;
+      this.health -= remainingDamage;
+    }
+
+    if (this.health < 0) {
+      this.health = 0;
+    }
+  }
+
+  resetForNewTurn() {
+    // Block is now retained across turns and battles
+    
+    if (this.vulnerable > 0) {
+      this.vulnerable--;
+    }
+    
+    if (this.weak > 0) {
+      this.weak--;
+    }
+  }
+
+  draw(p) {
+    p.push();
+    
+    // Update hit flash
+    if (this.hitFlash > 0) {
+      this.hitFlash--;
+    }
+    
+    // Draw player character with hit flash
+    if (this.hitFlash > 0) {
+      p.fill(255, 100, 100);
+      p.stroke(255, 50, 50);
+    } else {
+      p.fill(50, 150, 200);
+      p.stroke(20, 100, 150);
+    }
+    p.strokeWeight(3);
+    p.ellipse(this.x, this.y, 80, 80);
+    
+    // Draw simple face
+    p.fill(255);
+    p.noStroke();
+    p.ellipse(this.x - 15, this.y - 10, 8, 8);
+    p.ellipse(this.x + 15, this.y - 10, 8, 8);
+    p.arc(this.x, this.y + 5, 30, 20, 0, p.PI);
+    
+    // Player label
+    p.fill(200, 200, 200);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(14);
+    p.text("PLAYER", this.x, this.y - 60);
+    
+    // Draw health bar with better visuals
+    const healthBarWidth = 120;
+    const healthPercent = this.health / this.maxHealth;
+    
+    p.noStroke();
+    p.fill(40, 40, 40);
+    p.rect(this.x - healthBarWidth/2, this.y + 55, healthBarWidth, 16, 8);
+    
+    // Health bar color gradient based on health
+    if (healthPercent > 0.5) {
+      p.fill(60, 200, 60);
+    } else if (healthPercent > 0.25) {
+      p.fill(220, 180, 60);
+    } else {
+      p.fill(220, 60, 60);
+    }
+    p.rect(this.x - healthBarWidth/2 + 2, this.y + 57, (healthBarWidth - 4) * healthPercent, 12, 6);
+    
+    // Draw health text
+    p.fill(255);
+    p.stroke(0);
+    p.strokeWeight(3);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(13);
+    p.text(`${this.health}/${this.maxHealth}`, this.x, this.y + 63);
+    
+    // Draw block if any
+    if (this.block > 0) {
+      p.push();
+      p.drawingContext.shadowBlur = 10;
+      p.drawingContext.shadowColor = 'rgba(100, 180, 255, 0.6)';
+      p.fill(100, 180, 255, 200);
+      p.stroke(50, 100, 200);
+      p.strokeWeight(3);
+      p.ellipse(this.x + 35, this.y - 25, 40, 40);
+      
+      p.fill(255);
+      p.noStroke();
+      p.textAlign(p.CENTER, p.CENTER);
+      p.textSize(18);
+      p.textStyle(p.BOLD);
+      p.text(this.block, this.x + 35, this.y - 25);
+      p.textStyle(p.NORMAL);
+      
+      p.textSize(10);
+      p.text("BLOCK", this.x + 35, this.y - 10);
+      p.pop();
+    }
+    
+    // Draw status effects
+    let statusX = this.x - 35;
+    if (this.strength > 0) {
+      p.fill(200, 60, 60);
+      p.stroke(150, 30, 30);
+      p.strokeWeight(2);
+      p.ellipse(statusX, this.y - 25, 28, 28);
+      p.fill(255);
+      p.noStroke();
+      p.textSize(11);
+      p.text("💪" + this.strength, statusX, this.y - 25);
+      statusX -= 32;
+    }
+    
+    if (this.vulnerable > 0) {
+      p.fill(200, 120, 50);
+      p.stroke(150, 80, 30);
+      p.strokeWeight(2);
+      p.ellipse(statusX, this.y - 25, 28, 28);
+      p.fill(255);
+      p.noStroke();
+      p.textSize(11);
+      p.text("V" + this.vulnerable, statusX, this.y - 25);
+      statusX -= 32;
+    }
+    
+    if (this.weak > 0) {
+      p.fill(150, 150, 50);
+      p.stroke(100, 100, 30);
+      p.strokeWeight(2);
+      p.ellipse(statusX, this.y - 25, 28, 28);
+      p.fill(255);
+      p.noStroke();
+      p.textSize(11);
+      p.text("W" + this.weak, statusX, this.y - 25);
+    }
+    
+    p.pop();
+  }
+}
+</code>
+
+<code filename="game.js">
+import { CANVAS_WIDTH, CANVAS_HEIGHT, gameState, CARD_TEMPLATES, ENEMY_TEMPLATES, MAX_ENERGY, STARTING_HAND_SIZE, PLAYER_MAX_HEALTH, drawCard, shuffleArray, getGameState } from './globals.js';
+import { Player } from './player.js';
+import { Enemy } from './enemy.js';
+import { Card } from './card.js';
+import { drawStartScreen, drawPauseIndicator, drawGameOverScreen, drawBattleUI, drawRewardScreen } from './game_screens.js';
+import game_testing_controller from './automated_testing_controller.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+  // Initialize the logs
+  p.logs = {
+    "game_info": [],
+    "player_info": [],
+    "inputs": []
+  };
+
+  // Setup function
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(60);
+    p.randomSeed(42);
+    p.textFont('Arial');
+    
+    // Initialize game state
+    resetGame();
+    
+    // Log initial game state
+    logGameInfo("Game initialized", {});
+  };
+
+  // Draw function
+  p.draw = function() {
+    p.background(30, 30, 40);
+    
+    // Update animations
+    updateAnimations();
+    
+    // Handle different game phases
+    switch (gameState.gamePhase) {
+      case "START":
+        drawStartScreen(p);
+        break;
+      case "PLAYING":
+        drawPlayingScreen();
+        break;
+      case "PAUSED":
+        drawPlayingScreen();
+        drawPauseIndicator(p);
+        break;
+      case "GAME_OVER_WIN":
+        drawPlayingScreen();
+        drawGameOverScreen(p, true);
+        break;
+      case "GAME_OVER_LOSE":
+        drawPlayingScreen();
+        drawGameOverScreen(p, false);
+        break;
+    }
+    
+    // Draw animations
+    drawAnimations();
+    
+    // Handle automated testing if not in HUMAN mode
+    if (gameState.gamePhase === "PLAYING" && gameState.controlMode !== "HUMAN") {
+      const testAction = window.game_testing_controller(gameState);
+      if (testAction !== null) {
+        handleTestAction(testAction);
+      }
+    }
+  };
+
+  // Function to update animations
+  function updateAnimations() {
+    gameState.animations = gameState.animations.filter(anim => {
+      anim.update();
+      return !anim.isDone();
+    });
+  }
+
+  // Function to draw animations
+  function drawAnimations() {
+    gameState.animations.forEach(anim => {
+      anim.draw(p);
+    });
+  }
+
+  // Function to add damage number animation
+  function addDamageNumber(x, y, value, color = [255, 50, 50]) {
+    gameState.animations.push({
+      x: x,
+      y: y,
+      value: value,
+      color: color,
+      life: 60,
+      update: function() {
+        this.y -= 2;
+        this.life--;
+      },
+      isDone: function() {
+        return this.life <= 0;
+      },
+      draw: function(p) {
+        p.push();
+        p.fill(this.color[0], this.color[1], this.color[2], (this.life / 60) * 255);
+        p.textAlign(p.CENTER, p.CENTER);
+        p.textSize(24);
+        p.strokeWeight(2);
+        p.stroke(0, 0, 0, (this.life / 60) * 200);
+        p.text(this.value, this.x, this.y);
+        p.pop();
+      }
+    });
+  }
+  
+  // Function to add effectiveness text
+  function addEffectivenessText(x, y, text, color) {
+    gameState.animations.push({
+      x: x,
+      y: y,
+      text: text,
+      color: color,
+      life: 60,
+      update: function() {
+        this.y -= 1.5;
+        this.life--;
+      },
+      isDone: function() {
+        return this.life <= 0;
+      },
+      draw: function(p) {
+        p.push();
+        p.fill(this.color[0], this.color[1], this.color[2], (this.life / 60) * 255);
+        p.textAlign(p.CENTER, p.CENTER);
+        p.textSize(18);
+        p.textStyle(p.BOLD);
+        p.strokeWeight(3);
+        p.stroke(0, 0, 0, (this.life / 60) * 200);
+        p.text(this.text, this.x, this.y);
+        p.pop();
+      }
+    });
+  }
+
+  // Function to add block gained animation
+  function addBlockNumber(x, y, value) {
+    addDamageNumber(x, y, "+" + value, [100, 180, 255]);
+  }
+
+  // Function to add attack animation from enemy to player
+  function addEnemyAttackAnimation(fromX, fromY, toX, toY, damage) {
+    const duration = 15;
+    gameState.animations.push({
+      x: fromX,
+      y: fromY,
+      targetX: toX,
+      targetY: toY,
+      damage: damage,
+      life: duration,
+      maxLife: duration,
+      update: function() {
+        const progress = 1 - (this.life / this.maxLife);
+        this.x = fromX + (toX - fromX) * progress;
+        this.y = fromY + (toY - fromY) * progress;
+        this.life--;
+      },
+      isDone: function() {
+        return this.life <= 0;
+      },
+      draw: function(p) {
+        p.push();
+        const alpha = (this.life / this.maxLife) * 255;
+        p.fill(255, 50, 50, alpha);
+        p.noStroke();
+        p.ellipse(this.x, this.y, 20, 20);
+        
+        // Draw sword slash effect
+        p.stroke(255, 100, 100, alpha);
+        p.strokeWeight(4);
+        p.line(this.x - 15, this.y - 15, this.x + 15, this.y + 15);
+        p.line(this.x + 15, this.y - 15, this.x - 15, this.y + 15);
+        p.pop();
+      }
+    });
+  }
+
+  // Function to add card play animation
+  function addCardPlayAnimation(fromX, fromY, toX, toY, card) {
+    const duration = 20;
+    gameState.animations.push({
+      x: fromX,
+      y: fromY,
+      targetX: toX,
+      targetY: toY,
+      card: card,
+      life: duration,
+      maxLife: duration,
+      update: function() {
+        const progress = 1 - (this.life / this.maxLife);
+        this.x = fromX + (toX - fromX) * progress;
+        this.y = fromY + (toY - fromY) * progress;
+        this.life--;
+      },
+      isDone: function() {
+        return this.life <= 0;
+      },
+      draw: function(p) {
+        p.push();
+        const alpha = (this.life / this.maxLife) * 255;
+        p.tint(255, alpha);
+        this.card.draw(p, this.x - 55, this.y - 60, false);
+        p.pop();
+      }
+    });
+  }
+
+  // Function to draw the playing screen
+  function drawPlayingScreen() {
+    // Draw background
+    p.background(30, 30, 40);
+    
+    // Draw player
+    if (gameState.player) {
+      gameState.player.draw(p);
+      
+      // Log player info occasionally
+      if (p.frameCount % 30 === 0) {
+        logPlayerInfo();
+      }
+    }
+    
+    // Draw current enemy
+    if (gameState.currentEnemy) {
+      gameState.currentEnemy.draw(p);
+    }
+    
+    // Draw UI elements
+    drawBattleUI(p);
+    
+    // Draw hand
+    drawHand();
+    
+    // Draw reward screen if in reward state
+    if (gameState.battleState === "REWARD") {
+      drawRewardScreen(p);
+    }
+  }
+
+  // Function to draw the player's hand
+  function drawHand() {
+    const handSize = gameState.hand.length;
+    if (handSize === 0) return;
+    
+    const cardWidth = 110;
+    const spacing = Math.min(cardWidth + 10, (CANVAS_WIDTH - cardWidth) / (handSize + 1));
+    const startX = (CANVAS_WIDTH - (spacing * (handSize - 1) + cardWidth)) / 2;
+    const baseY = CANVAS_HEIGHT - 180;
+    
+    for (let i = 0; i < handSize; i++) {
+      const x = startX + i * spacing;
+      let y = baseY;
+      
+      // Raise the selected card
+      if (i === gameState.selectedCardIndex) {
+        y -= 30;
+      }
+      
+      // Dim cards that can't be played due to energy
+      const canPlay = gameState.hand[i].energy <= gameState.energy && gameState.turn === "PLAYER";
+      p.push();
+      if (!canPlay) {
+        p.tint(255, 150);
+      }
+      
+      gameState.hand[i].draw(p, x, y, i === gameState.selectedCardIndex);
+      p.pop();
+    }
+  }
+
+  // Function to reset the game
+  function resetGame() {
+    // Create player
+    gameState.player = new Player();
+    
+    // Reset game state
+    gameState.gamePhase = "START";
+    gameState.enemies = createEnemies();
+    gameState.currentEnemyIndex = 0;
+    gameState.currentEnemy = gameState.enemies[0];
+    gameState.totalEnemies = gameState.enemies.length;
+    gameState.deck = createStarterDeck();
+    gameState.hand = [];
+    gameState.drawPile = [...gameState.deck];
+    gameState.discardPile = [];
+    gameState.energy = MAX_ENERGY;
+    gameState.turn = "PLAYER";
+    gameState.selectedCardIndex = 0;
+    gameState.viewingPile = null;
+    gameState.battleState = "SELECT_CARD";
+    gameState.availableRewards = [];
+    gameState.selectedRewardIndex = 0;
+    gameState.battleCount = 0;
+    gameState.animations = [];
+    
+    // Shuffle the draw pile
+    shuffleArray(gameState.drawPile);
+    
+    // Log game reset
+    logGameInfo("Game reset", {});
+  }
+
+  // Function to start the game
+  function startGame() {
+    gameState.gamePhase = "PLAYING";
+    startBattle();
+    
+    // Log game start
+    logGameInfo("Game started", {});
+  }
+
+  // Function to start a battle
+  function startBattle() {
+    // Reset battle state
+    gameState.turn = "PLAYER";
+    gameState.energy = MAX_ENERGY;
+    gameState.hand = [];
+    gameState.battleState = "SELECT_CARD";
+    
+    // Move all cards back to draw pile
+    gameState.drawPile = [...gameState.deck];
+    gameState.discardPile = [];
+    shuffleArray(gameState.drawPile);
+    
+    // Draw starting hand
+    drawCard(gameState, STARTING_HAND_SIZE);
+    
+    // Log battle start
+    logGameInfo("Battle started", { enemyName: gameState.currentEnemy.name });
+  }
+
+  // Function to create starter deck
+  function createStarterDeck() {
+    const starterDeck = [];
+    
+    // Add 5 Strikes
+    for (let i = 0; i < 5; i++) {
+      starterDeck.push(new Card(CARD_TEMPLATES.find(t => t.id === "strike")));
+    }
+    
+    // Add 4 Defends
+    for (let i = 0; i < 4; i++) {
+      starterDeck.push(new Card(CARD_TEMPLATES.find(t => t.id === "defend")));
+    }
+    
+    // Add 1 Bash
+    starterDeck.push(new Card(CARD_TEMPLATES.find(t => t.id === "bash")));
+    
+    return starterDeck;
+  }
+
+  // Function to create enemies with progressive difficulty
+  // 6 Levels, 3 Battles each = 18 Battles
+  function createEnemies() {
+    const enemies = [];
+    
+    // Pools for difficulty levels
+    const easyPool = ['slime', 'cultist'];
+    const mediumPool = ['thief', 'jaw_worm'];
+    const hardPool = ['thief', 'jaw_worm', 'cultist']; // Scaled up versions
+    
+    // Level 1: Easy (Battles 1-3)
+    for (let i = 0; i < 3; i++) {
+      const enemyId = easyPool[Math.floor(p.random(easyPool.length))];
+      enemies.push(createScaledEnemy(ENEMY_TEMPLATES.find(e => e.id === enemyId), 0));
+    }
+    
+    // Level 2: Easy (Battles 4-6)
+    for (let i = 0; i < 3; i++) {
+      const enemyId = easyPool[Math.floor(p.random(easyPool.length))];
+      enemies.push(createScaledEnemy(ENEMY_TEMPLATES.find(e => e.id === enemyId), 1));
+    }
+    
+    // Level 3: Medium (Battles 7-9)
+    for (let i = 0; i < 3; i++) {
+      const enemyId = mediumPool[Math.floor(p.random(mediumPool.length))];
+      enemies.push(createScaledEnemy(ENEMY_TEMPLATES.find(e => e.id === enemyId), 3));
+    }
+    
+    // Level 4: Medium (Battles 10-12)
+    for (let i = 0; i < 3; i++) {
+      const enemyId = mediumPool[Math.floor(p.random(mediumPool.length))];
+      enemies.push(createScaledEnemy(ENEMY_TEMPLATES.find(e => e.id === enemyId), 4));
+    }
+    
+    // Level 5: Hard (Battles 13-15)
+    for (let i = 0; i < 3; i++) {
+      const enemyId = hardPool[Math.floor(p.random(hardPool.length))];
+      enemies.push(createScaledEnemy(ENEMY_TEMPLATES.find(e => e.id === enemyId), 6));
+    }
+    
+    // Level 6: Hard (Battles 16-18)
+    for (let i = 0; i < 2; i++) {
+      const enemyId = hardPool[Math.floor(p.random(hardPool.length))];
+      enemies.push(createScaledEnemy(ENEMY_TEMPLATES.find(e => e.id === enemyId), 8));
+    }
+    
+    // Final Boss (Battle 18)
+    const bossTemplate = ENEMY_TEMPLATES.find(e => e.id === "boss");
+    enemies.push(new Enemy(bossTemplate));
+    
+    return enemies;
+  }
+
+  // Function to create a scaled enemy based on progression
+  function createScaledEnemy(template, difficultyLevel) {
+    // Create a copy of the template
+    const scaledTemplate = JSON.parse(JSON.stringify(template));
+    
+    // Restore element reference (JSON.parse/stringify breaks object references)
+    // We need to find the matching element from the original template or reassign
+    const originalTemplate = ENEMY_TEMPLATES.find(e => e.id === template.id);
+    scaledTemplate.element = originalTemplate.element;
+
+    // Apply scaling factor based on difficulty level
+    // Increase health and damage by 10% per difficulty level
+    const scaleFactor = 1 + (difficultyLevel * 0.1);
+    
+    scaledTemplate.health = Math.floor(template.health * scaleFactor);
+    scaledTemplate.maxHealth = Math.floor(template.maxHealth * scaleFactor);
+    scaledTemplate.attackDamage = Math.floor(template.attackDamage * scaleFactor);
+    
+    if (template.heavyAttackDamage) {
+      scaledTemplate.heavyAttackDamage = Math.floor(template.heavyAttackDamage * scaleFactor);
+    }
+    
+    return new Enemy(scaledTemplate);
+  }
+
+  // Function to play a card
+  function playCard(cardIndex) {
+    if (cardIndex < 0 || cardIndex >= gameState.hand.length) return;
+    
+    const card = gameState.hand[cardIndex];
+    
+    // Check if player has enough energy
+    if (card.energy > gameState.energy) return;
+    
+    // Calculate card position for animation
+    const handSize = gameState.hand.length;
+    const cardWidth = 110;
+    const spacing = Math.min(cardWidth + 10, (CANVAS_WIDTH - cardWidth) / (handSize + 1));
+    const startX = (CANVAS_WIDTH - (spacing * (handSize - 1) + cardWidth)) / 2;
+    const fromX = startX + cardIndex * spacing + cardWidth / 2;
+    const fromY = CANVAS_HEIGHT - 180 - (cardIndex === gameState.selectedCardIndex ? 30 : 0);
+    
+    // Determine target based on card type
+    let toX, toY;
+    if (card.type.name === "Attack") {
+      toX = gameState.currentEnemy.x;
+      toY = gameState.currentEnemy.y;
+    } else {
+      toX = gameState.player.x;
+      toY = gameState.player.y;
+    }
+    
+    // Add card play animation
+    addCardPlayAnimation(fromX, fromY, toX, toY, card);
+    
+    // Use energy
+    gameState.energy -= card.energy;
+    
+    // Store old values for animation
+    const oldEnemyHealth = gameState.currentEnemy.health;
+    const oldPlayerBlock = gameState.player.block;
+    
+    // Apply card effect
+    // We pass the card itself so the effect can use the card's element
+    if (card.type.name === "Attack") {
+      card.effect(gameState.currentEnemy, gameState.player, card);
+      
+      // Show damage number
+      const damage = oldEnemyHealth - gameState.currentEnemy.health;
+      if (damage > 0) {
+        addDamageNumber(gameState.currentEnemy.x, gameState.currentEnemy.y - 20, damage);
+        gameState.currentEnemy.hitFlash = 10;
+        
+        // Show effectiveness text
+        if (gameState.currentEnemy.lastHitEffectiveness === "SUPER") {
+            addEffectivenessText(gameState.currentEnemy.x, gameState.currentEnemy.y - 50, "SUPER EFFECTIVE!", [255, 215, 0]);
+        } else if (gameState.currentEnemy.lastHitEffectiveness === "RESIST") {
+            addEffectivenessText(gameState.currentEnemy.x, gameState.currentEnemy.y - 50, "RESISTED", [150, 150, 150]);
+        }
+      }
+    } else {
+      card.effect(gameState.player, gameState, card);
+      // Show block gained
+      const blockGained = gameState.player.block - oldPlayerBlock;
+      if (blockGained > 0) {
+        addBlockNumber(gameState.player.x, gameState.player.y - 20, blockGained);
+      }
+    }
+    
+    // Move card to discard pile
+    gameState.discardPile.push(card);
+    gameState.hand.splice(cardIndex, 1);
+    
+    // Update selected card index
+    if (gameState.selectedCardIndex >= gameState.hand.length) {
+      gameState.selectedCardIndex = Math.max(0, gameState.hand.length - 1);
+    }
+    
+    // Check if enemy is defeated
+    if (gameState.currentEnemy.health <= 0) {
+      handleEnemyDefeated();
+    }
+  }
+
+  // Function to handle enemy being defeated
+  function handleEnemyDefeated() {
+    gameState.battleCount++;
+    
+    // Restore player health after winning battle (25% of max health)
+    const healthRestore = Math.floor(gameState.player.maxHealth * 0.25);
+    gameState.player.health = Math.min(gameState.player.maxHealth, gameState.player.health + healthRestore);
+    
+    // Show health restoration animation
+    addDamageNumber(gameState.player.x, gameState.player.y - 20, "+" + healthRestore, [60, 220, 120]);
+    
+    // Check if all enemies are defeated
+    if (gameState.currentEnemyIndex === gameState.totalEnemies - 1) {
+      // Player won the game
+      gameState.gamePhase = "GAME_OVER_WIN";
+      logGameInfo("Game over - Win", { battlesWon: gameState.battleCount });
+    } else {
+      // Show rewards
+      gameState.battleState = "REWARD";
+      generateRewards();
+    }
+  }
+
+  // Function to generate card rewards
+  function generateRewards() {
+    gameState.availableRewards = [];
+    gameState.selectedRewardIndex = 0;
+    
+    // Get 3 random cards from templates
+    const usedIndices = new Set();
+    
+    while (gameState.availableRewards.length < 3) {
+      const randomIndex = Math.floor(p.random(CARD_TEMPLATES.length));
+      
+      if (!usedIndices.has(randomIndex)) {
+        usedIndices.add(randomIndex);
+        gameState.availableRewards.push(new Card(CARD_TEMPLATES[randomIndex]));
+      }
+    }
+  }
+
+  // Function to select a reward
+  function selectReward(index) {
+    if (index < 0 || index >= gameState.availableRewards.length) return;
+    
+    // Add selected card to deck
+    const selectedCard = gameState.availableRewards[index];
+    gameState.deck.push(selectedCard);
+    
+    // Move to next enemy
+    gameState.currentEnemyIndex++;
+    gameState.currentEnemy = gameState.enemies[gameState.currentEnemyIndex];
+    
+    // Start next battle
+    startBattle();
+  }
+
+  // Function to end player turn
+  function endPlayerTurn() {
+    if (gameState.turn !== "PLAYER") return;
+    
+    // Move hand to discard pile
+    gameState.discardPile = [...gameState.discardPile, ...gameState.hand];
+    gameState.hand = [];
+    
+    // Start enemy turn
+    gameState.turn = "ENEMY";
+    gameState.battleState = "ENEMY_TURN";
+    
+    // Enemy takes its turn
+    setTimeout(() => {
+      if (gameState.gamePhase === "PLAYING") {
+        const oldPlayerHealth = gameState.player.health;
+        
+        // Add attack animation
+        const intention = gameState.currentEnemy.getCurrentIntention();
+        if (intention === "ATTACK" || intention === "HEAVY_ATTACK") {
+          addEnemyAttackAnimation(
+            gameState.currentEnemy.x,
+            gameState.currentEnemy.y,
+            gameState.player.x,
+            gameState.player.y,
+            intention === "HEAVY_ATTACK" ? gameState.currentEnemy.heavyAttackDamage : gameState.currentEnemy.attackDamage
+          );
+        }
+        
+        gameState.currentEnemy.takeTurn(gameState.player);
+        
+        // Show damage to player
+        const damage = oldPlayerHealth - gameState.player.health;
+        if (damage > 0) {
+          addDamageNumber(gameState.player.x, gameState.player.y - 20, damage);
+          gameState.player.hitFlash = 10;
+        }
+        
+        // Check if player is defeated
+        if (gameState.player.health <= 0) {
+          gameState.gamePhase = "GAME_OVER_LOSE";
+          logGameInfo("Game over - Lose", { battlesWon: gameState.battleCount });
+        } else {
+          // Start player turn
+          startPlayerTurn();
+        }
+      }
+    }, 1000);
+  }
+
+  // Function to start player turn
+  function startPlayerTurn() {
+    // Reset player for new turn
+    gameState.player.resetForNewTurn();
+    
+    // Reset energy
+    gameState.energy = MAX_ENERGY;
+    
+    // Draw new hand
+    drawCard(gameState, STARTING_HAND_SIZE);
+    
+    // Set turn to player
+    gameState.turn = "PLAYER";
+    gameState.battleState = "SELECT_CARD";
+    gameState.selectedCardIndex = 0;
+  }
+
+  // Key pressed handler
+  p.keyPressed = function() {
+    // Log key press
+    logInput("keyPressed", { key: p.key, keyCode: p.keyCode });
+    
+    // Handle global keys
+    if (p.keyCode === 82) { // R key - restart
+      if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") {
+        resetGame();
+      }
+    } else if (p.keyCode === 27) { // ESC key - pause
+      if (gameState.gamePhase === "PLAYING") {
+        gameState.gamePhase = "PAUSED";
+        logGameInfo("Game paused", {});
+      } else if (gameState.gamePhase === "PAUSED") {
+        gameState.gamePhase = "PLAYING";
+        logGameInfo("Game resumed", {});
+      }
+    } else if (p.keyCode === 13) { // ENTER key - start
+      if (gameState.gamePhase === "START") {
+        startGame();
+      }
+    }
+    
+    // Handle game-specific keys when playing
+    if (gameState.gamePhase === "PLAYING" && gameState.controlMode === "HUMAN") {
+      handleGameplayKey(p.keyCode);
+    }
+    
+    // Prevent default behavior for game keys
+    if ([32, 37, 38, 39, 40].includes(p.keyCode)) {
+      return false;
+    }
+  };
+
+  // Function to handle gameplay keys
+  function handleGameplayKey(keyCode) {
+    // If viewing a pile, handle pile navigation
+    if (gameState.viewingPile) {
+      if (keyCode === 37 || keyCode === 39) { // LEFT/RIGHT - switch pile view
+        gameState.viewingPile = gameState.viewingPile === "DRAW" ? "DISCARD" : "DRAW";
+      } else {
+        gameState.viewingPile = null; // Any other key closes the view
+      }
+      return;
+    }
+    
+    // If in reward state, handle reward selection
+    if (gameState.battleState === "REWARD") {
+      if (keyCode === 38) { // UP - navigate rewards
+        gameState.selectedRewardIndex = Math.max(0, gameState.selectedRewardIndex - 1);
+      } else if (keyCode === 40) { // DOWN - navigate rewards
+        gameState.selectedRewardIndex = Math.min(gameState.availableRewards.length - 1, gameState.selectedRewardIndex + 1);
+      } else if (keyCode === 32) { // SPACE - select reward
+        selectReward(gameState.selectedRewardIndex);
+      }
+      return;
+    }
+    
+    // Handle normal gameplay keys
+    if (gameState.turn === "PLAYER") {
+      if (keyCode === 38) { // UP - navigate cards
+        gameState.selectedCardIndex = Math.max(0, gameState.selectedCardIndex - 1);
+      } else if (keyCode === 40) { // DOWN - navigate cards
+        gameState.selectedCardIndex = Math.min(gameState.hand.length - 1, gameState.selectedCardIndex + 1);
+      } else if (keyCode === 32) { // SPACE - play card
+        playCard(gameState.selectedCardIndex);
+      } else if (keyCode === 90) { // Z - end turn
+        endPlayerTurn();
+      } else if (keyCode === 16) { // SHIFT - view draw pile
+        gameState.viewingPile = "DRAW";
+      } else if (keyCode === 39) { // RIGHT - view discard pile
+        gameState.viewingPile = "DISCARD";
+      }
+    }
+  }
+
+  // Function to handle automated test actions
+  function handleTestAction(keyCode) {
+    // Log test action
+    logInput("testAction", { keyCode });
+    
+    // Simulate key press
+    handleGameplayKey(keyCode);
+  }
+
+  // Function to log game info
+  function logGameInfo(status, data) {
+    p.logs.game_info.push({
+      "game_status": status,
+      "data": data,
+      "framecount": p.frameCount,
+      "timestamp": Date.now()
+    });
+  }
+
+  // Function to log player info
+  function logPlayerInfo() {
+    if (!gameState.player) return;
+    
+    p.logs.player_info.push({
+      "screen_x": gameState.player.x,
+      "screen_y": gameState.player.y,
+      "game_x": gameState.player.x,
+      "game_y": gameState.player.y,
+      "framecount": p.frameCount,
+      "timestamp": Date.now()
+    });
+  }
+
+  // Function to log input
+  function logInput(inputType, data) {
+    p.logs.inputs.push({
+      "input_type": inputType,
+      "data": data,
+      "framecount": p.frameCount,
+      "timestamp": Date.now()
+    });
+  }
+});
+
+// Set control mode function
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  
+  // Update button states
+  document.querySelectorAll('.control-button').forEach(button => {
+    button.classList.remove('active');
+  });
+  
+  if (mode === "HUMAN") {
+    document.getElementById('humanModeBtn').classList.add('active');
+  } else {
+    document.getElementById(`${mode.toLowerCase()}_ModeBtn`).classList.add('active');
+  }
+  
+  // Log control mode change
+  gameInstance.logs.game_info.push({
+    "game_status": "Control mode changed",
+    "data": { mode },
+    "framecount": gameInstance.frameCount,
+    "timestamp": Date.now()
+  });
+};
+
+// Expose the game instance globally
+window.gameInstance = gameInstance;
+// Expose level loading for dev mode
+window.loadLevel = function(levelNum) {
+  const state = window.getGameState ? window.getGameState() : (window.gameState || (window.gameInstance && window.gameInstance.gameState));
+  if (state) {
+    state.currentLevel = levelNum;
+    // Try common reset/start patterns
+    if (typeof resetGame === 'function') {
+      resetGame();
+    }
+    if (typeof startGame === 'function') {
+      startGame();
+    } else if (state.gamePhase !== undefined) {
+      state.gamePhase = "PLAYING";
+    }
+  }
+};
+</code>

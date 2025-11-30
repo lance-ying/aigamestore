@@ -13,7 +13,8 @@ export class Player {
     this.hitFlash = 0;
   }
 
-  takeDamage(amount) {
+  takeDamage(amount, sourceElement = null) {
+    // Player currently doesn't have elemental weaknesses
     if (this.vulnerable > 0) {
       amount = Math.floor(amount * 1.5);
     }

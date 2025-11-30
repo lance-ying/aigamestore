@@ -283,7 +283,8 @@ export function drawGameInfo(p) {
   p.fill(255);
   p.textAlign(p.LEFT);
 
-  const hudX = 450;
+  // Moved HUD to the left side (was 450)
+  const hudX = 20;
   let hudY = 30;
 
   // Level Info

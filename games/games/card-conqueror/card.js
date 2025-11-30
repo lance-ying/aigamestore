@@ -1,10 +1,11 @@
-import { CARD_WIDTH, CARD_HEIGHT } from './globals.js';
+import { CARD_WIDTH, CARD_HEIGHT, ELEMENTS } from './globals.js';
 
 export class Card {
   constructor(template) {
     this.id = template.id;
     this.name = template.name;
     this.type = template.type;
+    this.element = template.element || ELEMENTS.NONE;
     this.energy = template.energy;
     this.description = template.description;
     this.effect = template.effect;
@@ -39,11 +40,23 @@ export class Card {
     p.text(this.name, x + CARD_WIDTH / 2, y + 17);
     p.textStyle(p.NORMAL);
     
-    // Card art placeholder (colored rectangle based on type)
-    p.fill(typeColor[0] * 0.5, typeColor[1] * 0.5, typeColor[2] * 0.5);
+    // Card art placeholder (colored rectangle based on element if present, else type)
+    if (this.element && this.element !== ELEMENTS.NONE) {
+        p.fill(this.element.color[0], this.element.color[1], this.element.color[2]);
+    } else {
+        p.fill(typeColor[0] * 0.5, typeColor[1] * 0.5, typeColor[2] * 0.5);
+    }
     p.noStroke();
     p.rect(x + 10, y + 40, CARD_WIDTH - 20, 40, 5);
     
+    // Element Icon in center of art
+    if (this.element && this.element !== ELEMENTS.NONE) {
+        p.fill(255);
+        p.textAlign(p.CENTER, p.CENTER);
+        p.textSize(24);
+        p.text(this.element.icon, x + CARD_WIDTH / 2, y + 60);
+    }
+
     // Energy cost orb with glow - centered in the middle of the card
     p.push();
     if (isSelected) {

@@ -105,6 +105,7 @@ function restartGame(p) {
 
 function fireProjectile(p) {
   if (!gameState.canFire || !gameState.projectileBubble) return;
+  if (gameState.shotsRemaining <= 0) return;
 
   const shooter = gameState.player;
   const dir = shooter.getShootDirection();
@@ -126,6 +127,7 @@ function fireProjectile(p) {
 
   gameState.entities.push(projectile);
   gameState.canFire = false;
+  gameState.shotsRemaining--;
 
   // Move next bubble to current
   gameState.projectileBubble = gameState.nextBubble;
