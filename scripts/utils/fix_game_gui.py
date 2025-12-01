@@ -1798,7 +1798,9 @@ def build_interface():
                 model_dropdown = gr.Dropdown(
                     choices=[
                         ("Claude 4.5 Sonnet", "anthropic:claude-4.5-sonnet"),
+                        ("Claude 4.5 Haiku", "anthropic:claude-4.5-haiku"),
                         ("Gemini 3 Pro Preview", "google:gemini-3-pro-preview"),
+                        ("Gemini 2.5 Flash", "google:gemini-2.5-flash"),
                     ],
                     value="anthropic:claude-4.5-sonnet",
                     label="Model",

@@ -1,0 +1,279 @@
+<analysis>
+- Issue identified: The player's egg stack is always anchored to the global ground level. When passing over an obstacle, the eggs are not visually or physically lifted onto the obstacle. This causes the eggs at the bottom of the stack to continuously collide with the obstacle ("grinding") as the player moves forward, destroying the entire stack and eventually killing the player even if they had enough eggs to clear the height.
+- Files affected: `entities.js`
+- Changes needed:
+  1.  Modify `Player` class to track `currentGroundY`.
+  2.  In `Player.update`, detect if the player is "mounted" on an obstacle (i.e., passed the front face). If so, set `currentGroundY` to the obstacle's top.
+  3.  Update `getEggRects` and `render` to use `currentGroundY` instead of the fixed `groundY`. This ensures that once the player mounts the obstacle, the remaining eggs are safe and drawn on top of it.
+</analysis>
+
+<code filename="entities.js">
+import { GAME_OPTS, COLORS, CANVAS_HEIGHT, gameState, CANVAS_WIDTH } from './globals.js';
+import { generateID } from './utils.js';
+
+export class Entity {
+    constructor(x, y, w, h) {
+        this.id = generateID();
+        this.x = x;
+        this.y = y;
+        this.w = w;
+        this.h = h;
+        this.markedForDeletion = false;
+    }
+
+    update(dt) {}
+    render(p) {}
+}
+
+export class Player extends Entity {
+    constructor(x, y) {
+        super(x, y, GAME_OPTS.playerSize, GAME_OPTS.playerSize);
+        this.eggs = 0; // Current stack height (number of eggs)
+        this.vy = 0;
+        this.isGrounded = true;
+        this.groundY = CANVAS_HEIGHT - GAME_OPTS.groundHeight;
+        this.currentGroundY = this.groundY; // Dynamic ground level based on obstacles
+        this.feverShotTimer = 0;
+        
+        // Animation
+        this.rotation = 0;
+        this.bounce = 0;
+        
+        gameState.player = this;
+    }
+
+    update(dt) {
+        // Fever mode handling
+        if (gameState.feverMode) {
+            gameState.feverTimer--;
+            if (gameState.feverTimer <= 0) {
+                this.deactivateFever();
+            }
+            
+            // Auto-shoot in fever mode
+            this.feverShotTimer++;
+            if (this.feverShotTimer > 10) {
+                this.shoot();
+                this.feverShotTimer = 0;
+            }
+        }
+
+        // Determine current ground level (handle standing on obstacles)
+        this.currentGroundY = this.groundY;
+        
+        for (const obs of gameState.obstacles) {
+            // Check if we are "on" the obstacle.
+            // We consider the player "on" the obstacle if their left edge has passed the obstacle's left edge.
+            // This ensures we take collision damage from the front face before mounting.
+            if (this.x >= obs.x && this.x < obs.x + obs.w) {
+                // We are over this obstacle.
+                // If this obstacle is higher than our current ground (meaning smaller Y), snap to it.
+                if (obs.y < this.currentGroundY) {
+                    this.currentGroundY = obs.y;
+                }
+            }
+        }
+
+        // Calculate target Y based on egg count and current ground
+        const targetY = this.currentGroundY - (this.eggs * GAME_OPTS.eggSize) - this.h;
+        
+        // Smooth movement to target Y (gravity-like but snappy)
+        this.y = targetY; 
+        
+        // Bounce animation
+        if (this.bounce > 0) this.bounce -= 0.5;
+    }
+
+    layEgg() {
+        this.eggs++;
+        this.bounce = 5;
+    }
+
+    removeEgg(count = 1) {
+        this.eggs = Math.max(0, this.eggs - count);
+    }
+
+    resetEggs() {
+        this.eggs = 0;
+    }
+
+    activateFever() {
+        gameState.feverMode = true;
+        gameState.feverTimer = GAME_OPTS.feverDuration;
+        gameState.landings = 0; // Reset counter
+    }
+
+    deactivateFever() {
+        gameState.feverMode = false;
+    }
+
+    shoot() {
+        const p = new Projectile(this.x + this.w, this.y + this.h/2);
+        gameState.projectiles.push(p);
+    }
+    
+    getRect() {
+        return {x: this.x, y: this.y, w: this.w, h: this.h};
+    }
+    
+    // Helper to get rects of all eggs for collision
+    getEggRects() {
+        let rects = [];
+        for (let i = 0; i < this.eggs; i++) {
+            rects.push({
+                x: this.x,
+                // Egg 0 is at bottom, Egg N-1 is just below player
+                // Use currentGroundY so eggs sit on the obstacle if we are on it
+                y: this.currentGroundY - ((i + 1) * GAME_OPTS.eggSize),
+                w: GAME_OPTS.eggSize,
+                h: GAME_OPTS.eggSize,
+                index: i
+            });
+        }
+        return rects;
+    }
+
+    render(p) {
+        p.push();
+        
+        // Draw Eggs
+        for (let i = 0; i < this.eggs; i++) {
+            // Use currentGroundY for rendering too
+            const eggY = this.currentGroundY - ((i + 1) * GAME_OPTS.eggSize);
+            p.fill(COLORS.egg);
+            p.stroke(COLORS.eggBorder);
+            p.strokeWeight(2);
+            p.rect(this.x, eggY, GAME_OPTS.eggSize, GAME_OPTS.eggSize, 5);
+            
+            // Egg detail
+            p.noStroke();
+            p.fill(240);
+            p.circle(this.x + GAME_OPTS.eggSize/2, eggY + GAME_OPTS.eggSize/3, 5);
+        }
+
+        // Draw Player
+        p.translate(this.x + this.w/2, this.y + this.h/2 - this.bounce);
+        
+        // Fever rotation/shake
+        if (gameState.feverMode) {
+            p.rotate(Math.sin(p.frameCount * 0.5) * 0.1);
+            p.scale(1.1);
+        }
+        
+        p.fill(COLORS.player);
+        p.stroke(0);
+        p.strokeWeight(2);
+        p.rectMode(p.CENTER);
+        p.rect(0, 0, this.w, this.h, 8); // Rounded bird
+
+        // Face
+        p.fill(COLORS.playerFace);
+        p.noStroke();
+        // Eye
+        p.circle(5, -5, 5);
+        // Beak
+        p.fill(255, 100, 0);
+        p.triangle(10, 0, 20, 2, 10, 5);
+        // Wing
+        p.stroke(0);
+        p.strokeWeight(1);
+        p.noFill();
+        p.arc(-5, 5, 15, 10, 0, p.PI);
+
+        p.pop();
+    }
+}
+
+export class Obstacle extends Entity {
+    constructor(x, w, h, type = "WALL") {
+        // Obstacles are anchored to the ground
+        const groundY = CANVAS_HEIGHT - GAME_OPTS.groundHeight;
+        super(x, groundY - h, w, h);
+        this.type = type; // WALL, GAP (though gap is just lack of obstacle)
+        this.active = true;
+    }
+
+    update(speed) {
+        this.x -= speed;
+        if (this.x + this.w < 0) {
+            this.markedForDeletion = true;
+        }
+    }
+
+    render(p) {
+        if (!this.active) return;
+        
+        p.push();
+        p.fill(COLORS.obstacle);
+        p.stroke(COLORS.obstacleBorder);
+        p.strokeWeight(2);
+        
+        // Draw brick pattern
+        p.rect(this.x, this.y, this.w, this.h);
+        
+        p.stroke(60);
+        p.strokeWeight(1);
+        const brickH = 20;
+        for (let by = this.y; by < this.y + this.h; by += brickH) {
+            p.line(this.x, by, this.x + this.w, by);
+            // Staggered vertical lines would be nice but simple lines are ok
+        }
+        
+        p.pop();
+    }
+}
+
+export class Projectile extends Entity {
+    constructor(x, y) {
+        super(x, y, 15, 10);
+        this.speed = 15;
+    }
+    
+    update() {
+        this.x += this.speed;
+        if (this.x > CANVAS_WIDTH) this.markedForDeletion = true;
+    }
+    
+    render(p) {
+        p.push();
+        p.fill(255, 50, 50);
+        p.noStroke();
+        p.ellipse(this.x, this.y, this.w, this.h);
+        p.fill(255, 200, 50, 150);
+        p.ellipse(this.x - 5, this.y, this.w, this.h); // Trail
+        p.pop();
+    }
+}
+
+export class Particle extends Entity {
+    constructor(x, y, color) {
+        super(x, y, randomRange(2, 6), randomRange(2, 6));
+        this.vx = randomRange(-3, 3);
+        this.vy = randomRange(-5, -1);
+        this.gravity = 0.4;
+        this.color = color;
+        this.life = 60;
+    }
+    
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.vy += this.gravity;
+        this.life--;
+        if (this.life <= 0) this.markedForDeletion = true;
+    }
+    
+    render(p) {
+        p.push();
+        p.noStroke();
+        const alpha = p.map(this.life, 0, 60, 0, 255);
+        const c = p.color(this.color[0], this.color[1], this.color[2]);
+        c.setAlpha(alpha);
+        p.fill(c);
+        p.rect(this.x, this.y, this.w, this.w);
+        p.pop();
+    }
+}
+
+import { randomRange } from './utils.js';
+</code>

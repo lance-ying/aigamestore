@@ -1,0 +1,343 @@
+// entities.js
+// Classes for game objects
+
+import { 
+    CANVAS_HEIGHT, GRAVITY, TERMINAL_VELOCITY, 
+    PLAYER_SPEED, JUMP_FORCE, WALL_SLIDE_SPEED, 
+    WALL_JUMP_FORCE, SPIN_FORCE, gameState, TILE_SIZE 
+} from './globals.js';
+import { resolveMapCollision, checkAABB } from './physics.js';
+import { KEYS, isKeyDown } from './input.js';
+import { createParticles } from './particles.js';
+
+export class Player {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.width = 30;
+        this.height = 30;
+        
+        this.vx = 0;
+        this.vy = 0;
+        
+        this.onGround = false;
+        this.isWallSliding = false;
+        this.canSpin = true;
+        this.isDead = false;
+        
+        // Animation
+        this.animTimer = 0;
+    }
+    
+    tryJump() {
+        if (this.onGround) {
+            this.vy = -JUMP_FORCE;
+            this.onGround = false;
+            createParticles(this.x + this.width/2, this.y + this.height, 'jump_dust', 5);
+        } else if (this.isWallSliding) {
+            // Wall Jump
+            this.vy = -WALL_JUMP_FORCE.y;
+            // Kick off opposite to movement direction (which is currently blocked)
+            // Since this is an auto-runner, we usually run Right. 
+            // If sliding on a right wall, kick Left.
+            this.vx = -WALL_JUMP_FORCE.x; 
+            this.isWallSliding = false;
+            this.canSpin = true; // Refresh spin on wall jump
+            createParticles(this.x + this.width, this.y + this.height/2, 'jump_dust', 5);
+        }
+    }
+    
+    cancelJump() {
+        // Variable jump height
+        if (this.vy < -JUMP_FORCE / 2) {
+            this.vy = -JUMP_FORCE / 2;
+        }
+    }
+    
+    trySpin() {
+        if (!this.onGround && this.canSpin) {
+            this.vy = -SPIN_FORCE; // Small pop up / stall
+            this.canSpin = false;
+            createParticles(this.x + this.width/2, this.y + this.height/2, 'jump_dust', 8);
+        }
+    }
+    
+    update(p) {
+        if (this.isDead) return;
+
+        // Auto Run
+        // Accelerate towards max speed if not recently kicked off a wall
+        if (this.vx < PLAYER_SPEED) {
+            this.vx += 0.5;
+        }
+        
+        // Manual Fast Fall
+        if (isKeyDown(KEYS.DOWN)) {
+            this.vy += 1.0;
+        }
+        
+        // Physics
+        this.vy += GRAVITY;
+        if (this.isWallSliding && this.vy > WALL_SLIDE_SPEED) {
+            this.vy = WALL_SLIDE_SPEED; // Friction against wall
+        }
+        
+        this.vy = Math.min(this.vy, TERMINAL_VELOCITY);
+        
+        // Collision Resolution
+        resolveMapCollision(this, gameState.platforms);
+        
+        // Check bounds (death by pit)
+        if (this.y > CANVAS_HEIGHT + 100) {
+            this.die();
+        }
+        
+        // Reset flags
+        if (this.onGround) {
+            this.canSpin = true;
+        }
+        
+        // Animation Update
+        this.animTimer += 0.2;
+    }
+    
+    die() {
+        if (this.isDead) return;
+        this.isDead = true;
+        gameState.gamePhase = "GAME_OVER_LOSE";
+    }
+    
+    render(p) {
+        p.push();
+        p.translate(this.x, this.y);
+        
+        // Draw Body
+        p.fill(255, 50, 50); // Mario Red
+        p.stroke(150, 0, 0);
+        p.strokeWeight(2);
+        
+        if (this.canSpin) {
+            // Normal
+            p.rect(0, 0, this.width, this.height, 4);
+        } else {
+            // Spinning (Visual indication: smaller, rotated slightly or color shift)
+            p.push();
+            p.translate(this.width/2, this.height/2);
+            p.rotate(p.sin(p.frameCount * 0.5) * 0.5);
+            p.fill(255, 100, 100);
+            p.rect(-this.width/2, -this.height/2, this.width, this.height, 4);
+            p.pop();
+        }
+        
+        // Eyes (to indicate direction)
+        p.fill(255);
+        p.noStroke();
+        // Look in velocity direction
+        const eyeOffset = this.vx >= 0 ? 18 : 4;
+        p.rect(eyeOffset, 6, 8, 8); // White of eye
+        p.fill(0);
+        p.rect(eyeOffset + (this.vx >= 0 ? 4 : 0), 8, 4, 4); // Pupil
+        
+        p.pop();
+    }
+}
+
+export class Enemy {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.width = 30;
+        this.height = 30;
+        this.vx = -1; // Patrol left
+        this.vy = 0;
+        this.type = 'GOOMBA'; // or KOOPA
+        this.active = true;
+    }
+    
+    update(p) {
+        if (!this.active) return;
+        
+        // Simple Physics
+        this.vy += GRAVITY;
+        resolveMapCollision(this, gameState.platforms);
+        
+        // Patrol logic: Turn around at walls or edges (simplified to walls for now)
+        if (this.vx === 0) {
+            // If stopped by wall, probably need to flip velocity, 
+            // but resolveMapCollision sets vx to 0. We need to store direction intent.
+            // For simplicity in this runner, enemies just walk left.
+        }
+        
+        // Player Collision
+        if (gameState.player && !gameState.player.isDead) {
+            if (checkAABB(this, gameState.player)) {
+                // Check if player jumped on top
+                const playerBottom = gameState.player.y + gameState.player.height;
+                const enemyTop = this.y;
+                const overlapY = playerBottom - enemyTop;
+                
+                // If player is falling and is above enemy center
+                if (gameState.player.vy > 0 && gameState.player.y < this.y + this.height/2) {
+                    // Stomp!
+                    this.die();
+                    gameState.player.vy = -JUMP_FORCE * 0.7; // Bounce
+                    gameState.score += 50;
+                    createParticles(this.x + this.width/2, this.y + this.height/2, 'enemy_death', 10);
+                } else {
+                    // Player hurt
+                    gameState.player.die();
+                }
+            }
+        }
+        
+        // Despawn if off screen left significantly
+        if (this.x < gameState.cameraX - 100) {
+            this.active = false;
+        }
+    }
+    
+    die() {
+        this.active = false;
+    }
+    
+    render(p) {
+        if (!this.active) return;
+        p.push();
+        p.translate(this.x, this.y);
+        
+        // Goomba-like visuals
+        p.fill(139, 69, 19); // Brown
+        p.triangle(this.width/2, 0, 0, this.height, this.width, this.height);
+        
+        // Eyes
+        p.fill(255);
+        p.circle(10, 15, 8);
+        p.circle(20, 15, 8);
+        p.fill(0);
+        p.circle(10, 15, 3);
+        p.circle(20, 15, 3);
+        
+        p.pop();
+    }
+}
+
+export class Coin {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.width = 20;
+        this.height = 20;
+        this.collected = false;
+        this.rot = 0;
+    }
+    
+    update(p) {
+        if (this.collected) return;
+        
+        this.rot += 0.1;
+        
+        // Check collision
+        // Center check
+        const cx = this.x + this.width/2;
+        const cy = this.y + this.height/2;
+        
+        if (gameState.player && 
+            checkAABB({x: this.x, y: this.y, width: this.width, height: this.height}, gameState.player)) {
+            this.collected = true;
+            gameState.score += 10;
+            createParticles(cx, cy, 'coin_sparkle', 8);
+        }
+    }
+    
+    render(p) {
+        if (this.collected) return;
+        
+        p.push();
+        p.translate(this.x + this.width/2, this.y + this.height/2);
+        p.rotate(this.rot); // Spin effect (only works if shape is not perfectly round)
+        
+        // Draw Coin
+        p.fill(255, 215, 0); // Gold
+        p.stroke(200, 150, 0);
+        p.strokeWeight(2);
+        // Ellipse that changes width to simulate 3D spin
+        p.ellipse(0, 0, this.width * Math.abs(Math.cos(this.rot)), this.height);
+        
+        p.pop();
+    }
+}
+
+export class Platform {
+    constructor(x, y, w, h, type = 'GROUND') {
+        this.x = x;
+        this.y = y;
+        this.width = w;
+        this.height = h;
+        this.type = type;
+    }
+    
+    render(p) {
+        p.push();
+        if (this.type === 'GROUND') {
+            p.fill(100, 200, 100);
+            p.stroke(50, 150, 50);
+            p.rect(this.x, this.y, this.width, this.height);
+            // Dirt under grass
+            p.fill(139, 69, 19);
+            p.noStroke();
+            p.rect(this.x, this.y + 5, this.width, this.height - 5);
+        } else if (this.type === 'BRICK') {
+            p.fill(200, 100, 50);
+            p.stroke(100, 50, 25);
+            p.strokeWeight(2);
+            p.rect(this.x, this.y, this.width, this.height);
+            // Brick pattern
+            p.line(this.x, this.y + this.height/2, this.x + this.width, this.y + this.height/2);
+            p.line(this.x + this.width/2, this.y, this.x + this.width/2, this.y + this.height/2);
+        } else {
+            p.fill(100);
+            p.rect(this.x, this.y, this.width, this.height);
+        }
+        p.pop();
+    }
+}
+
+export class GoalPost {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.width = 10;
+        this.height = 200;
+        this.reached = false;
+    }
+    
+    update(p) {
+        if (this.reached) return;
+        
+        if (gameState.player && checkAABB(this, gameState.player)) {
+            this.reached = true;
+            gameState.gamePhase = "GAME_OVER_WIN";
+            gameState.score += 500;
+        }
+    }
+    
+    render(p) {
+        p.push();
+        p.translate(this.x, this.y);
+        
+        // Pole
+        p.fill(200);
+        p.noStroke();
+        p.rect(0, 0, this.width, this.height);
+        
+        // Knob
+        p.fill(255, 215, 0);
+        p.circle(this.width/2, 0, 15);
+        
+        // Flag
+        p.fill(255, 0, 0);
+        p.triangle(this.width, 10, this.width + 40, 30, this.width, 50);
+        
+        p.pop();
+    }
+}

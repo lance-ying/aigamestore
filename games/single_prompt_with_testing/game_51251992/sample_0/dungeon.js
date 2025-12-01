@@ -1,0 +1,96 @@
+// Procedural Dungeon Generation
+import Matter from 'https://cdn.jsdelivr.net/npm/matter-js@0.19.0/+esm';
+const { Bodies, World } = Matter;
+import { gameState, TILE_SIZE, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { Wall, Enemy, Collectible } from './entities.js';
+
+export function initializeDungeon(p) {
+  // Reset generation state
+  gameState.dungeonY = 0;
+  gameState.highestY = 0;
+  
+  // Create starting walls (border)
+  generateChunk(p, 0);
+  generateChunk(p, -CANVAS_HEIGHT); // Generate one screen ahead
+}
+
+export function updateDungeon(p) {
+  if (!gameState.player) return;
+  
+  const playerY = gameState.player.body.position.y;
+  
+  // Track progress
+  if (playerY < gameState.highestY) {
+    gameState.highestY = playerY;
+    gameState.score += 1; // Score for distance
+  }
+  
+  // Generate new chunks as player moves up
+  // dungeonY is the top-most Y coordinate generated
+  if (playerY < gameState.dungeonY + CANVAS_HEIGHT) {
+    const nextChunkY = gameState.dungeonY - CANVAS_HEIGHT;
+    generateChunk(p, nextChunkY);
+    gameState.dungeonY = nextChunkY;
+    
+    // Cleanup old entities far below
+    cleanupDungeon(playerY + CANVAS_HEIGHT * 2);
+  }
+}
+
+function generateChunk(p, startY) {
+  const h = CANVAS_HEIGHT;
+  const w = CANVAS_WIDTH;
+  
+  // 1. Create Borders
+  const leftWall = new Wall(p, 10, startY + h/2, 20, h);
+  const rightWall = new Wall(p, w - 10, startY + h/2, 20, h);
+  gameState.walls.push(leftWall, rightWall);
+  
+  // 2. Procedural Obstacles
+  const rows = 5;
+  const cols = 8;
+  const gridW = w / cols;
+  const gridH = h / rows;
+  
+  for (let r = 0; r < rows; r++) {
+    for (let c = 1; c < cols - 1; c++) {
+      const x = c * gridW + gridW/2;
+      const y = startY + r * gridH + gridH/2;
+      
+      // Randomly place obstacles or enemies
+      const rand = p.random();
+      
+      if (rand < 0.15) {
+        // Wall block
+        const block = new Wall(p, x, y, 30, 30);
+        gameState.walls.push(block);
+      } else if (rand < 0.20) {
+        // Enemy
+        const enemy = new Enemy(p, x, y);
+        gameState.entities.push(enemy);
+      } else if (rand < 0.22) {
+        // Loot
+        const loot = new Collectible(p, x, y);
+        gameState.entities.push(loot);
+      }
+    }
+  }
+}
+
+function cleanupDungeon(thresholdY) {
+  // Remove walls below threshold
+  for (let i = gameState.walls.length - 1; i >= 0; i--) {
+    if (gameState.walls[i].body.position.y > thresholdY) {
+      gameState.walls[i].destroy();
+      gameState.walls.splice(i, 1);
+    }
+  }
+  
+  // Remove entities below threshold
+  for (let i = gameState.entities.length - 1; i >= 0; i--) {
+    if (gameState.entities[i].body && gameState.entities[i].body.position.y > thresholdY) {
+      gameState.entities[i].destroy();
+      gameState.entities.splice(i, 1);
+    }
+  }
+}

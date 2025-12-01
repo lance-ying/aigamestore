@@ -1,0 +1,1762 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+can you improve the UI, right now the player and enemy is too low, we can move tha tupwards, and the text for the defend and attacking isn't high enough, make sure the placement of every object is correct and increase the canvas size if needed
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Spire Climber</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; font-family: sans-serif; transition: background 0.2s; }
+      .control-button:hover { background: #555; }
+      .control-button.active { background: #007bff; }
+      h1 { color: #eee; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin-bottom: 5px; text-shadow: 2px 2px 4px #000; }
+      .info-text { color: #aaa; font-family: sans-serif; max-width: 600px; text-align: center; margin-bottom: 5px; font-size: 14px; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 10px;">
+      <h1>Spire Climber</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="setMode('HUMAN', this)">Human Mode</button>
+        <button id="test1ModeBtn" class="control-button" onclick="setMode('TEST_1', this)">TEST 1 (Basic)</button>
+        <button id="test2ModeBtn" class="control-button" onclick="setMode('TEST_2', this)">TEST 2 (Smart)</button>
+      </div>
+      <p class="info-text">Arrow Keys: Navigate/Select | Space/Enter: Confirm/Play | Z: End Turn</p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script type="module" src="game.js"></script>
+    <script>
+      function setMode(mode, btn) {
+        if(window.setControlMode) window.setControlMode(mode);
+        document.querySelectorAll('.control-button').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+      }
+    </script>
+  </body>
+</html>
+</file>
+
+<file name="automated_testing_controller.js">
+/**
+ * Automated testing logic.
+ */
+import { gameState } from './globals.js';
+import { getNextAvailableNodes } from './map.js';
+
+export function get_automated_testing_action(gs) {
+    const mode = gs.controlMode;
+    if (mode === "HUMAN") return null;
+
+    if (mode === "TEST_1") {
+        return test1Strategy(gs);
+    } else if (mode === "TEST_2") {
+        return test2Strategy(gs);
+    }
+    return null;
+}
+
+// Basic Traversal Test
+function test1Strategy(gs) {
+    if (gs.gamePhase === "START") return { keyCode: 13 }; // Enter
+    
+    if (gs.gamePhase === "MAP") {
+        return { keyCode: 13 }; // Just press Enter to go to pre-selected next node
+    }
+    
+    if (gs.gamePhase === "BATTLE") {
+        if (gs.combat.phase === "PLAYER_TURN") {
+            // If energy > 0 and cards available, play first card
+            if (gs.combat.energy > 0 && gs.combat.hand.length > 0) {
+                return { keyCode: 32 }; // Play
+            } else {
+                return { keyCode: 90 }; // End Turn
+            }
+        }
+    }
+    
+    if (gs.gamePhase === "REWARD") return { keyCode: 13 }; // Take all
+    if (gs.gamePhase === "CAMPFIRE") return { keyCode: 13 }; // Rest
+    
+    return null;
+}
+
+// Smart Survival Test
+function test2Strategy(gs) {
+    if (gs.gamePhase === "START") return { keyCode: 13 };
+    if (gs.gamePhase === "MAP") return { keyCode: 13 };
+    
+    if (gs.gamePhase === "BATTLE") {
+        if (gs.combat.phase === "PLAYER_TURN") {
+            const hand = gs.combat.hand;
+            if (gs.combat.energy === 0 || hand.length === 0) return { keyCode: 90 };
+            
+            // Analyze intent
+            const enemy = gs.combat.enemies[0];
+            const isAttacking = enemy && enemy.nextMove && enemy.nextMove.type.includes('attack');
+            
+            // Find Defend cards
+            let defendIndex = -1;
+            let attackIndex = -1;
+            
+            hand.forEach((c, i) => {
+                if (c.data.id === 'defend' || c.data.block > 0) defendIndex = i;
+                if (c.data.type === 'ATTACK') attackIndex = i;
+            });
+            
+            // Selection logic
+            let targetIndex = 0;
+            if (isAttacking && defendIndex !== -1) {
+                targetIndex = defendIndex;
+            } else if (attackIndex !== -1) {
+                targetIndex = attackIndex;
+            } else {
+                targetIndex = 0; // Fallback
+            }
+            
+            // Move cursor
+            if (gs.combat.selectedCardIndex < targetIndex) return { keyCode: 39 };
+            if (gs.combat.selectedCardIndex > targetIndex) return { keyCode: 37 };
+            
+            // Play
+            return { keyCode: 32 };
+        }
+    }
+    
+    if (gs.gamePhase === "REWARD") return { keyCode: 13 };
+    if (gs.gamePhase === "CAMPFIRE") return { keyCode: 13 };
+    
+    return null;
+}
+
+window.get_automated_testing_action = get_automated_testing_action;
+</file>
+
+<file name="globals.js">
+/**
+ * Global constants and state management for Spire Climber.
+ */
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+export const COLORS = {
+    BACKGROUND: [30, 30, 40],
+    UI_BG: [20, 20, 30, 200],
+    TEXT: [230, 230, 230],
+    ACCENT: [100, 200, 255],
+    HIGHLIGHT: [255, 215, 0],
+    HP_BAR_BG: [50, 0, 0],
+    HP_BAR_FILL: [200, 30, 30],
+    BLOCK_ICON: [50, 100, 200],
+    ENERGY_ICON: [255, 150, 50],
+    CARD_BG: [50, 50, 60],
+    CARD_ATTACK: [100, 40, 40],
+    CARD_SKILL: [40, 40, 100],
+    CARD_POWER: [100, 40, 100],
+    ENEMY: [200, 50, 50],
+    PLAYER: [50, 200, 100]
+};
+
+// Initial Game State
+export const gameState = {
+    gamePhase: "START", // START, MAP, BATTLE, REWARD, CAMPFIRE, GAME_OVER_WIN, GAME_OVER_LOSE, PAUSED
+    controlMode: "HUMAN",
+    frameCount: 0,
+    lastFrameTime: 0,
+    deltaTime: 0,
+    
+    // Player Progression
+    player: null, // Will be instance of Player
+    deck: [],     // Master deck (array of CardData)
+    relics: [],   // Array of Relic objects
+    gold: 0,
+    floor: 0,
+    
+    // Map State
+    map: null,    // Map structure
+    currentNode: null, // Current position
+    mapSelectionIndex: 0, // For navigating next nodes
+    
+    // Combat State
+    combat: {
+        turn: 0,
+        energy: 3,
+        maxEnergy: 3,
+        hand: [],         // Current cards in hand (Card instances)
+        drawPile: [],     // Cards in draw pile
+        discardPile: [],  // Cards in discard pile
+        exhaustPile: [],  // Cards removed from combat
+        enemies: [],      // Array of Enemy instances
+        selectedCardIndex: 0, // Index in hand
+        targetIndex: 0,   // Index in enemies array (if we had multi-target, simplified to 0 usually)
+        message: "",      // "Player Turn", "Enemy Turn"
+        phase: "PLAYER_TURN" // PLAYER_TURN, ENEMY_TURN, RESOLVING
+    },
+    
+    // Reward State
+    rewards: [],
+    rewardSelectionIndex: 0,
+    
+    // Campfire State
+    campfireOptions: [],
+    campfireSelectionIndex: 0,
+
+    // Visual Effects
+    particles: [],
+    animations: []
+};
+
+// Logger function
+export function log(category, data, p) {
+    if (p && p.logs) {
+        if (!p.logs[category]) p.logs[category] = [];
+        p.logs[category].push({
+            data: data,
+            framecount: gameState.frameCount,
+            timestamp: Date.now()
+        });
+    }
+}
+
+// Expose state globally
+window.getGameState = () => gameState;
+</file>
+
+<file name="game.js">
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, log } from './globals.js';
+import { Player } from './entities.js';
+import { generateMap } from './map.js';
+import { STARTING_DECK, getCardData } from './card_definitions.js';
+import { renderUI } from './ui.js';
+import { handleInput } from './input.js';
+import { updateParticles, renderParticles } from './particles.js';
+import { get_automated_testing_action } from './automated_testing_controller.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+    
+    p.logs = { "game_info": [], "inputs": [], "player_info": [] };
+
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(60);
+        p.randomSeed(42);
+        
+        initializeGame();
+        
+        // Log start
+        log("game_info", { action: "game_start" }, p);
+    };
+
+    p.draw = function() {
+        // Time management
+        const currentTime = p.millis();
+        gameState.deltaTime = (currentTime - gameState.lastFrameTime) / 1000;
+        gameState.lastFrameTime = currentTime;
+        gameState.frameCount = p.frameCount;
+
+        // Automated Testing
+        const autoAction = get_automated_testing_action(gameState);
+        if (autoAction && p.frameCount % 10 === 0) { // Throttle inputs
+             handleKeyPress(autoAction.keyCode);
+        }
+
+        // Draw Background
+        p.background(30, 30, 40);
+        
+        // Render UI and Screens
+        renderUI(p);
+        
+        // Render Entities and Particles on top if in battle
+        if (gameState.gamePhase === "BATTLE") {
+            p.push();
+            // Translate for combat view? Already handled in render
+            
+            // Draw Player
+            gameState.player.render(p);
+            
+            // Draw Enemies
+            gameState.combat.enemies.forEach(e => {
+                if (!e.isDead) e.render(p);
+            });
+            
+            p.pop();
+        }
+        
+        updateParticles();
+        renderParticles(p);
+        
+        // Log Player Info infrequently
+        if (p.frameCount % 60 === 0 && gameState.player) {
+            log("player_info", { 
+                hp: gameState.player.currentHp, 
+                gold: gameState.gold,
+                phase: gameState.gamePhase 
+            }, p);
+        }
+    };
+
+    p.keyPressed = function() {
+        handleKeyPress(p.keyCode);
+    };
+    
+    function handleKeyPress(keyCode) {
+        log("inputs", { keyCode: keyCode }, p);
+        handleInput(p, keyCode);
+    }
+});
+
+function initializeGame() {
+    gameState.gamePhase = "START";
+    gameState.floor = 0;
+    gameState.gold = 99;
+    
+    // Create Player
+    gameState.player = new Player();
+    
+    // Create Deck
+    gameState.deck = STARTING_DECK.map(id => getCardData(id));
+    
+    // Generate Map
+    generateMap();
+}
+
+// Hook for control mode (called from HTML buttons)
+window.setControlMode = function(mode) {
+    gameState.controlMode = mode;
+    console.log("Control Mode set to:", mode);
+    // Reset game if needed or just continue
+    if (gameState.gamePhase !== "START") {
+        initializeGame();
+    }
+};
+
+window.gameInstance = gameInstance;
+</file>
+
+<file name="ui.js">
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, COLORS } from './globals.js';
+import { drawTextWrapped } from './utils.js';
+import { CARD_TYPES } from './card_definitions.js';
+
+/**
+ * UI Rendering functions.
+ */
+
+export function renderUI(p) {
+    // Top Bar (HUD)
+    if (gameState.gamePhase !== "START" && gameState.gamePhase !== "GAME_OVER_WIN" && gameState.gamePhase !== "GAME_OVER_LOSE") {
+        renderHUD(p);
+    }
+
+    switch (gameState.gamePhase) {
+        case "START": renderStartScreen(p); break;
+        case "MAP": renderMapScreen(p); break;
+        case "BATTLE": renderBattleScreen(p); break;
+        case "REWARD": renderRewardScreen(p); break;
+        case "CAMPFIRE": renderCampfireScreen(p); break;
+        case "GAME_OVER_WIN": renderGameOverScreen(p, true); break;
+        case "GAME_OVER_LOSE": renderGameOverScreen(p, false); break;
+        case "PAUSED": renderPausedScreen(p); break;
+    }
+}
+
+function renderHUD(p) {
+    p.push();
+    p.fill(COLORS.UI_BG);
+    p.noStroke();
+    p.rect(0, 0, CANVAS_WIDTH, 40);
+    
+    p.fill(COLORS.TEXT);
+    p.textSize(16);
+    p.textAlign(p.LEFT, p.CENTER);
+    
+    // HP
+    p.fill(200, 50, 50);
+    p.text(`HP: ${gameState.player.currentHp}/${gameState.player.maxHp}`, 20, 20);
+    
+    // Gold
+    p.fill(255, 215, 0);
+    p.text(`Gold: ${gameState.gold}`, 150, 20);
+    
+    // Floor
+    p.fill(200);
+    p.text(`Floor: ${gameState.floor + 1}`, 280, 20);
+    
+    p.pop();
+}
+
+function renderStartScreen(p) {
+    p.textAlign(p.CENTER, p.CENTER);
+    p.fill(COLORS.ACCENT);
+    p.textSize(40);
+    p.text("SPIRE CLIMBER", CANVAS_WIDTH/2, 100);
+    
+    p.fill(COLORS.TEXT);
+    p.textSize(16);
+    drawTextWrapped(p, "Climb the Spire. Slay the Boss. Build your Deck.", CANVAS_WIDTH/2 - 150, 160, 300, 25);
+    
+    p.fill(200);
+    p.textSize(14);
+    if (p.frameCount % 60 < 30) {
+        p.text("PRESS ENTER TO START", CANVAS_WIDTH/2, 300);
+    }
+    
+    p.textSize(12);
+    p.fill(150);
+    p.text("Arrow Keys: Navigate | Space/Enter: Select | Z: End Turn", CANVAS_WIDTH/2, 350);
+}
+
+function renderMapScreen(p) {
+    p.textAlign(p.CENTER);
+    p.fill(COLORS.TEXT);
+    p.textSize(24);
+    p.text("Map", CANVAS_WIDTH/2, 80);
+    
+    if (!gameState.map) return;
+    
+    // Draw connections first
+    p.stroke(100);
+    p.strokeWeight(2);
+    gameState.map.forEach(floor => {
+        floor.forEach(node => {
+            node.next.forEach(nextId => {
+                // Find next node object (inefficient search but fine for small map)
+                let nextNode;
+                gameState.map.forEach(f => f.forEach(n => { if(n.id === nextId) nextNode = n; }));
+                
+                if (nextNode) {
+                    p.line(node.x, node.y, nextNode.x, nextNode.y);
+                }
+            });
+        });
+    });
+    
+    // Draw Nodes
+    gameState.map.forEach(floor => {
+        floor.forEach(node => {
+            // Determine color
+            if (node === gameState.currentNode) {
+                p.fill(COLORS.PLAYER);
+                p.stroke(255);
+            } else if (node.visited) {
+                p.fill(50);
+                p.noStroke();
+            } else {
+                // Check if available
+                let isAvailable = gameState.currentNode && gameState.currentNode.next.includes(node.id);
+                
+                switch(node.type) {
+                    case 'monster': p.fill(COLORS.ENEMY); break;
+                    case 'elite': p.fill(150, 0, 0); break;
+                    case 'rest': p.fill(255, 100, 50); break;
+                    case 'boss': p.fill(100, 0, 0); break;
+                    default: p.fill(200);
+                }
+                
+                if (isAvailable) {
+                    p.stroke(COLORS.HIGHLIGHT);
+                    p.strokeWeight(2);
+                    // Selection Highlight
+                    let available = import('./map.js').then(m => m.getNextAvailableNodes()); // Async issue in sync render? 
+                    // Better: logic handles selection index
+                    // Let's just highlight based on ID matching available nodes logic from input
+                } else {
+                    p.noStroke();
+                }
+            }
+            
+            p.circle(node.x, node.y, 30);
+            
+            // Icon/Text
+            p.fill(255);
+            p.noStroke();
+            p.textSize(10);
+            let label = node.type.substring(0, 1).toUpperCase();
+            if (node.type === 'monster') label = 'M';
+            if (node.type === 'rest') label = 'R';
+            if (node.type === 'boss') label = 'B';
+            p.text(label, node.x, node.y + 4);
+        });
+    });
+
+    // Draw selection cursor for available nodes
+    // Access selection index from GameState if we are in map phase selecting
+    // NOTE: This requires fetching the available nodes list again which duplicates logic.
+    // In a full implementation, `availableNodes` would be cached in gameState.
+    
+    p.fill(COLORS.TEXT);
+    p.textSize(16);
+    p.text("Choose next room (Arrows + Enter)", CANVAS_WIDTH/2, 380);
+}
+
+function renderBattleScreen(p) {
+    // Message overlay
+    if (gameState.combat.message) {
+        p.textAlign(p.CENTER);
+        p.fill(255, 255, 255, 100);
+        p.textSize(30);
+        p.text(gameState.combat.message, CANVAS_WIDTH/2, 100);
+    }
+    
+    // Draw Energy
+    p.fill(COLORS.ENERGY_ICON);
+    p.circle(50, 320, 40);
+    p.fill(255);
+    p.textSize(20);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.text(`${gameState.combat.energy}/${gameState.player.maxEnergy}`, 50, 320);
+    p.textSize(12);
+    p.text("Energy", 50, 350);
+    
+    // Draw Cards
+    const hand = gameState.combat.hand;
+    const cardW = 80;
+    const cardH = 120;
+    const startX = 120;
+    const gap = 10;
+    
+    hand.forEach((cardInstance, index) => {
+        let x = startX + index * (cardW + gap);
+        let y = 300;
+        
+        // Highlight selection
+        if (index === gameState.combat.selectedCardIndex) {
+            y -= 20; // Pop up
+            p.stroke(COLORS.HIGHLIGHT);
+            p.strokeWeight(3);
+        } else {
+            p.stroke(0);
+            p.strokeWeight(1);
+        }
+        
+        // Card BG
+        const data = cardInstance.data;
+        if (data.type === CARD_TYPES.ATTACK) p.fill(COLORS.CARD_ATTACK);
+        else if (data.type === CARD_TYPES.SKILL) p.fill(COLORS.CARD_SKILL);
+        else p.fill(COLORS.CARD_POWER);
+        
+        p.rect(x, y, cardW, cardH, 5);
+        
+        // Cost
+        p.fill(COLORS.ENERGY_ICON);
+        p.circle(x + 10, y + 10, 15);
+        p.fill(255);
+        p.textSize(10);
+        p.text(data.cost, x + 10, y + 10);
+        
+        // Title
+        p.fill(255);
+        p.textSize(10);
+        p.textAlign(p.CENTER);
+        p.text(data.name, x + cardW/2, y + 25);
+        
+        // Desc
+        p.textSize(9);
+        p.fill(200);
+        drawTextWrapped(p, data.description, x + 5, y + 45, cardW - 10, 11);
+    });
+    
+    // Draw End Turn Hint
+    p.fill(150);
+    p.textSize(12);
+    p.textAlign(p.RIGHT);
+    p.text("Press Z to End Turn", CANVAS_WIDTH - 20, 380);
+    
+    // Draw Piles count
+    p.textAlign(p.LEFT);
+    p.text(`Draw: ${gameState.combat.drawPile.length}`, 10, 380);
+    p.text(`Discard: ${gameState.combat.discardPile.length}`, 10, 395);
+}
+
+function renderRewardScreen(p) {
+    p.textAlign(p.CENTER);
+    p.fill(COLORS.TEXT);
+    p.textSize(32);
+    p.text("Rewards", CANVAS_WIDTH/2, 80);
+    
+    let y = 150;
+    gameState.rewards.forEach((reward, index) => {
+        if (index === gameState.rewardSelectionIndex) {
+            p.fill(COLORS.HIGHLIGHT);
+            p.rect(CANVAS_WIDTH/2 - 100, y - 15, 200, 30);
+            p.fill(0);
+        } else {
+            p.fill(255);
+        }
+        
+        p.textSize(18);
+        if (reward.type === 'gold') {
+            p.text(`Gold: ${reward.amount}`, CANVAS_WIDTH/2, y);
+        } else if (reward.type === 'card_choice') {
+            p.text("Add a Card to Deck", CANVAS_WIDTH/2, y);
+        }
+        
+        y += 50;
+    });
+    
+    p.fill(150);
+    p.textSize(14);
+    p.text("Select with Arrows, Enter to Confirm", CANVAS_WIDTH/2, 350);
+}
+
+function renderCampfireScreen(p) {
+    // Background image abstract
+    p.fill(50, 20, 10);
+    p.rect(0, 40, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.fill(255, 100, 50);
+    p.circle(CANVAS_WIDTH/2, 200, 50); // Fire
+    
+    p.fill(255);
+    p.textSize(30);
+    p.text("Rest Site", CANVAS_WIDTH/2, 100);
+    
+    let options = gameState.campfireOptions;
+    let startX = CANVAS_WIDTH/2 - (options.length * 100) / 2 + 50;
+    
+    options.forEach((opt, idx) => {
+        let x = startX + idx * 100;
+        let y = 300;
+        
+        if (idx === gameState.campfireSelectionIndex) {
+            p.stroke(COLORS.HIGHLIGHT);
+            p.strokeWeight(3);
+        } else {
+            p.noStroke();
+        }
+        
+        p.fill(50);
+        p.rect(x - 40, y - 20, 80, 40);
+        
+        p.fill(255);
+        p.noStroke();
+        p.textSize(14);
+        p.text(opt.label, x, y);
+    });
+}
+
+function renderGameOverScreen(p, win) {
+    p.fill(0, 0, 0, 200);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.textAlign(p.CENTER);
+    if (win) {
+        p.fill(100, 255, 100);
+        p.textSize(48);
+        p.text("VICTORY!", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 40);
+    } else {
+        p.fill(200, 50, 50);
+        p.textSize(48);
+        p.text("GAME OVER", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 40);
+    }
+    
+    p.fill(255);
+    p.textSize(20);
+    p.text(`Floor Reached: ${gameState.floor + 1}`, CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 20);
+    
+    p.textSize(16);
+    p.fill(150);
+    p.text("Press R to Restart", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 60);
+}
+
+function renderPausedScreen(p) {
+    p.fill(0, 0, 0, 150);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.fill(255);
+    p.textSize(40);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.text("PAUSED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+}
+</file>
+
+<file name="card_definitions.js">
+/**
+ * Database of all cards in the game.
+ */
+
+export const CARD_TYPES = {
+    ATTACK: 'ATTACK',
+    SKILL: 'SKILL',
+    POWER: 'POWER'
+};
+
+export const TARGET_TYPES = {
+    ENEMY: 'ENEMY',
+    SELF: 'SELF',
+    ALL_ENEMIES: 'ALL_ENEMIES'
+};
+
+export const CARD_DATABASE = {
+    "strike": {
+        id: "strike",
+        name: "Strike",
+        type: CARD_TYPES.ATTACK,
+        cost: 1,
+        damage: 6,
+        description: "Deal 6 damage.",
+        target: TARGET_TYPES.ENEMY
+    },
+    "defend": {
+        id: "defend",
+        name: "Defend",
+        type: CARD_TYPES.SKILL,
+        cost: 1,
+        block: 5,
+        description: "Gain 5 Block.",
+        target: TARGET_TYPES.SELF
+    },
+    "bash": {
+        id: "bash",
+        name: "Bash",
+        type: CARD_TYPES.ATTACK,
+        cost: 2,
+        damage: 8,
+        vulnerable: 2,
+        description: "Deal 8 dmg. Apply 2 Vulnerable.",
+        target: TARGET_TYPES.ENEMY
+    },
+    "anger": {
+        id: "anger",
+        name: "Anger",
+        type: CARD_TYPES.ATTACK,
+        cost: 0,
+        damage: 6,
+        description: "Deal 6 damage. Add a copy of this card to your discard pile.",
+        special: "copy_self",
+        target: TARGET_TYPES.ENEMY
+    },
+    "cleave": {
+        id: "cleave",
+        name: "Cleave",
+        type: CARD_TYPES.ATTACK,
+        cost: 1,
+        damage: 8,
+        description: "Deal 8 damage to ALL enemies.",
+        target: TARGET_TYPES.ALL_ENEMIES
+    },
+    "iron_wave": {
+        id: "iron_wave",
+        name: "Iron Wave",
+        type: CARD_TYPES.ATTACK,
+        cost: 1,
+        damage: 5,
+        block: 5,
+        description: "Gain 5 Block. Deal 5 damage.",
+        target: TARGET_TYPES.ENEMY
+    },
+    "shrug": {
+        id: "shrug",
+        name: "Shrug It Off",
+        type: CARD_TYPES.SKILL,
+        cost: 1,
+        block: 8,
+        draw: 1,
+        description: "Gain 8 Block. Draw 1 card.",
+        target: TARGET_TYPES.SELF
+    },
+    "perfect_strike": {
+        id: "perfect_strike",
+        name: "Perfect Strike",
+        type: CARD_TYPES.ATTACK,
+        cost: 2,
+        damage: 15, // Simplified: flat high damage
+        description: "Deal 15 damage.",
+        target: TARGET_TYPES.ENEMY
+    },
+    "pommel": {
+        id: "pommel",
+        name: "Pommel Strike",
+        type: CARD_TYPES.ATTACK,
+        cost: 1,
+        damage: 9,
+        draw: 1,
+        description: "Deal 9 damage. Draw 1 card.",
+        target: TARGET_TYPES.ENEMY
+    }
+};
+
+export const STARTING_DECK = ["strike", "strike", "strike", "strike", "strike", "defend", "defend", "defend", "defend", "bash"];
+
+export function getCardData(id) {
+    return { ...CARD_DATABASE[id] }; // Return copy
+}
+
+export function getRandomCardReward() {
+    const keys = Object.keys(CARD_DATABASE);
+    // Filter out basic cards from rewards to make it interesting
+    const pool = keys.filter(k => k !== "strike" && k !== "defend");
+    const pick = pool[Math.floor(Math.random() * pool.length)];
+    return getCardData(pick);
+}
+</file>
+
+<file name="entities.js">
+import { gameState, COLORS } from './globals.js';
+import { createDamageParticle, createBlockParticle } from './particles.js';
+
+/**
+ * Classes for Player and Enemies.
+ */
+
+export class Entity {
+    constructor(x, y, maxHp) {
+        this.x = x;
+        this.y = y;
+        this.maxHp = maxHp;
+        this.currentHp = maxHp;
+        this.block = 0;
+        this.powers = {
+            vulnerable: 0,
+            weak: 0,
+            strength: 0
+        };
+        this.isDead = false;
+        // Animation
+        this.shakeX = 0;
+        this.shakeTime = 0;
+        this.flashTime = 0;
+    }
+
+    takeDamage(amount) {
+        // Apply Vulnerable (50% more damage taken)
+        if (this.powers.vulnerable > 0) {
+            amount = Math.floor(amount * 1.5);
+        }
+
+        // Block mitigation
+        let blocked = 0;
+        if (this.block > 0) {
+            if (this.block >= amount) {
+                blocked = amount;
+                this.block -= amount;
+                amount = 0;
+            } else {
+                blocked = this.block;
+                amount -= this.block;
+                this.block = 0;
+            }
+        }
+
+        // Apply remaining damage
+        this.currentHp -= amount;
+        
+        // Visuals
+        this.shakeTime = 10;
+        this.flashTime = 5;
+        createDamageParticle(this.x, this.y, amount + blocked, blocked > 0);
+
+        if (this.currentHp <= 0) {
+            this.currentHp = 0;
+            this.isDead = true;
+        }
+    }
+
+    addBlock(amount) {
+        // Apply Weak (25% less block gained - simplified interpretation for consistency)
+        if (this.powers.weak > 0) {
+            amount = Math.floor(amount * 0.75);
+        }
+        this.block += amount;
+        createBlockParticle(this.x, this.y, amount);
+    }
+
+    heal(amount) {
+        this.currentHp = Math.min(this.currentHp + amount, this.maxHp);
+    }
+
+    updateAnimations() {
+        if (this.shakeTime > 0) {
+            this.shakeX = (Math.random() - 0.5) * 10;
+            this.shakeTime--;
+        } else {
+            this.shakeX = 0;
+        }
+        if (this.flashTime > 0) this.flashTime--;
+    }
+
+    render(p) {
+        this.updateAnimations();
+        
+        p.push();
+        p.translate(this.x + this.shakeX, this.y);
+
+        // Flash white on hit
+        if (this.flashTime > 0) {
+            p.fill(255);
+            p.stroke(255);
+        } else {
+            this.drawShape(p);
+        }
+
+        // HP Bar
+        const barW = 80;
+        const barH = 10;
+        const hpPct = this.currentHp / this.maxHp;
+        p.noStroke();
+        p.fill(COLORS.HP_BAR_BG);
+        p.rect(-barW/2, 60, barW, barH);
+        p.fill(COLORS.HP_BAR_FILL);
+        p.rect(-barW/2, 60, barW * hpPct, barH);
+        
+        // HP Text
+        p.fill(255);
+        p.textSize(12);
+        p.textAlign(p.CENTER);
+        p.text(`${this.currentHp}/${this.maxHp}`, 0, 70);
+
+        // Block Icon
+        if (this.block > 0) {
+            p.fill(COLORS.BLOCK_ICON);
+            p.circle(-barW/2 - 15, 65, 20);
+            p.fill(255);
+            p.text(this.block, -barW/2 - 15, 70);
+        }
+
+        // Powers
+        this.drawPowers(p);
+
+        p.pop();
+    }
+    
+    drawPowers(p) {
+        let yOff = -60;
+        p.textSize(10);
+        p.textAlign(p.CENTER);
+        
+        if (this.powers.vulnerable > 0) {
+            p.fill(255, 100, 100);
+            p.text(`VULN ${this.powers.vulnerable}`, 0, yOff);
+            yOff -= 12;
+        }
+        if (this.powers.weak > 0) {
+            p.fill(200, 200, 100);
+            p.text(`WEAK ${this.powers.weak}`, 0, yOff);
+            yOff -= 12;
+        }
+        if (this.powers.strength > 0) {
+            p.fill(255, 100, 0);
+            p.text(`STR ${this.powers.strength}`, 0, yOff);
+            yOff -= 12;
+        }
+    }
+
+    drawShape(p) {
+        // Override
+    }
+}
+
+export class Player extends Entity {
+    constructor() {
+        super(100, 250, 80); // x, y, hp
+        this.energy = 3;
+        this.maxEnergy = 3;
+    }
+
+    drawShape(p) {
+        p.fill(COLORS.PLAYER);
+        p.stroke(200);
+        p.strokeWeight(2);
+        // Draw a shield-like shape
+        p.beginShape();
+        p.vertex(-20, -30);
+        p.vertex(20, -30);
+        p.vertex(20, 10);
+        p.vertex(0, 40);
+        p.vertex(-20, 10);
+        p.endShape(p.CLOSE);
+        
+        // Eyes
+        p.fill(255);
+        p.circle(-8, -10, 8);
+        p.circle(8, -10, 8);
+        p.fill(0);
+        p.circle(-8, -10, 3);
+        p.circle(8, -10, 3);
+    }
+}
+
+export class Enemy extends Entity {
+    constructor(x, y, type) {
+        // Define stats based on type
+        let hp = 40;
+        switch(type) {
+            case 'cultist': hp = 45; break;
+            case 'jaw_worm': hp = 40; break;
+            case 'louse': hp = 30; break;
+            case 'boss': hp = 150; break;
+        }
+        super(x, y, hp);
+        this.type = type;
+        this.intent = null;
+        this.nextMove = {};
+        this.decideNextMove();
+    }
+
+    decideNextMove() {
+        const roll = Math.random();
+        
+        if (this.type === 'cultist') {
+            // Cultist always attacks or buffs
+            if (this.powers.strength === 0) {
+                this.nextMove = { type: 'buff', amount: 3, name: "Ritual" }; // Gain str
+            } else {
+                this.nextMove = { type: 'attack', amount: 6 + this.powers.strength };
+            }
+        } else if (this.type === 'jaw_worm') {
+            if (roll < 0.6) {
+                this.nextMove = { type: 'attack', amount: 11 };
+            } else if (roll < 0.8) {
+                this.nextMove = { type: 'block_attack', amount: 7, block: 5 };
+            } else {
+                this.nextMove = { type: 'buff_block', amount: 3, block: 6 }; // Str + Block
+            }
+        } else if (this.type === 'boss') {
+             if (roll < 0.7) {
+                this.nextMove = { type: 'attack', amount: 15 };
+            } else {
+                this.nextMove = { type: 'debuff', amount: 2, name: "Gaze" }; // Vulnerable
+            }
+        } else {
+            // Default weak enemy
+            if (roll < 0.5) {
+                this.nextMove = { type: 'attack', amount: 8 };
+            } else {
+                this.nextMove = { type: 'debuff', amount: 2, name: "Web" }; // Weak
+            }
+        }
+    }
+
+    executeTurn(player) {
+        let dmg = 0;
+        
+        // Apply Strength
+        let rawDmg = (this.nextMove.amount || 0) + this.powers.strength;
+        
+        // Apply Player Weakness (Player deals less dmg? No, Player takes less dmg? Weak reduces OUTGOING dmg)
+        // If enemy has Weak, they deal 25% less.
+        if (this.powers.weak > 0) {
+            rawDmg = Math.floor(rawDmg * 0.75);
+        }
+
+        switch (this.nextMove.type) {
+            case 'attack':
+                player.takeDamage(rawDmg);
+                break;
+            case 'block_attack':
+                this.addBlock(this.nextMove.block);
+                player.takeDamage(rawDmg);
+                break;
+            case 'buff':
+                this.powers.strength += this.nextMove.amount;
+                break;
+            case 'buff_block':
+                 this.powers.strength += this.nextMove.amount;
+                 this.addBlock(this.nextMove.block);
+                 break;
+            case 'debuff':
+                if (this.nextMove.name === "Web") {
+                    player.powers.weak += this.nextMove.amount;
+                } else if (this.nextMove.name === "Gaze") {
+                    player.powers.vulnerable += this.nextMove.amount;
+                }
+                break;
+        }
+
+        // Tick down powers at end of turn
+        if (this.powers.vulnerable > 0) this.powers.vulnerable--;
+        if (this.powers.weak > 0) this.powers.weak--;
+        
+        this.decideNextMove();
+    }
+
+    drawShape(p) {
+        p.stroke(200);
+        p.strokeWeight(2);
+        
+        if (this.type === 'boss') {
+            p.fill(COLORS.ENEMY);
+            // Big Hexagon
+            p.beginShape();
+            for (let i = 0; i < 6; i++) {
+                let angle = p.TWO_PI / 6 * i;
+                p.vertex(Math.cos(angle) * 40, Math.sin(angle) * 40);
+            }
+            p.endShape(p.CLOSE);
+        } else if (this.type === 'cultist') {
+             p.fill(100, 200, 200);
+             // Bird shape roughly
+             p.triangle(0, -30, -20, 20, 20, 20);
+        } else {
+            p.fill(150, 100, 50);
+            p.circle(0, 0, 40);
+        }
+
+        // Draw Intent
+        this.drawIntent(p);
+    }
+
+    drawIntent(p) {
+        p.push();
+        p.translate(0, -50);
+        p.noStroke();
+        
+        if (this.nextMove.type.includes('attack')) {
+            p.fill(255, 50, 50);
+            p.triangle(-5, 0, 5, 0, 0, 10); // Sword tip
+            // Damage number
+            let dmg = (this.nextMove.amount || 0) + this.powers.strength;
+            if (this.powers.weak > 0) dmg = Math.floor(dmg * 0.75);
+            
+            p.textSize(16);
+            p.textAlign(p.CENTER);
+            p.text(dmg, 0, -5);
+        } else if (this.nextMove.type.includes('buff')) {
+            p.fill(50, 255, 50);
+            p.circle(0, 0, 10);
+        } else if (this.nextMove.type.includes('debuff')) {
+            p.fill(200, 50, 200);
+            p.circle(0, 0, 10);
+        } else {
+             p.fill(100, 100, 255);
+             p.rectMode(p.CENTER);
+             p.rect(0, 0, 10, 10);
+        }
+        
+        p.pop();
+    }
+}
+</file>
+
+<file name="combat_system.js">
+import { gameState, log, COLORS } from './globals.js';
+import { shuffleArray, uuid } from './utils.js';
+import { Player, Enemy } from './entities.js';
+import { CARD_DATABASE, getCardData, TARGET_TYPES } from './card_definitions.js';
+import { createDamageParticle } from './particles.js';
+
+/**
+ * Handles Combat Logic.
+ */
+
+// Helper class for in-combat card instance
+class CombatCard {
+    constructor(cardData) {
+        this.data = cardData;
+        this.uid = uuid(); // Unique ID for this instance in hand
+    }
+}
+
+export function startCombat(enemyType) {
+    gameState.gamePhase = "BATTLE";
+    gameState.combat.turn = 1;
+    gameState.combat.energy = gameState.player.energy;
+    gameState.combat.hand = [];
+    gameState.combat.discardPile = [];
+    gameState.combat.exhaustPile = [];
+    gameState.combat.phase = "PLAYER_TURN";
+    gameState.combat.selectedCardIndex = 0;
+    gameState.combat.message = "Battle Start!";
+    
+    // Initialize Draw Pile from Master Deck
+    gameState.combat.drawPile = gameState.deck.map(data => new CombatCard(data));
+    shuffleArray(gameState.combat.drawPile);
+    
+    // Spawn Enemy
+    let e = new Enemy(450, 250, enemyType || 'cultist');
+    gameState.combat.enemies = [e];
+    
+    // Reset Player combat stats
+    gameState.player.block = 0;
+    gameState.player.powers = { vulnerable: 0, weak: 0, strength: 0 };
+    
+    // Draw initial hand
+    drawCards(5);
+    
+    log("game_info", { event: "combat_start", enemy: enemyType });
+}
+
+export function drawCards(amount) {
+    for (let i = 0; i < amount; i++) {
+        if (gameState.combat.drawPile.length === 0) {
+            if (gameState.combat.discardPile.length === 0) break; // No cards left
+            // Reshuffle
+            gameState.combat.drawPile = gameState.combat.discardPile;
+            gameState.combat.discardPile = [];
+            shuffleArray(gameState.combat.drawPile);
+        }
+        gameState.combat.hand.push(gameState.combat.drawPile.pop());
+    }
+    // Limit hand size? usually 10.
+}
+
+export function playCard() {
+    const combat = gameState.combat;
+    if (combat.hand.length === 0) return;
+    
+    const cardInstance = combat.hand[combat.selectedCardIndex];
+    const card = cardInstance.data;
+    const player = gameState.player;
+    const target = combat.enemies[0]; // Simplification: Single target or auto-target first
+    
+    // Check Energy
+    if (combat.energy < card.cost) {
+        combat.message = "Not Enough Energy!";
+        return;
+    }
+    
+    // Apply Effects
+    combat.energy -= card.cost;
+    
+    let dmg = card.damage || 0;
+    // Apply Strength
+    if (dmg > 0) dmg += player.powers.strength;
+    // Apply Weak (player deals less)
+    if (player.powers.weak > 0) dmg = Math.floor(dmg * 0.75);
+
+    if (card.target === TARGET_TYPES.ENEMY) {
+        if (dmg > 0) target.takeDamage(dmg);
+        if (card.vulnerable) target.powers.vulnerable += card.vulnerable;
+    } else if (card.target === TARGET_TYPES.ALL_ENEMIES) {
+        combat.enemies.forEach(e => {
+            if (dmg > 0) e.takeDamage(dmg);
+        });
+    }
+    
+    if (card.block) {
+        player.addBlock(card.block);
+    }
+    
+    if (card.draw) {
+        drawCards(card.draw);
+    }
+
+    if (card.special === "copy_self") {
+        combat.discardPile.push(new CombatCard(card));
+    }
+    
+    // Move to discard
+    combat.discardPile.push(cardInstance);
+    combat.hand.splice(combat.selectedCardIndex, 1);
+    
+    // Adjust selection index
+    if (combat.selectedCardIndex >= combat.hand.length) {
+        combat.selectedCardIndex = Math.max(0, combat.hand.length - 1);
+    }
+    
+    // Check for Win
+    if (combat.enemies.every(e => e.isDead)) {
+        endCombat(true);
+    }
+}
+
+export function endTurn() {
+    gameState.combat.phase = "ENEMY_TURN";
+    gameState.combat.message = "Enemy Turn";
+    
+    // Discard Hand
+    while(gameState.combat.hand.length > 0) {
+        gameState.combat.discardPile.push(gameState.combat.hand.pop());
+    }
+    
+    // Enemy Actions
+    setTimeout(() => {
+        const player = gameState.player;
+        
+        gameState.combat.enemies.forEach(e => {
+            if (!e.isDead) e.executeTurn(player);
+        });
+        
+        // Check Loss
+        if (player.currentHp <= 0) {
+            gameState.gamePhase = "GAME_OVER_LOSE";
+            return;
+        }
+        
+        // Start Player Turn
+        startPlayerTurn();
+        
+    }, 1000); // Delay for visual pacing
+}
+
+function startPlayerTurn() {
+    gameState.combat.phase = "PLAYER_TURN";
+    gameState.combat.turn++;
+    gameState.combat.energy = gameState.player.maxEnergy;
+    gameState.combat.message = "Player Turn";
+    
+    // Reset Block (unless Barricade relic - not impl)
+    gameState.player.block = 0;
+    
+    // Tick powers
+    if (gameState.player.powers.vulnerable > 0) gameState.player.powers.vulnerable--;
+    if (gameState.player.powers.weak > 0) gameState.player.powers.weak--;
+    
+    drawCards(5);
+}
+
+function endCombat(win) {
+    if (win) {
+        gameState.combat.message = "Victory!";
+        // Delay then go to rewards
+        setTimeout(() => {
+            setupRewards();
+        }, 1500);
+    }
+}
+
+import { getRandomCardReward } from './card_definitions.js';
+
+function setupRewards() {
+    gameState.gamePhase = "REWARD";
+    gameState.rewards = [];
+    
+    // Card Reward
+    gameState.rewards.push({ type: 'card_choice', data: [getRandomCardReward(), getRandomCardReward(), getRandomCardReward()] });
+    
+    // Gold Reward
+    const goldAmt = Math.floor(Math.random() * 20) + 10;
+    gameState.rewards.push({ type: 'gold', amount: goldAmt });
+    
+    gameState.rewardSelectionIndex = 0;
+    
+    if (gameState.currentNode.type === 'boss') {
+        gameState.gamePhase = "GAME_OVER_WIN"; // Short game loop for this implementation
+    }
+}
+</file>
+
+<file name="utils.js">
+import { CANVAS_WIDTH } from './globals.js';
+
+/**
+ * Utility functions for drawing and calculations.
+ */
+
+// Draw wrapped text inside a box
+export function drawTextWrapped(p, text, x, y, maxWidth, lineHeight) {
+    let words = text.split(' ');
+    let line = '';
+    let currentY = y;
+    
+    for (let n = 0; n < words.length; n++) {
+        let testLine = line + words[n] + ' ';
+        let metrics = p.textWidth(testLine);
+        if (metrics > maxWidth && n > 0) {
+            p.text(line, x, currentY);
+            line = words[n] + ' ';
+            currentY += lineHeight;
+        } else {
+            line = testLine;
+        }
+    }
+    p.text(line, x, currentY);
+    return currentY + lineHeight; // Return next Y
+}
+
+// Check mouse hover (helper for potential mouse support extensions, used for layout logic)
+export function isMouseOver(p, x, y, w, h) {
+    return p.mouseX > x && p.mouseX < x + w && p.mouseY > y && p.mouseY < y + h;
+}
+
+// Shuffle array in place
+export function shuffleArray(array) {
+    for (let i = array.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [array[i], array[j]] = [array[j], array[i]];
+    }
+    return array;
+}
+
+// Ease out cubic
+export function easeOutCubic(t) {
+    return 1 - Math.pow(1 - t, 3);
+}
+
+// Create a unique ID
+export function uuid() {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+        var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+    });
+}
+</file>
+
+<file name="particles.js">
+import { gameState } from './globals.js';
+
+/**
+ * Particle system for effects.
+ */
+
+class Particle {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.vx = (Math.random() - 0.5) * 4;
+        this.vy = (Math.random() - 0.5) * 4;
+        this.life = 1.0;
+        this.decay = 0.05;
+        this.color = [255, 255, 255];
+        this.size = 5;
+    }
+    
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.life -= this.decay;
+    }
+    
+    render(p) {
+        p.noStroke();
+        p.fill(this.color[0], this.color[1], this.color[2], this.life * 255);
+        p.circle(this.x, this.y, this.size);
+    }
+}
+
+class TextParticle extends Particle {
+    constructor(x, y, text, color) {
+        super(x, y);
+        this.text = text;
+        this.color = color;
+        this.vy = -1; // Float up
+        this.vx = 0;
+        this.decay = 0.02;
+        this.size = 20;
+    }
+    
+    render(p) {
+        p.noStroke();
+        p.fill(this.color[0], this.color[1], this.color[2], this.life * 255);
+        p.textAlign(p.CENTER);
+        p.textSize(this.size);
+        p.text(this.text, this.x, this.y);
+    }
+}
+
+export function createDamageParticle(x, y, amount, isBlocked) {
+    if (amount === 0 && isBlocked) {
+        gameState.particles.push(new TextParticle(x, y - 40, "BLOCKED", [150, 150, 200]));
+    } else {
+        gameState.particles.push(new TextParticle(x, y - 40, amount.toString(), [255, 50, 50]));
+    }
+    
+    // Debris
+    for(let i=0; i<5; i++) {
+        let p = new Particle(x, y);
+        p.color = [255, 50, 50];
+        gameState.particles.push(p);
+    }
+}
+
+export function createBlockParticle(x, y, amount) {
+    gameState.particles.push(new TextParticle(x, y - 40, "+" + amount + " Block", [100, 100, 255]));
+}
+
+export function updateParticles() {
+    for (let i = gameState.particles.length - 1; i >= 0; i--) {
+        let p = gameState.particles[i];
+        p.update();
+        if (p.life <= 0) {
+            gameState.particles.splice(i, 1);
+        }
+    }
+}
+
+export function renderParticles(p) {
+    gameState.particles.forEach(pt => pt.render(p));
+}
+</file>
+
+<file name="map.js">
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { uuid } from './utils.js';
+
+/**
+ * Map generation and handling.
+ */
+
+// Node types: 'monster', 'elite', 'rest', 'treasure', 'boss', 'start'
+const FLOOR_CONFIG = [
+    ['start'],
+    ['monster'],
+    ['monster', 'monster', 'event'],
+    ['monster', 'rest', 'monster'],
+    ['elite', 'monster'],
+    ['rest'],
+    ['boss']
+];
+
+export function generateMap() {
+    const map = [];
+    const width = 3; // 3 lanes
+    
+    // Generate nodes
+    for (let i = 0; i < FLOOR_CONFIG.length; i++) {
+        let floorNodes = [];
+        let types = FLOOR_CONFIG[i];
+        
+        // If single type (like start/boss), create one node centered
+        if (types.length === 1) {
+            floorNodes.push({
+                id: uuid(),
+                floor: i,
+                x: CANVAS_WIDTH / 2,
+                y: CANVAS_HEIGHT - 50 - (i * 50),
+                type: types[0],
+                next: [], // IDs of next nodes
+                parents: []
+            });
+        } else {
+            // Distribute nodes across width
+            let count = Math.floor(Math.random() * width) + 1;
+            // Force at least 2 paths for variety in middle floors
+            if (i > 1 && i < FLOOR_CONFIG.length - 1) count = Math.max(2, count);
+            
+            let segmentW = CANVAS_WIDTH / (count + 1);
+            
+            for (let j = 0; j < count; j++) {
+                // Random type from available options for this floor config level
+                let type = types[Math.floor(Math.random() * types.length)];
+                
+                floorNodes.push({
+                    id: uuid(),
+                    floor: i,
+                    x: segmentW * (j + 1) + (Math.random() * 20 - 10),
+                    y: CANVAS_HEIGHT - 50 - (i * 50),
+                    type: type,
+                    next: [],
+                    parents: []
+                });
+            }
+        }
+        map.push(floorNodes);
+    }
+    
+    // Connect nodes
+    for (let i = 0; i < map.length - 1; i++) {
+        let currentFloor = map[i];
+        let nextFloor = map[i + 1];
+        
+        for (let node of currentFloor) {
+            // Connect to at least one node in next floor
+            // Simple logic: connect to nearest nodes
+            
+            // Find closest node in next floor
+            let sortedNext = [...nextFloor].sort((a, b) => Math.abs(a.x - node.x) - Math.abs(b.x - node.x));
+            
+            // Connect to closest 1 or 2
+            let connections = Math.min(sortedNext.length, Math.random() > 0.5 ? 2 : 1);
+            
+            for(let k=0; k<connections; k++) {
+                node.next.push(sortedNext[k].id);
+                sortedNext[k].parents.push(node.id);
+            }
+        }
+    }
+    
+    // Ensure connectivity (backward pass) - make sure every next floor node has a parent
+    for (let i = map.length - 1; i > 0; i--) {
+        for (let node of map[i]) {
+            if (node.parents.length === 0) {
+                // Connect to nearest parent
+                let prevFloor = map[i-1];
+                let closest = prevFloor.sort((a, b) => Math.abs(a.x - node.x) - Math.abs(b.x - node.x))[0];
+                closest.next.push(node.id);
+                node.parents.push(closest.id);
+            }
+        }
+    }
+
+    gameState.map = map;
+    gameState.currentNode = map[0][0]; // Start node
+    gameState.currentNode.visited = true;
+    gameState.floor = 0;
+}
+
+export function getNextAvailableNodes() {
+    if (!gameState.currentNode) return [];
+    if (!gameState.map) return [];
+    
+    let nextIds = gameState.currentNode.next;
+    let nextFloorIndex = gameState.floor + 1;
+    
+    if (nextFloorIndex >= gameState.map.length) return [];
+    
+    return gameState.map[nextFloorIndex].filter(n => nextIds.includes(n.id));
+}
+</file>
+
+<file name="input.js">
+import { gameState } from './globals.js';
+import { getNextAvailableNodes } from './map.js';
+import { startCombat, playCard, endTurn } from './combat_system.js';
+import { getRandomCardReward } from './card_definitions.js';
+
+/**
+ * Input handling state machine.
+ */
+
+export function handleInput(p, keyCode) {
+    if (keyCode === 27) { // ESC
+        if (gameState.gamePhase === "PLAYING" || gameState.gamePhase === "BATTLE" || gameState.gamePhase === "MAP") {
+            gameState.previousPhase = gameState.gamePhase;
+            gameState.gamePhase = "PAUSED";
+        } else if (gameState.gamePhase === "PAUSED") {
+            gameState.gamePhase = gameState.previousPhase;
+        }
+        return;
+    }
+
+    if (keyCode === 82) { // R
+        if (gameState.gamePhase.includes("GAME_OVER")) {
+            window.location.reload(); // Simple restart
+        }
+        return;
+    }
+
+    switch (gameState.gamePhase) {
+        case "START":
+            if (keyCode === 13) { // ENTER
+                gameState.gamePhase = "MAP";
+            }
+            break;
+            
+        case "MAP":
+            handleMapInput(keyCode);
+            break;
+            
+        case "BATTLE":
+            handleBattleInput(keyCode);
+            break;
+            
+        case "REWARD":
+            handleRewardInput(keyCode);
+            break;
+            
+        case "CAMPFIRE":
+            handleCampfireInput(keyCode);
+            break;
+    }
+}
+
+function handleMapInput(keyCode) {
+    const available = getNextAvailableNodes();
+    if (available.length === 0) return;
+    
+    if (keyCode === 39) { // Right
+        gameState.mapSelectionIndex = (gameState.mapSelectionIndex + 1) % available.length;
+    } else if (keyCode === 37) { // Left
+        gameState.mapSelectionIndex = (gameState.mapSelectionIndex - 1 + available.length) % available.length;
+    } else if (keyCode === 13 || keyCode === 32) { // Enter/Space
+        const nextNode = available[gameState.mapSelectionIndex];
+        visitNode(nextNode);
+    }
+}
+
+function visitNode(node) {
+    gameState.currentNode = node;
+    gameState.floor = node.floor;
+    node.visited = true;
+    
+    if (node.type === 'monster' || node.type === 'elite' || node.type === 'boss') {
+        startCombat(node.type);
+    } else if (node.type === 'rest') {
+        gameState.gamePhase = "CAMPFIRE";
+        gameState.campfireOptions = [{ label: "Rest", action: "heal" }]; // Simplify
+        gameState.campfireSelectionIndex = 0;
+    } else {
+        // Fallback for events/starts
+        gameState.gamePhase = "MAP"; 
+    }
+}
+
+function handleBattleInput(keyCode) {
+    const combat = gameState.combat;
+    
+    if (combat.phase !== "PLAYER_TURN") return;
+    
+    if (keyCode === 39) { // Right
+        combat.selectedCardIndex = Math.min(combat.selectedCardIndex + 1, combat.hand.length - 1);
+    } else if (keyCode === 37) { // Left
+        combat.selectedCardIndex = Math.max(combat.selectedCardIndex - 1, 0);
+    } else if (keyCode === 13 || keyCode === 32) { // Enter/Space
+        playCard();
+    } else if (keyCode === 90) { // Z
+        endTurn();
+    }
+}
+
+function handleRewardInput(keyCode) {
+    if (keyCode === 38 || keyCode === 40) { // Up/Down
+        gameState.rewardSelectionIndex = (gameState.rewardSelectionIndex === 0) ? 1 : 0;
+    } else if (keyCode === 13 || keyCode === 32) {
+        // Claim reward
+        const reward = gameState.rewards[gameState.rewardSelectionIndex];
+        if (reward) {
+            if (reward.type === 'gold') {
+                gameState.gold += reward.amount;
+            } else if (reward.type === 'card_choice') {
+                // Auto pick first for simplicity in this constrained version
+                // Ideally opens another sub-menu
+                gameState.deck.push(reward.data[0]); 
+            }
+            gameState.rewards.splice(gameState.rewardSelectionIndex, 1);
+            if (gameState.rewards.length === 0) {
+                gameState.gamePhase = "MAP";
+                // Reset selection for next map traversal
+                gameState.mapSelectionIndex = 0;
+            }
+        }
+    } else if (keyCode === 27) { // ESC - Skip
+        gameState.gamePhase = "MAP";
+    }
+}
+
+function handleCampfireInput(keyCode) {
+    if (keyCode === 13 || keyCode === 32) {
+        // Heal
+        gameState.player.heal(Math.floor(gameState.player.maxHp * 0.3));
+        gameState.gamePhase = "MAP";
+    }
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

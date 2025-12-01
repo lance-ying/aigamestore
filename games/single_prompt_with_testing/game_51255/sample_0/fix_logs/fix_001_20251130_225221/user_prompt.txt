@@ -1,0 +1,934 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+GET https://cdn.jsdelivr.net/npm/p5.collide2d@1.0.0/+esm net::ERR_ABORTED 404 (Not Found)
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Flappy Dunk</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; font-family: sans-serif; transition: background 0.2s; }
+      .control-button:hover { background: #555; }
+      .control-button.active { background: #e67e22; color: white; }
+    </style>
+    <script>
+      window.setControlMode = function(mode) {
+        const gameState = window.getGameState();
+        if (gameState) {
+          gameState.controlMode = mode;
+          console.log("Control Mode set to:", mode);
+          
+          // Update UI
+          document.querySelectorAll('.control-button').forEach(btn => btn.classList.remove('active'));
+          if(mode === 'HUMAN') document.getElementById('humanModeBtn').classList.add('active');
+          if(mode === 'TEST_1') document.getElementById('test_1_ModeBtn').classList.add('active');
+          if(mode === 'TEST_2') document.getElementById('test_2_ModeBtn').classList.add('active');
+        }
+      };
+    </script>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: 'Segoe UI', Arial, sans-serif; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 2px;">Flappy Dunk</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Smart)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Chaos)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4; font-size: 14px;">
+        Tap to jump. Fall through the hoops to score. Avoid the ground and don't miss!
+      </p>
+      <p id="gameControls" style="color: #888; font-family: monospace; max-width: 600px; margin: 0 auto; font-size: 12px;">
+        [SPACE] Jump | [ENTER] Start | [ESC] Pause | [R] Restart
+      </p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="automated_testing_controller.js">
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export function get_automated_testing_action(currentGameState) {
+    if (!currentGameState.player) return null;
+
+    const player = currentGameState.player;
+    const hoops = currentGameState.hoops;
+
+    // Default: No action
+    let action = null;
+
+    if (currentGameState.controlMode === 'TEST_1') {
+        // Strategy: Survival / Scoring
+        // Find the nearest upcoming hoop
+        let targetHoop = null;
+        for (let hoop of hoops) {
+            // If hoop is in front of player (with some margin for passing)
+            if (hoop.x > player.x - 30) {
+                targetHoop = hoop;
+                break;
+            }
+        }
+
+        if (targetHoop) {
+            // If we are far from the hoop, we want to be high enough to drop into it
+            // Target height is above the hoop
+            const targetHeight = targetHoop.y - 120; // Aim above the hoop
+            
+            // If we are close to the hoop (horizontal distance), we stop jumping to fall through
+            const distToHoop = targetHoop.x - player.x;
+            
+            if (distToHoop > 80) {
+                // If we are far, maintain altitude
+                if (player.y > targetHeight) {
+                    action = { keyCode: 32 }; // Jump
+                }
+            } else if (distToHoop > 0) {
+                // We are approaching the hoop
+                // If we are dangerously low (below rim), panic jump
+                if (player.y > targetHoop.y - 20) {
+                    action = { keyCode: 32 };
+                }
+                // Otherwise let gravity pull us down
+            }
+        } else {
+            // No hoops, just stay in middle
+            if (player.y > CANVAS_HEIGHT / 2) {
+                action = { keyCode: 32 };
+            }
+        }
+    } else if (currentGameState.controlMode === 'TEST_2') {
+        // Random chaos
+        if (Math.random() < 0.1) {
+            action = { keyCode: 32 };
+        }
+    }
+
+    return action;
+}
+
+window.get_automated_testing_action = get_automated_testing_action;
+</file>
+
+<file name="globals.js">
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const TARGET_FPS = 60;
+
+// Physics Constants
+export const GRAVITY = 0.6;
+export const JUMP_FORCE = -9;
+export const FRICTION = 0.99; // Air resistance
+export const RESTITUTION = 0.7; // Bounciness
+export const MAX_FALL_SPEED = 15;
+
+// Game Constants
+export const HOOP_SPEED = 3;
+export const HOOP_SPAWN_INTERVAL = 140; // Frames
+export const HOOP_GAP_HEIGHT = 100; // Vertical variation
+
+export const gameState = {
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    controlMode: "HUMAN",
+    
+    // Entities
+    player: null,
+    hoops: [],
+    particles: [],
+    
+    // State
+    score: 0,
+    highScore: 0,
+    frameCount: 0,
+    lastFrameTime: 0,
+    deltaTime: 0,
+    
+    // Tracking
+    hoopsPassed: 0,
+    perfectShots: 0,
+    
+    // Camera effect (screen shake)
+    shakeIntensity: 0,
+    shakeTimer: 0
+};
+
+export function getGameState() {
+    return gameState;
+}
+
+// Global accessor
+window.getGameState = getGameState;
+</file>
+
+<file name="game.js">
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, HOOP_SPAWN_INTERVAL, HOOP_GAP_HEIGHT } from './globals.js';
+import { Player, Hoop } from './entities.js';
+import { checkHoopCollisions, checkScore, checkWorldBounds } from './physics.js';
+import { handleKeyPress, handleKeyRelease } from './input.js';
+import { renderUI, renderStartScreen, renderGameOver, renderPausedOverlay } from './ui.js';
+import { Particle, createExplosion } from './particles.js';
+import { get_automated_testing_action } from './automated_testing_controller.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+    
+    // Initial logs setup
+    p.logs = {
+        "game_info": [],
+        "inputs": [],
+        "player_info": []
+    };
+
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(60);
+        p.randomSeed(42);
+        
+        gameState.gamePhase = "START";
+        
+        // Log start
+        p.logs.game_info.push({
+            event: "INITIALIZED",
+            timestamp: Date.now()
+        });
+    };
+
+    p.draw = function() {
+        gameState.frameCount = p.frameCount;
+        
+        // Background
+        drawBackground(p);
+        
+        // Handle Automated Inputs
+        if (gameState.controlMode.startsWith("TEST") && gameState.gamePhase === "PLAYING") {
+            const action = get_automated_testing_action(gameState);
+            if (action) {
+                p.keyCode = action.keyCode;
+                handleKeyPress(p);
+                p.keyCode = 0; // Reset
+            }
+        }
+
+        switch (gameState.gamePhase) {
+            case "START":
+                renderStartScreen(p);
+                break;
+            case "PLAYING":
+                updateGame(p);
+                renderGame(p);
+                renderUI(p);
+                break;
+            case "PAUSED":
+                renderGame(p);
+                renderPausedOverlay(p);
+                break;
+            case "GAME_OVER_WIN":
+            case "GAME_OVER_LOSE":
+                renderGame(p);
+                renderGameOver(p);
+                break;
+        }
+    };
+
+    p.keyPressed = function() {
+        handleKeyPress(p);
+    };
+    
+    p.keyReleased = function() {
+        handleKeyRelease(p);
+    }
+});
+
+function drawBackground(p) {
+    // Dynamic background based on score
+    const c1 = p.color(20, 20, 40);
+    const c2 = p.color(50, 40, 80);
+    
+    // Simple gradient
+    p.noFill();
+    for(let y = 0; y < CANVAS_HEIGHT; y+=10) {
+        let inter = p.map(y, 0, CANVAS_HEIGHT, 0, 1);
+        let c = p.lerpColor(c1, c2, inter);
+        p.fill(c);
+        p.noStroke();
+        p.rect(0, y, CANVAS_WIDTH, 10);
+    }
+
+    // Screen shake application
+    if (gameState.shakeIntensity > 0) {
+        p.translate(p.random(-gameState.shakeIntensity, gameState.shakeIntensity), 
+                    p.random(-gameState.shakeIntensity, gameState.shakeIntensity));
+        gameState.shakeIntensity *= 0.9; // Decay
+        if (gameState.shakeIntensity < 0.5) gameState.shakeIntensity = 0;
+    }
+}
+
+function updateGame(p) {
+    // Spawn Player if needed
+    if (!gameState.player) {
+        gameState.player = new Player(150, CANVAS_HEIGHT / 2);
+    }
+
+    // Spawn Hoops
+    if (p.frameCount % HOOP_SPAWN_INTERVAL === 0) {
+        // Random height
+        const margin = 100;
+        const y = p.random(margin, CANVAS_HEIGHT - margin);
+        gameState.hoops.push(new Hoop(CANVAS_WIDTH + 50, y));
+    }
+
+    // Update Player
+    gameState.player.update(p);
+
+    // World Bounds Check
+    if (checkWorldBounds(gameState.player)) {
+        gameOver();
+        return;
+    }
+
+    // Update Hoops and Check Collisions
+    for (let i = gameState.hoops.length - 1; i >= 0; i--) {
+        const hoop = gameState.hoops[i];
+        hoop.update(p);
+
+        // Physics Collision
+        if (checkHoopCollisions(gameState.player, hoop, p)) {
+            // Just bounced
+        }
+
+        // Score Check
+        const scoreResult = checkScore(gameState.player, hoop);
+        if (scoreResult !== "NONE") {
+            // Update Score
+            const points = scoreResult === "SWISH" ? 2 : 1;
+            gameState.score += points;
+            gameState.hoopsPassed++;
+            
+            // Visual feedback
+            gameState.shakeIntensity = scoreResult === "SWISH" ? 10 : 5;
+            createExplosion(hoop.x, hoop.y, 20, 'CONFETTI', gameState);
+            if (scoreResult === "SWISH") {
+                createExplosion(hoop.x, hoop.y, 10, 'FLAME', gameState);
+            }
+        }
+
+        // Missed Hoop Check (if passed without scoring)
+        // Usually Flappy Dunk is generous: you can miss a hoop but if you hit the ground you die.
+        // However, standard runner logic implies you MUST score.
+        // Let's adopt the rule: If you pass the hoop's X and didn't score, 
+        // you only lose if you hit the ground. But passing a hoop without scoring is fine 
+        // as long as you don't hit the ground? No, usually that breaks the "chain".
+        // Let's simply enforce: If hoop goes off screen and !scored, Game Over?
+        // To be simpler and less frustrating: Game Over only on crash (rim/ground).
+        // BUT, to force gameplay: If the hoop is completely passed (x < player.x - radius) and not scored, Game Over.
+        if (!hoop.scored && hoop.x < gameState.player.x - gameState.player.radius - hoop.width/2 - 20) {
+             gameOver();
+             return;
+        }
+
+        // Remove off-screen hoops
+        if (hoop.isOffScreen()) {
+            gameState.hoops.splice(i, 1);
+        }
+    }
+
+    // Update Particles
+    for (let i = gameState.particles.length - 1; i >= 0; i--) {
+        gameState.particles[i].update();
+        if (gameState.particles[i].isDead()) {
+            gameState.particles.splice(i, 1);
+        }
+    }
+}
+
+function gameOver() {
+    gameState.gamePhase = "GAME_OVER_LOSE";
+    if (gameState.score > gameState.highScore) {
+        gameState.highScore = gameState.score;
+    }
+    
+    // Final log
+    if (window.gameInstance && window.gameInstance.logs) {
+         window.gameInstance.logs.game_info.push({
+            event: "GAME_OVER",
+            score: gameState.score,
+            timestamp: Date.now()
+        });
+    }
+}
+
+function renderGame(p) {
+    // Render Hoops (Back part)
+    gameState.hoops.forEach(hoop => hoop.renderBack(p));
+
+    // Render Player
+    if (gameState.player) {
+        gameState.player.render(p);
+    }
+
+    // Render Hoops (Front part)
+    gameState.hoops.forEach(hoop => hoop.renderFront(p));
+
+    // Render Particles
+    gameState.particles.forEach(pt => pt.render(p));
+}
+
+window.gameInstance = gameInstance;
+</file>
+
+<file name="ui.js">
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export function renderUI(p) {
+    // Score
+    p.push();
+    p.textAlign(p.CENTER, p.TOP);
+    p.textSize(40);
+    p.textStyle(p.BOLD);
+    p.fill(255);
+    p.stroke(0);
+    p.strokeWeight(4);
+    p.text(gameState.score, CANVAS_WIDTH / 2, 20);
+    p.pop();
+
+    // High Score (small)
+    p.push();
+    p.textAlign(p.RIGHT, p.TOP);
+    p.textSize(16);
+    p.fill(200);
+    p.noStroke();
+    p.text(`Best: ${gameState.highScore}`, CANVAS_WIDTH - 20, 20);
+    p.pop();
+
+    // Debug / Info
+    /*
+    p.textAlign(p.LEFT, p.BOTTOM);
+    p.textSize(12);
+    p.text(`Hoops: ${gameState.hoopsPassed}`, 10, CANVAS_HEIGHT - 10);
+    */
+}
+
+export function renderStartScreen(p) {
+    p.background(20, 20, 35);
+    
+    // Draw decorative hoop
+    p.push();
+    p.translate(CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 50);
+    p.noFill();
+    p.stroke(200, 50, 50);
+    p.strokeWeight(4);
+    p.ellipse(0, 0, 80, 20);
+    p.pop();
+
+    p.textAlign(p.CENTER, p.CENTER);
+    
+    // Title
+    p.fill(255, 140, 0);
+    p.stroke(255);
+    p.strokeWeight(2);
+    p.textSize(60);
+    p.textStyle(p.BOLDITALIC);
+    p.text("FLAPPY DUNK", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 80);
+    
+    // Subtitle
+    p.noStroke();
+    p.fill(200);
+    p.textSize(18);
+    p.textStyle(p.NORMAL);
+    p.text("Jump through the hoops!", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 20);
+    
+    // Instructions
+    p.fill(255);
+    p.textSize(24);
+    if (p.frameCount % 60 < 30) {
+        p.text("PRESS ENTER TO START", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 50);
+    }
+    
+    // Controls
+    p.fill(150);
+    p.textSize(14);
+    p.text("Controls: Space/Up to Jump | Esc to Pause", CANVAS_WIDTH / 2, CANVAS_HEIGHT - 40);
+}
+
+export function renderGameOver(p) {
+    p.push();
+    p.fill(0, 0, 0, 150);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.textAlign(p.CENTER, p.CENTER);
+    p.fill(255, 50, 50);
+    p.stroke(0);
+    p.strokeWeight(4);
+    p.textSize(50);
+    p.text("GAME OVER", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 50);
+    
+    p.fill(255);
+    p.noStroke();
+    p.textSize(30);
+    p.text(`Score: ${gameState.score}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 10);
+    
+    p.textSize(16);
+    p.fill(200);
+    p.text("Press R to Restart", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 60);
+    p.pop();
+}
+
+export function renderPausedOverlay(p) {
+    p.push();
+    p.fill(0, 0, 0, 100);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.textAlign(p.CENTER, p.CENTER);
+    p.fill(255);
+    p.textSize(40);
+    p.text("PAUSED", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+    p.textSize(16);
+    p.text("Press ESC to Resume", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 40);
+    p.pop();
+}
+</file>
+
+<file name="entities.js">
+import { GRAVITY, JUMP_FORCE, FRICTION, MAX_FALL_SPEED, HOOP_SPEED, CANVAS_HEIGHT, CANVAS_WIDTH, gameState } from './globals.js';
+import { checkHoopCollisions, checkScore, checkWorldBounds } from './physics.js';
+import { createExplosion } from './particles.js';
+
+export class Player {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.prevY = y;
+        this.vx = 0;
+        this.vy = 0;
+        this.radius = 16;
+        this.rotation = 0;
+        this.angularVelocity = 0;
+    }
+
+    update(p) {
+        this.prevY = this.y;
+
+        // Apply Forces
+        this.vy += GRAVITY;
+        this.vx *= FRICTION; // Air resistance
+        
+        // Cap speed
+        this.vy = Math.min(this.vy, MAX_FALL_SPEED);
+
+        // Update Position
+        this.x += this.vx;
+        this.y += this.vy;
+        
+        // Rotate ball based on movement
+        this.rotation += this.vx * 0.1 + 0.05;
+
+        // Keep player somewhat centered horizontally with a restoring force if bounced
+        // The game mechanic is player stays at fixed X relative to camera, but bounces might push them.
+        // We gently push them back to x=150
+        const targetX = 150;
+        const diffX = targetX - this.x;
+        this.vx += diffX * 0.05;
+        
+        // Log info
+        if (p.frameCount % 10 === 0 && p.logs) {
+            p.logs.player_info.push({
+                x: this.x,
+                y: this.y,
+                vx: this.vx,
+                vy: this.vy,
+                framecount: p.frameCount,
+                timestamp: Date.now()
+            });
+        }
+    }
+
+    jump() {
+        this.vy = JUMP_FORCE;
+        // Small forward impulse to help correct position if stuck
+        this.vx += 1; 
+    }
+
+    render(p) {
+        p.push();
+        p.translate(this.x, this.y);
+        p.rotate(this.rotation);
+
+        // Ball Body
+        p.fill(255, 140, 0); // Basketball orange
+        p.stroke(0);
+        p.strokeWeight(2);
+        p.circle(0, 0, this.radius * 2);
+
+        // Ball Lines (Standard Basketball pattern approximation)
+        p.noFill();
+        p.stroke(20);
+        p.strokeWeight(2);
+        p.line(-this.radius, 0, this.radius, 0); // Horizontal
+        p.line(0, -this.radius, 0, this.radius); // Vertical
+        // Curves
+        p.arc(0, 0, this.radius * 1.5, this.radius * 2, p.PI / 4, 3 * p.PI / 4);
+        p.arc(0, 0, this.radius * 1.5, this.radius * 2, -3 * p.PI / 4, -p.PI / 4);
+
+        p.pop();
+    }
+}
+
+export class Hoop {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.width = 70; // Diameter of opening
+        this.rimRadius = 6;
+        this.scored = false;
+        
+        // Visual net properties
+        this.netLength = 50;
+        this.netOscillation = 0;
+    }
+
+    update(p) {
+        this.x -= HOOP_SPEED;
+        
+        // Net animation
+        this.netOscillation += 0.1;
+    }
+
+    isOffScreen() {
+        return this.x < -100;
+    }
+
+    renderBack(p) {
+        // Render net (back part)
+        p.push();
+        p.translate(this.x, this.y);
+        
+        p.stroke(230);
+        p.strokeWeight(1);
+        p.noFill();
+        
+        // Net shape
+        const topW = this.width - 5;
+        const botW = this.width * 0.4;
+        const h = this.netLength;
+        
+        // Net lines (Crosshatch)
+        p.beginShape();
+        // Simple procedural net drawing
+        for (let i = -topW/2; i <= topW/2; i+=10) {
+            let x1 = i;
+            let y1 = 0;
+            let percent = (i + topW/2) / topW;
+            let x2 = -botW/2 + percent * botW;
+            let y2 = h;
+            
+            // Add some sway based on movement
+            x2 += Math.sin(this.netOscillation + i * 0.1) * 3;
+            
+            p.line(x1, y1, x2, y2);
+        }
+        // Horizontal rings
+        for (let j = 0; j <= h; j+=10) {
+             let percent = j / h;
+             let w = p.lerp(topW, botW, percent);
+             let sway = Math.sin(this.netOscillation + j * 0.2) * 3 * percent;
+             p.ellipse(sway, j, w, j/5); // Faux 3D perspective
+        }
+        
+        p.pop();
+        
+        // Back Rim
+        p.fill(180, 50, 20);
+        p.stroke(100, 20, 10);
+        p.circle(this.x + this.width / 2, this.y, this.rimRadius * 2);
+    }
+
+    renderFront(p) {
+        // Front Rim (rendered after player to create depth)
+        p.fill(220, 60, 30); // Brighter red
+        p.stroke(120, 30, 15);
+        p.strokeWeight(2);
+        p.circle(this.x - this.width / 2, this.y, this.rimRadius * 2);
+    }
+}
+</file>
+
+<file name="physics.js">
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, RESTITUTION } from './globals.js';
+import { collideCircleCircle, collidePointRect } from 'https://cdn.jsdelivr.net/npm/p5.collide2d@1.0.0/+esm';
+
+// Check collision between ball and hoop rims
+export function checkHoopCollisions(player, hoop, p) {
+    let collided = false;
+
+    // Hoop consists of two rims (circles)
+    const rims = [
+        { x: hoop.x - hoop.width / 2, y: hoop.y }, // Left/Front rim
+        { x: hoop.x + hoop.width / 2, y: hoop.y }  // Right/Back rim
+    ];
+
+    rims.forEach(rim => {
+        // Check collision using p5.collide2D or simple distance
+        const dx = player.x - rim.x;
+        const dy = player.y - rim.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const minDist = player.radius + hoop.rimRadius;
+
+        if (dist < minDist) {
+            collided = true;
+            
+            // Resolve Collision (Elastic bounce)
+            // Normal vector
+            const nx = dx / dist;
+            const ny = dy / dist;
+
+            // Penetration depth
+            const overlap = minDist - dist;
+            
+            // Separate
+            player.x += nx * overlap;
+            player.y += ny * overlap;
+
+            // Reflect velocity
+            // v' = v - (1 + e) * (v . n) * n
+            const dotProduct = player.vx * nx + player.vy * ny;
+            
+            // Only bounce if moving towards the collider
+            if (dotProduct < 0) {
+                const impulse = -(1 + RESTITUTION) * dotProduct;
+                player.vx += impulse * nx;
+                player.vy += impulse * ny;
+            }
+        }
+    });
+
+    return collided;
+}
+
+// Check if player scored (passed through sensor)
+export function checkScore(player, hoop) {
+    if (hoop.scored) return "NONE";
+
+    // Sensor area between rims
+    // We strictly check if the ball crosses the line segment defined by the rims moving downwards
+    
+    // Check if player is within the horizontal bounds of the hoop
+    const withinX = player.x > (hoop.x - hoop.width/2 + player.radius) && 
+                    player.x < (hoop.x + hoop.width/2 - player.radius);
+    
+    // Check if player crossed the Y threshold downwards
+    // We use previous Y to detect crossing
+    const crossedY = player.prevY <= hoop.y && player.y > hoop.y;
+
+    if (withinX && crossedY) {
+        hoop.scored = true;
+        
+        // Determine if Swish (perfect shot)
+        // Swish if the ball is close to the center X
+        const centerDist = Math.abs(player.x - hoop.x);
+        const isSwish = centerDist < 10;
+        
+        return isSwish ? "SWISH" : "NORMAL";
+    }
+
+    return "NONE";
+}
+
+export function checkWorldBounds(player) {
+    // Floor
+    if (player.y + player.radius >= CANVAS_HEIGHT) {
+        return true; // Hit ground
+    }
+    
+    // Ceiling
+    if (player.y - player.radius <= 0) {
+        return true; // Hit ceiling
+    }
+    
+    return false;
+}
+</file>
+
+<file name="particles.js">
+export class Particle {
+    constructor(x, y, type) {
+        this.x = x;
+        this.y = y;
+        this.type = type; // 'CONFETTI', 'FLAME', 'SMOKE'
+        this.age = 0;
+        
+        if (type === 'CONFETTI') {
+            this.lifetime = 60;
+            this.vx = (Math.random() - 0.5) * 8;
+            this.vy = (Math.random() - 0.5) * 8 - 2;
+            this.size = Math.random() * 6 + 3;
+            this.color = [Math.random() * 255, Math.random() * 255, Math.random() * 255];
+            this.rotation = Math.random() * Math.PI * 2;
+            this.rotationSpeed = (Math.random() - 0.5) * 0.2;
+        } else if (type === 'FLAME') {
+            this.lifetime = 20;
+            this.vx = (Math.random() - 0.5) * 2;
+            this.vy = -Math.random() * 3 - 1;
+            this.size = Math.random() * 10 + 5;
+            this.color = [255, Math.random() * 100 + 100, 0];
+        } else {
+            this.lifetime = 30;
+            this.vx = (Math.random() - 0.5) * 2;
+            this.vy = (Math.random() - 0.5) * 2;
+            this.size = Math.random() * 4 + 2;
+            this.color = [200, 200, 200];
+        }
+    }
+
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.age++;
+
+        if (this.type === 'CONFETTI') {
+            this.vy += 0.2; // Gravity
+            this.rotation += this.rotationSpeed;
+        } else if (this.type === 'FLAME') {
+            this.size *= 0.9;
+        }
+    }
+
+    isDead() {
+        return this.age >= this.lifetime;
+    }
+
+    render(p) {
+        p.push();
+        p.translate(this.x, this.y);
+        
+        const alpha = p.map(this.age, 0, this.lifetime, 255, 0);
+        
+        if (this.type === 'CONFETTI') {
+            p.rotate(this.rotation);
+            p.fill(this.color[0], this.color[1], this.color[2], alpha);
+            p.noStroke();
+            p.rect(0, 0, this.size, this.size / 2);
+        } else if (this.type === 'FLAME') {
+            p.fill(this.color[0], this.color[1], this.color[2], alpha);
+            p.noStroke();
+            p.circle(0, 0, this.size);
+        } else {
+            p.fill(this.color[0], this.color[1], this.color[2], alpha);
+            p.noStroke();
+            p.circle(0, 0, this.size);
+        }
+        
+        p.pop();
+    }
+}
+
+export function createExplosion(x, y, count, type, gameState) {
+    for (let i = 0; i < count; i++) {
+        gameState.particles.push(new Particle(x, y, type));
+    }
+}
+</file>
+
+<file name="input.js">
+import { gameState } from './globals.js';
+
+export function handleInput(p) {
+    // Only processed in game loop if needed, mainly relying on keyPressed
+}
+
+export function handleKeyPress(p) {
+    const key = p.keyCode;
+    
+    // Log input
+    if (p.logs) {
+        p.logs.inputs.push({
+            type: 'PRESS',
+            key: key,
+            frame: p.frameCount
+        });
+    }
+
+    // Global Phase Controls
+    if (key === 13) { // ENTER
+        if (gameState.gamePhase === "START") {
+            gameState.gamePhase = "PLAYING";
+            gameState.score = 0;
+            gameState.hoopsPassed = 0;
+            gameState.hoops = [];
+            gameState.player = null; // Will be created in updateGame
+        }
+    }
+
+    if (key === 27) { // ESC
+        if (gameState.gamePhase === "PLAYING") {
+            gameState.gamePhase = "PAUSED";
+        } else if (gameState.gamePhase === "PAUSED") {
+            gameState.gamePhase = "PLAYING";
+        }
+    }
+
+    if (key === 82) { // R
+        if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") {
+            resetGame(p);
+        }
+    }
+
+    // Gameplay Controls
+    if (gameState.gamePhase === "PLAYING" && gameState.player) {
+        if (key === 32 || key === 38) { // SPACE or UP
+            gameState.player.jump();
+        }
+    }
+}
+
+export function handleKeyRelease(p) {
+    // Optional: Log release if needed
+}
+
+export function resetGame(p) {
+    gameState.gamePhase = "START";
+    gameState.score = 0;
+    gameState.hoops = [];
+    gameState.particles = [];
+    gameState.player = null;
+    gameState.shakeIntensity = 0;
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

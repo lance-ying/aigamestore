@@ -1,0 +1,277 @@
+/**
+ * Game entities: Player, Platforms, Enemies, Items
+ */
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, JUMP_FORCE, SPRING_FORCE, MOVE_SPEED } from './globals.js';
+import { createParticles } from './particles.js';
+
+export class Player {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.width = 30;
+        this.height = 40;
+        this.vx = 0;
+        this.vy = 0;
+        this.facing = 1; // 1 Right, -1 Left
+        this.noseOffset = 0;
+        
+        gameState.player = this;
+    }
+    
+    moveLeft() {
+        this.vx -= 1.5; // Acceleration
+        if (this.vx < -MOVE_SPEED) this.vx = -MOVE_SPEED;
+        this.facing = -1;
+    }
+    
+    moveRight() {
+        this.vx += 1.5;
+        if (this.vx > MOVE_SPEED) this.vx = MOVE_SPEED;
+        this.facing = 1;
+    }
+    
+    jump(type = 'NORMAL') {
+        this.vy = type === 'HIGH' ? SPRING_FORCE : JUMP_FORCE;
+        // Squash and stretch effect could be added here
+        createParticles(this.x, this.y + this.height/2, 'DUST', 5);
+    }
+    
+    shoot() {
+        // Cooldown or limit check could go here
+        new Projectile(this.x, this.y - this.height/2 - 10);
+    }
+    
+    die() {
+        gameState.gamePhase = "GAME_OVER_LOSE";
+        createParticles(this.x, this.y, 'EXPLOSION', 20);
+    }
+    
+    render(p) {
+        p.push();
+        p.translate(this.x, this.y);
+        
+        // Face direction
+        p.scale(this.facing, 1);
+        
+        // Draw Body (Doodle style)
+        p.stroke(0);
+        p.strokeWeight(2);
+        p.fill(200, 255, 200); // Light green
+        
+        // Main body - sort of a rounded blob
+        p.beginShape();
+        p.vertex(-15, 20); // Bottom left
+        p.bezierVertex(-15, -20, 15, -20, 15, 20); // Top curve to bottom right
+        p.vertex(-15, 20); // Close
+        p.endShape();
+        
+        // Legs
+        p.line(-10, 20, -10, 25);
+        p.line(10, 20, 10, 25);
+        
+        // Snout
+        p.fill(200, 255, 200);
+        p.ellipse(15, -5, 12, 12);
+        
+        // Eyes
+        p.fill(255);
+        p.ellipse(5, -10, 8, 8);
+        p.ellipse(12, -10, 6, 6); // Further eye
+        
+        p.fill(0);
+        p.circle(6, -10, 2);
+        p.circle(13, -10, 2);
+        
+        // Backpack/Jetpack (cosmetic)
+        p.fill(150, 150, 150);
+        p.rect(-18, -5, 5, 15, 2);
+        
+        p.pop();
+    }
+}
+
+export class Platform {
+    constructor(x, y, type = 'NORMAL') {
+        this.x = x;
+        this.y = y;
+        this.width = 60;
+        this.height = 15;
+        this.type = type; // NORMAL (Green), MOVING (Blue), BROKEN (Brown), SPRING (Green+Spring)
+        this.active = true;
+        this.moveSpeed = 2;
+        this.moveRange = 100;
+        this.startX = x;
+        this.offset = Math.random() * 100;
+    }
+    
+    update() {
+        if (this.type === 'MOVING') {
+            this.x = this.startX + Math.sin((gameState.frameCount + this.offset) * 0.05) * this.moveRange;
+        }
+    }
+    
+    onJump() {
+        if (this.type === 'BROKEN') {
+            this.break();
+        }
+    }
+    
+    break() {
+        this.active = false;
+        createParticles(this.x + this.width/2, this.y, 'BREAK', 8);
+        // Remove from game state immediately or flag for removal
+        const idx = gameState.platforms.indexOf(this);
+        if (idx > -1) gameState.platforms.splice(idx, 1);
+    }
+    
+    render(p) {
+        if (!this.active) return;
+        
+        p.noStroke();
+        
+        // Color based on type
+        if (this.type === 'NORMAL' || this.type === 'SPRING') p.fill(100, 200, 100);
+        else if (this.type === 'MOVING') p.fill(100, 150, 255);
+        else if (this.type === 'BROKEN') p.fill(139, 69, 19);
+        
+        // Draw rounded rect platform
+        p.rect(this.x, this.y, this.width, this.height, 5);
+        
+        // Draw top detail
+        p.fill(255, 255, 255, 50);
+        p.rect(this.x, this.y, this.width, 4, 5, 5, 0, 0);
+        
+        // Draw Spring
+        if (this.type === 'SPRING') {
+            p.fill(200, 50, 50);
+            p.rect(this.x + this.width/2 - 5, this.y - 8, 10, 8);
+        }
+    }
+}
+
+export class Enemy {
+    constructor(x, y, type) {
+        this.x = x;
+        this.y = y;
+        this.type = type; // 'STATIC', 'HOVER'
+        this.radius = 20;
+        this.angle = 0;
+        this.startY = y;
+        this.isDead = false;
+    }
+    
+    update() {
+        if (this.type === 'HOVER') {
+            this.y = this.startY + Math.sin(gameState.frameCount * 0.05) * 20;
+        }
+        this.angle += 0.05;
+    }
+    
+    die() {
+        this.isDead = true;
+        gameState.score += 100;
+        createParticles(this.x, this.y, 'EXPLOSION', 15);
+        
+        const idx = gameState.enemies.indexOf(this);
+        if (idx > -1) gameState.enemies.splice(idx, 1);
+    }
+    
+    render(p) {
+        p.push();
+        p.translate(this.x, this.y);
+        
+        p.stroke(0);
+        p.strokeWeight(1);
+        p.fill(200, 50, 150);
+        
+        // Body
+        p.beginShape();
+        for (let i = 0; i < Math.PI * 2; i += 0.5) {
+            let r = this.radius + Math.sin(i * 5 + this.angle) * 3;
+            let px = Math.cos(i) * r;
+            let py = Math.sin(i) * r;
+            p.vertex(px, py);
+        }
+        p.endShape(p.CLOSE);
+        
+        // Eyes
+        p.fill(255);
+        p.circle(-8, -5, 10);
+        p.circle(8, -5, 10);
+        p.fill(0);
+        p.circle(-8 + Math.sin(gameState.frameCount*0.1)*2, -5, 3);
+        p.circle(8 + Math.sin(gameState.frameCount*0.1)*2, -5, 3);
+        
+        // Mouth
+        p.noFill();
+        p.stroke(0);
+        p.arc(0, 5, 10, 10, 0, Math.PI);
+        
+        p.pop();
+    }
+}
+
+export class Collectible {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.radius = 12;
+        this.wobble = Math.random() * Math.PI;
+    }
+    
+    update() {
+        this.wobble += 0.1;
+    }
+    
+    collect() {
+        gameState.score += 50;
+        createParticles(this.x, this.y, 'STAR', 10);
+        
+        const idx = gameState.collectibles.indexOf(this);
+        if (idx > -1) gameState.collectibles.splice(idx, 1);
+    }
+    
+    render(p) {
+        p.push();
+        p.translate(this.x, this.y + Math.sin(this.wobble) * 3);
+        
+        p.fill(255, 215, 0);
+        p.stroke(200, 180, 0);
+        p.strokeWeight(1);
+        
+        // Draw Star
+        p.beginShape();
+        for (let i = 0; i < 5; i++) {
+            let angle = Math.PI * 2 * i / 5 - Math.PI / 2;
+            let r = this.radius;
+            p.vertex(Math.cos(angle) * r, Math.sin(angle) * r);
+            angle += Math.PI * 2 / 10;
+            r = this.radius * 0.4;
+            p.vertex(Math.cos(angle) * r, Math.sin(angle) * r);
+        }
+        p.endShape(p.CLOSE);
+        
+        p.pop();
+    }
+}
+
+export class Projectile {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.width = 8;
+        this.height = 8;
+        this.speed = 10;
+        
+        gameState.projectiles.push(this);
+    }
+    
+    update() {
+        this.y -= this.speed;
+    }
+    
+    render(p) {
+        p.fill(0);
+        p.circle(this.x, this.y, this.width);
+    }
+}
