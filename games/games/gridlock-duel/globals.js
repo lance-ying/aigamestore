@@ -68,11 +68,17 @@ export const gameState = {
 
 // Level configurations - Progressive grid size increase with balanced win conditions
 export const LEVELS = [
-  { level: 1, boardSize: 3, winLength: 3, aiDifficulty: "EASY", name: "Novice Grid" },
-  { level: 2, boardSize: 4, winLength: 3, aiDifficulty: "EASY", name: "Apprentice Grid" },
-  { level: 3, boardSize: 5, winLength: 3, aiDifficulty: "MEDIUM", name: "Master Grid" },
-  { level: 4, boardSize: 6, winLength: 4, aiDifficulty: "MEDIUM", name: "Grand Grid" },
-  { level: 5, boardSize: 7, winLength: 4, aiDifficulty: "HARD", name: "Ultimate Grid" }
+  // Easy Levels (Connect 3)
+  { level: 1, boardSize: 3, winLength: 3, aiDifficulty: "EASY", name: "Novice Grid", bgColor: [40, 60, 40] },
+  { level: 2, boardSize: 4, winLength: 3, aiDifficulty: "EASY", name: "Apprentice Grid", bgColor: [30, 50, 70] },
+  
+  // Medium Levels (Connect 4)
+  { level: 3, boardSize: 5, winLength: 4, aiDifficulty: "MEDIUM", name: "Journeyman Grid", bgColor: [60, 40, 70] },
+  { level: 4, boardSize: 6, winLength: 4, aiDifficulty: "MEDIUM", name: "Master Grid", bgColor: [80, 60, 30] },
+  
+  // Hard Levels (Connect 4 on bigger grid)
+  { level: 5, boardSize: 7, winLength: 4, aiDifficulty: "HARD", name: "Grand Grid", bgColor: [80, 30, 30] },
+  { level: 6, boardSize: 8, winLength: 4, aiDifficulty: "HARD", name: "Ultimate Grid", bgColor: [20, 20, 20] }
 ];
 
 // Scoring constants

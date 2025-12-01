@@ -149,7 +149,9 @@ function minimax(board, player, depth, alpha, beta) {
   }
   
   // Limit depth for performance on larger boards
-  if (depth >= 6) {
+  // Dynamic depth based on board size to prevent lag on 8x8
+  const maxDepth = gameState.boardSize > 5 ? 4 : 6;
+  if (depth >= maxDepth) {
     return { score: 0 };
   }
   

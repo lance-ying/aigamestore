@@ -25,6 +25,7 @@ import sys
 import threading
 import subprocess
 import platform
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
@@ -879,15 +880,15 @@ def refresh_games(directory: str = "games/games", sort_by: str = "alphabetical")
     return gr.Dropdown(choices=choices, value=choices[0][1] if choices else "")
 
 
-def on_game_selected_minimal(game_path: str) -> Tuple[str, gr.Dropdown, str]:
+def on_game_selected_minimal(game_path: str) -> Tuple[str, gr.Dropdown, str, str]:
     """
     Handle game selection event (minimal version).
     
     Returns:
-        Tuple of (iframe_html, backup_dropdown, current_flag_color)
+        Tuple of (iframe_html, backup_dropdown, current_flag_color, concept_text)
     """
     if not game_path:
-        return "", gr.Dropdown(choices=[]), "none"
+        return "", gr.Dropdown(choices=[]), "none", ""
     
     game_dir = Path(game_path)
     
@@ -919,7 +920,11 @@ def on_game_selected_minimal(game_path: str) -> Tuple[str, gr.Dropdown, str]:
     flag_color = get_game_flag(game_path)
     current_flag = flag_color if flag_color else "none"
     
-    return iframe_html, gr.Dropdown(choices=backup_choices), current_flag
+    # Get concept from metadata
+    concept = extract_concept_from_metadata(game_path)
+    concept_text = concept if concept else "No concept found in metadata.json"
+    
+    return iframe_html, gr.Dropdown(choices=backup_choices), current_flag, concept_text
 
 
 # COMMENTED OUT: Level selector functionality
@@ -1363,6 +1368,306 @@ def set_flag_action(game_path: str, color: str, games_dir: str = "games/games", 
         return gr.Dropdown(), "", f"Error setting flag: {e}"
 
 
+def extract_concept_from_metadata(game_path: str) -> Optional[str]:
+    """
+    Extract the concept field from a game's metadata.json.
+    
+    Args:
+        game_path: Path to the game directory
+        
+    Returns:
+        Concept text if found, None otherwise
+    """
+    game_dir = Path(game_path) if Path(game_path).is_absolute() else SCRIPT_DIR / game_path
+    metadata_path = game_dir / "metadata.json"
+    
+    if not metadata_path.exists():
+        return None
+    
+    try:
+        with open(metadata_path, 'r', encoding='utf-8') as f:
+            metadata = json.load(f)
+        
+        game_info = metadata.get('game_info', {})
+        concept = game_info.get('concept')
+        
+        if concept:
+            return str(concept).strip()
+        
+        return None
+    except Exception as e:
+        print(f"Error reading metadata: {e}")
+        return None
+
+
+def regenerate_game_action(game_path: str, model: str, method: str) -> Tuple[str, str]:
+    """
+    Regenerate a game from scratch using the concept from metadata.json.
+    
+    Args:
+        game_path: Path to the game directory
+        model: Model to use (e.g., "anthropic:claude-4.5-sonnet")
+        method: Generation method ("matter", "threejs", or "p5js")
+    
+    Returns:
+        Tuple of (status_message, updated_iframe_html)
+    """
+    if not game_path:
+        return "Error: No game selected", ""
+    
+    game_dir = Path(game_path) if Path(game_path).is_absolute() else SCRIPT_DIR / game_path
+    
+    if not game_dir.exists():
+        return f"Error: Game directory not found: {game_path}", ""
+    
+    status_lines = [
+        "Game Regeneration",
+        "=" * 60,
+        ""
+    ]
+    
+    # Extract concept from metadata
+    status_lines.append("Extracting concept from metadata...")
+    concept = extract_concept_from_metadata(game_path)
+    
+    if not concept:
+        return "Error: Could not find concept in metadata.json. Please ensure the game has a 'game_info.concept' field.", ""
+    
+    status_lines.append(f"Concept extracted ({len(concept)} characters)")
+    status_lines.append("")
+    
+    # Create backup
+    try:
+        backup_path = create_backup(game_dir)
+        status_lines.append(f"Backup created: {backup_path.name}")
+        status_lines.append("")
+    except Exception as e:
+        return f"Error creating backup: {e}", ""
+    
+    # Map method to config file
+    method_config_map = {
+        "matter": "configs/generators/matter_gen.yaml",
+        "threejs": "configs/generators/threejs_gen.yaml",
+        "p5js": "configs/generators/p5_gen.yaml",
+    }
+    
+    if method not in method_config_map:
+        return f"Error: Unknown method '{method}'. Must be one of: matter, threejs, p5js", ""
+    
+    config_file = method_config_map[method]
+    config_path = PROJECT_ROOT / config_file
+    
+    if not config_path.exists():
+        return f"Error: Config file not found: {config_file}", ""
+    
+    # Create temporary concept file in project directory with short name
+    temp_concept_path = None
+    try:
+        # Create a short, unique filename in the project root to avoid path length issues
+        import time
+        timestamp = int(time.time() * 1000)
+        temp_concept_path = PROJECT_ROOT / f"temp_concept_{timestamp}.txt"
+        
+        # Write the concept file - use the raw concept without modifications
+        # Adding instructions might confuse the model, and since CLI works fine,
+        # we'll keep it simple and match what works
+        temp_concept_path.write_text(concept, encoding='utf-8')
+        
+        # Verify the file was written correctly
+        if not temp_concept_path.exists():
+            return f"Error: Failed to create temporary concept file at {temp_concept_path}", ""
+        
+        # Verify the file content matches
+        written_content = temp_concept_path.read_text(encoding='utf-8')
+        if written_content != concept:
+            return f"Error: Temporary concept file content mismatch. Expected {len(concept)} chars, got {len(written_content)} chars", ""
+        
+        status_lines.append(f"Using method: {method}")
+        status_lines.append(f"Using model: {model}")
+        status_lines.append(f"Config: {config_file}")
+        status_lines.append("")
+        status_lines.append("Generating game...")
+        status_lines.append("   (this may take 1-3 minutes...)")
+        status_lines.append("")
+        
+        # Send notification that regeneration has started
+        game_name = game_dir.name
+        send_notification(
+            "Regeneration Started",
+            f"Regenerating {game_name}...\nThis may take 1-3 minutes."
+        )
+        
+        # Determine output folder name
+        # Save regenerated games in games/games/ directory to match the original location
+        output_folder = f"games/{game_dir.name}_regenerated"
+        
+        # Call the generator directly instead of via subprocess
+        # This avoids environment differences that cause the filename error
+        status_lines.append("Calling generator directly (not via subprocess)...")
+        status_lines.append(f"Config: {config_file}")
+        status_lines.append(f"Concept file: {temp_concept_path.name}")
+        status_lines.append(f"Model: {model}")
+        status_lines.append(f"Output folder: {output_folder}")
+        status_lines.append("")
+        
+        # Import and use the generator directly
+        from generators.single_prompt_with_testing import SinglePromptWithTestingGenerator
+        import yaml
+        
+        # Load config
+        with open(config_path, 'r', encoding='utf-8') as f:
+            cfg = yaml.safe_load(f) if config_path.suffix in ('.yml', '.yaml') else json.load(f)
+        
+        # Set up prompt config
+        prompt_config = {
+            "libraries_allowed": cfg.get("libraries_allowed"),
+            "actions_allowed": cfg.get("actions_allowed"),
+            "canvas_width": cfg.get("canvas_width", 600),
+            "canvas_height": cfg.get("canvas_height", 400),
+            "output_folder": output_folder,
+            "prompt_file": cfg.get("prompt_file"),
+            "library": cfg.get("library"),
+            "game_controls": cfg.get("game_controls"),
+            "game_phase_control": cfg.get("game_phase_control"),
+            "include_testing": True,
+            "max_tokens": cfg.get("max_tokens"),
+        }
+        
+        # Create generator
+        gen = SinglePromptWithTestingGenerator(
+            model_name=model,
+            verbose=True,
+            thinking=bool(cfg.get("thinking", False)),
+            thinking_budget=cfg.get("thinking_budget"),
+            temperature=cfg.get("temperature", 1.0),
+            top_p=cfg.get("top_p", 1.0),
+            prompt_config=prompt_config,
+        )
+        
+        # Generate the game
+        try:
+            result = gen.generate_game(str(temp_concept_path), forced_game_index=None)
+            game_dir_str = result.get("game_dir", "")
+            
+            # Convert to absolute path if it's relative
+            if game_dir_str:
+                generated_game_dir = Path(game_dir_str)
+                if not generated_game_dir.is_absolute():
+                    generated_game_dir = PROJECT_ROOT / generated_game_dir
+            else:
+                generated_game_dir = None
+            
+            if not generated_game_dir or not generated_game_dir.exists():
+                raise ValueError("Game generation completed but directory not found")
+            
+        except Exception as e:
+            error_msg = str(e)
+            status_lines.append(f"Error during generation:")
+            status_lines.append(error_msg)
+            status_lines.append("")
+            status_lines.append(f"Backup preserved at: {backup_path}")
+            
+            # Send error notification
+            send_notification(
+                "Regeneration Failed ✗",
+                f"Error regenerating {game_name}:\n{str(error_msg)[:100]}"
+            )
+            
+            return "\n".join(status_lines), ""
+        
+        # Game generated successfully
+        if not generated_game_dir.exists():
+            # Try to find the generated game in the expected location
+            # Structure: games/{output_folder}/game_{index}/sample_{sample}/
+            base_path = PROJECT_ROOT / "games" / output_folder
+            if base_path.exists():
+                # Find the most recent game directory
+                game_dirs = [d for d in base_path.iterdir() if d.is_dir() and d.name.startswith("game_")]
+                if game_dirs:
+                    # Get the most recent game directory
+                    latest_game_dir = max(game_dirs, key=lambda p: p.stat().st_mtime)
+                    # Find the most recent sample directory
+                    sample_dirs = [d for d in latest_game_dir.iterdir() if d.is_dir() and d.name.startswith("sample_")]
+                    if sample_dirs:
+                        generated_game_dir = max(sample_dirs, key=lambda p: p.stat().st_mtime)
+            
+            if not generated_game_dir:
+                status_lines.append("Warning: Could not determine generated game location")
+                status_lines.append(f"Check the games/{output_folder}/ directory for the regenerated game")
+                status_lines.append("")
+                status_lines.append(f"Backup preserved at: {backup_path}")
+                status_lines.append("Done!")
+                
+                send_notification(
+                    "Regeneration Complete ✓",
+                    f"{game_name} regeneration completed.\nCheck games/ directory."
+                )
+                
+                return "\n".join(status_lines), ""
+        
+        status_lines.append(f"Game regenerated successfully!")
+        status_lines.append(f"New game location: {generated_game_dir}")
+        status_lines.append("")
+        status_lines.append(f"Backup preserved at: {backup_path}")
+        status_lines.append("Done!")
+        status_lines.append("")
+        status_lines.append("=" * 60)
+        status_lines.append("The regenerated game has been saved to a new directory.")
+        status_lines.append("The original game remains unchanged.")
+        
+        # Send success notification
+        send_notification(
+            "Regeneration Complete ✓",
+            f"{game_name} regenerated successfully!\nSaved to: {generated_game_dir.name}"
+        )
+        
+        # Generate iframe HTML for the new game
+        try:
+            # Ensure we have an absolute path
+            if not generated_game_dir.is_absolute():
+                generated_game_dir = PROJECT_ROOT / generated_game_dir
+            
+            # Get relative path from project root
+            game_relative_path_from_root = generated_game_dir.relative_to(PROJECT_ROOT)
+            updated_iframe = get_game_iframe_html(str(game_relative_path_from_root), cache_bust=True)
+        except Exception as e:
+            # If we can't generate iframe, just return empty
+            status_lines.append(f"(Note: Could not generate preview: {e})")
+            updated_iframe = ""
+        
+        return "\n".join(status_lines), updated_iframe
+        
+    except subprocess.TimeoutExpired:
+        status_lines.append("Error: Generation timed out after 10 minutes")
+        status_lines.append(f"Backup preserved at: {backup_path}")
+        
+        send_notification(
+            "Regeneration Timeout ✗",
+            f"Regeneration of {game_dir.name} timed out."
+        )
+        
+        return "\n".join(status_lines), ""
+        
+    except Exception as e:
+        status_lines.append(f"Error during regeneration: {e}")
+        status_lines.append(f"Backup preserved at: {backup_path}")
+        
+        send_notification(
+            "Regeneration Failed ✗",
+            f"Error regenerating {game_dir.name}:\n{str(e)[:100]}"
+        )
+        
+        return "\n".join(status_lines), ""
+        
+    finally:
+        # Clean up temporary concept file
+        if temp_concept_path and temp_concept_path.exists():
+            try:
+                temp_concept_path.unlink()
+            except Exception:
+                pass
+
+
 def build_interface():
     """Build the Gradio interface."""
     
@@ -1514,6 +1819,34 @@ def build_interface():
                         interactive=True
                     )
                     restore_btn = gr.Button("Restore")
+                
+                with gr.Accordion("Regenerate Game", open=False):
+                    regenerate_model_dropdown = gr.Dropdown(
+                        choices=[
+                            ("Claude 4.5 Sonnet", "anthropic:claude-4.5-sonnet"),
+                            ("Gemini 3 Pro Preview", "google:gemini-3-pro-preview"),
+                        ],
+                        value="anthropic:claude-4.5-sonnet",
+                        label="Model",
+                        interactive=True
+                    )
+                    regenerate_method_dropdown = gr.Dropdown(
+                        choices=[
+                            ("Matter.js", "matter"),
+                            ("Three.js", "threejs"),
+                            ("p5.js", "p5js"),
+                        ],
+                        value="p5js",
+                        label="Generation Method",
+                        interactive=True
+                    )
+                    concept_display = gr.Textbox(
+                        label="Concept (from metadata.json)",
+                        lines=6,
+                        interactive=False,
+                        placeholder="Select a game to view its concept..."
+                    )
+                    regenerate_btn = gr.Button("Regenerate Game", variant="primary")
         
         # Wire up events
         # When directory changes, refresh game list and flag counts
@@ -1555,7 +1888,7 @@ def build_interface():
         game_dropdown.change(
             fn=on_game_selected_minimal,
             inputs=[game_dropdown],
-            outputs=[game_iframe, backup_list, flag_color_dropdown]
+            outputs=[game_iframe, backup_list, flag_color_dropdown, concept_display]
         )
         
         # Flag management events
@@ -1581,7 +1914,14 @@ def build_interface():
         app.load(
             fn=on_game_selected_minimal,
             inputs=[game_dropdown],
-            outputs=[game_iframe, backup_list, flag_color_dropdown]
+            outputs=[game_iframe, backup_list, flag_color_dropdown, concept_display]
+        )
+        
+        # Regenerate game event
+        regenerate_btn.click(
+            fn=regenerate_game_action,
+            inputs=[game_dropdown, regenerate_model_dropdown, regenerate_method_dropdown],
+            outputs=[status_output, game_iframe]
         )
         app.load(
             fn=update_flag_counts,

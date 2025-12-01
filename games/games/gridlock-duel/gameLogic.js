@@ -89,7 +89,7 @@ function handleWinner(result) {
     // Player wins
     gameState.score += SCORES.WIN_ROUND;
     
-    if (gameState.currentLevel < 5) {
+    if (gameState.currentLevel < 6) {
       gameState.score += SCORES.LEVEL_COMPLETE;
       gameState.gameStatus = GAME_STATES.LEVEL_COMPLETE;
     } else {
@@ -190,7 +190,7 @@ function updateHighScore() {
 }
 
 export function proceedToNextLevel() {
-  if (gameState.currentLevel < 5) {
+  if (gameState.currentLevel < 6) {
     gameState.currentLevel++;
     gameState.gameStatus = GAME_STATES.PLAYING;
     gameState.levelCompleteTimer = 0;

@@ -8,16 +8,17 @@ import {
   CONTAINER_X,
   CONTAINER_Y,
   FRUIT_TYPES,
-  DANGER_LINE_Y,
-  DANGER_LINE_GRACE_FRAMES
+  DANGER_LINE_GRACE_FRAMES,
+  LEVELS
 } from './globals.js';
 import { Fruit } from './entities.js';
 
 export function render() {
   const ctx = gameState.ctx;
   
-  // Clear canvas
-  ctx.fillStyle = '#87CEEB';
+  // Clear canvas with current level background color
+  const currentLevel = LEVELS[gameState.currentLevelIndex] || LEVELS[0];
+  ctx.fillStyle = currentLevel.color;
   ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
   
   if (gameState.gamePhase === 'START') {
@@ -132,13 +133,13 @@ function renderGameplay(ctx) {
     gameState.container.draw(ctx);
   }
   
-  // Draw danger line
+  // Draw danger line (use dynamic dangerLineY)
   ctx.strokeStyle = gameState.dangerFrameCount > 0 ? '#ff0000' : 'rgba(255, 0, 0, 0.5)';
   ctx.lineWidth = 3;
   ctx.setLineDash([10, 5]);
   ctx.beginPath();
-  ctx.moveTo(CONTAINER_X - CONTAINER_WIDTH / 2, DANGER_LINE_Y);
-  ctx.lineTo(CONTAINER_X + CONTAINER_WIDTH / 2, DANGER_LINE_Y);
+  ctx.moveTo(CONTAINER_X - CONTAINER_WIDTH / 2, gameState.dangerLineY);
+  ctx.lineTo(CONTAINER_X + CONTAINER_WIDTH / 2, gameState.dangerLineY);
   ctx.stroke();
   ctx.setLineDash([]);
   
@@ -156,7 +157,7 @@ function renderGameplay(ctx) {
     ctx.fillStyle = '#fff';
     ctx.font = 'bold 20px Arial';
     ctx.textAlign = 'center';
-    ctx.fillText('DANGER!', CONTAINER_X, DANGER_LINE_Y - 30);
+    ctx.fillText('DANGER!', CONTAINER_X, gameState.dangerLineY - 30);
   }
   
   // Draw all fruits
@@ -213,9 +214,27 @@ function renderGameplay(ctx) {
   ctx.font = '16px Arial';
   ctx.fillText(`High: ${gameState.highScore}`, 10, 55);
   
+  // Display Level and Target Score
+  const currentLevel = LEVELS[gameState.currentLevelIndex] || LEVELS[0];
+  const nextLevel = LEVELS[gameState.currentLevelIndex + 1];
+  
+  ctx.font = 'bold 20px Arial';
+  ctx.fillText(`Level: ${currentLevel.name}`, 10, 85);
+  
+  if (nextLevel) {
+    ctx.font = '16px Arial';
+    ctx.fillStyle = '#555';
+    ctx.fillText(`Target: ${nextLevel.threshold}`, 10, 110);
+  } else {
+    ctx.font = '16px Arial';
+    ctx.fillStyle = '#555';
+    ctx.fillText(`Max Level`, 10, 110);
+  }
+  
   // Next fruit preview (the one that comes AFTER the current)
   ctx.textAlign = 'right';
   ctx.font = '16px Arial';
+  ctx.fillStyle = '#333';
   ctx.fillText('Next:', CANVAS_WIDTH - 80, 30);
   
   const nextFruitPreview = FRUIT_TYPES[gameState.nextFruitType];

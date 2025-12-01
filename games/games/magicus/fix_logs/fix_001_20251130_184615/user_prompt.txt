@@ -1,0 +1,1813 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+can you make it so that my health gains a bit more as I progress? and can you make the UI more centered and proper right now it seems all over the place, and when I do reset with R, the game's proression isn't full reset, execute!
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">MAGICUS</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Random)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Win)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">MAGICUS is a match-3 RPG where you battle enemies by matching colored runes on a grid. Match 3+ runes of the same color to attack enemies and charge elemental meters. Fill a meter completely to unlock devastating magic spells. Defeat enemies to earn gold, level up your character, and progress through increasingly challenging stages. Manage your HP carefully - if it reaches zero, the game is over!</p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Arrow Keys: Move cursor on the rune grid | Space: Select/swap runes to create matches | Z: Cast charged spell (when meter is full) | Enter: Start game | Esc: Pause/Unpause | R: Restart to main menu</p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script src="../../dev_mode.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="automated_testing_controller.js">
+// automated_testing_controller.js - Automated testing logic
+
+import { GRID_SIZE } from './globals.js';
+import { canSwap, findAllMatches } from './grid.js';
+
+function findBestMove(gameState) {
+  let bestMove = null;
+  let bestScore = -1;
+  
+  for (let y = 0; y < GRID_SIZE; y++) {
+    for (let x = 0; x < GRID_SIZE; x++) {
+      // Try swapping right
+      if (x < GRID_SIZE - 1) {
+        if (canSwap(gameState.grid, x, y, x + 1, y)) {
+          const score = evaluateSwap(gameState.grid, x, y, x + 1, y);
+          if (score > bestScore) {
+            bestScore = score;
+            bestMove = {
+              from: { x, y },
+              to: { x: x + 1, y }
+            };
+          }
+        }
+      }
+      
+      // Try swapping down
+      if (y < GRID_SIZE - 1) {
+        if (canSwap(gameState.grid, x, y, x, y + 1)) {
+          const score = evaluateSwap(gameState.grid, x, y, x, y + 1);
+          if (score > bestScore) {
+            bestScore = score;
+            bestMove = {
+              from: { x, y },
+              to: { x, y: y + 1 }
+            };
+          }
+        }
+      }
+    }
+  }
+  
+  return bestMove;
+}
+
+function evaluateSwap(grid, x1, y1, x2, y2) {
+  // Temporarily swap
+  const temp = grid[y1][x1];
+  grid[y1][x1] = grid[y2][x2];
+  grid[y2][x2] = temp;
+  
+  const matches = findAllMatches(grid);
+  let score = matches.length;
+  
+  // Bonus for 4+ matches
+  const colorCounts = {};
+  matches.forEach(m => {
+    colorCounts[m.color] = (colorCounts[m.color] || 0) + 1;
+  });
+  
+  for (const color in colorCounts) {
+    if (colorCounts[color] >= 4) score += 10;
+    if (colorCounts[color] >= 5) score += 20;
+  }
+  
+  // Swap back
+  const temp2 = grid[y1][x1];
+  grid[y1][x1] = grid[y2][x2];
+  grid[y2][x2] = temp2;
+  
+  return score;
+}
+
+function getTestWinAction(gameState) {
+  // Priority 1: Cast spell if available
+  for (let i = 0; i < 5; i++) {
+    if (gameState.elementalMeters[i] >= gameState.meterMax) {
+      return { type: 'spell', color: i };
+    }
+  }
+  
+  // Priority 2: Find best move
+  const bestMove = findBestMove(gameState);
+  
+  if (bestMove) {
+    // Move cursor to from position
+    if (gameState.cursor.x !== bestMove.from.x || gameState.cursor.y !== bestMove.from.y) {
+      return { type: 'move', x: bestMove.from.x, y: bestMove.from.y };
+    }
+    
+    // Select if not selected
+    if (!gameState.selectedCell) {
+      return { type: 'select' };
+    }
+    
+    // Move to target
+    if (gameState.cursor.x !== bestMove.to.x || gameState.cursor.y !== bestMove.to.y) {
+      return { type: 'move', x: bestMove.to.x, y: bestMove.to.y };
+    }
+    
+    // Swap
+    return { type: 'swap' };
+  }
+  
+  return null;
+}
+
+function getRandomAction(gameState) {
+  const actions = ['move', 'select', 'swap', 'spell'];
+  const action = actions[Math.floor(Math.random() * actions.length)];
+  
+  if (action === 'move') {
+    return {
+      type: 'move',
+      x: Math.floor(Math.random() * GRID_SIZE),
+      y: Math.floor(Math.random() * GRID_SIZE)
+    };
+  } else if (action === 'spell') {
+    for (let i = 0; i < 5; i++) {
+      if (gameState.elementalMeters[i] >= gameState.meterMax) {
+        return { type: 'spell', color: i };
+      }
+    }
+  }
+  
+  return { type: action };
+}
+
+export function get_automated_testing_action(gameState) {
+  if (!gameState.isPlayerTurn || gameState.animating) {
+    return null;
+  }
+  
+  switch (gameState.controlMode) {
+    case "TEST_1":
+      return getRandomAction(gameState);
+    case "TEST_2":
+      return getTestWinAction(gameState);
+    default:
+      return null;
+  }
+}
+
+// Expose globally
+if (typeof window !== 'undefined') {
+  window.get_automated_testing_action = get_automated_testing_action;
+}
+
+export default get_automated_testing_action;
+</file>
+
+<file name="globals.js">
+// globals.js - Global constants and game state
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+// Game phases
+export const PHASE_START = "START";
+export const PHASE_PLAYING = "PLAYING";
+export const PHASE_PAUSED = "PAUSED";
+export const PHASE_STAGE_TRANSITION = "STAGE_TRANSITION";
+export const PHASE_GAME_OVER_WIN = "GAME_OVER_WIN";
+export const PHASE_GAME_OVER_LOSE = "GAME_OVER_LOSE";
+
+// Rune colors
+export const RUNE_RED = 0;
+export const RUNE_BLUE = 1;
+export const RUNE_GREEN = 2;
+export const RUNE_YELLOW = 3;
+export const RUNE_PURPLE = 4;
+
+export const RUNE_COLORS = [
+  [255, 80, 80],    // Red
+  [80, 150, 255],   // Blue
+  [80, 255, 120],   // Green
+  [255, 220, 80],   // Yellow
+  [200, 100, 255]   // Purple
+];
+
+export const RUNE_NAMES = ["Fire", "Ice", "Nature", "Light", "Shadow"];
+
+// Grid settings
+export const GRID_SIZE = 6;
+export const GRID_START_X = 50;
+export const GRID_START_Y = 100;
+export const CELL_SIZE = 40;
+
+// Game state object
+export const gameState = {
+  player: null,
+  entities: [],
+  grid: [],
+  cursor: { x: 0, y: 0 },
+  selectedCell: null,
+  score: 0,
+  gold: 0,
+  stage: 1,
+  enemyHP: 100,
+  enemyMaxHP: 100,
+  playerHP: 100,
+  playerMaxHP: 100,
+  elementalMeters: [0, 0, 0, 0, 0], // One for each rune color
+  meterMax: 10,
+  isPlayerTurn: true,
+  animating: false,
+  matchedCells: [],
+  animationTimer: 0,
+  damageDealt: 0,
+  gamePhase: PHASE_START,
+  controlMode: "HUMAN",
+  currentEnemy: null,
+  level: 1,
+  experience: 0,
+  experienceToLevel: 100,
+  totalEnemiesDefeated: 0,
+  turnCount: 0,
+  invalidSwap: false,
+  invalidSwapTimer: 0,
+  invalidSwapCells: null,
+  transitionTimer: 0
+};
+
+// Initialize getGameState function
+if (typeof window !== 'undefined') {
+  window.getGameState = function() {
+    return gameState;
+  };
+}
+</file>
+
+<file name="combat.js">
+// combat.js - Combat mechanics and calculations
+
+import { gameState, RUNE_NAMES, PHASE_STAGE_TRANSITION } from './globals.js';
+
+export function calculateMatchDamage(matchedCells) {
+  const baseScore = matchedCells.length * 10;
+  const baseDamage = matchedCells.length * 8;
+  
+  // Bonus for larger matches
+  let bonus = 0;
+  if (matchedCells.length >= 4) {
+    bonus = 20;
+  }
+  if (matchedCells.length >= 5) {
+    bonus = 50;
+  }
+  
+  return {
+    damage: baseDamage + bonus,
+    score: baseScore + bonus
+  };
+}
+
+export function chargeMeter(color, amount) {
+  gameState.elementalMeters[color] = Math.min(
+    gameState.meterMax,
+    gameState.elementalMeters[color] + amount
+  );
+}
+
+export function castSpell(color, p) {
+  if (gameState.elementalMeters[color] < gameState.meterMax) {
+    return null;
+  }
+  
+  gameState.elementalMeters[color] = 0;
+  
+  let damage = 0;
+  let effect = "";
+  
+  switch (color) {
+    case 0: // Fire - High damage
+      damage = 80;
+      effect = `${RUNE_NAMES[color]} Blast!`;
+      break;
+    case 1: // Ice - Medium damage + slow
+      damage = 50;
+      effect = `${RUNE_NAMES[color]} Storm!`;
+      break;
+    case 2: // Nature - Heal + damage
+      damage = 40;
+      gameState.player.heal(30);
+      effect = `${RUNE_NAMES[color]} Renewal!`;
+      break;
+    case 3: // Light - Medium damage
+      damage = 60;
+      effect = `${RUNE_NAMES[color]} Ray!`;
+      break;
+    case 4: // Shadow - High damage
+      damage = 70;
+      effect = `${RUNE_NAMES[color]} Curse!`;
+      break;
+  }
+  
+  return { damage, effect };
+}
+
+export function enemyTurn(enemy, player) {
+  if (!enemy || enemy.isDead()) {
+    return 0;
+  }
+  
+  const damage = enemy.performAttack();
+  player.takeDamage(damage);
+  
+  return damage;
+}
+
+export function checkGameOver() {
+  if (gameState.playerHP <= 0) {
+    gameState.gamePhase = "GAME_OVER_LOSE";
+    return true;
+  }
+  
+  if (gameState.currentEnemy && gameState.currentEnemy.isDead()) {
+    gameState.totalEnemiesDefeated++;
+    
+    // Grant rewards
+    const goldReward = 50 + gameState.stage * 10;
+    const expReward = 30 + gameState.stage * 5;
+    
+    gameState.gold += goldReward;
+    gameState.experience += expReward;
+    
+    // Check level up
+    if (gameState.experience >= gameState.experienceToLevel) {
+      gameState.experience -= gameState.experienceToLevel;
+      gameState.player.levelUp();
+      gameState.level++;
+      gameState.experienceToLevel = Math.floor(gameState.experienceToLevel * 1.5);
+    }
+    
+    // Check win condition
+    if (gameState.stage >= 5) {
+      gameState.gamePhase = "GAME_OVER_WIN";
+      return true;
+    }
+    
+    // Enemy defeated, transition to next stage
+    gameState.gamePhase = PHASE_STAGE_TRANSITION;
+    gameState.transitionTimer = 0;
+    return true;
+  }
+  
+  return false;
+}
+</file>
+
+<file name="game.js">
+// game.js - Main game file
+
+import { 
+  gameState,
+  CANVAS_WIDTH,
+  CANVAS_HEIGHT,
+  PHASE_START,
+  PHASE_PLAYING,
+  PHASE_PAUSED,
+  PHASE_STAGE_TRANSITION,
+  PHASE_GAME_OVER_WIN,
+  PHASE_GAME_OVER_LOSE
+} from './globals.js';
+
+import { Player, Enemy } from './entities.js';
+import { initializeGrid, findAllMatches, applyGravity, hasValidMoves, swapCells } from './grid.js';
+import { calculateMatchDamage, chargeMeter, enemyTurn, checkGameOver } from './combat.js';
+import { drawStartScreen, drawGame, drawGameOver, drawStageTransition } from './rendering.js';
+import { handleKeyPressed, processAutomatedInput } from './input.js';
+import get_automated_testing_action from './automated_testing_controller.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+  // Game setup
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(60);
+    p.randomSeed(42);
+    
+    // Initialize logs
+    p.logs = {
+      "game_info": [],
+      "inputs": [],
+      "player_info": []
+    };
+    
+    // Log initial state
+    p.logs.game_info.push({
+      data: { gamePhase: gameState.gamePhase },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  };
+  
+  // Main draw loop
+  p.draw = function() {
+    // Handle automated testing
+    if (gameState.controlMode !== "HUMAN" && gameState.gamePhase === PHASE_PLAYING) {
+      const action = get_automated_testing_action(gameState);
+      if (action) {
+        processAutomatedInput(p, action);
+      }
+    }
+    
+    // Render based on game phase
+    switch (gameState.gamePhase) {
+      case PHASE_START:
+        drawStartScreen(p);
+        break;
+      case PHASE_PLAYING:
+      case PHASE_PAUSED:
+        drawGame(p);
+        updateGame(p);
+        break;
+      case PHASE_STAGE_TRANSITION:
+        drawStageTransition(p);
+        updateTransition(p);
+        break;
+      case PHASE_GAME_OVER_WIN:
+      case PHASE_GAME_OVER_LOSE:
+        drawGameOver(p);
+        break;
+    }
+  };
+  
+  // Update transition phase
+  function updateTransition(p) {
+    gameState.transitionTimer++;
+    
+    // After 120 frames (2 seconds), advance to next stage
+    if (gameState.transitionTimer > 120) {
+      gameState.stage++;
+      gameState.currentEnemy = new Enemy(gameState.stage);
+      gameState.enemyHP = gameState.currentEnemy.hp;
+      gameState.enemyMaxHP = gameState.currentEnemy.maxHP;
+      gameState.isPlayerTurn = true;
+      gameState.gamePhase = PHASE_PLAYING;
+      gameState.transitionTimer = 0;
+      
+      p.logs.game_info.push({
+        data: { gamePhase: PHASE_PLAYING, stage: gameState.stage },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  }
+  
+  // Update game logic
+  function updateGame(p) {
+    if (gameState.gamePhase !== PHASE_PLAYING) return;
+    
+    // Handle invalid swap animation
+    if (gameState.invalidSwap) {
+      gameState.invalidSwapTimer++;
+      
+      if (gameState.invalidSwapTimer > 20) {
+        // Swap back to original position
+        if (gameState.invalidSwapCells) {
+          swapCells(gameState.grid,
+                   gameState.invalidSwapCells.x1, gameState.invalidSwapCells.y1,
+                   gameState.invalidSwapCells.x2, gameState.invalidSwapCells.y2);
+        }
+        gameState.invalidSwap = false;
+        gameState.invalidSwapTimer = 0;
+        gameState.invalidSwapCells = null;
+      }
+      return;
+    }
+    
+    // Handle animations
+    if (gameState.animating) {
+      gameState.animationTimer++;
+      
+      if (gameState.animationTimer > 30) {
+        gameState.animating = false;
+        gameState.animationTimer = 0;
+        gameState.damageDealt = 0;
+        
+        // Check if enemy defeated
+        if (checkGameOver()) {
+          if (gameState.gamePhase === PHASE_GAME_OVER_WIN || 
+              gameState.gamePhase === PHASE_GAME_OVER_LOSE ||
+              gameState.gamePhase === PHASE_STAGE_TRANSITION) {
+            p.logs.game_info.push({
+              data: { gamePhase: gameState.gamePhase, finalScore: gameState.score },
+              framecount: p.frameCount,
+              timestamp: Date.now()
+            });
+            return;
+          }
+        }
+      }
+      return;
+    }
+    
+    // Process matches if not player turn
+    if (!gameState.isPlayerTurn) {
+      const matches = findAllMatches(gameState.grid);
+      
+      if (matches.length > 0) {
+        // Calculate damage
+        const result = calculateMatchDamage(matches);
+        gameState.currentEnemy.takeDamage(result.damage);
+        gameState.score += result.score;
+        
+        // Charge meters
+        const colorCounts = {};
+        matches.forEach(m => {
+          colorCounts[m.color] = (colorCounts[m.color] || 0) + 1;
+        });
+        
+        for (const color in colorCounts) {
+          chargeMeter(parseInt(color), colorCounts[color]);
+        }
+        
+        // Clear matched cells
+        matches.forEach(cell => {
+          gameState.grid[cell.y][cell.x] = -1;
+        });
+        
+        // Start animation
+        gameState.matchedCells = matches;
+        gameState.damageDealt = result.damage;
+        gameState.animating = true;
+        gameState.animationTimer = 0;
+        
+        // Apply gravity after animation
+        setTimeout(() => {
+          applyGravity(gameState.grid, p);
+        }, 500);
+        
+        // Log player info
+        if (gameState.player) {
+          p.logs.player_info.push({
+            screen_x: 100,
+            screen_y: 50,
+            game_x: 100,
+            game_y: 50,
+            framecount: p.frameCount
+          });
+        }
+        
+      } else {
+        // No more matches - check valid moves
+        if (!hasValidMoves(gameState.grid)) {
+          // Reshuffle grid
+          gameState.grid = initializeGrid(p);
+        }
+        
+        // Enemy turn
+        if (!checkGameOver()) {
+          const damage = enemyTurn(gameState.currentEnemy, gameState.player);
+          
+          if (checkGameOver()) {
+            p.logs.game_info.push({
+              data: { gamePhase: gameState.gamePhase },
+              framecount: p.frameCount,
+              timestamp: Date.now()
+            });
+            return;
+          }
+        }
+        
+        gameState.isPlayerTurn = true;
+      }
+    }
+  }
+  
+  // Key press handler
+  p.keyPressed = function() {
+    const keyCode = p.keyCode;
+    
+    // Phase transition keys
+    if (keyCode === 13) { // ENTER
+      if (gameState.gamePhase === PHASE_START) {
+        startGame(p);
+        p.logs.game_info.push({
+          data: { gamePhase: PHASE_PLAYING },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      } else if (gameState.gamePhase === PHASE_STAGE_TRANSITION) {
+        // Allow skipping transition
+        gameState.stage++;
+        gameState.currentEnemy = new Enemy(gameState.stage);
+        gameState.enemyHP = gameState.currentEnemy.hp;
+        gameState.enemyMaxHP = gameState.currentEnemy.maxHP;
+        gameState.isPlayerTurn = true;
+        gameState.gamePhase = PHASE_PLAYING;
+        gameState.transitionTimer = 0;
+      }
+      return false;
+    }
+    
+    if (keyCode === 27) { // ESC
+      if (gameState.gamePhase === PHASE_PLAYING) {
+        gameState.gamePhase = PHASE_PAUSED;
+        p.logs.game_info.push({
+          data: { gamePhase: PHASE_PAUSED },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      } else if (gameState.gamePhase === PHASE_PAUSED) {
+        gameState.gamePhase = PHASE_PLAYING;
+        p.logs.game_info.push({
+          data: { gamePhase: PHASE_PLAYING },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      }
+      return false;
+    }
+    
+    if (keyCode === 82) { // R
+      if (gameState.gamePhase === PHASE_GAME_OVER_WIN || 
+          gameState.gamePhase === PHASE_GAME_OVER_LOSE) {
+        resetGame(p);
+        p.logs.game_info.push({
+          data: { gamePhase: PHASE_START },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      }
+      return false;
+    }
+    
+    // Gameplay keys
+    handleKeyPressed(p, keyCode);
+    return false;
+  };
+  
+  function startGame(p) {
+    // Initialize player
+    gameState.player = new Player();
+    gameState.playerHP = gameState.player.hp;
+    gameState.playerMaxHP = gameState.player.maxHP;
+    
+    // Initialize grid
+    gameState.grid = initializeGrid(p);
+    
+    // Initialize enemy
+    gameState.currentEnemy = new Enemy(gameState.stage);
+    gameState.enemyHP = gameState.currentEnemy.hp;
+    gameState.enemyMaxHP = gameState.currentEnemy.maxHP;
+    
+    // Reset state
+    gameState.score = 0;
+    gameState.gold = 0;
+    gameState.stage = 1;
+    gameState.level = 1;
+    gameState.experience = 0;
+    gameState.totalEnemiesDefeated = 0;
+    gameState.turnCount = 0;
+    gameState.cursor = { x: 0, y: 0 };
+    gameState.selectedCell = null;
+    gameState.isPlayerTurn = true;
+    gameState.animating = false;
+    gameState.elementalMeters = [0, 0, 0, 0, 0];
+    gameState.entities = [gameState.player, gameState.currentEnemy];
+    gameState.invalidSwap = false;
+    gameState.invalidSwapTimer = 0;
+    gameState.invalidSwapCells = null;
+    gameState.transitionTimer = 0;
+    
+    gameState.gamePhase = PHASE_PLAYING;
+  }
+  
+  function resetGame(p) {
+    gameState.gamePhase = PHASE_START;
+    gameState.player = null;
+    gameState.currentEnemy = null;
+    gameState.entities = [];
+  }
+});
+
+// Expose game instance globally
+window.gameInstance = gameInstance;
+// Expose level loading for dev mode
+window.loadLevel = function(levelNum) {
+  const state = window.getGameState ? window.getGameState() : (window.gameState || (window.gameInstance && window.gameInstance.gameState));
+  if (state) {
+    state.currentLevel = levelNum;
+    // Try common reset/start patterns
+    if (typeof resetGame === 'function') {
+      resetGame();
+    }
+    if (typeof startGame === 'function') {
+      startGame();
+    } else if (state.gamePhase !== undefined) {
+      state.gamePhase = "PLAYING";
+    }
+  }
+};
+
+// Control mode setter
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  
+  // Update button states
+  const buttons = ['humanModeBtn', 'test_1_ModeBtn', 'test_2_ModeBtn'];
+  buttons.forEach(btnId => {
+    const btn = document.getElementById(btnId);
+    if (btn) {
+      btn.classList.remove('active');
+    }
+  });
+  
+  const activeBtn = document.getElementById(
+    mode === 'HUMAN' ? 'humanModeBtn' : 
+    mode === 'TEST_1' ? 'test_1_ModeBtn' : 
+    'test_2_ModeBtn'
+  );
+  
+  if (activeBtn) {
+    activeBtn.classList.add('active');
+  }
+};
+</file>
+
+<file name="grid.js">
+// grid.js - Grid management and matching logic
+
+import { gameState, GRID_SIZE, RUNE_RED, RUNE_BLUE, RUNE_GREEN, RUNE_YELLOW, RUNE_PURPLE } from './globals.js';
+
+export function initializeGrid(p) {
+  const grid = [];
+  for (let y = 0; y < GRID_SIZE; y++) {
+    grid[y] = [];
+    for (let x = 0; x < GRID_SIZE; x++) {
+      grid[y][x] = p.floor(p.random(5));
+    }
+  }
+  
+  // Remove initial matches
+  let hasMatches = true;
+  let iterations = 0;
+  while (hasMatches && iterations < 100) {
+    hasMatches = false;
+    for (let y = 0; y < GRID_SIZE; y++) {
+      for (let x = 0; x < GRID_SIZE; x++) {
+        if (checkMatchAt(grid, x, y).length > 0) {
+          grid[y][x] = p.floor(p.random(5));
+          hasMatches = true;
+        }
+      }
+    }
+    iterations++;
+  }
+  
+  return grid;
+}
+
+export function checkMatchAt(grid, x, y) {
+  const color = grid[y][x];
+  const matched = new Set();
+  matched.add(`${x},${y}`);
+  
+  // Check horizontal
+  let left = x - 1;
+  while (left >= 0 && grid[y][left] === color) {
+    matched.add(`${left},${y}`);
+    left--;
+  }
+  let right = x + 1;
+  while (right < GRID_SIZE && grid[y][right] === color) {
+    matched.add(`${right},${y}`);
+    right++;
+  }
+  
+  const horizontalMatch = matched.size >= 3 ? Array.from(matched) : [];
+  
+  // Check vertical
+  matched.clear();
+  matched.add(`${x},${y}`);
+  let up = y - 1;
+  while (up >= 0 && grid[up][x] === color) {
+    matched.add(`${x},${up}`);
+    up--;
+  }
+  let down = y + 1;
+  while (down < GRID_SIZE && grid[down][x] === color) {
+    matched.add(`${x},${down}`);
+    down++;
+  }
+  
+  const verticalMatch = matched.size >= 3 ? Array.from(matched) : [];
+  
+  // Combine matches
+  const allMatches = new Set([...horizontalMatch, ...verticalMatch]);
+  return Array.from(allMatches);
+}
+
+export function findAllMatches(grid) {
+  const allMatched = new Set();
+  
+  for (let y = 0; y < GRID_SIZE; y++) {
+    for (let x = 0; x < GRID_SIZE; x++) {
+      const matches = checkMatchAt(grid, x, y);
+      matches.forEach(cell => allMatched.add(cell));
+    }
+  }
+  
+  return Array.from(allMatched).map(cell => {
+    const [x, y] = cell.split(',').map(Number);
+    return { x, y, color: grid[y][x] };
+  });
+}
+
+export function applyGravity(grid, p) {
+  for (let x = 0; x < GRID_SIZE; x++) {
+    let emptySpaces = 0;
+    for (let y = GRID_SIZE - 1; y >= 0; y--) {
+      if (grid[y][x] === -1) {
+        emptySpaces++;
+      } else if (emptySpaces > 0) {
+        grid[y + emptySpaces][x] = grid[y][x];
+        grid[y][x] = -1;
+      }
+    }
+    
+    // Fill from top
+    for (let y = 0; y < GRID_SIZE; y++) {
+      if (grid[y][x] === -1) {
+        grid[y][x] = p.floor(p.random(5));
+      }
+    }
+  }
+}
+
+export function canSwap(grid, x1, y1, x2, y2) {
+  if (x2 < 0 || x2 >= GRID_SIZE || y2 < 0 || y2 >= GRID_SIZE) {
+    return false;
+  }
+  
+  // Swap
+  const temp = grid[y1][x1];
+  grid[y1][x1] = grid[y2][x2];
+  grid[y2][x2] = temp;
+  
+  // Check if swap creates match
+  const hasMatch = checkMatchAt(grid, x1, y1).length > 0 || 
+                   checkMatchAt(grid, x2, y2).length > 0;
+  
+  // Swap back
+  const temp2 = grid[y1][x1];
+  grid[y1][x1] = grid[y2][x2];
+  grid[y2][x2] = temp2;
+  
+  return hasMatch;
+}
+
+export function swapCells(grid, x1, y1, x2, y2) {
+  const temp = grid[y1][x1];
+  grid[y1][x1] = grid[y2][x2];
+  grid[y2][x2] = temp;
+}
+
+export function hasValidMoves(grid) {
+  for (let y = 0; y < GRID_SIZE; y++) {
+    for (let x = 0; x < GRID_SIZE; x++) {
+      // Check right
+      if (x < GRID_SIZE - 1 && canSwap(grid, x, y, x + 1, y)) {
+        return true;
+      }
+      // Check down
+      if (y < GRID_SIZE - 1 && canSwap(grid, x, y, x, y + 1)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+</file>
+
+<file name="rendering.js">
+// rendering.js - Rendering functions
+
+import { 
+  gameState, 
+  CANVAS_WIDTH, 
+  CANVAS_HEIGHT,
+  GRID_SIZE,
+  GRID_START_X,
+  GRID_START_Y,
+  CELL_SIZE,
+  RUNE_COLORS,
+  RUNE_NAMES,
+  PHASE_START,
+  PHASE_PLAYING,
+  PHASE_PAUSED,
+  PHASE_GAME_OVER_WIN,
+  PHASE_GAME_OVER_LOSE
+} from './globals.js';
+
+export function drawStartScreen(p) {
+  p.background(20, 15, 35);
+  
+  // Title with glow effect
+  p.push();
+  p.textAlign(p.CENTER, p.CENTER);
+  
+  // Glow
+  p.fill(150, 100, 255, 100);
+  p.textSize(48);
+  p.text("MAGICUS", CANVAS_WIDTH / 2 + 2, 60 + 2);
+  
+  // Title
+  p.fill(220, 180, 255);
+  p.text("MAGICUS", CANVAS_WIDTH / 2, 60);
+  
+  // Subtitle
+  p.textSize(16);
+  p.fill(180, 160, 200);
+  p.text("Match-3 RPG Battle", CANVAS_WIDTH / 2, 95);
+  
+  // Description box
+  p.fill(40, 30, 60, 200);
+  p.rect(50, 120, CANVAS_WIDTH - 100, 140, 10);
+  
+  p.textSize(14);
+  p.fill(220, 220, 220);
+  p.textAlign(p.LEFT, p.TOP);
+  const descX = 70;
+  let descY = 135;
+  
+  p.text("OBJECTIVE:", descX, descY);
+  descY += 20;
+  p.textSize(12);
+  p.fill(200, 200, 200);
+  p.text("• Match 3+ runes to attack enemies", descX, descY);
+  descY += 18;
+  p.text("• Fill elemental meters to cast powerful spells", descX, descY);
+  descY += 18;
+  p.text("• Defeat 5 stages of enemies to win!", descX, descY);
+  descY += 18;
+  p.text("• Don't let your HP reach zero!", descX, descY);
+  
+  descY += 30;
+  p.textSize(14);
+  p.fill(220, 220, 220);
+  p.text("CONTROLS:", descX, descY);
+  descY += 20;
+  p.textSize(12);
+  p.fill(200, 200, 200);
+  p.text("Arrow Keys: Move cursor  |  Space: Swap runes", descX, descY);
+  descY += 18;
+  p.text("Z: Cast spell (when meter full)  |  ESC: Pause", descX, descY);
+  
+  // Start prompt
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(20);
+  const pulse = p.sin(p.frameCount * 0.1) * 0.3 + 0.7;
+  p.fill(255, 220, 100, 255 * pulse);
+  p.text("PRESS ENTER TO START", CANVAS_WIDTH / 2, 340);
+  
+  p.pop();
+}
+
+export function drawGame(p) {
+  p.background(20, 15, 35);
+  
+  // Draw background pattern
+  drawBackground(p);
+  
+  // Draw UI
+  drawUI(p);
+  
+  // Draw grid
+  drawGrid(p);
+  
+  // Draw cursor
+  drawCursor(p);
+  
+  // Draw enemy
+  drawEnemy(p);
+  
+  // Draw elemental meters
+  drawElementalMeters(p);
+  
+  // Draw animations
+  if (gameState.animating) {
+    drawMatchAnimation(p);
+  }
+  
+  // Pause indicator
+  if (gameState.gamePhase === PHASE_PAUSED) {
+    p.push();
+    p.textAlign(p.RIGHT, p.TOP);
+    p.textSize(16);
+    p.fill(255, 200, 100);
+    p.text("PAUSED", CANVAS_WIDTH - 10, 10);
+    p.pop();
+  }
+}
+
+export function drawStageTransition(p) {
+  p.background(20, 15, 35);
+  
+  p.push();
+  p.textAlign(p.CENTER, p.CENTER);
+  
+  // Title
+  const pulse = p.sin(gameState.transitionTimer * 0.1) * 0.2 + 0.8;
+  p.fill(100, 255, 150, 255 * pulse);
+  p.textSize(48);
+  p.text("STAGE COMPLETE!", CANVAS_WIDTH / 2, 100);
+  
+  // Stats box
+  p.fill(40, 30, 60, 200);
+  p.rect(100, 150, CANVAS_WIDTH - 200, 150, 10);
+  
+  p.textSize(18);
+  p.fill(255, 220, 100);
+  p.text(`Stage ${gameState.stage} Cleared!`, CANVAS_WIDTH / 2, 175);
+  
+  p.textSize(14);
+  p.fill(200, 200, 200);
+  p.text(`Gold Earned: +${50 + gameState.stage * 10}`, CANVAS_WIDTH / 2, 210);
+  p.text(`Experience: +${30 + gameState.stage * 5}`, CANVAS_WIDTH / 2, 235);
+  
+  // Next enemy info
+  const nextStage = gameState.stage + 1;
+  const nextEnemy = { 
+    stage: nextStage, 
+    type: (nextStage - 1) % 5,
+    isBoss: (nextStage === 3 || nextStage === 5)
+  };
+  
+  p.textSize(16);
+  p.fill(255, 150, 150);
+  p.text("Next Enemy:", CANVAS_WIDTH / 2, 265);
+  
+  const typeNames = ["Fire", "Ice", "Nature", "Light", "Shadow"];
+  const enemyName = (nextEnemy.isBoss ? "BOSS: " : "") + 
+                    typeNames[nextEnemy.type] + 
+                    (nextEnemy.isBoss ? " Lord" : " Elemental");
+  
+  p.textSize(20);
+  p.fill(...RUNE_COLORS[nextEnemy.type]);
+  p.text(enemyName, CANVAS_WIDTH / 2, 290);
+  
+  // Continue prompt
+  const promptPulse = p.sin(gameState.transitionTimer * 0.15) * 0.3 + 0.7;
+  p.textSize(16);
+  p.fill(255, 255, 255, 255 * promptPulse);
+  p.text("Press ENTER to continue...", CANVAS_WIDTH / 2, 350);
+  
+  p.pop();
+}
+
+function drawBackground(p) {
+  p.push();
+  p.noStroke();
+  for (let i = 0; i < 20; i++) {
+    const x = (p.frameCount * 0.5 + i * 30) % CANVAS_WIDTH;
+    const y = (p.frameCount * 0.3 + i * 20) % CANVAS_HEIGHT;
+    p.fill(60, 40, 80, 30);
+    p.circle(x, y, 3);
+  }
+  p.pop();
+}
+
+function drawUI(p) {
+  p.push();
+  
+  // Top bar background
+  p.fill(30, 20, 50, 200);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, 30);
+  
+  p.textSize(14);
+  p.fill(255, 220, 100);
+  p.textAlign(p.LEFT, p.CENTER);
+  p.text(`Stage: ${gameState.stage}`, 10, 15);
+  p.text(`Gold: ${gameState.gold}`, 120, 15);
+  p.text(`Score: ${gameState.score}`, 230, 15);
+  p.text(`Level: ${gameState.level}`, 360, 15);
+  
+  // Player HP bar
+  const hpBarX = 10;
+  const hpBarY = 40;
+  const hpBarW = 200;
+  const hpBarH = 20;
+  
+  p.fill(60, 30, 30);
+  p.rect(hpBarX, hpBarY, hpBarW, hpBarH, 5);
+  
+  const hpPercent = gameState.playerHP / gameState.playerMaxHP;
+  p.fill(...(hpPercent > 0.5 ? [100, 255, 100] : hpPercent > 0.25 ? [255, 200, 100] : [255, 100, 100]));
+  p.rect(hpBarX, hpBarY, hpBarW * hpPercent, hpBarH, 5);
+  
+  p.fill(255);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(12);
+  p.text(`HP: ${Math.ceil(gameState.playerHP)}/${gameState.playerMaxHP}`, hpBarX + hpBarW / 2, hpBarY + hpBarH / 2);
+  
+  p.pop();
+}
+
+function drawGrid(p) {
+  p.push();
+  
+  for (let y = 0; y < GRID_SIZE; y++) {
+    for (let x = 0; x < GRID_SIZE; x++) {
+      const screenX = GRID_START_X + x * CELL_SIZE;
+      const screenY = GRID_START_Y + y * CELL_SIZE;
+      
+      // Cell background
+      p.fill(40, 35, 55);
+      p.stroke(60, 55, 75);
+      p.strokeWeight(1);
+      p.rect(screenX, screenY, CELL_SIZE - 2, CELL_SIZE - 2, 4);
+      
+      // Rune
+      const runeColor = gameState.grid[y][x];
+      if (runeColor >= 0) {
+        drawRune(p, screenX + CELL_SIZE / 2, screenY + CELL_SIZE / 2, runeColor, CELL_SIZE * 0.6);
+      }
+    }
+  }
+  
+  p.pop();
+}
+
+function drawRune(p, x, y, colorIndex, size) {
+  p.push();
+  
+  const color = RUNE_COLORS[colorIndex];
+  const pulse = p.sin(p.frameCount * 0.05 + colorIndex) * 0.1 + 0.9;
+  
+  // Glow
+  p.noStroke();
+  p.fill(...color, 50);
+  p.circle(x, y, size * 1.3);
+  
+  // Main rune
+  p.fill(...color.map(c => c * pulse));
+  p.stroke(255, 255, 255, 150);
+  p.strokeWeight(2);
+  
+  // Different shapes for different colors
+  switch (colorIndex) {
+    case 0: // Fire - triangle
+      p.triangle(x, y - size / 2, x - size / 2, y + size / 2, x + size / 2, y + size / 2);
+      break;
+    case 1: // Ice - diamond
+      p.push();
+      p.translate(x, y);
+      p.rotate(p.PI / 4);
+      p.rect(-size / 3, -size / 3, size * 0.66, size * 0.66);
+      p.pop();
+      break;
+    case 2: // Nature - hexagon
+      drawHexagon(p, x, y, size / 2);
+      break;
+    case 3: // Light - star
+      drawStar(p, x, y, size / 3, size / 6, 5);
+      break;
+    case 4: // Shadow - pentagon
+      drawPolygon(p, x, y, size / 2, 5);
+      break;
+  }
+  
+  p.pop();
+}
+
+function drawHexagon(p, x, y, radius) {
+  p.beginShape();
+  for (let i = 0; i < 6; i++) {
+    const angle = p.TWO_PI / 6 * i;
+    const vx = x + radius * p.cos(angle);
+    const vy = y + radius * p.sin(angle);
+    p.vertex(vx, vy);
+  }
+  p.endShape(p.CLOSE);
+}
+
+function drawStar(p, x, y, radius1, radius2, npoints) {
+  const angle = p.TWO_PI / npoints;
+  const halfAngle = angle / 2;
+  p.beginShape();
+  for (let a = -p.PI / 2; a < p.TWO_PI - p.PI / 2; a += angle) {
+    let sx = x + p.cos(a) * radius1;
+    let sy = y + p.sin(a) * radius1;
+    p.vertex(sx, sy);
+    sx = x + p.cos(a + halfAngle) * radius2;
+    sy = y + p.sin(a + halfAngle) * radius2;
+    p.vertex(sx, sy);
+  }
+  p.endShape(p.CLOSE);
+}
+
+function drawPolygon(p, x, y, radius, npoints) {
+  const angle = p.TWO_PI / npoints;
+  p.beginShape();
+  for (let a = 0; a < p.TWO_PI; a += angle) {
+    const sx = x + p.cos(a) * radius;
+    const sy = y + p.sin(a) * radius;
+    p.vertex(sx, sy);
+  }
+  p.endShape(p.CLOSE);
+}
+
+function drawCursor(p) {
+  if (gameState.animating) return;
+  
+  p.push();
+  const x = GRID_START_X + gameState.cursor.x * CELL_SIZE;
+  const y = GRID_START_Y + gameState.cursor.y * CELL_SIZE;
+  
+  p.noFill();
+  p.stroke(255, 255, 100);
+  p.strokeWeight(3);
+  p.rect(x, y, CELL_SIZE - 2, CELL_SIZE - 2, 4);
+  
+  // Selected cell indicator
+  if (gameState.selectedCell) {
+    const sx = GRID_START_X + gameState.selectedCell.x * CELL_SIZE;
+    const sy = GRID_START_Y + gameState.selectedCell.y * CELL_SIZE;
+    p.stroke(100, 255, 255);
+    p.strokeWeight(2);
+    p.rect(sx + 2, sy + 2, CELL_SIZE - 6, CELL_SIZE - 6, 4);
+  }
+  
+  p.pop();
+}
+
+function drawEnemy(p) {
+  if (!gameState.currentEnemy) return;
+  
+  p.push();
+  
+  const enemyX = 400;
+  const enemyY = 180;
+  
+  // Enemy shadow
+  p.fill(0, 0, 0, 100);
+  p.noStroke();
+  p.ellipse(enemyX, enemyY + 60, 80, 20);
+  
+  // Enemy body (larger for bosses)
+  const bounce = p.sin(p.frameCount * 0.05) * 5;
+  const enemyColor = RUNE_COLORS[gameState.currentEnemy.type];
+  const isBoss = gameState.currentEnemy.isBoss;
+  const baseSize = isBoss ? 70 : 50;
+  
+  // Boss aura
+  if (isBoss) {
+    const auraPulse = p.sin(p.frameCount * 0.08) * 10 + baseSize + 20;
+    p.fill(...enemyColor, 30);
+    p.circle(enemyX, enemyY + bounce, auraPulse);
+  }
+  
+  // Glow
+  p.fill(...enemyColor, 50);
+  p.circle(enemyX, enemyY + bounce, baseSize + 20);
+  
+  // Main body
+  p.fill(...enemyColor);
+  p.stroke(255, 255, 255, isBoss ? 200 : 100);
+  p.strokeWeight(isBoss ? 3 : 2);
+  p.circle(enemyX, enemyY + bounce, baseSize);
+  
+  // Eyes (more intimidating for bosses)
+  p.fill(255);
+  p.noStroke();
+  const eyeSize = isBoss ? 14 : 10;
+  const eyeSpacing = isBoss ? 15 : 12;
+  p.circle(enemyX - eyeSpacing, enemyY - 5 + bounce, eyeSize);
+  p.circle(enemyX + eyeSpacing, enemyY - 5 + bounce, eyeSize);
+  
+  p.fill(isBoss ? [255, 0, 0] : [0, 0, 0]);
+  const pupilSize = isBoss ? 7 : 5;
+  p.circle(enemyX - eyeSpacing + 2, enemyY - 5 + bounce, pupilSize);
+  p.circle(enemyX + eyeSpacing + 2, enemyY - 5 + bounce, pupilSize);
+  
+  // HP bar
+  const hpBarW = isBoss ? 120 : 100;
+  const hpBarH = isBoss ? 14 : 12;
+  const hpBarX = enemyX - hpBarW / 2;
+  const hpBarY = enemyY - (isBoss ? 70 : 60);
+  
+  p.fill(60, 30, 30);
+  p.noStroke();
+  p.rect(hpBarX, hpBarY, hpBarW, hpBarH, 3);
+  
+  const hpPercent = gameState.enemyHP / gameState.enemyMaxHP;
+  p.fill(255, 100, 100);
+  p.rect(hpBarX, hpBarY, hpBarW * hpPercent, hpBarH, 3);
+  
+  p.fill(255);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(10);
+  p.text(`${Math.ceil(gameState.enemyHP)}/${gameState.enemyMaxHP}`, enemyX, hpBarY + hpBarH / 2);
+  
+  // Enemy name
+  p.textSize(isBoss ? 16 : 14);
+  p.fill(isBoss ? [255, 100, 100] : [220, 200, 255]);
+  if (isBoss) {
+    p.stroke(255, 200, 100);
+    p.strokeWeight(1);
+  }
+  p.text(gameState.currentEnemy.getName(), enemyX, hpBarY - 18);
+  
+  // Boss indicator
+  if (isBoss) {
+    p.noStroke();
+    p.textSize(10);
+    p.fill(255, 220, 100);
+    p.text("⚔ BOSS ⚔", enemyX, hpBarY - 35);
+  }
+  
+  // Special ability tooltip
+  p.textSize(9);
+  p.fill(180, 180, 200);
+  p.noStroke();
+  const abilityText = gameState.currentEnemy.specialAbility;
+  p.text(abilityText, enemyX, enemyY + (isBoss ? 90 : 75));
+  
+  p.pop();
+}
+
+function drawElementalMeters(p) {
+  p.push();
+  
+  const meterStartX = 400;
+  const meterStartY = 280;
+  const meterWidth = 30;
+  const meterHeight = 80;
+  const meterSpacing = 35;
+  
+  p.textAlign(p.CENTER, p.TOP);
+  p.textSize(10);
+  
+  for (let i = 0; i < 5; i++) {
+    const x = meterStartX + i * meterSpacing;
+    const y = meterStartY;
+    
+    // Background
+    p.fill(30, 25, 45);
+    p.stroke(60, 55, 75);
+    p.strokeWeight(1);
+    p.rect(x, y, meterWidth, meterHeight, 3);
+    
+    // Fill
+    const fillPercent = gameState.elementalMeters[i] / gameState.meterMax;
+    const fillHeight = meterHeight * fillPercent;
+    
+    p.fill(...RUNE_COLORS[i]);
+    p.noStroke();
+    p.rect(x, y + meterHeight - fillHeight, meterWidth, fillHeight, 3);
+    
+    // Full indicator
+    if (fillPercent >= 1) {
+      p.stroke(255, 255, 100);
+      p.strokeWeight(2);
+      p.noFill();
+      p.rect(x - 2, y - 2, meterWidth + 4, meterHeight + 4, 5);
+      
+      p.fill(255, 255, 100);
+      p.textSize(8);
+      p.text("READY", x + meterWidth / 2, y + meterHeight + 5);
+    }
+    
+    // Initial letter
+    p.fill(255);
+    p.textSize(12);
+    p.text(RUNE_NAMES[i][0], x + meterWidth / 2, y - 15);
+  }
+  
+  // Instruction
+  p.fill(200, 200, 200);
+  p.textSize(10);
+  p.textAlign(p.CENTER, p.TOP);
+  p.text("Press Z to cast spell", meterStartX + 2 * meterSpacing, meterStartY + meterHeight + 20);
+  
+  p.pop();
+}
+
+function drawMatchAnimation(p) {
+  if (gameState.matchedCells.length === 0) return;
+  
+  p.push();
+  
+  const alpha = 255 - gameState.animationTimer * 8;
+  
+  for (const cell of gameState.matchedCells) {
+    const x = GRID_START_X + cell.x * CELL_SIZE + CELL_SIZE / 2;
+    const y = GRID_START_Y + cell.y * CELL_SIZE + CELL_SIZE / 2;
+    
+    const size = CELL_SIZE * (1 + gameState.animationTimer * 0.05);
+    
+    p.fill(...RUNE_COLORS[cell.color], alpha);
+    p.noStroke();
+    p.circle(x, y, size);
+  }
+  
+  // Damage number
+  if (gameState.damageDealt > 0) {
+    p.fill(255, 200, 100, alpha);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(32);
+    p.text(`-${gameState.damageDealt}`, 450, 150 - gameState.animationTimer * 2);
+  }
+  
+  p.pop();
+}
+
+export function drawGameOver(p) {
+  p.background(20, 15, 35);
+  
+  p.push();
+  p.textAlign(p.CENTER, p.CENTER);
+  
+  if (gameState.gamePhase === PHASE_GAME_OVER_WIN) {
+    // Victory screen
+    p.fill(100, 255, 150);
+    p.textSize(48);
+    p.text("VICTORY!", CANVAS_WIDTH / 2, 100);
+    
+    p.fill(200, 255, 200);
+    p.textSize(24);
+    p.text("You have defeated all enemies!", CANVAS_WIDTH / 2, 160);
+    
+    p.fill(255, 220, 100);
+    p.textSize(20);
+    p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, 210);
+    p.text(`Gold Earned: ${gameState.gold}`, CANVAS_WIDTH / 2, 240);
+    p.text(`Final Level: ${gameState.level}`, CANVAS_WIDTH / 2, 270);
+  } else {
+    // Defeat screen
+    p.fill(255, 100, 100);
+    p.textSize(48);
+    p.text("DEFEATED", CANVAS_WIDTH / 2, 100);
+    
+    p.fill(255, 180, 180);
+    p.textSize(24);
+    p.text("Your HP reached zero...", CANVAS_WIDTH / 2, 160);
+    
+    p.fill(255, 220, 100);
+    p.textSize(20);
+    p.text(`Score: ${gameState.score}`, CANVAS_WIDTH / 2, 220);
+    p.text(`Stages Cleared: ${gameState.stage - 1}`, CANVAS_WIDTH / 2, 250);
+  }
+  
+  // Restart prompt
+  const pulse = p.sin(p.frameCount * 0.1) * 0.3 + 0.7;
+  p.fill(255, 255, 255, 255 * pulse);
+  p.textSize(20);
+  p.text("PRESS R TO RESTART", CANVAS_WIDTH / 2, 340);
+  
+  p.pop();
+}
+</file>
+
+<file name="entities.js">
+// entities.js - Player and Enemy classes
+
+import { gameState } from './globals.js';
+
+export class Player {
+  constructor() {
+    this.hp = 100;
+    this.maxHP = 100;
+    this.attack = 10;
+    this.defense = 5;
+    this.level = 1;
+  }
+
+  takeDamage(amount) {
+    const actualDamage = Math.max(1, amount - this.defense);
+    this.hp = Math.max(0, this.hp - actualDamage);
+    gameState.playerHP = this.hp;
+    return actualDamage;
+  }
+
+  heal(amount) {
+    this.hp = Math.min(this.maxHP, this.hp + amount);
+    gameState.playerHP = this.hp;
+  }
+
+  levelUp() {
+    this.level++;
+    this.maxHP += 20;
+    this.hp = this.maxHP;
+    this.attack += 5;
+    this.defense += 2;
+    gameState.playerMaxHP = this.maxHP;
+    gameState.playerHP = this.hp;
+  }
+}
+
+export class Enemy {
+  constructor(stage) {
+    this.stage = stage;
+    this.type = (stage - 1) % 5; // Different enemy types based on stage
+    this.isBoss = (stage === 3 || stage === 5); // Stages 3 and 5 are bosses
+    
+    // Base stats with significant scaling
+    if (this.isBoss) {
+      this.maxHP = 200 + (stage - 1) * 80; // Bosses: 360, 520
+      this.attack = 18 + (stage - 1) * 4; // Bosses: 26, 34
+    } else {
+      this.maxHP = 120 + (stage - 1) * 50; // Normal: 120, 170, 270, 370
+      this.attack = 12 + (stage - 1) * 3; // Normal: 12, 15, 21, 27
+    }
+    
+    this.hp = this.maxHP;
+    this.attackCounter = 0; // For special attack patterns
+    
+    // Type-specific mechanics
+    this.specialAbility = this.getSpecialAbility();
+  }
+
+  getSpecialAbility() {
+    switch (this.type) {
+      case 0: // Fire - Can do double damage attacks
+        return "Fire Rage: Every 3rd attack deals double damage!";
+      case 1: // Ice - Consistent high damage
+        return "Ice Shards: Attacks deal 30% more damage!";
+      case 2: // Nature - Can heal
+        return "Regeneration: Heals 5 HP each turn!";
+      case 3: // Light - Fast attacks
+        return "Divine Fury: Attacks 20% faster!";
+      case 4: // Shadow - Draining attacks
+        return "Life Drain: Heals for 25% of damage dealt!";
+      default:
+        return "";
+    }
+  }
+
+  takeDamage(amount) {
+    this.hp = Math.max(0, this.hp - amount);
+    gameState.enemyHP = this.hp;
+    return amount;
+  }
+
+  performAttack() {
+    this.attackCounter++;
+    let damage = this.attack;
+    
+    // Boss bonus
+    if (this.isBoss) {
+      damage = Math.floor(damage * 1.3);
+    }
+    
+    // Type-specific abilities
+    switch (this.type) {
+      case 0: // Fire - Every 3rd attack is double damage
+        if (this.attackCounter % 3 === 0) {
+          damage *= 2;
+        }
+        break;
+      case 1: // Ice - Always 30% more damage
+        damage = Math.floor(damage * 1.3);
+        break;
+      case 2: // Nature - Heal self
+        this.hp = Math.min(this.maxHP, this.hp + 5);
+        gameState.enemyHP = this.hp;
+        break;
+      case 3: // Light - Faster attacks (handled elsewhere, slight damage boost here)
+        damage = Math.floor(damage * 1.2);
+        break;
+      case 4: // Shadow - Life drain
+        const drainAmount = Math.floor(damage * 0.25);
+        this.hp = Math.min(this.maxHP, this.hp + drainAmount);
+        gameState.enemyHP = this.hp;
+        break;
+    }
+    
+    return damage;
+  }
+
+  isDead() {
+    return this.hp <= 0;
+  }
+  
+  getName() {
+    const typeNames = ["Fire", "Ice", "Nature", "Light", "Shadow"];
+    const prefix = this.isBoss ? "BOSS: " : "";
+    const suffix = this.isBoss ? " Lord" : " Elemental";
+    return prefix + typeNames[this.type] + suffix;
+  }
+}
+</file>
+
+<file name="input.js">
+// input.js - Input handling
+
+import { gameState, GRID_SIZE, PHASE_PLAYING, PHASE_PAUSED } from './globals.js';
+import { swapCells, canSwap } from './grid.js';
+import { castSpell } from './combat.js';
+
+export function handleKeyPressed(p, keyCode) {
+  // Log input
+  p.logs.inputs.push({
+    input_type: "keyPressed",
+    data: { key: p.key, keyCode: keyCode },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+  
+  if (gameState.gamePhase !== PHASE_PLAYING) return;
+  if (gameState.animating || !gameState.isPlayerTurn || gameState.invalidSwap) return;
+  
+  // Arrow keys - cursor movement
+  if (keyCode === 37) { // LEFT
+    gameState.cursor.x = Math.max(0, gameState.cursor.x - 1);
+  } else if (keyCode === 39) { // RIGHT
+    gameState.cursor.x = Math.min(GRID_SIZE - 1, gameState.cursor.x + 1);
+  } else if (keyCode === 38) { // UP
+    gameState.cursor.y = Math.max(0, gameState.cursor.y - 1);
+  } else if (keyCode === 40) { // DOWN
+    gameState.cursor.y = Math.min(GRID_SIZE - 1, gameState.cursor.y + 1);
+  }
+  
+  // Space - select/swap
+  else if (keyCode === 32) {
+    if (!gameState.selectedCell) {
+      gameState.selectedCell = { x: gameState.cursor.x, y: gameState.cursor.y };
+    } else {
+      const dx = Math.abs(gameState.selectedCell.x - gameState.cursor.x);
+      const dy = Math.abs(gameState.selectedCell.y - gameState.cursor.y);
+      
+      if ((dx === 1 && dy === 0) || (dx === 0 && dy === 1)) {
+        const isValidSwap = canSwap(gameState.grid, 
+                   gameState.selectedCell.x, gameState.selectedCell.y,
+                   gameState.cursor.x, gameState.cursor.y);
+        
+        // Always perform the swap for visual feedback
+        swapCells(gameState.grid,
+                 gameState.selectedCell.x, gameState.selectedCell.y,
+                 gameState.cursor.x, gameState.cursor.y);
+        
+        if (isValidSwap) {
+          // Valid swap - proceed with turn
+          gameState.isPlayerTurn = false;
+          gameState.turnCount++;
+        } else {
+          // Invalid swap - trigger revert animation
+          gameState.invalidSwap = true;
+          gameState.invalidSwapTimer = 0;
+          gameState.invalidSwapCells = {
+            x1: gameState.selectedCell.x,
+            y1: gameState.selectedCell.y,
+            x2: gameState.cursor.x,
+            y2: gameState.cursor.y
+          };
+        }
+      }
+      gameState.selectedCell = null;
+    }
+  }
+  
+  // Z - cast spell
+  else if (keyCode === 90) {
+    for (let i = 0; i < 5; i++) {
+      if (gameState.elementalMeters[i] >= gameState.meterMax) {
+        const result = castSpell(i, p);
+        if (result) {
+          gameState.currentEnemy.takeDamage(result.damage);
+          gameState.score += result.damage;
+          
+          // Show spell effect
+          gameState.animating = true;
+          gameState.damageDealt = result.damage;
+          gameState.animationTimer = 0;
+        }
+        break;
+      }
+    }
+  }
+}
+
+export function processAutomatedInput(p, action) {
+  if (!action) return;
+  
+  // Log automated input
+  p.logs.inputs.push({
+    input_type: "automated",
+    data: { action: action },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+  
+  if (gameState.gamePhase !== PHASE_PLAYING) return;
+  if (gameState.animating || !gameState.isPlayerTurn || gameState.invalidSwap) return;
+  
+  if (action.type === 'move') {
+    gameState.cursor.x = action.x;
+    gameState.cursor.y = action.y;
+  } else if (action.type === 'select') {
+    gameState.selectedCell = { x: gameState.cursor.x, y: gameState.cursor.y };
+  } else if (action.type === 'swap') {
+    if (gameState.selectedCell) {
+      const dx = Math.abs(gameState.selectedCell.x - gameState.cursor.x);
+      const dy = Math.abs(gameState.selectedCell.y - gameState.cursor.y);
+      
+      if ((dx === 1 && dy === 0) || (dx === 0 && dy === 1)) {
+        const isValidSwap = canSwap(gameState.grid, 
+                   gameState.selectedCell.x, gameState.selectedCell.y,
+                   gameState.cursor.x, gameState.cursor.y);
+        
+        // Always perform the swap for visual feedback
+        swapCells(gameState.grid,
+                 gameState.selectedCell.x, gameState.selectedCell.y,
+                 gameState.cursor.x, gameState.cursor.y);
+        
+        if (isValidSwap) {
+          // Valid swap - proceed with turn
+          gameState.isPlayerTurn = false;
+          gameState.turnCount++;
+        } else {
+          // Invalid swap - trigger revert animation
+          gameState.invalidSwap = true;
+          gameState.invalidSwapTimer = 0;
+          gameState.invalidSwapCells = {
+            x1: gameState.selectedCell.x,
+            y1: gameState.selectedCell.y,
+            x2: gameState.cursor.x,
+            y2: gameState.cursor.y
+          };
+        }
+      }
+      gameState.selectedCell = null;
+    }
+  } else if (action.type === 'spell') {
+    for (let i = 0; i < 5; i++) {
+      if (gameState.elementalMeters[i] >= gameState.meterMax) {
+        const result = castSpell(i, p);
+        if (result) {
+          gameState.currentEnemy.takeDamage(result.damage);
+          gameState.score += result.damage;
+          
+          gameState.animating = true;
+          gameState.damageDealt = result.damage;
+          gameState.animationTimer = 0;
+        }
+        break;
+      }
+    }
+  }
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

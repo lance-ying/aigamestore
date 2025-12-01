@@ -1,9 +1,8 @@
 import { 
   CANVAS_WIDTH, CANVAS_HEIGHT, LANE_COUNT, LANE_WIDTH, 
   TARGET_ZONE_HEIGHT, TARGET_ZONE_Y, TILE_HEIGHT, 
-  PERFECT_SCORE, GOOD_SCORE, WIN_SCORE, STARTING_SPEED, 
-  MAX_SPEED, SPEED_INCREMENT, SPEED_INCREASE_THRESHOLD,
-  TAP_DEBOUNCE_MS, MAX_HEALTH,
+  PERFECT_SCORE, GOOD_SCORE, 
+  TAP_DEBOUNCE_MS, MAX_HEALTH, LEVEL_CONFIG,
   gameState, LANE_KEYS, getGameState, setControlMode
 } from './globals.js';
 import { Tile } from './tile.js';
@@ -202,11 +201,16 @@ let gameInstance = new p5(p => {
     gameState.player.lastHitTime = p.frameCount;
     gameState.player.health = MAX_HEALTH;
     gameState.tiles = [];
-    gameState.speed = STARTING_SPEED;
-    gameState.lastSpawnTime = 0;
-    gameState.spawnInterval = 60;
-    gameState.spawnCountdown = 60;
+    
+    // Initialize Level 1
     gameState.difficultyLevel = 1;
+    gameState.notesHitInLevel = 0;
+    const levelConfig = LEVEL_CONFIG[0];
+    gameState.speed = levelConfig.speed;
+    gameState.spawnInterval = levelConfig.spawnInterval;
+    gameState.spawnCountdown = levelConfig.spawnInterval;
+    
+    gameState.lastSpawnTime = 0;
     gameState.damageFlash = 0;
     
     // Reset lane states and debounce timers
@@ -270,14 +274,6 @@ let gameInstance = new p5(p => {
       gameState.damageFlash = Math.max(0, gameState.damageFlash - 0.05);
     }
     
-    // Check for win condition
-    if (gameState.player.score >= WIN_SCORE) {
-      gameOver(true);
-    }
-    
-    // Update difficulty based on score
-    updateDifficulty();
-    
     // Log player info periodically
     if (p.frameCount % 30 === 0) {
       logPlayerInfo();
@@ -307,29 +303,32 @@ let gameInstance = new p5(p => {
       // Choose a random lane for the new tile
       const laneIndex = Math.floor(p.random(LANE_COUNT));
       
-      // Create a new tile
-      const newTile = new Tile(laneIndex);
+      // Create a new tile with current level color
+      const currentConfig = LEVEL_CONFIG[gameState.difficultyLevel - 1];
+      const newTile = new Tile(laneIndex, currentConfig.color);
       gameState.tiles.push(newTile);
       
       // Reset spawn countdown with some randomness
       gameState.spawnCountdown = gameState.spawnInterval - 10 + Math.floor(p.random(20));
-      
-      // Decrease spawn interval as game progresses (for difficulty)
-      if (gameState.spawnInterval > 30) {
-        gameState.spawnInterval -= 0.1;
-      }
     }
   }
   
-  function updateDifficulty() {
-    // Increase speed based on score
-    const newLevel = Math.floor(gameState.player.score / SPEED_INCREASE_THRESHOLD) + 1;
-    
-    if (newLevel > gameState.difficultyLevel) {
-      gameState.difficultyLevel = newLevel;
-      gameState.speed = Math.min(MAX_SPEED, STARTING_SPEED + (newLevel - 1) * SPEED_INCREMENT);
-      logGameInfo("Difficulty increased", { level: gameState.difficultyLevel, speed: gameState.speed });
+  function advanceLevel() {
+    if (gameState.difficultyLevel >= LEVEL_CONFIG.length) {
+      // Game Completed
+      gameOver(true);
+      return;
     }
+    
+    gameState.difficultyLevel++;
+    gameState.notesHitInLevel = 0;
+    gameState.player.health = MAX_HEALTH; // Reset health on level up
+    
+    const nextConfig = LEVEL_CONFIG[gameState.difficultyLevel - 1];
+    gameState.speed = nextConfig.speed;
+    gameState.spawnInterval = nextConfig.spawnInterval;
+    
+    logGameInfo("Level Up", { level: gameState.difficultyLevel, speed: gameState.speed });
   }
   
   // Animation update functions
@@ -423,6 +422,14 @@ let gameInstance = new p5(p => {
         }
         
         gameState.player.lastHitTime = p.frameCount;
+        
+        // Level Progression
+        gameState.notesHitInLevel++;
+        const currentConfig = LEVEL_CONFIG[gameState.difficultyLevel - 1];
+        if (gameState.notesHitInLevel >= currentConfig.notesToAdvance) {
+          advanceLevel();
+        }
+        
         break;
       }
     }
@@ -636,10 +643,15 @@ let gameInstance = new p5(p => {
     p.push();
     p.translate(CANVAS_WIDTH / 2, 20);
     p.scale(levelPulse);
+    
+    const currentConfig = LEVEL_CONFIG[gameState.difficultyLevel - 1];
+    const levelName = currentConfig ? currentConfig.name : `Level ${gameState.difficultyLevel}`;
+    const progress = currentConfig ? `${gameState.notesHitInLevel}/${currentConfig.notesToAdvance}` : "";
+    
     p.fill(50);
-    p.text(`Level ${gameState.difficultyLevel}`, 2, 2);
+    p.text(`${levelName} (${progress})`, 2, 2);
     p.fill(100, 150, 255);
-    p.text(`Level ${gameState.difficultyLevel}`, 0, 0);
+    p.text(`${levelName} (${progress})`, 0, 0);
     p.pop();
   }
   

@@ -1,0 +1,883 @@
+<analysis>
+- Issue identified: The current game uses a continuous 5-minute timer for victory, whereas the user requested a 6-stage progression system (2 Easy, 2 Medium, 2 Hard) based on kill counts. Additionally, the user requested that character progression (XP/Level) resets between stages, making each stage a fresh challenge with increasing difficulty.
+- Files affected: `index.html`, `globals.js`, `game_logic.js`, `rendering.js`.
+- Changes needed:
+    - `index.html`: Update instructions to explain the 6-stage structure and reset mechanic.
+    - `globals.js`: Remove `WIN_TIME_SECONDS`. Add `STAGE_CONFIG` defining the 6 stages (kills required, spawn rates, enemy types). Add `stage`, `stageKills`, and `stageMessageTimer` to `gameState`.
+    - `game_logic.js`: Implement `resetForStage` to handle the per-stage reset of player stats and XP. Update `initGame` to use this. Modify `updateGame` to check `stageKills` against the config for progression instead of time. Update `spawnEnemies` to use the stage configuration for spawn rates and enemy types.
+    - `rendering.js`: Update the HUD to display "Stage X", "Kills Y/Z" instead of time. Update Start and Game Over screens to reflect the new structure.
+</analysis>
+
+<code filename="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">Cosmic Survival</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Basic Movement)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Win Strategy)</button>
+        <button id="test_3_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_3')">TEST (Upgrade Focus)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Survive 6 stages of increasing difficulty in this intense top-down shooter. Defeat enemies to progress through 2 Easy, 2 Medium, and 2 Hard levels. <strong>Warning:</strong> Your XP and Upgrades reset at the start of each new stage! Adapt and survive to conquer the cosmic horrors.</p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;"><strong>Arrow Keys:</strong> Move your character | <strong>Space:</strong> Fire your weapon | <strong>Z:</strong> Activate special ability (when unlocked) | <strong>Enter:</strong> Start the game | <strong>ESC:</strong> Pause/Unpause | <strong>R:</strong> Return to start screen from game over</p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script src="../../dev_mode.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</code>
+
+<code filename="globals.js">
+// globals.js - Global constants and game state
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const TARGET_FPS = 60;
+
+// Game phases
+export const PHASE_START = "START";
+export const PHASE_PLAYING = "PLAYING";
+export const PHASE_PAUSED = "PAUSED";
+export const PHASE_GAME_OVER_WIN = "GAME_OVER_WIN";
+export const PHASE_GAME_OVER_LOSE = "GAME_OVER_LOSE";
+
+// Control keys
+export const KEY_ENTER = 13;
+export const KEY_ESC = 27;
+export const KEY_R = 82;
+export const KEY_SPACE = 32;
+export const KEY_Z = 90;
+export const KEY_LEFT = 37;
+export const KEY_UP = 38;
+export const KEY_RIGHT = 39;
+export const KEY_DOWN = 40;
+export const KEY_SHIFT = 16;
+
+// Game constants
+export const PLAYER_SIZE = 20;
+export const PLAYER_SPEED = 3;
+export const PLAYER_MAX_HEALTH = 100;
+export const BULLET_SPEED = 8;
+export const BULLET_SIZE = 4;
+export const ENEMY_SIZE = 18;
+export const ENEMY_SPEED = 1.2;
+export const XP_ORB_SIZE = 8;
+export const XP_ORB_PICKUP_RANGE = 30;
+
+// Stage Configuration
+export const STAGE_CONFIG = [
+  { name: "Easy I", killsRequired: 15, spawnRate: 120, enemyTypes: ['basic'] },
+  { name: "Easy II", killsRequired: 25, spawnRate: 100, enemyTypes: ['basic', 'fast'] },
+  { name: "Medium I", killsRequired: 40, spawnRate: 80, enemyTypes: ['basic', 'fast', 'tank'] },
+  { name: "Medium II", killsRequired: 50, spawnRate: 70, enemyTypes: ['basic', 'fast', 'tank'] },
+  { name: "Hard I", killsRequired: 70, spawnRate: 50, enemyTypes: ['basic', 'fast', 'tank', 'elite'] },
+  { name: "Hard II", killsRequired: 100, spawnRate: 40, enemyTypes: ['basic', 'fast', 'tank', 'elite'] }
+];
+
+// Upgrade types
+export const UPGRADE_TYPES = {
+  FIRE_RATE: 'fire_rate',
+  DAMAGE: 'damage',
+  BULLET_SPEED: 'bullet_speed',
+  MOVE_SPEED: 'move_speed',
+  MAX_HEALTH: 'max_health',
+  HEALTH_REGEN: 'health_regen',
+  PIERCE: 'pierce',
+  MULTISHOT: 'multishot',
+  AREA_DAMAGE: 'area_damage',
+  LIGHTNING: 'lightning',
+  SHIELD: 'shield',
+  SPEED_BOOST: 'speed_boost'
+};
+
+// Game state object
+export const gameState = {
+  player: null,
+  entities: [],
+  bullets: [],
+  enemies: [],
+  xpOrbs: [],
+  particles: [],
+  score: 0,
+  gamePhase: PHASE_START,
+  controlMode: "HUMAN",
+  level: 1,
+  experience: 0,
+  experienceToNextLevel: 10,
+  upgradeChoices: [],
+  showingUpgradeScreen: false,
+  gameStartTime: 0,
+  elapsedTime: 0,
+  enemySpawnTimer: 0,
+  enemySpawnRate: 120, // frames between spawns
+  waveNumber: 1,
+  kills: 0,
+  lastFireTime: 0,
+  positionHistory: [],
+  stage: 1,
+  stageKills: 0,
+  stageMessageTimer: 0
+};
+
+// Player stats that can be upgraded
+export const playerStats = {
+  fireRate: 15, // frames between shots
+  damage: 10,
+  bulletSpeed: BULLET_SPEED,
+  moveSpeed: PLAYER_SPEED,
+  maxHealth: PLAYER_MAX_HEALTH,
+  healthRegen: 0,
+  pierce: 0,
+  multishot: 1,
+  areaDamage: 0,
+  hasLightning: false,
+  lightningCooldown: 0,
+  hasShield: false,
+  shieldHealth: 0
+};
+</code>
+
+<code filename="game_logic.js">
+// game_logic.js - Core game logic
+import { gameState, playerStats } from './globals.js';
+import { 
+  PHASE_PLAYING, PHASE_GAME_OVER_WIN, PHASE_GAME_OVER_LOSE,
+  CANVAS_WIDTH, CANVAS_HEIGHT, XP_ORB_PICKUP_RANGE, STAGE_CONFIG
+} from './globals.js';
+import { Player, Enemy, Bullet, XPOrb, Particle } from './entities.js';
+import { getRandomUpgrades } from './upgrades.js';
+
+export function initGame(p) {
+  // Reset Global Game State
+  gameState.score = 0;
+  gameState.kills = 0;
+  gameState.stage = 1;
+  gameState.gameStartTime = Date.now();
+  gameState.positionHistory = [];
+  
+  // Initialize the first stage
+  resetForStage(p);
+
+  // Log game start
+  p.logs.game_info.push({
+    data: { phase: PHASE_PLAYING, message: "Game Started" },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function resetForStage(p) {
+  // Reset entities
+  gameState.player = new Player(CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+  gameState.entities = [gameState.player];
+  gameState.bullets = [];
+  gameState.enemies = [];
+  gameState.xpOrbs = [];
+  gameState.particles = [];
+  
+  // Reset Level/XP (Start at level 0/1 for each stage)
+  gameState.level = 1;
+  gameState.experience = 0;
+  gameState.experienceToNextLevel = 10;
+  gameState.upgradeChoices = [];
+  gameState.showingUpgradeScreen = false;
+  
+  // Reset Stage Progress
+  gameState.stageKills = 0;
+  gameState.stageMessageTimer = 120; // Show stage name for 2 seconds
+  
+  // Reset Timers
+  gameState.elapsedTime = 0;
+  gameState.enemySpawnTimer = 0;
+  const config = STAGE_CONFIG[gameState.stage - 1];
+  gameState.enemySpawnRate = config.spawnRate;
+  gameState.lastFireTime = 0;
+  
+  // Reset Player Stats to base
+  playerStats.fireRate = 15;
+  playerStats.damage = 10;
+  playerStats.bulletSpeed = 8;
+  playerStats.moveSpeed = 3;
+  playerStats.maxHealth = 100;
+  playerStats.healthRegen = 0;
+  playerStats.pierce = 0;
+  playerStats.multishot = 1;
+  playerStats.areaDamage = 0;
+  playerStats.hasLightning = false;
+  playerStats.lightningCooldown = 0;
+  playerStats.hasShield = false;
+  playerStats.shieldHealth = 0;
+}
+
+export function updateGame(p) {
+  if (gameState.showingUpgradeScreen) {
+    return; // Pause game during upgrade selection
+  }
+
+  // Update elapsed time (per stage)
+  gameState.elapsedTime += 1/60;
+  
+  if (gameState.stageMessageTimer > 0) {
+    gameState.stageMessageTimer--;
+  }
+
+  // Check Stage Progression
+  const config = STAGE_CONFIG[gameState.stage - 1];
+  if (gameState.stageKills >= config.killsRequired) {
+    if (gameState.stage < STAGE_CONFIG.length) {
+      // Proceed to next stage
+      gameState.stage++;
+      resetForStage(p);
+      p.logs.game_info.push({
+        data: { event: "stage_complete", stage: gameState.stage },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+      return; // Skip rest of update for this frame
+    } else {
+      // Game Win
+      gameState.gamePhase = PHASE_GAME_OVER_WIN;
+      p.logs.game_info.push({
+        data: { phase: PHASE_GAME_OVER_WIN, score: gameState.score, kills: gameState.kills },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+      return;
+    }
+  }
+
+  // Update player
+  gameState.player.update(p);
+
+  // Track player position for automated testing
+  if (p.frameCount % 10 === 0) {
+    gameState.positionHistory.push({ x: gameState.player.x, y: gameState.player.y, frame: p.frameCount });
+    if (gameState.positionHistory.length > 30) {
+      gameState.positionHistory.shift();
+    }
+  }
+
+  // Log player info
+  if (p.frameCount % 60 === 0) {
+    p.logs.player_info.push({
+      screen_x: gameState.player.x,
+      screen_y: gameState.player.y,
+      game_x: gameState.player.x,
+      game_y: gameState.player.y,
+      framecount: p.frameCount
+    });
+  }
+
+  // Spawn enemies
+  spawnEnemies(p);
+
+  // Update bullets
+  for (let i = gameState.bullets.length - 1; i >= 0; i--) {
+    const bullet = gameState.bullets[i];
+    if (bullet.update()) {
+      gameState.bullets.splice(i, 1);
+    }
+  }
+
+  // Update enemies
+  for (let i = gameState.enemies.length - 1; i >= 0; i--) {
+    const enemy = gameState.enemies[i];
+    enemy.update(p, gameState.player);
+
+    // Check collision with player
+    const dist = Math.sqrt(
+      Math.pow(enemy.x - gameState.player.x, 2) + 
+      Math.pow(enemy.y - gameState.player.y, 2)
+    );
+    if (dist < (enemy.size + gameState.player.size) / 2) {
+      if (gameState.player.takeDamage(enemy.damage)) {
+        createHitParticles(p, gameState.player.x, gameState.player.y, [255, 100, 100]);
+      }
+      
+      if (gameState.player.health <= 0) {
+        gameState.gamePhase = PHASE_GAME_OVER_LOSE;
+        p.logs.game_info.push({
+          data: { phase: PHASE_GAME_OVER_LOSE, score: gameState.score, kills: gameState.kills },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+        return;
+      }
+    }
+  }
+
+  // Check bullet-enemy collisions
+  for (let i = gameState.bullets.length - 1; i >= 0; i--) {
+    const bullet = gameState.bullets[i];
+    let bulletRemoved = false;
+
+    for (let j = gameState.enemies.length - 1; j >= 0; j--) {
+      const enemy = gameState.enemies[j];
+      
+      const dist = Math.sqrt(
+        Math.pow(bullet.x - enemy.x, 2) + 
+        Math.pow(bullet.y - enemy.y, 2)
+      );
+
+      if (dist < (bullet.size + enemy.size) / 2) {
+        // Apply damage
+        const killed = enemy.takeDamage(bullet.damage);
+        
+        // Area damage
+        if (playerStats.areaDamage > 0) {
+          applyAreaDamage(p, bullet.x, bullet.y, playerStats.areaDamage, bullet.damage * 0.5);
+        }
+
+        createHitParticles(p, enemy.x, enemy.y, [255, 200, 100]);
+
+        if (killed) {
+          // Enemy died
+          spawnXPOrb(enemy.x, enemy.y, enemy.xpValue);
+          gameState.enemies.splice(j, 1);
+          gameState.score += enemy.xpValue * 10;
+          gameState.kills++;
+          gameState.stageKills++;
+        }
+
+        bullet.onHit();
+        if (!bullet.canPierce()) {
+          gameState.bullets.splice(i, 1);
+          bulletRemoved = true;
+          break;
+        }
+      }
+    }
+
+    if (bulletRemoved) break;
+  }
+
+  // Update XP orbs
+  for (let i = gameState.xpOrbs.length - 1; i >= 0; i--) {
+    const orb = gameState.xpOrbs[i];
+    if (orb.update(p, gameState.player)) {
+      gameState.xpOrbs.splice(i, 1);
+      continue;
+    }
+
+    // Check pickup
+    const dist = Math.sqrt(
+      Math.pow(orb.x - gameState.player.x, 2) + 
+      Math.pow(orb.y - gameState.player.y, 2)
+    );
+    if (dist < XP_ORB_PICKUP_RANGE) {
+      gameState.experience += orb.value;
+      gameState.xpOrbs.splice(i, 1);
+      createPickupParticles(p, orb.x, orb.y);
+
+      // Check level up
+      if (gameState.experience >= gameState.experienceToNextLevel) {
+        levelUp(p);
+      }
+    }
+  }
+
+  // Update particles
+  for (let i = gameState.particles.length - 1; i >= 0; i--) {
+    if (gameState.particles[i].update()) {
+      gameState.particles.splice(i, 1);
+    }
+  }
+
+  // Lightning ability
+  if (playerStats.hasLightning) {
+    if (playerStats.lightningCooldown <= 0 && gameState.enemies.length > 0) {
+      triggerLightning(p);
+      playerStats.lightningCooldown = 180; // 3 seconds
+    } else {
+      playerStats.lightningCooldown--;
+    }
+  }
+}
+
+function spawnEnemies(p) {
+  gameState.enemySpawnTimer--;
+  if (gameState.enemySpawnTimer <= 0) {
+    const config = STAGE_CONFIG[gameState.stage - 1];
+    
+    // Set spawn rate from config
+    gameState.enemySpawnRate = config.spawnRate;
+    gameState.enemySpawnTimer = gameState.enemySpawnRate;
+
+    // Determine enemy type from config
+    const allowedTypes = config.enemyTypes;
+    const type = allowedTypes[Math.floor(Math.random() * allowedTypes.length)];
+
+    // Spawn from random edge
+    let x, y;
+    const edge = Math.floor(Math.random() * 4);
+    switch (edge) {
+      case 0: // top
+        x = Math.random() * CANVAS_WIDTH;
+        y = -20;
+        break;
+      case 1: // right
+        x = CANVAS_WIDTH + 20;
+        y = Math.random() * CANVAS_HEIGHT;
+        break;
+      case 2: // bottom
+        x = Math.random() * CANVAS_WIDTH;
+        y = CANVAS_HEIGHT + 20;
+        break;
+      case 3: // left
+        x = -20;
+        y = Math.random() * CANVAS_HEIGHT;
+        break;
+    }
+
+    const enemy = new Enemy(x, y, type);
+    gameState.enemies.push(enemy);
+  }
+}
+
+function spawnXPOrb(x, y, value) {
+  const orb = new XPOrb(x, y, value);
+  gameState.xpOrbs.push(orb);
+}
+
+function levelUp(p) {
+  gameState.level++;
+  gameState.experience -= gameState.experienceToNextLevel;
+  gameState.experienceToNextLevel = Math.floor(gameState.experienceToNextLevel * 1.3);
+
+  // Show upgrade choices
+  gameState.upgradeChoices = getRandomUpgrades(3);
+  gameState.showingUpgradeScreen = true;
+
+  // Heal player on level up
+  gameState.player.health = Math.min(gameState.player.maxHealth, gameState.player.health + 20);
+
+  p.logs.game_info.push({
+    data: { event: "level_up", level: gameState.level },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+export function fireBullet(p) {
+  const currentTime = p.frameCount;
+  if (currentTime - gameState.lastFireTime < playerStats.fireRate) {
+    return;
+  }
+
+  gameState.lastFireTime = currentTime;
+
+  const player = gameState.player;
+  const spreadAngle = 0.15;
+
+  for (let i = 0; i < playerStats.multishot; i++) {
+    let angle = player.facingAngle;
+    
+    if (playerStats.multishot > 1) {
+      const offset = (i - (playerStats.multishot - 1) / 2) * spreadAngle;
+      angle += offset;
+    }
+
+    const bullet = new Bullet(
+      player.x,
+      player.y,
+      angle,
+      playerStats.bulletSpeed,
+      playerStats.damage,
+      playerStats.pierce
+    );
+    gameState.bullets.push(bullet);
+  }
+}
+
+function applyAreaDamage(p, x, y, radius, damage) {
+  for (let enemy of gameState.enemies) {
+    const dist = Math.sqrt(
+      Math.pow(enemy.x - x, 2) + 
+      Math.pow(enemy.y - y, 2)
+    );
+    if (dist < radius) {
+      enemy.takeDamage(damage);
+    }
+  }
+}
+
+function triggerLightning(p) {
+  // Strike up to 3 closest enemies
+  const targets = gameState.enemies
+    .map(e => ({
+      enemy: e,
+      dist: Math.sqrt(
+        Math.pow(e.x - gameState.player.x, 2) + 
+        Math.pow(e.y - gameState.player.y, 2)
+      )
+    }))
+    .sort((a, b) => a.dist - b.dist)
+    .slice(0, 3);
+
+  for (let target of targets) {
+    target.enemy.takeDamage(playerStats.damage * 2);
+    createLightningParticles(p, target.enemy.x, target.enemy.y);
+  }
+}
+
+function createHitParticles(p, x, y, color) {
+  for (let i = 0; i < 5; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = Math.random() * 2 + 1;
+    const vx = Math.cos(angle) * speed;
+    const vy = Math.sin(angle) * speed;
+    gameState.particles.push(new Particle(x, y, vx, vy, color, 20));
+  }
+}
+
+function createPickupParticles(p, x, y) {
+  for (let i = 0; i < 8; i++) {
+    const angle = (Math.PI * 2 * i) / 8;
+    const speed = 2;
+    const vx = Math.cos(angle) * speed;
+    const vy = Math.sin(angle) * speed;
+    gameState.particles.push(new Particle(x, y, vx, vy, [100, 255, 200], 15));
+  }
+}
+
+function createLightningParticles(p, x, y) {
+  for (let i = 0; i < 10; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = Math.random() * 3 + 2;
+    const vx = Math.cos(angle) * speed;
+    const vy = Math.sin(angle) * speed;
+    gameState.particles.push(new Particle(x, y, vx, vy, [150, 200, 255], 25));
+  }
+}
+</code>
+
+<code filename="rendering.js">
+// rendering.js - Rendering functions
+import { gameState, playerStats } from './globals.js';
+import {
+  PHASE_START, PHASE_PLAYING, PHASE_PAUSED,
+  PHASE_GAME_OVER_WIN, PHASE_GAME_OVER_LOSE,
+  CANVAS_WIDTH, CANVAS_HEIGHT, STAGE_CONFIG
+} from './globals.js';
+
+export function drawGame(p) {
+  p.background(20, 15, 30);
+
+  switch (gameState.gamePhase) {
+    case PHASE_START:
+      drawStartScreen(p);
+      break;
+    case PHASE_PLAYING:
+      drawPlaying(p);
+      if (gameState.showingUpgradeScreen) {
+        drawUpgradeScreen(p);
+      }
+      break;
+    case PHASE_PAUSED:
+      drawPlaying(p);
+      drawPausedOverlay(p);
+      break;
+    case PHASE_GAME_OVER_WIN:
+    case PHASE_GAME_OVER_LOSE:
+      drawPlaying(p);
+      drawGameOverScreen(p);
+      break;
+  }
+}
+
+function drawStartScreen(p) {
+  p.fill(255);
+  p.textAlign(p.CENTER, p.CENTER);
+  
+  // Title
+  p.textSize(48);
+  p.fill(100, 200, 255);
+  p.text("COSMIC SURVIVAL", CANVAS_WIDTH / 2, 80);
+  
+  // Subtitle
+  p.textSize(16);
+  p.fill(150, 150, 255);
+  p.text("The 6 Stages of Fear", CANVAS_WIDTH / 2, 120);
+
+  // Description
+  p.textSize(14);
+  p.fill(200);
+  p.text("Survive waves of Cthulhu monsters!", CANVAS_WIDTH / 2, 160);
+  p.text("Complete 6 stages of increasing difficulty.", CANVAS_WIDTH / 2, 180);
+  p.text("Note: XP and stats reset every stage!", CANVAS_WIDTH / 2, 200);
+
+  // Controls
+  p.textSize(12);
+  p.fill(180);
+  p.textAlign(p.LEFT, p.CENTER);
+  const controlX = 180;
+  p.text("ARROW KEYS: Move", controlX, 240);
+  p.text("SPACE: Fire weapon", controlX, 260);
+  p.text("Z: Special ability (when unlocked)", controlX, 280);
+  p.text("ESC: Pause game", controlX, 300);
+
+  // Start prompt
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(20);
+  p.fill(255, 220, 100);
+  if (Math.floor(p.frameCount / 30) % 2 === 0) {
+    p.text("PRESS ENTER TO START", CANVAS_WIDTH / 2, 350);
+  }
+}
+
+function drawPlaying(p) {
+  // Draw background grid
+  drawGrid(p);
+
+  // Draw particles (behind everything)
+  for (let particle of gameState.particles) {
+    particle.draw(p);
+  }
+
+  // Draw XP orbs
+  for (let orb of gameState.xpOrbs) {
+    orb.draw(p);
+  }
+
+  // Draw bullets
+  for (let bullet of gameState.bullets) {
+    bullet.draw(p);
+  }
+
+  // Draw enemies
+  for (let enemy of gameState.enemies) {
+    enemy.draw(p);
+  }
+
+  // Draw player
+  if (gameState.player) {
+    gameState.player.draw(p);
+  }
+
+  // Draw UI
+  drawUI(p);
+  
+  // Draw Stage Message Overlay
+  if (gameState.stageMessageTimer > 0) {
+    p.push();
+    const alpha = Math.min(255, gameState.stageMessageTimer * 5);
+    p.fill(255, 255, 255, alpha);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(40);
+    p.text(`STAGE ${gameState.stage}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 20);
+    p.textSize(24);
+    p.text(STAGE_CONFIG[gameState.stage - 1].name, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 20);
+    p.pop();
+  }
+}
+
+function drawGrid(p) {
+  p.stroke(40, 35, 50);
+  p.strokeWeight(1);
+  const gridSize = 40;
+  
+  for (let x = 0; x < CANVAS_WIDTH; x += gridSize) {
+    p.line(x, 0, x, CANVAS_HEIGHT);
+  }
+  for (let y = 0; y < CANVAS_HEIGHT; y += gridSize) {
+    p.line(0, y, CANVAS_WIDTH, y);
+  }
+}
+
+function drawUI(p) {
+  const config = STAGE_CONFIG[gameState.stage - 1];
+
+  // Stage Info
+  p.textAlign(p.CENTER, p.TOP);
+  p.textSize(20);
+  p.fill(255, 220, 100);
+  p.text(`Stage ${gameState.stage}: ${config.name}`, CANVAS_WIDTH / 2, 10);
+  
+  // Progress
+  p.textSize(14);
+  p.fill(200);
+  p.text(`Kills: ${gameState.stageKills} / ${config.killsRequired}`, CANVAS_WIDTH / 2, 35);
+
+  // Level and XP bar
+  p.textAlign(p.LEFT, p.TOP);
+  p.textSize(14);
+  p.fill(255);
+  p.text(`Level ${gameState.level}`, 10, 10);
+  
+  const xpBarX = 10;
+  const xpBarY = 30;
+  const xpBarWidth = 150;
+  const xpBarHeight = 10;
+  
+  p.fill(60, 60, 80);
+  p.noStroke();
+  p.rect(xpBarX, xpBarY, xpBarWidth, xpBarHeight);
+  
+  const xpPercent = gameState.experience / gameState.experienceToNextLevel;
+  p.fill(100, 255, 200);
+  p.rect(xpBarX, xpBarY, xpBarWidth * xpPercent, xpBarHeight);
+
+  // Score
+  p.textAlign(p.RIGHT, p.TOP);
+  p.textSize(14);
+  p.fill(255);
+  p.text(`Score: ${gameState.score}`, CANVAS_WIDTH - 10, 10);
+  p.text(`Total Kills: ${gameState.kills}`, CANVAS_WIDTH - 10, 30);
+
+  // Stats display
+  p.textAlign(p.LEFT, p.TOP);
+  p.textSize(10);
+  p.fill(180);
+  let statY = 55;
+  if (playerStats.multishot > 1) {
+    p.text(`Multishot: ${playerStats.multishot}`, 10, statY);
+    statY += 12;
+  }
+  if (playerStats.pierce > 0) {
+    p.text(`Pierce: ${playerStats.pierce}`, 10, statY);
+    statY += 12;
+  }
+  if (playerStats.areaDamage > 0) {
+    p.text(`Area DMG: ${playerStats.areaDamage}`, 10, statY);
+    statY += 12;
+  }
+  if (playerStats.hasLightning) {
+    p.text(`⚡ Lightning`, 10, statY);
+    statY += 12;
+  }
+  if (playerStats.hasShield && playerStats.shieldHealth > 0) {
+    p.text(`🛡 Shield: ${Math.floor(playerStats.shieldHealth)}`, 10, statY);
+    statY += 12;
+  }
+}
+
+function drawUpgradeScreen(p) {
+  // Semi-transparent overlay
+  p.fill(0, 0, 0, 200);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+  // Title
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(24);
+  p.fill(255, 220, 100);
+  p.text("LEVEL UP!", CANVAS_WIDTH / 2, 60);
+
+  // Upgrade choices
+  const choiceWidth = 160;
+  const choiceHeight = 120;
+  const spacing = 20;
+  const startX = (CANVAS_WIDTH - (choiceWidth * 3 + spacing * 2)) / 2;
+  const startY = 120;
+
+  for (let i = 0; i < gameState.upgradeChoices.length; i++) {
+    const upgrade = gameState.upgradeChoices[i];
+    const x = startX + i * (choiceWidth + spacing);
+    const y = startY;
+
+    // Box
+    p.fill(40, 40, 60);
+    p.stroke(100, 150, 255);
+    p.strokeWeight(2);
+    p.rect(x, y, choiceWidth, choiceHeight, 5);
+
+    // Number key indicator
+    p.fill(255, 220, 100);
+    p.noStroke();
+    p.textSize(16);
+    p.textAlign(p.CENTER, p.TOP);
+    p.text(`[${i + 1}]`, x + choiceWidth / 2, y + 10);
+
+    // Name
+    p.fill(255);
+    p.textSize(14);
+    p.text(upgrade.name, x + choiceWidth / 2, y + 35);
+
+    // Description
+    p.fill(200);
+    p.textSize(11);
+    const words = upgrade.description.split(' ');
+    let line = '';
+    let lineY = y + 60;
+    for (let word of words) {
+      const testLine = line + word + ' ';
+      if (p.textWidth(testLine) > choiceWidth - 10) {
+        p.text(line, x + choiceWidth / 2, lineY);
+        line = word + ' ';
+        lineY += 14;
+      } else {
+        line = testLine;
+      }
+    }
+    p.text(line, x + choiceWidth / 2, lineY);
+  }
+
+  // Instructions
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(12);
+  p.fill(180);
+  p.text("Press 1, 2, or 3 to choose an upgrade", CANVAS_WIDTH / 2, 300);
+}
+
+function drawPausedOverlay(p) {
+  p.textAlign(p.RIGHT, p.TOP);
+  p.textSize(16);
+  p.fill(255, 220, 100);
+  p.text("PAUSED", CANVAS_WIDTH - 10, 10);
+}
+
+function drawGameOverScreen(p) {
+  // Semi-transparent overlay
+  p.fill(0, 0, 0, 200);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+  p.textAlign(p.CENTER, p.CENTER);
+
+  if (gameState.gamePhase === PHASE_GAME_OVER_WIN) {
+    p.textSize(48);
+    p.fill(100, 255, 150);
+    p.text("VICTORY!", CANVAS_WIDTH / 2, 120);
+    
+    p.textSize(18);
+    p.fill(200);
+    p.text("You conquered all 6 stages!", CANVAS_WIDTH / 2, 170);
+  } else {
+    p.textSize(48);
+    p.fill(255, 100, 100);
+    p.text("DEFEATED", CANVAS_WIDTH / 2, 120);
+    
+    p.textSize(18);
+    p.fill(200);
+    p.text(`Fallen at Stage ${gameState.stage}`, CANVAS_WIDTH / 2, 170);
+  }
+
+  // Stats
+  p.textSize(16);
+  p.fill(255);
+  p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, 220);
+  p.text(`Total Kills: ${gameState.kills}`, CANVAS_WIDTH / 2, 245);
+  p.text(`Max Stage: ${gameState.stage}`, CANVAS_WIDTH / 2, 270);
+
+  // Restart prompt
+  p.textSize(20);
+  p.fill(255, 220, 100);
+  if (Math.floor(p.frameCount / 30) % 2 === 0) {
+    p.text("PRESS R TO RESTART", CANVAS_WIDTH / 2, 350);
+  }
+}
+</code>

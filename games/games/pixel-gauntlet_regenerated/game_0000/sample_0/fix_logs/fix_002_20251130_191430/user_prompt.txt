@@ -1,0 +1,1163 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+input.js:1 Uncaught SyntaxError: The requested module './globals.js' does not provide an export named 'GAME_OVER_PHASES' (at input.js:1:34)
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Pixel Gauntlet</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; image-rendering: pixelated; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+      .control-button:hover { background: #555; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: 'Courier New', monospace; margin-bottom: 10px;">Pixel Gauntlet</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="setMode('HUMAN', this)">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="setMode('TEST_1', this)">TEST 1 (Movement)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="setMode('TEST_2', this)">TEST 2 (Combat)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: sans-serif; max-width: 600px; margin: 0 auto 10px auto; font-size: 14px;">
+        Battle through 5 levels of pixelated enemies. Defeat the Slimes, Bats, and Knights to reach the Overlord!
+      </p>
+      <p id="gameControls" style="color: #888; font-family: sans-serif; max-width: 600px; margin: 0 auto 20px auto; font-size: 12px;">
+        ARROWS: Move/Jump | Z/SHIFT: Attack | ENTER: Start | ESC: Pause | R: Restart
+      </p>
+    </div>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    
+    <script>
+      function setMode(mode, btn) {
+        if (window.setControlMode) {
+          window.setControlMode(mode);
+          // UI update
+          document.querySelectorAll('.control-button').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+        }
+      }
+    </script>
+    
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="globals.js">
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+export const GRAVITY = 0.6;
+export const FRICTION = 0.8;
+export const ACCELERATION = 0.5;
+export const MAX_SPEED = 6;
+export const JUMP_FORCE = -14;
+
+export const GAME_PHASES = {
+    START: "START",
+    PLAYING: "PLAYING",
+    PAUSED: "PAUSED",
+    LEVEL_COMPLETE: "LEVEL_COMPLETE",
+    GAME_OVER_WIN: "GAME_OVER_WIN",
+    GAME_OVER_LOSE: "GAME_OVER_LOSE"
+};
+
+export const gameState = {
+    gamePhase: GAME_PHASES.START,
+    controlMode: "HUMAN",
+    
+    // Level state
+    currentLevel: 1,
+    maxLevels: 5,
+    levelData: null,
+    
+    // World state
+    worldWidth: 2000,
+    cameraX: 0,
+    cameraY: 0,
+    
+    // Entities
+    player: null,
+    entities: [], // All active entities (enemies, items, projectiles)
+    platforms: [],
+    particles: [],
+    
+    // Player Stats
+    score: 0,
+    
+    // Performance
+    frameCount: 0,
+    lastFrameTime: 0,
+    deltaTime: 0,
+    
+    // Inputs
+    keys: {}
+};
+
+export function getGameState() {
+    return gameState;
+}
+
+// Make accessible globally
+window.getGameState = getGameState;
+</file>
+
+<file name="game.js">
+import { gameState, GAME_PHASES, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { handleKeyPress, handleKeyRelease } from './input.js';
+import { renderUI, renderStartScreen, renderPaused, renderGameOver, renderLevelComplete } from './ui.js';
+import { Player, Enemy } from './entities.js';
+import { get_automated_testing_action } from './automated_test.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+    
+    // Initialize Logs
+    p.logs = {
+        "game_info": [],
+        "inputs": [],
+        "player_info": []
+    };
+
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(60);
+        p.randomSeed(42);
+        
+        p.noSmooth(); // Pixel art feel
+        
+        // Log Initial State
+        p.logs.game_info.push({
+            event: "Initial State",
+            data: { gamePhase: gameState.gamePhase },
+            frame: p.frameCount,
+            timestamp: Date.now()
+        });
+    };
+
+    p.draw = function() {
+        // Time management
+        const currentTime = p.millis();
+        gameState.deltaTime = (currentTime - gameState.lastFrameTime) / 1000;
+        gameState.lastFrameTime = currentTime;
+        gameState.frameCount = p.frameCount;
+
+        p.background(30, 30, 40); // Dark Blueish bg
+
+        switch (gameState.gamePhase) {
+            case GAME_PHASES.START:
+                renderStartScreen(p);
+                break;
+                
+            case GAME_PHASES.PLAYING:
+                updateGame(p);
+                renderGame(p);
+                renderUI(p);
+                break;
+                
+            case GAME_PHASES.PAUSED:
+                // Still render game behind overlay
+                p.push();
+                applyCamera(p);
+                renderEntities(p);
+                p.pop();
+                renderUI(p);
+                renderPaused(p);
+                break;
+                
+            case GAME_PHASES.LEVEL_COMPLETE:
+                renderGame(p); // Static last frame
+                renderUI(p);
+                renderLevelComplete(p);
+                break;
+                
+            case GAME_PHASES.GAME_OVER_WIN:
+                renderGame(p);
+                renderGameOver(p, true);
+                break;
+                
+            case GAME_PHASES.GAME_OVER_LOSE:
+                renderGame(p);
+                renderGameOver(p, false);
+                break;
+        }
+        
+        // Logging Periodically
+        if (p.frameCount % 60 === 0 && gameState.player) {
+             p.logs.player_info.push({
+                x: gameState.player.x,
+                y: gameState.player.y,
+                health: gameState.player.health,
+                score: gameState.score,
+                frame: p.frameCount,
+                timestamp: Date.now()
+             });
+        }
+    };
+
+    p.keyPressed = function() {
+        handleKeyPress(p);
+    };
+
+    p.keyReleased = function() {
+        handleKeyRelease(p);
+    };
+});
+
+function updateGame(p) {
+    if (!gameState.player) return;
+
+    // Update Player
+    gameState.player.update(p);
+
+    // Update Entities
+    gameState.entities.forEach(entity => {
+        if (entity !== gameState.player) {
+            entity.update(p);
+        }
+    });
+    
+    // Update Particles
+    gameState.particles.forEach(particle => particle.update());
+
+    // Clean up dead entities
+    gameState.entities = gameState.entities.filter(e => !e.markedForDeletion);
+    gameState.particles = gameState.particles.filter(pt => pt.life > 0);
+    
+    // Check Level Completion (All enemies dead in level 1-4, Boss dead in 5)
+    // Or reach end of level X coordinate
+    checkLevelWinCondition();
+    
+    // Update Camera
+    updateCamera();
+}
+
+function updateCamera() {
+    // Center on player
+    const targetX = gameState.player.x - CANVAS_WIDTH / 3;
+    
+    // Smooth
+    gameState.cameraX += (targetX - gameState.cameraX) * 0.1;
+    
+    // Clamp
+    gameState.cameraX = Math.max(0, Math.min(gameState.cameraX, gameState.worldWidth - CANVAS_WIDTH));
+}
+
+function applyCamera(p) {
+    p.translate(-gameState.cameraX, 0);
+}
+
+function renderGame(p) {
+    p.push();
+    applyCamera(p);
+    
+    // Platforms
+    gameState.platforms.forEach(pf => pf.render(p));
+    
+    // Entities (sorted by bottom Y for depth, though simple here)
+    gameState.entities.forEach(e => e.render(p));
+    
+    // Particles
+    gameState.particles.forEach(pt => pt.render(p));
+    
+    p.pop();
+}
+
+function renderEntities(p) {
+    gameState.platforms.forEach(pf => pf.render(p));
+    gameState.entities.forEach(e => e.render(p));
+}
+
+function checkLevelWinCondition() {
+    // Win by reaching end of level
+    // But concept says "Defeat all enemies" or "Reach exit".
+    // Let's go with Reach Exit (World Width) IF required enemies are dead.
+    
+    const enemiesAlive = gameState.entities.filter(e => e instanceof Enemy && !e.isDead).length;
+    
+    // Specific logic per concept:
+    // Lvl 1-4: Defeat enemies? Or just reach end?
+    // Concept says "Objective: Defeat all X enemies". 
+    // Let's enforce: Must kill all enemies to trigger "Portal/Exit" active or just immediate win?
+    // Immediate win is abrupt. Let's say if enemiesAlive == 0, then reaching right edge triggers win.
+    
+    if (enemiesAlive === 0) {
+        // Render an "EXIT" visual indicator at end of world?
+        // Implicitly, if player x > worldWidth - 100
+        if (gameState.player.x > gameState.worldWidth - 100) {
+            gameState.gamePhase = GAME_PHASES.LEVEL_COMPLETE;
+        }
+    }
+}
+
+// Global hook for controls
+window.setControlMode = function(mode) {
+    gameState.controlMode = mode;
+    console.log("Control Mode set to:", mode);
+};
+
+window.gameInstance = gameInstance;
+</file>
+
+<file name="ui.js">
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export function renderUI(p) {
+    p.textAlign(p.LEFT, p.TOP);
+    
+    // Score
+    p.fill(255);
+    p.textSize(20);
+    p.text('SCORE: ' + gameState.score.toString().padStart(5, '0'), 20, 20);
+    
+    // Level
+    p.textAlign(p.RIGHT, p.TOP);
+    p.text('LEVEL: ' + gameState.currentLevel, CANVAS_WIDTH - 20, 20);
+    
+    // Health Bar
+    const player = gameState.player;
+    if (player) {
+        p.stroke(255);
+        p.strokeWeight(2);
+        p.fill(50);
+        p.rect(20, 50, 150, 20);
+        p.noStroke();
+        p.fill(0, 255, 0);
+        const hpWidth = (player.health / player.maxHealth) * 146;
+        if (hpWidth > 0) p.rect(22, 52, hpWidth, 16);
+    }
+}
+
+export function renderStartScreen(p) {
+    p.background(20, 20, 40);
+    p.fill(255);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(40);
+    p.text('PIXEL GAUNTLET', CANVAS_WIDTH / 2, 100);
+    
+    p.textSize(16);
+    p.text('Controls:', CANVAS_WIDTH / 2, 180);
+    p.text('Arrows to Move/Jump', CANVAS_WIDTH / 2, 210);
+    p.text('Z / Shift to Attack', CANVAS_WIDTH / 2, 230);
+    p.text('ESC to Pause', CANVAS_WIDTH / 2, 250);
+    
+    p.textSize(24);
+    p.fill(100, 255, 100);
+    if (p.frameCount % 60 < 30) {
+        p.text('PRESS ENTER TO START', CANVAS_WIDTH / 2, 320);
+    }
+}
+
+export function renderPaused(p) {
+    p.fill(0, 0, 0, 150);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.fill(255);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(40);
+    p.text('PAUSED', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+    p.textSize(16);
+    p.text('Press ESC to Resume', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 40);
+}
+
+export function renderLevelComplete(p) {
+    p.fill(0, 0, 0, 150);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.fill(100, 255, 100);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(30);
+    p.text('LEVEL ' + gameState.currentLevel + ' COMPLETE!', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 20);
+    p.fill(255);
+    p.textSize(16);
+    p.text('Press ENTER for Next Level', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 30);
+}
+
+export function renderGameOver(p, win) {
+    p.fill(0, 0, 0, 200);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.textAlign(p.CENTER, p.CENTER);
+    
+    if (win) {
+        p.fill(255, 215, 0);
+        p.textSize(40);
+        p.text('YOU WIN!', CANVAS_WIDTH / 2, 150);
+        p.textSize(20);
+        p.fill(255);
+        p.text('The Overlord is defeated!', CANVAS_WIDTH / 2, 200);
+    } else {
+        p.fill(255, 50, 50);
+        p.textSize(40);
+        p.text('GAME OVER', CANVAS_WIDTH / 2, 150);
+    }
+    
+    p.fill(255);
+    p.textSize(24);
+    p.text('Final Score: ' + gameState.score, CANVAS_WIDTH / 2, 250);
+    
+    p.textSize(16);
+    p.fill(150);
+    p.text('Press R to Return to Title', CANVAS_WIDTH / 2, 320);
+}
+</file>
+
+<file name="entities.js">
+import { gameState, GRAVITY, FRICTION, CANVAS_HEIGHT } from './globals.js';
+import { checkCollision, resolvePlatformCollisions } from './physics.js';
+
+class Entity {
+    constructor(x, y, width, height, type) {
+        this.x = x;
+        this.y = y;
+        this.width = width;
+        this.height = height;
+        this.vx = 0;
+        this.vy = 0;
+        this.type = type;
+        this.markedForDeletion = false;
+    }
+
+    update(p) {}
+    render(p) {}
+}
+
+export class Player extends Entity {
+    constructor(x, y) {
+        super(x, y, 30, 50, 'PLAYER');
+        this.speed = 5;
+        this.jumpPower = -12;
+        this.onGround = false;
+        this.facing = 1; // 1 Right, -1 Left
+        this.health = 100;
+        this.maxHealth = 100;
+        this.isAttacking = false;
+        this.attackTimer = 0;
+        this.attackDuration = 15;
+        this.attackCooldown = 0;
+        this.invincibleTimer = 0;
+    }
+
+    update(p) {
+        // Controls
+        const keys = gameState.keys;
+        // Support Arrows (37-40) and WASD (implicitly handled if mapped, but complying to Hard Constraints: Arrows)
+        // Hard constraints: Arrow keys (37-40), Space (32), Shift (16), Z (90)
+        
+        let moveLeft = keys[37];
+        let moveRight = keys[39];
+        let jump = keys[32] || keys[38]; // Space or Up
+        let attack = keys[90] || keys[16]; // Z or Shift
+
+        // Automated Input Override
+        if (gameState.controlMode !== 'HUMAN' && window.get_automated_testing_action) {
+            const action = window.get_automated_testing_action(gameState);
+            if (action) {
+                if (action.moveLeft) moveLeft = true;
+                if (action.moveRight) moveRight = true;
+                if (action.jump) jump = true;
+                if (action.attack) attack = true;
+            }
+        }
+
+        // Horizontal Movement
+        if (moveLeft) {
+            this.vx = -this.speed;
+            this.facing = -1;
+        } else if (moveRight) {
+            this.vx = this.speed;
+            this.facing = 1;
+        } else {
+            this.vx *= FRICTION;
+            if (Math.abs(this.vx) < 0.1) this.vx = 0;
+        }
+
+        // Jumping
+        if (jump && this.onGround) {
+            this.vy = this.jumpPower;
+            this.onGround = false;
+        }
+
+        // Attacking
+        if (this.attackCooldown > 0) this.attackCooldown--;
+        
+        if (attack && !this.isAttacking && this.attackCooldown === 0) {
+            this.isAttacking = true;
+            this.attackTimer = this.attackDuration;
+            this.attackCooldown = 30;
+            
+            // Create Attack Hitbox
+            const reach = 40;
+            const attackX = this.facing === 1 ? this.x + this.width : this.x - reach;
+            const attackBox = { x: attackX, y: this.y + 10, width: reach, height: 30 };
+            
+            // Check Hits
+            gameState.entities.forEach(entity => {
+                if (entity instanceof Enemy && checkCollision(attackBox, entity)) {
+                    entity.takeDamage(25); // Player damage
+                    // Knockback enemy
+                    entity.vx = this.facing * 5;
+                    entity.vy = -3;
+                    // Spawn particle
+                    spawnParticles(entity.x + entity.width/2, entity.y + entity.height/2, 5, [255, 255, 255]);
+                }
+            });
+        }
+
+        if (this.isAttacking) {
+            this.attackTimer--;
+            if (this.attackTimer <= 0) {
+                this.isAttacking = false;
+            }
+        }
+
+        // Apply Physics
+        this.vy += GRAVITY;
+        this.x += this.vx;
+        this.y += this.vy;
+
+        // Platform Collisions
+        resolvePlatformCollisions(this);
+
+        // World Bounds
+        if (this.x < 0) this.x = 0;
+        if (this.y > CANVAS_HEIGHT + 100) { // Fell off world
+            this.health = 0; 
+        }
+
+        // Invincibility
+        if (this.invincibleTimer > 0) this.invincibleTimer--;
+
+        // Check Entity Collisions (Items, Enemy Bodies)
+        gameState.entities.forEach(entity => {
+            if (checkCollision(this, entity)) {
+                if (entity instanceof Collectible) {
+                    entity.collect(this);
+                } else if (entity instanceof Enemy && !entity.isDead && this.invincibleTimer === 0) {
+                    // Touch damage
+                    this.takeDamage(10);
+                    // Knockback player
+                    this.vx = (this.x < entity.x ? -1 : 1) * 8;
+                    this.vy = -5;
+                } else if (entity instanceof Projectile && this.invincibleTimer === 0) {
+                     this.takeDamage(entity.damage);
+                     entity.markedForDeletion = true;
+                }
+            }
+        });
+
+        // Death
+        if (this.health <= 0) {
+            gameState.gamePhase = "GAME_OVER_LOSE";
+        }
+    }
+
+    takeDamage(amount) {
+        this.health -= amount;
+        this.invincibleTimer = 60; // 1 second
+        spawnParticles(this.x + this.width/2, this.y + this.height/2, 10, [255, 0, 0]);
+        if (this.health < 0) this.health = 0;
+    }
+
+    render(p) {
+        p.push();
+        p.translate(this.x, this.y);
+        
+        // Blink if invincible
+        if (this.invincibleTimer > 0 && Math.floor(p.frameCount / 4) % 2 === 0) {
+            p.pop();
+            return;
+        }
+
+        // Body
+        p.fill(0, 100, 255);
+        p.noStroke();
+        p.rect(0, 0, this.width, this.height);
+
+        // Eyes
+        p.fill(255);
+        if (this.facing === 1) {
+            p.rect(20, 10, 5, 5);
+            p.rect(20, 25, 5, 5); // Walking animation bob
+        } else {
+            p.rect(5, 10, 5, 5);
+            p.rect(5, 25, 5, 5);
+        }
+
+        // Attack Visual
+        if (this.isAttacking) {
+            p.fill(255, 255, 0, 150);
+            if (this.facing === 1) p.rect(this.width, 10, 40, 30);
+            else p.rect(-40, 10, 40, 30);
+        }
+
+        p.pop();
+    }
+}
+
+export class Enemy extends Entity {
+    constructor(x, y, width, height, type, hp) {
+        super(x, y, width, height, type);
+        this.health = hp;
+        this.maxHealth = hp;
+        this.isDead = false;
+        this.patrolStart = x - 100;
+        this.patrolEnd = x + 100;
+        this.direction = 1;
+        this.speed = 1;
+    }
+
+    takeDamage(amount) {
+        this.health -= amount;
+        if (this.health <= 0) {
+            this.isDead = true;
+            this.markedForDeletion = true;
+            
+            // Score
+            let points = 10;
+            if (this.type === 'BAT') points = 15;
+            if (this.type === 'KNIGHT') points = 50;
+            if (this.type === 'BOSS') points = 200;
+            gameState.score += points;
+
+            spawnParticles(this.x + this.width/2, this.y + this.height/2, 20, [100, 100, 100]);
+        }
+    }
+
+    update(p) {
+        if (this.isDead) return;
+
+        // Basic AI
+        const player = gameState.player;
+        const dist = Math.sqrt(Math.pow(player.x - this.x, 2) + Math.pow(player.y - this.y, 2));
+
+        if (this.type === 'SLIME') {
+            // Patrol
+            this.x += this.speed * this.direction;
+            if (this.x > this.patrolEnd) this.direction = -1;
+            if (this.x < this.patrolStart) this.direction = 1;
+            
+            // Gravity
+            this.vy += GRAVITY;
+            this.y += this.vy;
+            resolvePlatformCollisions(this);
+            
+        } else if (this.type === 'BAT') {
+            // Fly towards player if close
+            if (dist < 200) {
+                this.x += (player.x - this.x) * 0.01;
+                this.y += (player.y - this.y) * 0.01;
+            } else {
+                // Bob in place
+                this.y += Math.sin(p.frameCount * 0.1);
+            }
+        } else if (this.type === 'KNIGHT') {
+             // Slower patrol, heavy
+            this.x += (this.speed * 0.5) * this.direction;
+            if (this.x > this.patrolEnd) this.direction = -1;
+            if (this.x < this.patrolStart) this.direction = 1;
+            
+            this.vy += GRAVITY;
+            this.y += this.vy;
+            resolvePlatformCollisions(this);
+        } else if (this.type === 'BOSS') {
+            // Move back and forth
+            this.x += Math.sin(p.frameCount * 0.02) * 2;
+            this.vy += GRAVITY;
+            this.y += this.vy;
+            resolvePlatformCollisions(this);
+            
+            // Shoot projectiles
+            if (p.frameCount % 120 === 0) {
+                const proj = new Projectile(this.x, this.y + 20, player.x, player.y);
+                gameState.entities.push(proj);
+            }
+        }
+    }
+
+    render(p) {
+        p.push();
+        p.translate(this.x, this.y);
+        
+        if (this.type === 'SLIME') {
+            p.fill(50, 200, 50);
+            const squash = Math.sin(p.frameCount * 0.2) * 5;
+            p.rect(0, 10 - squash, this.width, this.height + squash);
+        } else if (this.type === 'BAT') {
+            p.fill(150, 50, 200);
+            p.ellipse(this.width/2, this.height/2, this.width, this.height);
+            // Wings
+            if (Math.floor(p.frameCount / 5) % 2 === 0) {
+                p.triangle(0, 10, -10, -5, 10, 10);
+                p.triangle(this.width, 10, this.width + 10, -5, this.width - 10, 10);
+            }
+        } else if (this.type === 'KNIGHT') {
+            p.fill(150);
+            p.rect(0, 0, this.width, this.height);
+            p.fill(50); // visor
+            p.rect(5, 10, 30, 5);
+        } else if (this.type === 'BOSS') {
+            p.fill(200, 20, 20);
+            p.rect(0, 0, this.width, this.height);
+            // Angry Eyes
+            p.fill(255, 255, 0);
+            p.rect(10, 20, 20, 10);
+            p.rect(50, 20, 20, 10);
+        }
+        
+        // Health Bar above enemy
+        if (this.health < this.maxHealth) {
+            p.fill(255, 0, 0);
+            p.rect(0, -10, this.width, 5);
+            p.fill(0, 255, 0);
+            p.rect(0, -10, this.width * (this.health / this.maxHealth), 5);
+        }
+
+        p.pop();
+    }
+}
+
+export class Platform extends Entity {
+    constructor(x, y, width, height) {
+        super(x, y, width, height, 'PLATFORM');
+    }
+    
+    render(p) {
+        p.fill(100, 80, 60); // Brownish
+        p.stroke(80, 60, 40);
+        p.strokeWeight(2);
+        p.rect(this.x, this.y, this.width, this.height);
+        
+        // Grass top
+        p.stroke(50, 200, 50);
+        p.line(this.x, this.y, this.x + this.width, this.y);
+        p.noStroke();
+    }
+}
+
+export class Collectible extends Entity {
+    constructor(x, y, subType) {
+        super(x, y, 20, 20, 'ITEM');
+        this.subType = subType; // 'POTION', 'BOOST'
+    }
+
+    collect(player) {
+        if (this.subType === 'POTION') {
+            player.health = Math.min(player.maxHealth, player.health + 20);
+            gameState.score += 5;
+        } else if (this.subType === 'BOOST') {
+            // NotImplemented: Boost logic, just score for now
+            gameState.score += 10;
+        }
+        this.markedForDeletion = true;
+        spawnParticles(this.x + 10, this.y + 10, 10, [255, 255, 0]);
+    }
+
+    render(p) {
+        p.push();
+        p.translate(this.x + 10, this.y + 10 + Math.sin(p.frameCount * 0.1) * 3);
+        
+        if (this.subType === 'POTION') {
+            p.fill(0, 255, 0);
+            p.circle(0, 0, 15);
+            p.fill(255); // shine
+            p.circle(-3, -3, 5);
+        } else {
+            p.fill(255, 215, 0); // Gold
+            p.rectMode(p.CENTER);
+            p.rotate(p.frameCount * 0.05);
+            p.rect(0, 0, 15, 15);
+        }
+        p.pop();
+    }
+}
+
+export class Projectile extends Entity {
+    constructor(x, y, targetX, targetY) {
+        super(x, y, 10, 10, 'PROJECTILE');
+        const angle = Math.atan2(targetY - y, targetX - x);
+        this.speed = 4;
+        this.vx = Math.cos(angle) * this.speed;
+        this.vy = Math.sin(angle) * this.speed;
+        this.damage = 15;
+        this.lifetime = 120;
+    }
+
+    update(p) {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.lifetime--;
+        if (this.lifetime <= 0) this.markedForDeletion = true;
+    }
+
+    render(p) {
+        p.fill(255, 50, 50);
+        p.circle(this.x + 5, this.y + 5, 10);
+    }
+}
+
+export class Particle {
+    constructor(x, y, color) {
+        this.x = x;
+        this.y = y;
+        this.color = color;
+        this.vx = (Math.random() - 0.5) * 4;
+        this.vy = (Math.random() - 0.5) * 4;
+        this.life = 1.0;
+        this.decay = Math.random() * 0.05 + 0.02;
+    }
+
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.life -= this.decay;
+    }
+
+    render(p) {
+        p.noStroke();
+        p.fill(this.color[0], this.color[1], this.color[2], this.life * 255);
+        p.rect(this.x, this.y, 4, 4);
+    }
+}
+
+function spawnParticles(x, y, count, color) {
+    for (let i = 0; i < count; i++) {
+        gameState.particles.push(new Particle(x, y, color));
+    }
+}
+</file>
+
+<file name="levels.js">
+import { gameState, CANVAS_HEIGHT, CANVAS_WIDTH } from './globals.js';
+import { Player, Platform, Enemy, Collectible } from './entities.js';
+
+export function resetGame(p) {
+    loadLevel(p, gameState.currentLevel);
+}
+
+export function loadLevel(p, levelIndex) {
+    gameState.entities = [];
+    gameState.platforms = [];
+    gameState.particles = [];
+    
+    // Player start position
+    gameState.player = new Player(50, CANVAS_HEIGHT - 100);
+    gameState.entities.push(gameState.player);
+
+    // Floor (exists in all levels)
+    gameState.platforms.push(new Platform(-100, CANVAS_HEIGHT - 20, 4000, 40));
+
+    // Level Specific Generation
+    if (levelIndex === 1) { // Rookie
+        gameState.worldWidth = 1200;
+        
+        // Platforms
+        gameState.platforms.push(new Platform(200, 300, 100, 20));
+        gameState.platforms.push(new Platform(400, 250, 150, 20));
+        gameState.platforms.push(new Platform(700, 300, 100, 20));
+
+        // Enemies (4 Slimes)
+        gameState.entities.push(new Enemy(300, 350, 30, 30, 'SLIME', 10));
+        gameState.entities.push(new Enemy(500, 350, 30, 30, 'SLIME', 10));
+        gameState.entities.push(new Enemy(800, 350, 30, 30, 'SLIME', 10));
+        gameState.entities.push(new Enemy(1000, 350, 30, 30, 'SLIME', 10));
+
+    } else if (levelIndex === 2) { // Forest
+        gameState.worldWidth = 1500;
+        
+        gameState.platforms.push(new Platform(200, 320, 80, 20));
+        gameState.platforms.push(new Platform(350, 250, 80, 20));
+        gameState.platforms.push(new Platform(500, 180, 200, 20)); // High platform
+        gameState.platforms.push(new Platform(800, 300, 100, 20));
+        gameState.platforms.push(new Platform(1000, 250, 100, 20));
+
+        // Enemies
+        gameState.entities.push(new Enemy(400, 350, 30, 30, 'SLIME', 10));
+        gameState.entities.push(new Enemy(600, 150, 30, 30, 'SLIME', 10)); // On platform
+        gameState.entities.push(new Enemy(900, 100, 30, 20, 'BAT', 15));
+        gameState.entities.push(new Enemy(1200, 150, 30, 20, 'BAT', 15));
+
+        gameState.entities.push(new Collectible(550, 140, 'POTION'));
+
+    } else if (levelIndex === 3) { // Cavern
+        gameState.worldWidth = 1800;
+        // More verticality
+        gameState.platforms.push(new Platform(200, 300, 100, 20));
+        gameState.platforms.push(new Platform(300, 220, 100, 20));
+        gameState.platforms.push(new Platform(150, 150, 100, 20));
+        gameState.platforms.push(new Platform(450, 150, 300, 20));
+        gameState.platforms.push(new Platform(800, 300, 100, 20));
+        gameState.platforms.push(new Platform(1000, 200, 100, 20));
+        
+        gameState.entities.push(new Enemy(500, 120, 30, 30, 'SLIME', 15));
+        gameState.entities.push(new Enemy(600, 120, 30, 30, 'SLIME', 15));
+        gameState.entities.push(new Enemy(300, 100, 30, 20, 'BAT', 20));
+        gameState.entities.push(new Enemy(900, 100, 30, 20, 'BAT', 20));
+        
+        gameState.entities.push(new Collectible(160, 110, 'POTION'));
+
+    } else if (levelIndex === 4) { // Castle
+        gameState.worldWidth = 2000;
+        gameState.platforms.push(new Platform(300, 300, 200, 20));
+        gameState.platforms.push(new Platform(600, 250, 200, 20));
+        gameState.platforms.push(new Platform(900, 200, 400, 20)); // Bridge
+        
+        gameState.entities.push(new Enemy(1000, 160, 40, 60, 'KNIGHT', 50)); // MiniBoss
+        gameState.entities.push(new Enemy(400, 270, 30, 30, 'SLIME', 20));
+        gameState.entities.push(new Enemy(700, 200, 30, 20, 'BAT', 25));
+        
+        gameState.entities.push(new Collectible(950, 160, 'POTION'));
+
+    } else if (levelIndex === 5) { // Boss
+        gameState.worldWidth = 1000;
+        // Arena
+        gameState.platforms.push(new Platform(100, 300, 200, 20));
+        gameState.platforms.push(new Platform(700, 300, 200, 20));
+        
+        gameState.entities.push(new Enemy(500, 250, 80, 80, 'BOSS', 200));
+        
+        gameState.entities.push(new Collectible(150, 260, 'POTION'));
+        gameState.entities.push(new Collectible(800, 260, 'BOOST'));
+    }
+}
+</file>
+
+<file name="automated_test.js">
+export function get_automated_testing_action(gameState) {
+    if (!gameState.player) return null;
+    
+    // TEST_1: Survival / Movement
+    if (gameState.controlMode === 'TEST_1') {
+        const jumping = gameState.frameCount % 120 < 30; // Jump every 2 seconds
+        return {
+            moveRight: true,
+            moveLeft: false,
+            jump: jumping,
+            attack: false
+        };
+    }
+    
+    // TEST_2: Aggressive / Combat
+    if (gameState.controlMode === 'TEST_2') {
+        // Find nearest enemy
+        let nearest = null;
+        let minDist = 1000;
+        
+        gameState.entities.forEach(e => {
+            if (e.type && (e.type === 'SLIME' || e.type === 'BAT' || e.type === 'KNIGHT' || e.type === 'BOSS')) {
+                const dist = Math.abs(e.x - gameState.player.x);
+                if (dist < minDist) {
+                    minDist = dist;
+                    nearest = e;
+                }
+            }
+        });
+        
+        const action = {
+            moveRight: false,
+            moveLeft: false,
+            jump: false,
+            attack: false
+        };
+        
+        // Navigate to end if no enemies
+        if (!nearest || minDist > 500) {
+             action.moveRight = true;
+             if (gameState.frameCount % 100 < 20) action.jump = true; // Random jumps
+             return action;
+        }
+        
+        // Combat logic
+        const dx = nearest.x - gameState.player.x;
+        
+        if (Math.abs(dx) > 50) {
+            if (dx > 0) action.moveRight = true;
+            else action.moveLeft = true;
+        } else {
+            // Close enough to attack
+            if (gameState.frameCount % 20 < 10) action.attack = true;
+        }
+        
+        // Jump if enemy is higher or just randomly to dodge
+        if (nearest.y < gameState.player.y - 20 || Math.random() < 0.05) {
+            action.jump = true;
+        }
+        
+        return action;
+    }
+    
+    return null;
+}
+
+// Expose globally
+window.get_automated_testing_action = get_automated_testing_action;
+</file>
+
+<file name="physics.js">
+import { gameState } from './globals.js';
+
+export function checkCollision(entityA, entityB) {
+    // Simple AABB collision
+    return (
+        entityA.x < entityB.x + entityB.width &&
+        entityA.x + entityA.width > entityB.x &&
+        entityA.y < entityB.y + entityB.height &&
+        entityA.y + entityA.height > entityB.y
+    );
+}
+
+export function resolvePlatformCollisions(entity) {
+    entity.onGround = false;
+    
+    // Broad phase optimization could go here (spatial hash), 
+    // but iterating all platforms is fine for this scale.
+    for (const platform of gameState.platforms) {
+        // Only check if entity is close to platform
+        if (entity.x + entity.width > platform.x && 
+            entity.x < platform.x + platform.width) {
+            
+            // Checking falling down onto platform
+            if (entity.vy >= 0 && 
+                entity.y + entity.height <= platform.y + platform.height && // Was above or inside
+                entity.y + entity.height + entity.vy >= platform.y) { // Will be below or touching
+                
+                // Snap to top
+                if (entity.y + entity.height <= platform.y + 10) { // Tolerance
+                   entity.y = platform.y - entity.height;
+                   entity.vy = 0;
+                   entity.onGround = true;
+                }
+            }
+        }
+    }
+}
+
+export function checkAttackCollision(attackBox, enemies) {
+    const hits = [];
+    for (const enemy of enemies) {
+        if (checkCollision(attackBox, enemy)) {
+            hits.push(enemy);
+        }
+    }
+    return hits;
+}
+</file>
+
+<file name="input.js">
+import { gameState, GAME_PHASES, GAME_OVER_PHASES } from './globals.js';
+import { loadLevel, resetGame } from './levels.js';
+
+// Key Codes
+const KEY_ENTER = 13;
+const KEY_ESC = 27;
+const KEY_R = 82;
+const KEY_LEFT = 37;
+const KEY_UP = 38;
+const KEY_RIGHT = 39;
+const KEY_DOWN = 40;
+const KEY_SPACE = 32;
+const KEY_SHIFT = 16;
+const KEY_Z = 90;
+
+export function handleKeyPress(p) {
+    const code = p.keyCode;
+    gameState.keys[code] = true;
+
+    // Log input
+    p.logs.inputs.push({
+        type: 'press',
+        key: code,
+        frame: p.frameCount,
+        time: Date.now()
+    });
+
+    // Phase Transitions
+    if (code === KEY_ENTER) {
+        if (gameState.gamePhase === GAME_PHASES.START) {
+            gameState.currentLevel = 1;
+            gameState.score = 0;
+            resetGame(p);
+            gameState.gamePhase = GAME_PHASES.PLAYING;
+        } else if (gameState.gamePhase === GAME_PHASES.LEVEL_COMPLETE) {
+            if (gameState.currentLevel < gameState.maxLevels) {
+                gameState.currentLevel++;
+                resetGame(p); // Loads next level
+                gameState.gamePhase = GAME_PHASES.PLAYING;
+            } else {
+                gameState.gamePhase = GAME_PHASES.GAME_OVER_WIN;
+            }
+        }
+    }
+
+    if (code === KEY_ESC) {
+        if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+            gameState.gamePhase = GAME_PHASES.PAUSED;
+        } else if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+            gameState.gamePhase = GAME_PHASES.PLAYING;
+        }
+    }
+
+    if (code === KEY_R) {
+        if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN || 
+            gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE) {
+            gameState.currentLevel = 1;
+            gameState.score = 0;
+            gameState.gamePhase = GAME_PHASES.START;
+        }
+    }
+}
+
+export function handleKeyRelease(p) {
+    const code = p.keyCode;
+    gameState.keys[code] = false;
+    
+    p.logs.inputs.push({
+        type: 'release',
+        key: code,
+        frame: p.frameCount,
+        time: Date.now()
+    });
+}
+
+export function isKeyDown(code) {
+    return !!gameState.keys[code];
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

@@ -3,7 +3,7 @@
 import Matter from 'https://cdn.jsdelivr.net/npm/matter-js@0.19.0/+esm';
 const { Events, World, Body } = Matter;
 
-import { gameState, FRUIT_TYPES, logs } from './globals.js';
+import { gameState, FRUIT_TYPES, logs, LEVELS, DANGER_LINE_Y } from './globals.js';
 import { Fruit } from './entities.js';
 
 export function setupPhysics() {
@@ -55,14 +55,50 @@ function executeMerge(bodyA, bodyB, fruitA, fruitB, mergeX, mergeY, newTypeIndex
     e => e !== fruitA && e !== fruitB
   );
   
-  // Create new merged fruit immediately
-  const newFruit = new Fruit(mergeX, mergeY, newTypeIndex);
-  World.add(gameState.world, newFruit.body);
-  gameState.entities.push(newFruit);
-  
   // Add score
   const scoreGained = FRUIT_TYPES[newTypeIndex].score;
   gameState.score += scoreGained;
+  
+  // Check level progression
+  const nextLevelIndex = gameState.currentLevelIndex + 1;
+  if (nextLevelIndex < LEVELS.length && gameState.score >= LEVELS[nextLevelIndex].threshold) {
+    gameState.currentLevelIndex = nextLevelIndex;
+    
+    // Update danger line
+    if (LEVELS[nextLevelIndex].dangerY) {
+      gameState.dangerLineY = LEVELS[nextLevelIndex].dangerY;
+    } else {
+      gameState.dangerLineY = DANGER_LINE_Y;
+    }
+
+    // Clear all fruits for the new level
+    gameState.entities.forEach(entity => {
+      if (entity instanceof Fruit) {
+        World.remove(gameState.world, entity.body);
+      }
+    });
+    gameState.entities = [];
+    
+    // Log level up
+    logs.game_info.push({
+      game_status: 'LEVEL_UP',
+      data: { 
+        level: LEVELS[nextLevelIndex].name, 
+        score: gameState.score,
+        new_level_index: nextLevelIndex
+      },
+      framecount: gameState.frameCount,
+      timestamp: Date.now()
+    });
+    
+    // Return early so we don't spawn the merged fruit (since board is cleared)
+    return;
+  }
+  
+  // If not leveling up, create new merged fruit
+  const newFruit = new Fruit(mergeX, mergeY, newTypeIndex);
+  World.add(gameState.world, newFruit.body);
+  gameState.entities.push(newFruit);
   
   // Update high score
   if (gameState.score > gameState.highScore) {

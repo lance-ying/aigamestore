@@ -2,35 +2,60 @@
 import { gameState, playerStats } from './globals.js';
 import { 
   PHASE_PLAYING, PHASE_GAME_OVER_WIN, PHASE_GAME_OVER_LOSE,
-  CANVAS_WIDTH, CANVAS_HEIGHT, XP_ORB_PICKUP_RANGE, WIN_TIME_SECONDS
+  CANVAS_WIDTH, CANVAS_HEIGHT, XP_ORB_PICKUP_RANGE, STAGE_CONFIG
 } from './globals.js';
-import { Player, Enemy, Bullet, XPOrb, Particle } from './entities.js';
+import { Player, Enemy, Bullet, XPOrb, Particle, Explosion, LightningBolt } from './entities.js';
 import { getRandomUpgrades } from './upgrades.js';
 
 export function initGame(p) {
-  // Reset game state
+  // Reset Global Game State
+  gameState.score = 0;
+  gameState.kills = 0;
+  gameState.stage = 1;
+  gameState.gameStartTime = Date.now();
+  gameState.positionHistory = [];
+  
+  // Initialize the first stage
+  resetForStage(p);
+
+  // Log game start
+  p.logs.game_info.push({
+    data: { phase: PHASE_PLAYING, message: "Game Started" },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function resetForStage(p) {
+  // Reset entities
   gameState.player = new Player(CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
   gameState.entities = [gameState.player];
   gameState.bullets = [];
   gameState.enemies = [];
   gameState.xpOrbs = [];
   gameState.particles = [];
-  gameState.score = 0;
+  gameState.explosions = [];
+  gameState.lightningBolts = [];
+  
+  // Reset Level/XP (Start at level 0/1 for each stage)
   gameState.level = 1;
   gameState.experience = 0;
   gameState.experienceToNextLevel = 10;
   gameState.upgradeChoices = [];
   gameState.showingUpgradeScreen = false;
-  gameState.gameStartTime = Date.now();
+  
+  // Reset Stage Progress
+  gameState.stageKills = 0;
+  gameState.stageMessageTimer = 120; // Show stage name for 2 seconds
+  
+  // Reset Timers
   gameState.elapsedTime = 0;
   gameState.enemySpawnTimer = 0;
-  gameState.enemySpawnRate = 120;
-  gameState.waveNumber = 1;
-  gameState.kills = 0;
+  const config = STAGE_CONFIG[gameState.stage - 1];
+  gameState.enemySpawnRate = config.spawnRate;
   gameState.lastFireTime = 0;
-  gameState.positionHistory = [];
-
-  // Reset player stats
+  
+  // Reset Player Stats to base
   playerStats.fireRate = 15;
   playerStats.damage = 10;
   playerStats.bulletSpeed = 8;
@@ -44,13 +69,6 @@ export function initGame(p) {
   playerStats.lightningCooldown = 0;
   playerStats.hasShield = false;
   playerStats.shieldHealth = 0;
-
-  // Log game start
-  p.logs.game_info.push({
-    data: { phase: PHASE_PLAYING, message: "Game Started" },
-    framecount: p.frameCount,
-    timestamp: Date.now()
-  });
 }
 
 export function updateGame(p) {
@@ -58,18 +76,36 @@ export function updateGame(p) {
     return; // Pause game during upgrade selection
   }
 
-  // Update elapsed time
-  gameState.elapsedTime = (Date.now() - gameState.gameStartTime) / 1000;
+  // Update elapsed time (per stage)
+  gameState.elapsedTime += 1/60;
+  
+  if (gameState.stageMessageTimer > 0) {
+    gameState.stageMessageTimer--;
+  }
 
-  // Check win condition
-  if (gameState.elapsedTime >= WIN_TIME_SECONDS) {
-    gameState.gamePhase = PHASE_GAME_OVER_WIN;
-    p.logs.game_info.push({
-      data: { phase: PHASE_GAME_OVER_WIN, score: gameState.score, kills: gameState.kills },
-      framecount: p.frameCount,
-      timestamp: Date.now()
-    });
-    return;
+  // Check Stage Progression
+  const config = STAGE_CONFIG[gameState.stage - 1];
+  if (gameState.stageKills >= config.killsRequired) {
+    if (gameState.stage < STAGE_CONFIG.length) {
+      // Proceed to next stage
+      gameState.stage++;
+      resetForStage(p);
+      p.logs.game_info.push({
+        data: { event: "stage_complete", stage: gameState.stage },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+      return; // Skip rest of update for this frame
+    } else {
+      // Game Win
+      gameState.gamePhase = PHASE_GAME_OVER_WIN;
+      p.logs.game_info.push({
+        data: { phase: PHASE_GAME_OVER_WIN, score: gameState.score, kills: gameState.kills },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+      return;
+    }
   }
 
   // Update player
@@ -162,6 +198,7 @@ export function updateGame(p) {
           gameState.enemies.splice(j, 1);
           gameState.score += enemy.xpValue * 10;
           gameState.kills++;
+          gameState.stageKills++;
         }
 
         bullet.onHit();
@@ -208,6 +245,20 @@ export function updateGame(p) {
     }
   }
 
+  // Update explosions
+  for (let i = gameState.explosions.length - 1; i >= 0; i--) {
+    if (gameState.explosions[i].update()) {
+      gameState.explosions.splice(i, 1);
+    }
+  }
+
+  // Update lightning bolts
+  for (let i = gameState.lightningBolts.length - 1; i >= 0; i--) {
+    if (gameState.lightningBolts[i].update()) {
+      gameState.lightningBolts.splice(i, 1);
+    }
+  }
+
   // Lightning ability
   if (playerStats.hasLightning) {
     if (playerStats.lightningCooldown <= 0 && gameState.enemies.length > 0) {
@@ -222,22 +273,15 @@ export function updateGame(p) {
 function spawnEnemies(p) {
   gameState.enemySpawnTimer--;
   if (gameState.enemySpawnTimer <= 0) {
-    // Spawn rate increases over time
-    const timeFactor = Math.min(gameState.elapsedTime / 60, 5);
-    gameState.enemySpawnRate = Math.max(30, 120 - timeFactor * 15);
+    const config = STAGE_CONFIG[gameState.stage - 1];
+    
+    // Set spawn rate from config
+    gameState.enemySpawnRate = config.spawnRate;
     gameState.enemySpawnTimer = gameState.enemySpawnRate;
 
-    // Determine enemy type
-    let type = 'basic';
-    const rand = Math.random();
-    if (gameState.elapsedTime > 60) {
-      if (rand < 0.1) type = 'elite';
-      else if (rand < 0.3) type = 'tank';
-      else if (rand < 0.5) type = 'fast';
-    } else if (gameState.elapsedTime > 30) {
-      if (rand < 0.2) type = 'tank';
-      else if (rand < 0.4) type = 'fast';
-    }
+    // Determine enemy type from config
+    const allowedTypes = config.enemyTypes;
+    const type = allowedTypes[Math.floor(Math.random() * allowedTypes.length)];
 
     // Spawn from random edge
     let x, y;
@@ -322,6 +366,9 @@ export function fireBullet(p) {
 }
 
 function applyAreaDamage(p, x, y, radius, damage) {
+  // Visual effect
+  gameState.explosions.push(new Explosion(x, y, radius));
+
   for (let enemy of gameState.enemies) {
     const dist = Math.sqrt(
       Math.pow(enemy.x - x, 2) + 
@@ -349,6 +396,14 @@ function triggerLightning(p) {
   for (let target of targets) {
     target.enemy.takeDamage(playerStats.damage * 2);
     createLightningParticles(p, target.enemy.x, target.enemy.y);
+    
+    // Add visual bolt
+    gameState.lightningBolts.push(new LightningBolt(
+      gameState.player.x, 
+      gameState.player.y, 
+      target.enemy.x, 
+      target.enemy.y
+    ));
   }
 }
 

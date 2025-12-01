@@ -1,12 +1,13 @@
 import { LANE_WIDTH, TILE_HEIGHT, TARGET_ZONE_Y, CANVAS_HEIGHT } from './globals.js';
 
 export class Tile {
-  constructor(laneIndex, y = -TILE_HEIGHT) {
+  constructor(laneIndex, color = [0, 0, 0], y = -TILE_HEIGHT) {
     this.laneIndex = laneIndex;
     this.x = laneIndex * LANE_WIDTH;
     this.y = y;
     this.width = LANE_WIDTH;
     this.height = TILE_HEIGHT;
+    this.color = color;
     this.hit = false;
     this.missed = false;
     this.perfect = false;
@@ -86,8 +87,8 @@ export class Tile {
       const fadeAlpha = this.hitAnimation * 150 + 50;
       p.fill(80, 80, 80, fadeAlpha);
     } else {
-      // Draw gradient for active tiles
-      p.fill(0);
+      // Draw colored tile
+      p.fill(this.color[0], this.color[1], this.color[2]);
     }
     
     p.stroke(60, 60, 60);
@@ -96,7 +97,7 @@ export class Tile {
     
     // Add inner highlight for 3D effect
     if (!this.hit) {
-      p.stroke(40, 40, 40);
+      p.stroke(255, 255, 255, 50); // Light highlight
       p.strokeWeight(1);
       p.noFill();
       p.rect(-this.width/2 + 2, -this.height/2 + 2, this.width - 4, this.height - 4);

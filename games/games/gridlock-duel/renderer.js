@@ -9,7 +9,17 @@ export function initRenderer(p5Instance) {
 }
 
 export function render() {
-  p.background(30, 30, 30);
+  // Determine background color
+  let bgColor = [30, 30, 30]; // Default
+  
+  if (gameState.gamePhase !== GAME_PHASES.START) {
+    const levelConfig = LEVELS[gameState.currentLevel - 1];
+    if (levelConfig && levelConfig.bgColor) {
+      bgColor = levelConfig.bgColor;
+    }
+  }
+  
+  p.background(...bgColor);
   
   if (gameState.gamePhase === GAME_PHASES.START) {
     renderTitleScreen();
@@ -37,7 +47,7 @@ function renderTitleScreen() {
   p.textSize(16);
   p.fill(200, 200, 200);
   p.text("Battle the AI in strategic grid warfare!", CANVAS_WIDTH / 2, 140);
-  p.text("Win rounds to advance through 5 challenging levels", CANVAS_WIDTH / 2, 165);
+  p.text("Win rounds to advance through 6 challenging levels", CANVAS_WIDTH / 2, 165);
   
   // High Score
   p.textSize(20);
@@ -268,7 +278,7 @@ function renderLevelCompleteOverlay() {
   const alpha = Math.sin(p.frameCount * 0.1) * 127 + 128;
   p.fill(255, 255, 255, alpha);
   p.textSize(18);
-  if (gameState.currentLevel < 5) {
+  if (gameState.currentLevel < 6) {
     p.text("PRESS SPACE FOR NEXT LEVEL", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 50);
   }
   

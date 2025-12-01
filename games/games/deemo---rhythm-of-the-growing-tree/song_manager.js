@@ -26,38 +26,63 @@ export class SongManager {
     return [
       {
         id: 0,
-        name: "First Steps",
+        name: "Level 1",
         difficulty: DIFFICULTY_EASY,
         unlocked: true,
-        treeGrowth: 1.0
+        treeGrowth: 2.0,
+        noteCount: 20,
+        noteSpeed: 2.5,
+        bgColor: { top: [40, 80, 120], bottom: [10, 20, 40] }
       },
       {
         id: 1,
-        name: "Morning Light",
+        name: "Level 2",
         difficulty: DIFFICULTY_EASY,
         unlocked: false,
-        treeGrowth: 1.2
+        treeGrowth: 2.5,
+        noteCount: 30,
+        noteSpeed: 2.8,
+        bgColor: { top: [40, 120, 60], bottom: [10, 40, 20] }
       },
       {
         id: 2,
-        name: "Dancing Shadows",
+        name: "Level 3",
         difficulty: DIFFICULTY_NORMAL,
         unlocked: false,
-        treeGrowth: 1.5
+        treeGrowth: 3.0,
+        noteCount: 40,
+        noteSpeed: 3.1,
+        bgColor: { top: [100, 40, 120], bottom: [30, 10, 40] }
       },
       {
         id: 3,
-        name: "Ethereal Dreams",
+        name: "Level 4",
         difficulty: DIFFICULTY_NORMAL,
         unlocked: false,
-        treeGrowth: 1.8
+        treeGrowth: 3.5,
+        noteCount: 50,
+        noteSpeed: 3.4,
+        bgColor: { top: [140, 80, 40], bottom: [50, 20, 10] }
       },
       {
         id: 4,
-        name: "Storm's Crescendo",
+        name: "Level 5",
         difficulty: DIFFICULTY_HARD,
         unlocked: false,
-        treeGrowth: 2.0
+        treeGrowth: 4.0,
+        noteCount: 60,
+        noteSpeed: 3.7,
+        bgColor: { top: [120, 40, 40], bottom: [40, 10, 10] }
+      },
+      {
+        id: 5,
+        name: "Level 6",
+        difficulty: DIFFICULTY_HARD,
+        unlocked: false,
+        treeGrowth: 5.0,
+        noteCount: 70,
+        noteSpeed: 4.0,
+        bgColor: { top: [60, 60, 70], bottom: [10, 10, 15] }
       }
     ];
   }
@@ -80,31 +105,17 @@ export class SongManager {
     const pattern = [];
     const song = this.getSong(songId);
     
-    // Pattern length based on difficulty
-    let numNotes = 30;
-    let holdFrequency = 0.15;
-    let swipeFrequency = 0.1;
+    // Use fixed note count per level
+    const numNotes = song.noteCount;
+    const noteSpeed = song.noteSpeed;
     
-    if (difficulty === DIFFICULTY_NORMAL) {
-      numNotes = 50;
-      holdFrequency = 0.2;
-      swipeFrequency = 0.15;
-    } else if (difficulty === DIFFICULTY_HARD) {
-      numNotes = 70;
-      holdFrequency = 0.25;
-      swipeFrequency = 0.2;
-    }
-
-    // Calculate how many frames it takes for a note to reach the judgment line
-    const travelDistance = JUDGMENT_LINE_Y + 50; // From spawn y=-50 to judgment line
-    const framesToReachJudgment = Math.ceil(travelDistance / NOTE_SPEED);
+    // Difficulty affects variety of note types
+    let holdFrequency = 0.1 + (songId * 0.03); // Increases with level
+    let swipeFrequency = 0.05 + (songId * 0.03); // Increases with level
+    let baseReactionBuffer = 25 - (songId * 2); // Decreases with level (more challenging)
     
-    // Minimum gap to ensure notes don't overlap at judgment line
-    // Add extra buffer beyond the timing window to ensure clear separation
-    const minGapBetweenNotes = GOOD_TIMING + 10;
-
     let frame = 60; // Start after 1 second
-    let lastJudgmentFrame = frame + framesToReachJudgment;
+    let lastLane = Math.floor(NUM_LANES / 2);
 
     for (let i = 0; i < numNotes; i++) {
       const lane = Math.floor(this.p.random(NUM_LANES));
@@ -117,33 +128,31 @@ export class SongManager {
         noteType = NOTE_TYPE_SWIPE;
       } else if (rand < swipeFrequency + holdFrequency) {
         noteType = NOTE_TYPE_HOLD;
-        holdDuration = Math.floor(this.p.random(30, 60));
+        holdDuration = Math.floor(this.p.random(20, 40));
       }
 
-      // Calculate when this note will reach the judgment line
-      const thisJudgmentFrame = frame + framesToReachJudgment;
+      // Calculate minimum gap required based on travel time
+      const laneDistance = Math.abs(lane - lastLane);
+      const travelFrames = laneDistance * 10;
       
-      // If this note would reach the judgment line too close to the last note,
-      // delay it further
-      if (thisJudgmentFrame < lastJudgmentFrame + minGapBetweenNotes) {
-        const additionalDelay = (lastJudgmentFrame + minGapBetweenNotes) - thisJudgmentFrame;
-        frame += additionalDelay;
-      }
+      const minGap = travelFrames + baseReactionBuffer;
+      
+      // Reduced gap for faster pacing as levels progress
+      frame += minGap + Math.floor(this.p.random(5, 20 - songId));
 
       pattern.push({
         frame: frame,
         lane: lane,
         type: noteType,
-        holdDuration: holdDuration
+        holdDuration: holdDuration,
+        speed: noteSpeed
       });
 
-      // Update last judgment frame
-      lastJudgmentFrame = frame + framesToReachJudgment;
+      if (noteType === NOTE_TYPE_HOLD) {
+        frame += holdDuration;
+      }
 
-      // Add base gap before next note
-      const baseGap = difficulty === DIFFICULTY_EASY ? 45 : 
-                      difficulty === DIFFICULTY_NORMAL ? 35 : 25;
-      frame += Math.floor(this.p.random(baseGap, baseGap + 20));
+      lastLane = lane;
     }
 
     return pattern;

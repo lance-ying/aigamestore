@@ -1,14 +1,29 @@
 // render.js - Rendering functions
 import { gameState, GAME_PHASES, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { LEVEL_CONFIGS } from './levels.js';
 
-const GRID_OFFSET_X = 150;
-const GRID_OFFSET_Y = 80;
 const CELL_SIZE = 45;
 
+function getGridOffsets() {
+  const gridWidth = gameState.gridCols * CELL_SIZE;
+  const gridHeight = gameState.gridRows * CELL_SIZE;
+  
+  // Center horizontally
+  const x = (CANVAS_WIDTH - gridWidth) / 2;
+  
+  // Center vertically but ensure space for top UI
+  // UI takes up approx 80-90px with 3 objectives
+  let y = (CANVAS_HEIGHT - gridHeight) / 2;
+  y = Math.max(100, y); // Minimum top margin
+  
+  return { x, y };
+}
+
 export function calculateDotPosition(gridX, gridY) {
+  const offsets = getGridOffsets();
   return {
-    x: GRID_OFFSET_X + gridX * CELL_SIZE + CELL_SIZE / 2,
-    y: GRID_OFFSET_Y + gridY * CELL_SIZE + CELL_SIZE / 2
+    x: offsets.x + gridX * CELL_SIZE + CELL_SIZE / 2,
+    y: offsets.y + gridY * CELL_SIZE + CELL_SIZE / 2
   };
 }
 
@@ -48,16 +63,22 @@ export function renderPlayingScreen(p) {
   // Draw UI
   renderUI(p);
   
+  const offsets = getGridOffsets();
+  const startX = offsets.x;
+  const startY = offsets.y;
+  const gridWidth = gameState.gridCols * CELL_SIZE;
+  const gridHeight = gameState.gridRows * CELL_SIZE;
+  
   // Draw grid lines
   p.stroke(60, 60, 80);
   p.strokeWeight(1);
   for (let row = 0; row <= gameState.gridRows; row++) {
-    const y = GRID_OFFSET_Y + row * CELL_SIZE;
-    p.line(GRID_OFFSET_X, y, GRID_OFFSET_X + gameState.gridCols * CELL_SIZE, y);
+    const y = startY + row * CELL_SIZE;
+    p.line(startX, y, startX + gridWidth, y);
   }
   for (let col = 0; col <= gameState.gridCols; col++) {
-    const x = GRID_OFFSET_X + col * CELL_SIZE;
-    p.line(x, GRID_OFFSET_Y, x, GRID_OFFSET_Y + gameState.gridRows * CELL_SIZE);
+    const x = startX + col * CELL_SIZE;
+    p.line(x, startY, x, startY + gridHeight);
   }
   
   // Update and draw dots
@@ -192,7 +213,7 @@ export function renderGameOverScreen(p) {
   
   p.textSize(24);
   p.fill(200, 200, 200);
-  p.text("Final Score: " + gameState.score, CANVAS_WIDTH / 2, 150);
+  p.text("Final Score: " + gameState.totalScore, CANVAS_WIDTH / 2, 150);
   
   // Show objectives
   p.textSize(16);
@@ -218,11 +239,23 @@ export function renderGameOverScreen(p) {
   
   p.textSize(20);
   p.fill(100, 255, 100);
-  p.text("PRESS R TO RESTART", CANVAS_WIDTH / 2, CANVAS_HEIGHT - 60);
   
-  if (isWin && gameState.currentLevel < 5) {
-    p.textSize(16);
-    p.fill(200, 200, 200);
-    p.text("(Next level will be available in full version)", CANVAS_WIDTH / 2, CANVAS_HEIGHT - 30);
+  let actionText = "PRESS R TO RESTART";
+  if (isWin) {
+    if (gameState.currentLevel < LEVEL_CONFIGS.length) {
+      actionText = "PRESS R FOR NEXT LEVEL";
+    } else {
+      actionText = "PRESS R TO RETURN TO MENU";
+    }
+  } else {
+    actionText = "PRESS R TO RETRY LEVEL";
+  }
+  
+  p.text(actionText, CANVAS_WIDTH / 2, CANVAS_HEIGHT - 60);
+  
+  if (isWin && gameState.currentLevel < LEVEL_CONFIGS.length) {
+    // p.textSize(16);
+    // p.fill(200, 200, 200);
+    // p.text("(Next level available)", CANVAS_WIDTH / 2, CANVAS_HEIGHT - 30);
   }
 }

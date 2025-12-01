@@ -65,8 +65,8 @@ export const upgradeDefinitions = [
     id: 'area_damage_1',
     type: UPGRADE_TYPES.AREA_DAMAGE,
     name: 'Explosive Rounds',
-    description: 'Bullets deal area damage on impact',
-    apply: () => { playerStats.areaDamage += 20; }
+    description: 'Bullets explode on impact',
+    apply: () => { playerStats.areaDamage += 40; } // Increased from 20 to 40 for better effect
   },
   {
     id: 'lightning_1',
@@ -117,8 +117,8 @@ export const upgradeDefinitions = [
     id: 'area_damage_2',
     type: UPGRADE_TYPES.AREA_DAMAGE,
     name: 'Bigger Boom',
-    description: 'Increases area damage radius',
-    apply: () => { playerStats.areaDamage += 30; }
+    description: 'Increases explosion radius',
+    apply: () => { playerStats.areaDamage += 50; } // Increased from 30 to 50
   }
 ];
 

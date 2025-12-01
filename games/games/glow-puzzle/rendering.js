@@ -3,52 +3,76 @@ import { gameState } from './globals.js';
 import { CANVAS_WIDTH, CANVAS_HEIGHT, GRID_PADDING, DOT_RADIUS, LINE_WIDTH, GLOW_INTENSITY } from './globals.js';
 import { getDotPosition } from './puzzles.js';
 
+// Color Palette
+const COLORS = {
+  bg: [5, 5, 16],
+  grid: [20, 20, 40],
+  dotInactive: [40, 40, 60],
+  dotActive: [0, 255, 255], // Cyan
+  dotStart: [100, 255, 100], // Green
+  dotEnd: [255, 200, 50], // Orange
+  lineInactive: [20, 30, 50],
+  lineActive: [255, 0, 255], // Magenta
+  cursor: [255, 255, 255],
+  text: [200, 220, 255]
+};
+
 export function renderStartScreen(p) {
-  p.background(15, 15, 25);
+  p.background(COLORS.bg);
+  drawBackgroundGrid(p);
   
-  // Title with glow effect
   p.push();
   p.textAlign(p.CENTER, p.CENTER);
   
-  // Glow
-  for (let i = 3; i > 0; i--) {
-    p.fill(100, 200, 255, 30 * i);
-    p.textSize(48 + i * 2);
-    p.text("GLOW PUZZLE", CANVAS_WIDTH / 2, 80);
-  }
-  
-  // Main title
-  p.fill(150, 220, 255);
-  p.textSize(48);
+  // Title with neon glow
+  p.drawingContext.shadowBlur = 30;
+  p.drawingContext.shadowColor = p.color(0, 255, 255);
+  p.fill(200, 255, 255);
+  p.textSize(56);
   p.text("GLOW PUZZLE", CANVAS_WIDTH / 2, 80);
   
+  p.drawingContext.shadowBlur = 0; // Reset
+  
   // Instructions
-  p.fill(200, 200, 220);
+  p.fill(COLORS.text);
+  p.textSize(16);
+  p.text("Connect all glowing dots with a continuous path.", CANVAS_WIDTH / 2, 150);
+  p.text("Visit every connection exactly once.", CANVAS_WIDTH / 2, 175);
+  
+  p.fill(150, 180, 220);
   p.textSize(14);
-  p.text("Connect all dots with a continuous path", CANVAS_WIDTH / 2, 150);
-  p.text("Never retrace a line segment", CANVAS_WIDTH / 2, 170);
-  p.text("Find the single valid Eulerian path!", CANVAS_WIDTH / 2, 190);
-  
-  p.fill(180, 180, 200);
-  p.textSize(13);
-  p.text("CONTROLS:", CANVAS_WIDTH / 2, 230);
+  p.text("CONTROLS", CANVAS_WIDTH / 2, 230);
+  p.fill(120, 150, 190);
   p.textSize(12);
-  p.text("Arrow Keys: Navigate grid", CANVAS_WIDTH / 2, 250);
-  p.text("Space: Select dot & draw connection", CANVAS_WIDTH / 2, 270);
-  p.text("Shift: Undo last connection", CANVAS_WIDTH / 2, 290);
-  p.text("Z: Reset puzzle", CANVAS_WIDTH / 2, 310);
+  p.text("Arrows: Move | Space: Connect | Shift: Undo | Z: Reset", CANVAS_WIDTH / 2, 260);
   
-  // Start prompt with pulse
-  const pulseAlpha = 150 + Math.sin(p.frameCount * 0.1) * 100;
-  p.fill(255, 255, 100, pulseAlpha);
-  p.textSize(18);
-  p.text("PRESS ENTER TO START", CANVAS_WIDTH / 2, 360);
+  // Start prompt
+  const pulse = 150 + Math.sin(p.frameCount * 0.1) * 105;
+  p.drawingContext.shadowBlur = 15;
+  p.drawingContext.shadowColor = p.color(255, 255, 0);
+  p.fill(255, 255, 100, pulse);
+  p.textSize(20);
+  p.text("PRESS ENTER TO START", CANVAS_WIDTH / 2, 340);
   
   p.pop();
 }
 
+function drawBackgroundGrid(p) {
+  p.push();
+  p.stroke(COLORS.grid);
+  p.strokeWeight(1);
+  for(let x = 0; x <= CANVAS_WIDTH; x += 30) {
+    p.line(x, 0, x, CANVAS_HEIGHT);
+  }
+  for(let y = 0; y <= CANVAS_HEIGHT; y += 30) {
+    p.line(0, y, CANVAS_WIDTH, y);
+  }
+  p.pop();
+}
+
 export function renderPlaying(p) {
-  p.background(15, 15, 25);
+  p.background(COLORS.bg);
+  drawBackgroundGrid(p);
   
   if (!gameState.puzzleData) return;
   
@@ -58,19 +82,13 @@ export function renderPlaying(p) {
   const offsetX = GRID_PADDING;
   const offsetY = GRID_PADDING + 20;
   
-  // Draw connections from puzzle
+  // Draw puzzle elements
   drawConnections(p, rows, cols, gridWidth, gridHeight, offsetX, offsetY);
-  
-  // Draw completed path
   drawPath(p, rows, cols, gridWidth, gridHeight, offsetX, offsetY);
-  
-  // Draw dots
   drawDots(p, rows, cols, gridWidth, gridHeight, offsetX, offsetY);
   
-  // Draw UI
   drawUI(p);
   
-  // Draw puzzle complete overlay
   if (gameState.puzzleComplete) {
     drawPuzzleCompleteOverlay(p);
   }
@@ -79,7 +97,7 @@ export function renderPlaying(p) {
 function drawConnections(p, rows, cols, gridWidth, gridHeight, offsetX, offsetY) {
   const connections = gameState.puzzleData.connections;
   
-  p.strokeWeight(LINE_WIDTH);
+  p.strokeCap(p.ROUND);
   
   for (const [dot1, dot2] of connections) {
     const pos1 = getDotPosition(dot1, rows, cols, gridWidth, gridHeight, offsetX, offsetY);
@@ -89,19 +107,14 @@ function drawConnections(p, rows, cols, gridWidth, gridHeight, offsetX, offsetY)
     const isCompleted = gameState.completedConnections.has(connKey);
     
     if (isCompleted) {
-      // Completed connection - bright glow
-      for (let i = 3; i > 0; i--) {
-        p.stroke(100, 255, 200, 50 * i);
-        p.strokeWeight(LINE_WIDTH + i * 2);
-        p.line(pos1.x, pos1.y, pos2.x, pos2.y);
-      }
-      p.stroke(150, 255, 220);
+      // Completed connection - drawn in drawPath, but we draw a base here
+      p.stroke(COLORS.lineInactive);
       p.strokeWeight(LINE_WIDTH);
       p.line(pos1.x, pos1.y, pos2.x, pos2.y);
     } else {
-      // Uncompleted connection - dim
-      p.stroke(50, 50, 70, 100);
-      p.strokeWeight(LINE_WIDTH - 1);
+      // Uncompleted connection - dim line
+      p.stroke(COLORS.lineInactive);
+      p.strokeWeight(LINE_WIDTH);
       p.line(pos1.x, pos1.y, pos2.x, pos2.y);
     }
   }
@@ -110,25 +123,25 @@ function drawConnections(p, rows, cols, gridWidth, gridHeight, offsetX, offsetY)
 function drawPath(p, rows, cols, gridWidth, gridHeight, offsetX, offsetY) {
   if (gameState.currentPath.length < 2) return;
   
-  p.strokeWeight(LINE_WIDTH + 2);
+  p.strokeCap(p.ROUND);
   
-  for (let i = 0; i < gameState.currentPath.length - 1; i++) {
-    const dot1 = gameState.currentPath[i];
-    const dot2 = gameState.currentPath[i + 1];
-    
-    const pos1 = getDotPosition(dot1, rows, cols, gridWidth, gridHeight, offsetX, offsetY);
-    const pos2 = getDotPosition(dot2, rows, cols, gridWidth, gridHeight, offsetX, offsetY);
-    
-    // Animated glow
-    const glowPhase = (p.frameCount * 0.1 + i * 0.5) % (Math.PI * 2);
-    const glowAlpha = 100 + Math.sin(glowPhase) * 50;
-    
-    for (let j = 2; j > 0; j--) {
-      p.stroke(255, 200, 100, glowAlpha * j / 2);
-      p.strokeWeight(LINE_WIDTH + 2 + j * 2);
-      p.line(pos1.x, pos1.y, pos2.x, pos2.y);
-    }
+  // Use drawingContext for neon glow
+  p.drawingContext.shadowBlur = 15;
+  p.drawingContext.shadowColor = p.color(COLORS.lineActive);
+  
+  p.stroke(COLORS.lineActive);
+  p.strokeWeight(LINE_WIDTH + 2);
+  p.noFill();
+  
+  p.beginShape();
+  for (let i = 0; i < gameState.currentPath.length; i++) {
+    const dot = gameState.currentPath[i];
+    const pos = getDotPosition(dot, rows, cols, gridWidth, gridHeight, offsetX, offsetY);
+    p.vertex(pos.x, pos.y);
   }
+  p.endShape();
+  
+  p.drawingContext.shadowBlur = 0; // Reset
 }
 
 function drawDots(p, rows, cols, gridWidth, gridHeight, offsetX, offsetY) {
@@ -142,163 +155,138 @@ function drawDots(p, rows, cols, gridWidth, gridHeight, offsetX, offsetY) {
     const isEnd = gameState.currentPath.length > 0 && gameState.currentPath[gameState.currentPath.length - 1] === i;
     const isCursor = gameState.cursorPosition.row === pos.row && gameState.cursorPosition.col === pos.col;
     
-    // Enhanced glow when puzzle complete
-    if (gameState.puzzleComplete && isInPath) {
-      const celebrationGlow = 30 + Math.sin(p.frameCount * 0.2) * 10;
-      for (let j = 4; j > 0; j--) {
-        p.fill(100, 255, 200, 50 * j);
-        p.noStroke();
-        p.circle(pos.x, pos.y, (DOT_RADIUS + celebrationGlow) * (1 + j * 0.4));
-      }
-    } else if (isInPath || isCursor) {
-      const glowSize = isCursor ? GLOW_INTENSITY + Math.sin(p.frameCount * 0.15) * 5 : GLOW_INTENSITY;
-      for (let j = 3; j > 0; j--) {
-        p.fill(...(isInPath ? [255, 200, 100, 40 * j] : [100, 150, 255, 40 * j]));
-        p.noStroke();
-        p.circle(pos.x, pos.y, (DOT_RADIUS + glowSize) * (1 + j * 0.3));
-      }
-    }
+    // Determine color and size
+    let dotColor = COLORS.dotInactive;
+    let size = DOT_RADIUS * 2;
+    let glowColor = null;
     
-    // Dot
     if (isStart) {
-      p.fill(100, 255, 100);
-      p.stroke(50, 200, 50);
+      dotColor = COLORS.dotStart;
+      glowColor = COLORS.dotStart;
+      size += 4;
     } else if (isEnd) {
-      p.fill(255, 200, 100);
-      p.stroke(200, 150, 50);
+      dotColor = COLORS.dotEnd;
+      glowColor = COLORS.dotEnd;
+      size += 4;
     } else if (isInPath) {
-      if (gameState.puzzleComplete) {
-        p.fill(150, 255, 220);
-        p.stroke(100, 200, 170);
-      } else {
-        p.fill(255, 220, 150);
-        p.stroke(200, 170, 100);
-      }
-    } else if (isCursor) {
-      p.fill(150, 180, 255);
-      p.stroke(100, 130, 200);
-    } else {
-      p.fill(80, 80, 100);
-      p.stroke(60, 60, 80);
+      dotColor = COLORS.dotActive;
+      glowColor = COLORS.dotActive;
     }
     
-    p.strokeWeight(2);
-    p.circle(pos.x, pos.y, DOT_RADIUS * 2);
+    if (isCursor) {
+      size += Math.sin(p.frameCount * 0.2) * 4;
+      if (!glowColor) glowColor = COLORS.cursor;
+    }
+    
+    // Draw Glow
+    if (glowColor || isCursor) {
+      p.drawingContext.shadowBlur = isCursor ? 20 : 15;
+      p.drawingContext.shadowColor = p.color(isCursor ? COLORS.cursor : glowColor);
+    }
+    
+    p.noStroke();
+    p.fill(isCursor ? COLORS.cursor : dotColor);
+    p.circle(pos.x, pos.y, size);
+    
+    p.drawingContext.shadowBlur = 0; // Reset
   }
 }
 
 function drawPuzzleCompleteOverlay(p) {
-  // Semi-transparent overlay
   p.push();
-  p.fill(0, 0, 0, 150);
-  p.noStroke();
+  p.fill(0, 0, 0, 180);
   p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
   
-  // Success message with animated glow
   p.textAlign(p.CENTER, p.CENTER);
   
-  const pulseScale = 1 + Math.sin(p.frameCount * 0.15) * 0.1;
-  const glowIntensity = 150 + Math.sin(p.frameCount * 0.2) * 100;
+  const pulse = 1 + Math.sin(p.frameCount * 0.1) * 0.05;
   
-  // Glow effect
-  for (let i = 5; i > 0; i--) {
-    p.fill(100, 255, 200, 40 * i);
-    p.textSize((36 + i * 3) * pulseScale);
-    p.text("PUZZLE COMPLETE!", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 30);
-  }
+  p.drawingContext.shadowBlur = 30;
+  p.drawingContext.shadowColor = p.color(0, 255, 255);
   
-  // Main text
-  p.fill(150, 255, 220, glowIntensity);
-  p.textSize(36 * pulseScale);
-  p.text("PUZZLE COMPLETE!", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 30);
+  p.fill(200, 255, 255);
+  p.textSize(40 * pulse);
+  p.text("LEVEL COMPLETE!", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 20);
   
-  // Bonus points
-  const points = 100 * (gameState.currentPuzzle + 1);
+  p.drawingContext.shadowBlur = 0;
+  
   p.fill(255, 255, 150);
   p.textSize(20);
-  p.text(`+${points} points!`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 20);
-  
-  // Next puzzle or win message
-  if (gameState.currentPuzzle < gameState.totalPuzzles - 1) {
-    p.fill(200, 200, 220, 200);
-    p.textSize(16);
-    p.text("Loading next puzzle...", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 60);
-  } else {
-    p.fill(255, 255, 100, 200);
-    p.textSize(18);
-    p.text("All puzzles complete!", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 60);
-  }
+  p.text(`+${100 * (gameState.currentPuzzle + 1)} Points`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 30);
   
   p.pop();
 }
 
 function drawUI(p) {
-  // Top UI
   p.push();
-  p.textAlign(p.LEFT, p.TOP);
-  p.fill(200, 200, 220);
+  p.fill(COLORS.text);
+  p.noStroke();
   p.textSize(14);
-  p.text(`Puzzle: ${gameState.currentPuzzle + 1}/${gameState.totalPuzzles}`, 20, 15);
+  
+  // Top Bar
+  p.textAlign(p.LEFT, p.TOP);
+  p.text(`LEVEL ${gameState.currentPuzzle + 1}/${gameState.totalPuzzles}`, 20, 15);
   
   p.textAlign(p.RIGHT, p.TOP);
-  p.text(`Score: ${gameState.score}`, CANVAS_WIDTH - 20, 15);
+  p.text(`SCORE: ${gameState.score}`, CANVAS_WIDTH - 20, 15);
   
-  // Progress indicator
+  // Progress
+  const progress = gameState.completedConnections.size / gameState.requiredConnections.size;
+  const barWidth = 100;
+  const barHeight = 6;
+  
   p.textAlign(p.LEFT, p.TOP);
-  p.textSize(12);
-  const progress = `${gameState.completedConnections.size}/${gameState.requiredConnections.size}`;
-  p.text(`Connections: ${progress}`, 20, 35);
+  p.text("PROGRESS", 20, 35);
+  
+  // Progress Bar Background
+  p.fill(30, 30, 50);
+  p.rect(100, 38, barWidth, barHeight, 3);
+  
+  // Progress Bar Fill
+  if (gameState.completedConnections.size > 0) {
+    p.fill(COLORS.dotActive);
+    p.drawingContext.shadowBlur = 10;
+    p.drawingContext.shadowColor = p.color(COLORS.dotActive);
+    p.rect(100, 38, barWidth * progress, barHeight, 3);
+    p.drawingContext.shadowBlur = 0;
+  }
+  
+  if (gameState.gamePhase === "PAUSED") {
+    p.textAlign(p.CENTER, p.CENTER);
+    p.fill(255, 255, 0);
+    p.textSize(24);
+    p.text("PAUSED", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+  }
   
   p.pop();
-  
-  // Paused indicator
-  if (gameState.gamePhase === "PAUSED") {
-    p.push();
-    p.textAlign(p.RIGHT, p.TOP);
-    p.fill(255, 255, 100);
-    p.textSize(12);
-    p.text("PAUSED", CANVAS_WIDTH - 20, 35);
-    p.pop();
-  }
 }
 
 export function renderGameOver(p) {
-  p.background(15, 15, 25);
+  p.background(COLORS.bg);
+  drawBackgroundGrid(p);
   
   const isWin = gameState.gamePhase === "GAME_OVER_WIN";
   
   p.push();
   p.textAlign(p.CENTER, p.CENTER);
   
-  // Title with glow
-  const titleColor = isWin ? [100, 255, 150] : [255, 100, 100];
-  for (let i = 3; i > 0; i--) {
-    p.fill(...titleColor, 30 * i);
-    p.textSize(42 + i * 2);
-    p.text(isWin ? "ALL PUZZLES COMPLETE!" : "GAME OVER", CANVAS_WIDTH / 2, 120);
-  }
+  p.drawingContext.shadowBlur = 40;
+  p.drawingContext.shadowColor = isWin ? p.color(0, 255, 100) : p.color(255, 50, 50);
   
-  p.fill(...titleColor);
-  p.textSize(42);
-  p.text(isWin ? "ALL PUZZLES COMPLETE!" : "GAME OVER", CANVAS_WIDTH / 2, 120);
+  p.fill(isWin ? [200, 255, 220] : [255, 200, 200]);
+  p.textSize(48);
+  p.text(isWin ? "YOU WIN!" : "GAME OVER", CANVAS_WIDTH / 2, 120);
   
-  // Stats
-  p.fill(200, 200, 220);
+  p.drawingContext.shadowBlur = 0;
+  
+  p.fill(COLORS.text);
+  p.textSize(24);
+  p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, 200);
+  
+  const pulse = 150 + Math.sin(p.frameCount * 0.1) * 105;
+  p.fill(255, 255, 100, pulse);
   p.textSize(18);
-  p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, 180);
-  p.text(`Puzzles Completed: ${gameState.currentPuzzle}/${gameState.totalPuzzles}`, CANVAS_WIDTH / 2, 210);
-  
-  if (isWin) {
-    p.fill(150, 220, 255);
-    p.textSize(16);
-    p.text("Congratulations!", CANVAS_WIDTH / 2, 250);
-  }
-  
-  // Restart prompt
-  const pulseAlpha = 150 + Math.sin(p.frameCount * 0.1) * 100;
-  p.fill(255, 255, 100, pulseAlpha);
-  p.textSize(16);
-  p.text("PRESS R TO RESTART", CANVAS_WIDTH / 2, 330);
+  p.text("PRESS R TO RESTART", CANVAS_WIDTH / 2, 300);
   
   p.pop();
 }

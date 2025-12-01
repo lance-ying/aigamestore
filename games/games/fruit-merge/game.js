@@ -15,7 +15,8 @@ import {
   CONTAINER_WALL_THICKNESS,
   FRUIT_TYPES,
   DANGER_LINE_Y,
-  DANGER_LINE_GRACE_FRAMES
+  DANGER_LINE_GRACE_FRAMES,
+  LEVELS
 } from './globals.js';
 
 import { Fruit, Container } from './entities.js';
@@ -87,8 +88,8 @@ function init() {
   // Setup input
   setupInput();
   
-  // Initialize danger line position
-  gameState.dangerLineY = DANGER_LINE_Y;
+  // Initialize danger line position (default)
+  gameState.dangerLineY = LEVELS[0].dangerY || DANGER_LINE_Y;
   gameState.dangerGraceFrames = DANGER_LINE_GRACE_FRAMES;
   
   // Log initial state
@@ -106,11 +107,15 @@ function init() {
 export function startGame() {
   gameState.gamePhase = 'PLAYING';
   gameState.score = 0;
+  gameState.currentLevelIndex = 0;
   gameState.frameCount = 0;
   gameState.dangerFrameCount = 0;
   gameState.isDropping = false;
   gameState.dropX = CANVAS_WIDTH / 2;
   gameState.mergeQueue = [];
+  
+  // Set initial danger line
+  gameState.dangerLineY = LEVELS[0].dangerY || DANGER_LINE_Y;
   
   // Clear all entities
   gameState.entities.forEach(entity => {
@@ -155,6 +160,10 @@ export function restartGame() {
   });
   gameState.entities = [];
   gameState.mergeQueue = [];
+  
+  // Reset level info
+  gameState.currentLevelIndex = 0;
+  gameState.dangerLineY = LEVELS[0].dangerY || DANGER_LINE_Y;
   
   logs.game_info.push({
     game_status: 'START',

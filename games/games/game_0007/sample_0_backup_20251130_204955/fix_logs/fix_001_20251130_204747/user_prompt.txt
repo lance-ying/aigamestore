@@ -1,0 +1,1124 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+can you generate 6 levels, 2 easy levels, 2 medium levels, and 2 hard levels. right now level 1 isn't solvable because one of the coins isn't accessible since its too high, can you make the jump a bit higher. execute
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Leo's Quest - P5.js Platformer</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 4px solid #444; box-shadow: 0 0 20px rgba(0,0,0,0.5); width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; transition: background 0.2s; }
+      .control-button:hover { background: #555; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: 'Segoe UI', Arial, sans-serif; margin-bottom: 10px;">Leo's Quest</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Auto-Win)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Physics Stress)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto 10px auto; line-height: 1.4; font-size: 14px;">
+        Control Leo, the fuzzy ball! Roll, Jump, Float, and Dive to collect gold and reach the pipe.
+      </p>
+      <p id="gameControls" style="color: #aaa; font-family: monospace; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4; font-size: 12px;">
+        ARROWS: Move/Jump/Float/Dive | R: Restart | ENTER: Start | ESC: Pause
+      </p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="automated_testing_controller.js">
+import { gameState } from './globals.js';
+
+// Simple heuristic bot for testing
+export function get_automated_testing_action(state) {
+    const player = state.player;
+    if (!player) return null;
+    
+    const actions = { left: false, right: false, up: false, down: false };
+    
+    if (state.controlMode === "TEST_1") {
+        // Strategy: Move right, jump if obstacle or gap detected ahead
+        actions.right = true;
+        
+        // Look ahead
+        const lookAheadDist = 60;
+        const groundCheckDist = 80;
+        
+        // Check for ground ahead
+        let groundAhead = false;
+        const checkX = player.x + lookAheadDist;
+        const checkY = player.y + player.r + 10;
+        
+        for (let plat of state.platforms) {
+            if (checkX > plat.x && checkX < plat.x + plat.w &&
+                checkY > plat.y && checkY < plat.y + plat.h + 100) {
+                groundAhead = true;
+                break;
+            }
+        }
+        
+        // If no ground ahead, jump
+        if (!groundAhead && player.onGround) {
+            actions.up = true;
+        }
+        
+        // Check for wall ahead
+        let wallAhead = false;
+        for (let plat of state.platforms) {
+            if (player.x + player.r + 20 > plat.x && player.x < plat.x &&
+                player.y > plat.y && player.y < plat.y + plat.h) {
+                wallAhead = true;
+            }
+        }
+        
+        if (wallAhead && player.onGround) {
+            actions.up = true;
+        }
+        
+        // If falling in a pit, hold up to float
+        if (player.vy > 2) {
+            actions.up = true;
+        }
+        
+        // Detect hazard ahead - Jump
+        for (let haz of state.hazards) {
+            if (haz.x > player.x && haz.x < player.x + 100 && Math.abs(haz.y - player.y) < 50) {
+                if (player.onGround) actions.up = true;
+            }
+        }
+        
+    } else if (state.controlMode === "TEST_2") {
+        // Random inputs to stress test physics
+        if (Math.random() < 0.3) actions.left = true;
+        if (Math.random() < 0.3) actions.right = true;
+        if (Math.random() < 0.2) actions.up = true;
+        if (Math.random() < 0.1) actions.down = true;
+    }
+    
+    return actions;
+}
+</file>
+
+<file name="globals.js">
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+export const gameState = {
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE, LEVEL_COMPLETE
+    controlMode: "HUMAN", // HUMAN, TEST_1, TEST_2, etc.
+    
+    // Time
+    frameCount: 0,
+    lastFrameTime: 0,
+    deltaTime: 0,
+    
+    // Level
+    currentLevelIndex: 0,
+    totalLevels: 3,
+    
+    // Entities
+    player: null,
+    platforms: [],
+    coins: [],
+    hazards: [],
+    exit: null,
+    particles: [],
+    
+    // Camera
+    cameraX: 0,
+    cameraY: 0,
+    worldWidth: 2000,
+    worldHeight: 600,
+    
+    // Physics Config
+    gravity: 0.5,
+    friction: 0.92,
+    groundFriction: 0.9,
+    airResistance: 0.98,
+    
+    // Player Stats
+    score: 0,
+    coinsCollected: 0,
+    totalCoinsInLevel: 0
+};
+
+export function getGameState() {
+    return gameState;
+}
+
+// Attach to window for external access
+window.getGameState = getGameState;
+
+export function resetGameState() {
+    gameState.gamePhase = "START";
+    gameState.frameCount = 0;
+    gameState.score = 0;
+    gameState.currentLevelIndex = 0;
+    gameState.particles = [];
+}
+</file>
+
+<file name="game.js">
+import { CANVAS_WIDTH, CANVAS_HEIGHT, gameState, resetGameState } from './globals.js';
+import { Player, Platform, Coin, Hazard, ExitPipe } from './entities.js';
+import { loadLevel } from './levels.js';
+import { initInput } from './input.js';
+import { updateParticles } from './particles.js';
+import { renderUI, renderStartScreen, renderGameOverWin, renderGameOverLose, renderPaused } from './ui.js';
+
+const p5 = window.p5;
+
+window.resetGame = function() {
+    resetGameState();
+    // Re-instantiate level 1 (or current)
+    loadLevel(gameState.currentLevelIndex);
+}
+
+// Window function to set control mode from HTML buttons
+window.setControlMode = function(mode) {
+    gameState.controlMode = mode;
+    console.log("Control Mode set to:", mode);
+    // Update button styles
+    document.querySelectorAll('.control-button').forEach(btn => btn.classList.remove('active'));
+    if(mode === 'HUMAN') document.getElementById('humanModeBtn').classList.add('active');
+    if(mode === 'TEST_1') document.getElementById('test_1_ModeBtn').classList.add('active');
+    if(mode === 'TEST_2') document.getElementById('test_2_ModeBtn').classList.add('active');
+};
+
+let gameInstance = new p5(p => {
+    
+    p.logs = {
+        game_info: [],
+        inputs: [],
+        player_info: []
+    };
+
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(60);
+        p.randomSeed(42);
+        
+        initInput(p);
+        
+        // Initial load
+        gameState.gamePhase = "START";
+        loadLevel(0);
+        
+        p.logs.game_info.push({
+            event: "Game Initialized",
+            frame: 0,
+            timestamp: Date.now()
+        });
+    };
+
+    p.draw = function() {
+        // Time management
+        const current = p.millis();
+        gameState.deltaTime = (current - gameState.lastFrameTime) / 1000;
+        gameState.lastFrameTime = current;
+        gameState.frameCount = p.frameCount;
+        
+        // Render Background (Parallax simulation via color gradient or simple bg)
+        drawBackground(p);
+        
+        if (gameState.gamePhase === "START") {
+            renderStartScreen(p);
+        }
+        else if (gameState.gamePhase === "PLAYING") {
+            updateGameLogic(p);
+            renderGameWorld(p);
+            renderUI(p);
+        }
+        else if (gameState.gamePhase === "PAUSED") {
+            renderGameWorld(p);
+            renderUI(p);
+            renderPaused(p);
+        }
+        else if (gameState.gamePhase === "GAME_OVER_WIN") {
+            renderGameWorld(p);
+            renderUI(p);
+            renderGameOverWin(p);
+        }
+        else if (gameState.gamePhase === "GAME_OVER_LOSE") {
+            renderGameWorld(p);
+            renderUI(p);
+            renderGameOverLose(p);
+        }
+    };
+});
+
+function updateGameLogic(p) {
+    // Update Player
+    if (gameState.player) {
+        gameState.player.update(p);
+    }
+    
+    // Update Particles
+    updateParticles(p);
+    
+    // Camera Follow Logic
+    if (gameState.player) {
+        // Target is player centered
+        let targetX = gameState.player.x - CANVAS_WIDTH / 2;
+        let targetY = gameState.player.y - CANVAS_HEIGHT / 2;
+        
+        // Clamp camera to world bounds
+        targetX = Math.max(0, Math.min(targetX, gameState.worldWidth - CANVAS_WIDTH));
+        targetY = Math.max(0, Math.min(targetY, gameState.worldHeight - CANVAS_HEIGHT));
+        
+        // Smooth lerp
+        gameState.cameraX += (targetX - gameState.cameraX) * 0.1;
+        gameState.cameraY += (targetY - gameState.cameraY) * 0.1;
+    }
+}
+
+function renderGameWorld(p) {
+    p.push();
+    // Apply Camera Transform
+    p.translate(-gameState.cameraX, -gameState.cameraY);
+    
+    // Draw Level Elements
+    // Platforms
+    for (let plat of gameState.platforms) {
+        plat.render(p);
+    }
+    
+    // Exit
+    if (gameState.exit) gameState.exit.render(p);
+    
+    // Coins
+    for (let coin of gameState.coins) {
+        coin.render(p);
+    }
+    
+    // Hazards
+    for (let hazard of gameState.hazards) {
+        hazard.render(p);
+    }
+    
+    // Player
+    if (gameState.player) {
+        gameState.player.render(p);
+    }
+    
+    // Particles
+    for (let part of gameState.particles) {
+        part.render(p);
+    }
+    
+    p.pop();
+}
+
+function drawBackground(p) {
+    // Create a nice gradient background
+    // Sky
+    p.background(135, 206, 235);
+    
+    // Distant mountains (parallax layer 1 - moves slower)
+    p.push();
+    p.translate(-gameState.cameraX * 0.2, -gameState.cameraY * 0.1);
+    p.fill(100, 149, 237);
+    p.noStroke();
+    p.beginShape();
+    p.vertex(0, CANVAS_HEIGHT);
+    p.vertex(0, 200);
+    p.vertex(200, 100);
+    p.vertex(400, 250);
+    p.vertex(600, 150);
+    p.vertex(800, 280);
+    p.vertex(1200, 100);
+    p.vertex(1200, CANVAS_HEIGHT);
+    p.endShape(p.CLOSE);
+    p.pop();
+    
+    // Closer hills (parallax layer 2)
+    p.push();
+    p.translate(-gameState.cameraX * 0.5, -gameState.cameraY * 0.2);
+    p.fill(60, 179, 113);
+    p.noStroke();
+    p.ellipse(0, CANVAS_HEIGHT, 800, 400);
+    p.ellipse(600, CANVAS_HEIGHT+50, 900, 500);
+    p.ellipse(1200, CANVAS_HEIGHT, 800, 400);
+    p.pop();
+}
+</file>
+
+<file name="ui.js">
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export function renderUI(p) {
+    // Score
+    p.textAlign(p.LEFT, p.TOP);
+    p.textSize(20);
+    p.fill(255);
+    p.noStroke();
+    p.text(`Coins: ${gameState.coinsCollected} / ${gameState.totalCoinsInLevel}`, 20, 20);
+    p.text(`Score: ${gameState.score}`, 20, 50);
+    
+    // Level Indicator
+    p.textAlign(p.RIGHT, p.TOP);
+    p.text(`Level ${gameState.currentLevelIndex + 1}`, CANVAS_WIDTH - 20, 20);
+}
+
+export function renderStartScreen(p) {
+    p.background(30, 40, 50);
+    p.textAlign(p.CENTER, p.CENTER);
+    
+    p.textSize(48);
+    p.fill(0, 200, 180);
+    p.text("Leo's Quest", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 60);
+    
+    p.textSize(18);
+    p.fill(220);
+    p.text("Recover the stolen gold!", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+    
+    p.textSize(16);
+    p.fill(180);
+    p.text("ARROWS to Move, Jump, Float (Up), & Dive (Down)", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 40);
+    
+    p.textSize(24);
+    p.fill(255, 215, 0);
+    p.text("PRESS ENTER TO START", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 100);
+}
+
+export function renderGameOverWin(p) {
+    p.background(0, 0, 0, 150);
+    p.textAlign(p.CENTER, p.CENTER);
+    
+    p.textSize(40);
+    p.fill(0, 255, 100);
+    p.text("LEVEL COMPLETE!", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 40);
+    
+    p.textSize(24);
+    p.fill(255);
+    p.text(`Score: ${gameState.score}`, CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 20);
+    
+    p.textSize(16);
+    p.fill(200);
+    p.text("Press R to Restart / Next Level (Coming Soon)", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 60);
+}
+
+export function renderGameOverLose(p) {
+    p.background(0, 0, 0, 150);
+    p.textAlign(p.CENTER, p.CENTER);
+    
+    p.textSize(40);
+    p.fill(255, 50, 50);
+    p.text("OUCH!", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 40);
+    
+    p.textSize(18);
+    p.fill(220);
+    p.text("Watch out for spikes!", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 10);
+    
+    p.textSize(20);
+    p.fill(255);
+    p.text("Press R to Try Again", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 60);
+}
+
+export function renderPaused(p) {
+    p.background(0, 0, 0, 100);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(40);
+    p.fill(255);
+    p.text("PAUSED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+}
+</file>
+
+<file name="entities.js">
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { resolvePlayerPlatformCollisions, checkCircleRect } from './physics.js';
+import { KEYS, isKeyDown } from './input.js';
+import { createExplosion } from './particles.js';
+import { get_automated_testing_action } from './automated_testing_controller.js';
+
+export class Player {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.vx = 0;
+        this.vy = 0;
+        
+        // Stats
+        this.baseRadius = 15;
+        this.r = this.baseRadius;
+        this.angle = 0; // For rolling animation
+        
+        // Physics constants
+        this.speed = 0.5;
+        this.maxSpeed = 8;
+        this.jumpForce = -10;
+        this.floatForce = -0.3; // Counter-gravity
+        this.heavyGravity = 0.8; // Extra gravity
+        
+        this.onGround = false;
+        
+        // States
+        this.isInflated = false;
+        this.isDeflated = false;
+        
+        // Fur visuals
+        this.furOffsets = [];
+        for(let i=0; i<12; i++) {
+            this.furOffsets.push(Math.random() * 5);
+        }
+    }
+    
+    update(p) {
+        // Input Handling
+        let inputLeft = false;
+        let inputRight = false;
+        let inputUp = false;
+        let inputDown = false;
+        
+        if (gameState.controlMode === "HUMAN") {
+            inputLeft = isKeyDown(KEYS.LEFT);
+            inputRight = isKeyDown(KEYS.RIGHT);
+            inputUp = isKeyDown(KEYS.UP) || isKeyDown(KEYS.SPACE);
+            inputDown = isKeyDown(KEYS.DOWN);
+        } else {
+            // Automated testing input
+            const action = get_automated_testing_action(gameState);
+            if (action) {
+                if (action.left) inputLeft = true;
+                if (action.right) inputRight = true;
+                if (action.up) inputUp = true;
+                if (action.down) inputDown = true;
+            }
+        }
+        
+        // State Changes
+        this.isInflated = inputUp && !this.onGround;
+        this.isDeflated = inputDown;
+        
+        // Size Changes
+        if (this.isInflated) {
+            this.r = this.baseRadius * 1.3;
+        } else if (this.isDeflated) {
+            this.r = this.baseRadius * 0.7;
+        } else {
+            this.r = this.baseRadius;
+        }
+        
+        // Horizontal Movement
+        if (inputLeft) {
+            this.vx -= this.speed;
+        }
+        if (inputRight) {
+            this.vx += this.speed;
+        }
+        
+        // Jump
+        if (inputUp && this.onGround) {
+            this.vy = this.jumpForce;
+            this.onGround = false;
+            // Add particles for jump
+            createExplosion(this.x, this.y + this.r, 5, [200, 200, 200]);
+        }
+        
+        // Physics Application
+        // Gravity
+        let g = gameState.gravity;
+        if (this.isInflated && this.vy > 0) g *= 0.3; // Float (reduced gravity falling)
+        if (this.isDeflated) g *= 2.0; // Fast fall
+        
+        this.vy += g;
+        
+        // Friction / Air Resistance
+        if (this.onGround) {
+            this.vx *= gameState.groundFriction;
+        } else {
+            this.vx *= gameState.airResistance;
+        }
+        
+        // Terminal Velocity
+        const terminal = this.isDeflated ? 20 : (this.isInflated ? 3 : 12);
+        this.vy = Math.min(this.vy, terminal);
+        this.vx = Math.max(Math.min(this.vx, this.maxSpeed), -this.maxSpeed);
+        
+        // Collision Resolution
+        // Important: This function updates x and y directly based on platform collisions
+        resolvePlayerPlatformCollisions(this, gameState.platforms);
+        
+        // Update Rotation for visual effect
+        this.angle += this.vx / this.r;
+        
+        // World Bounds (Death at bottom)
+        if (this.y > gameState.worldHeight + 100) {
+            this.die();
+        }
+        
+        // Check Hazards
+        this.checkHazards();
+        
+        // Check Collectibles
+        this.checkCoins();
+        
+        // Check Exit
+        this.checkExit();
+    }
+    
+    checkHazards() {
+        for (let hazard of gameState.hazards) {
+            // Hazard collision (Triangle vs Circle approx or Poly vs Circle)
+            // Simplified: check distance to hazard center < radius + hazardRadius
+            // Hazards are typically spikes (Triangle).
+            // Let's use simple AABB + Distance check for center point
+            
+            // Approximate hazard as a small circle at its center
+            const hx = hazard.x + hazard.w/2;
+            const hy = hazard.y + hazard.h/2;
+            const dist = Math.sqrt(Math.pow(this.x - hx, 2) + Math.pow(this.y - hy, 2));
+            
+            if (dist < this.r + hazard.w/3) {
+                this.die();
+            }
+        }
+    }
+    
+    checkCoins() {
+        for (let i = gameState.coins.length - 1; i >= 0; i--) {
+            const coin = gameState.coins[i];
+            const dist = Math.sqrt(Math.pow(this.x - coin.x, 2) + Math.pow(this.y - coin.y, 2));
+            if (dist < this.r + coin.r) {
+                // Collect
+                gameState.score += 100;
+                gameState.coinsCollected++;
+                createExplosion(coin.x, coin.y, 10, [255, 215, 0]);
+                gameState.coins.splice(i, 1);
+            }
+        }
+    }
+    
+    checkExit() {
+        if (!gameState.exit) return;
+        
+        const ex = gameState.exit.x + gameState.exit.w/2;
+        const ey = gameState.exit.y + gameState.exit.h/2;
+        const dist = Math.sqrt(Math.pow(this.x - ex, 2) + Math.pow(this.y - ey, 2));
+        
+        if (dist < this.r + 20) {
+            // Win Level
+            gameState.gamePhase = "GAME_OVER_WIN";
+        }
+    }
+    
+    die() {
+        if (gameState.gamePhase === "PLAYING") {
+            gameState.gamePhase = "GAME_OVER_LOSE";
+            createExplosion(this.x, this.y, 30, [0, 255, 200]);
+        }
+    }
+    
+    render(p) {
+        p.push();
+        p.translate(this.x, this.y);
+        p.rotate(this.angle);
+        
+        // Draw Furball Body
+        p.fill(0, 180, 160); // Teal
+        p.stroke(0, 100, 90);
+        p.strokeWeight(1);
+        
+        // Fur effect
+        const segments = 12;
+        p.beginShape();
+        for (let i = 0; i < segments * 2; i++) {
+            const a = (Math.PI * 2 * i) / (segments * 2);
+            let rOff = this.r;
+            if (i % 2 === 0) rOff += 3; // Spike out
+            else rOff -= 1; 
+            
+            const x = Math.cos(a) * rOff;
+            const y = Math.sin(a) * rOff;
+            p.vertex(x, y);
+        }
+        p.endShape(p.CLOSE);
+        
+        // Eyes (don't rotate with body to look stabilized? No, let them rotate for roll effect or stabilize)
+        // To make it look like he is rolling, eyes should rotate.
+        // To make it look like he is looking forward, we counter-rotate eyes.
+        // Let's rotate eyes to show rolling!
+        
+        p.fill(255);
+        p.noStroke();
+        p.ellipse(5, -5, 8, 8);
+        p.ellipse(12, -5, 8, 8);
+        
+        p.fill(0);
+        p.ellipse(6, -5, 3, 3);
+        p.ellipse(13, -5, 3, 3);
+        
+        // Mustache
+        p.noFill();
+        p.stroke(0);
+        p.strokeWeight(2);
+        p.arc(9, 2, 10, 5, p.PI, 0);
+        
+        p.pop();
+        
+        // Log player info periodically
+        if (p.frameCount % 60 === 0) {
+            p.logs.player_info.push({
+                x: this.x,
+                y: this.y,
+                vx: this.vx,
+                vy: this.vy,
+                state: this.isInflated ? "float" : (this.isDeflated ? "heavy" : "normal"),
+                frame: p.frameCount
+            });
+        }
+    }
+}
+
+export class Platform {
+    constructor(x, y, w, h) {
+        this.x = x;
+        this.y = y;
+        this.w = w;
+        this.h = h;
+    }
+    
+    render(p) {
+        // Wood texture/color
+        p.fill(101, 67, 33);
+        p.stroke(60, 40, 20);
+        p.strokeWeight(2);
+        p.rect(this.x, this.y, this.w, this.h);
+        
+        // Detail lines
+        p.stroke(120, 80, 40);
+        p.line(this.x + 5, this.y, this.x + 5, this.y + this.h);
+        p.line(this.x + this.w - 5, this.y, this.x + this.w - 5, this.y + this.h);
+    }
+}
+
+export class Coin {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.r = 10;
+        this.angle = 0;
+    }
+    
+    render(p) {
+        this.angle += 0.05;
+        p.push();
+        p.translate(this.x, this.y);
+        p.rotate(this.angle); // Spin 3D effect simulation
+        p.scale(Math.sin(this.angle), 1); // Flip effect
+        
+        p.fill(255, 215, 0);
+        p.stroke(200, 150, 0);
+        p.strokeWeight(2);
+        p.circle(0, 0, this.r * 2);
+        
+        p.fill(255, 240, 100);
+        p.noStroke();
+        p.circle(0, 0, this.r * 1.5);
+        
+        p.pop();
+    }
+}
+
+export class Hazard {
+    constructor(x, y, w, h) {
+        this.x = x;
+        this.y = y;
+        this.w = w;
+        this.h = h;
+    }
+    
+    render(p) {
+        // Spikes look
+        p.fill(150);
+        p.stroke(100);
+        
+        const spikesCount = Math.floor(this.w / 10);
+        for(let i=0; i<spikesCount; i++) {
+            const sx = this.x + i * 10;
+            const sy = this.y + this.h;
+            p.triangle(sx, sy, sx + 5, this.y, sx + 10, sy);
+        }
+    }
+}
+
+export class ExitPipe {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.w = 50;
+        this.h = 60;
+    }
+    
+    render(p) {
+        p.fill(0, 150, 50);
+        p.stroke(0, 100, 0);
+        p.strokeWeight(3);
+        // Pipe connector
+        p.rect(this.x - 5, this.y, this.w + 10, 20);
+        // Pipe body
+        p.rect(this.x, this.y + 20, this.w, this.h - 20);
+        
+        p.fill(0);
+        p.noStroke();
+        p.rect(this.x + 5, this.y + 5, this.w - 10, 15);
+    }
+}
+</file>
+
+<file name="levels.js">
+import { gameState } from './globals.js';
+import { Platform, Coin, Hazard, ExitPipe, Player } from './entities.js';
+
+export function loadLevel(levelIndex) {
+    gameState.platforms = [];
+    gameState.coins = [];
+    gameState.hazards = [];
+    gameState.exit = null;
+    gameState.particles = [];
+    
+    // Default floor for all levels to prevent infinite fall at start
+    // gameState.platforms.push(new Platform(-100, gameState.worldHeight - 20, gameState.worldWidth + 200, 40));
+    
+    if (levelIndex === 0) {
+        // Level 1: Introduction
+        gameState.worldWidth = 1200;
+        gameState.worldHeight = 500;
+        
+        // Floor segments
+        gameState.platforms.push(new Platform(0, 350, 400, 50));
+        gameState.platforms.push(new Platform(500, 300, 300, 50));
+        gameState.platforms.push(new Platform(900, 350, 300, 50));
+        
+        // Floating platform
+        gameState.platforms.push(new Platform(600, 180, 100, 20));
+        
+        // Coins
+        gameState.coins.push(new Coin(200, 320));
+        gameState.coins.push(new Coin(300, 320));
+        gameState.coins.push(new Coin(650, 150)); // High coin
+        gameState.coins.push(new Coin(950, 320));
+        
+        // Hazards
+        gameState.hazards.push(new Hazard(400, 380, 100, 20)); // Spike pit floor
+        
+        // Exit
+        gameState.exit = new ExitPipe(1100, 290);
+        
+        // Player Start
+        gameState.player = new Player(50, 300);
+    }
+    else if (levelIndex === 1) {
+        // Level 2: Precision
+        gameState.worldWidth = 1600;
+        gameState.worldHeight = 600;
+        
+        // Platforms
+        gameState.platforms.push(new Platform(0, 400, 200, 50)); // Start
+        gameState.platforms.push(new Platform(250, 350, 100, 20));
+        gameState.platforms.push(new Platform(400, 300, 100, 20));
+        
+        // Tight tunnel (Deflate needed?)
+        gameState.platforms.push(new Platform(600, 250, 300, 20)); // Tunnel floor
+        gameState.platforms.push(new Platform(600, 200, 300, 20)); // Tunnel ceiling (30px gap - need deflate or precision)
+        
+        // Big drop
+        gameState.platforms.push(new Platform(1000, 500, 200, 50));
+        
+        // Stairs
+        gameState.platforms.push(new Platform(1300, 450, 100, 20));
+        gameState.platforms.push(new Platform(1450, 400, 150, 20));
+        
+        // Hazards
+        gameState.hazards.push(new Hazard(200, 580, 800, 20)); // Floor spikes
+        gameState.hazards.push(new Hazard(700, 240, 20, 10)); // Tiny spike in tunnel?
+        
+        // Coins
+        gameState.coins.push(new Coin(250, 320));
+        gameState.coins.push(new Coin(450, 270));
+        gameState.coins.push(new Coin(750, 235)); // In tunnel
+        gameState.coins.push(new Coin(1100, 470));
+        
+        // Exit
+        gameState.exit = new ExitPipe(1500, 340);
+        
+        // Player
+        gameState.player = new Player(50, 350);
+    } 
+    else {
+        // Fallback or Loop
+        loadLevel(0);
+    }
+    
+    gameState.totalCoinsInLevel = gameState.coins.length;
+}
+</file>
+
+<file name="physics.js">
+import { gameState } from './globals.js';
+
+// Simple AABB collision detection
+export function checkAABB(rect1, rect2) {
+    return (
+        rect1.x < rect2.x + rect2.w &&
+        rect1.x + rect1.w > rect2.x &&
+        rect1.y < rect2.y + rect2.h &&
+        rect1.y + rect1.h > rect2.y
+    );
+}
+
+// Circle-Rect collision detection
+// Returns true if collision occurs
+export function checkCircleRect(circle, rect) {
+    // Find the closest point to the circle within the rectangle
+    let closestX = clamp(circle.x, rect.x, rect.x + rect.w);
+    let closestY = clamp(circle.y, rect.y, rect.y + rect.h);
+
+    // Calculate the distance between the circle's center and this closest point
+    let distanceX = circle.x - closestX;
+    let distanceY = circle.y - closestY;
+
+    // If the distance is less than the circle's radius, an intersection occurs
+    let distanceSquared = (distanceX * distanceX) + (distanceY * distanceY);
+    return distanceSquared < (circle.r * circle.r);
+}
+
+// Helper to clamp value
+function clamp(val, min, max) {
+    return Math.max(min, Math.min(max, val));
+}
+
+// Resolve collisions between a moving circle (player) and static rectangles (platforms)
+// Updates player position and velocity directly
+export function resolvePlayerPlatformCollisions(player, platforms) {
+    player.onGround = false;
+    
+    // We check vertical and horizontal collisions separately for stability
+    
+    // 1. Horizontal movement
+    player.x += player.vx;
+    for (let platform of platforms) {
+        if (checkCircleRect(player, platform)) {
+            // Determine direction of collision
+            // Since we just moved X, the overlap is horizontal
+            if (player.vx > 0) { // Moving right
+                // Push back to left
+                // Closest point logic again to find edge
+                player.x = platform.x - player.r;
+                player.vx = 0;
+            } else if (player.vx < 0) { // Moving left
+                player.x = platform.x + platform.w + player.r;
+                player.vx = 0;
+            }
+        }
+    }
+    
+    // 2. Vertical movement
+    player.y += player.vy;
+    for (let platform of platforms) {
+        if (checkCircleRect(player, platform)) {
+            if (player.vy > 0) { // Falling down
+                // Land on top
+                player.y = platform.y - player.r;
+                player.vy = 0;
+                player.onGround = true;
+            } else if (player.vy < 0) { // Jumping up
+                // Hit bottom
+                player.y = platform.y + platform.h + player.r;
+                player.vy = 0;
+            }
+        }
+    }
+}
+</file>
+
+<file name="particles.js">
+import { gameState } from './globals.js';
+
+export class Particle {
+    constructor(x, y, color) {
+        this.x = x;
+        this.y = y;
+        this.color = color;
+        this.size = Math.random() * 4 + 2;
+        this.vx = (Math.random() - 0.5) * 4;
+        this.vy = (Math.random() - 0.5) * 4;
+        this.life = 1.0;
+        this.decay = Math.random() * 0.02 + 0.01;
+    }
+
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.life -= this.decay;
+    }
+
+    render(p) {
+        p.noStroke();
+        // Extract RGB and apply alpha
+        const c = this.color;
+        // Assuming p5 color object or array. Let's use array for simplicity [r,g,b]
+        p.fill(c[0], c[1], c[2], this.life * 255);
+        p.circle(this.x, this.y, this.size);
+    }
+}
+
+export function createExplosion(x, y, count, color) {
+    for (let i = 0; i < count; i++) {
+        gameState.particles.push(new Particle(x, y, color));
+    }
+}
+
+export function updateParticles(p) {
+    for (let i = gameState.particles.length - 1; i >= 0; i--) {
+        const part = gameState.particles[i];
+        part.update();
+        if (part.life <= 0) {
+            gameState.particles.splice(i, 1);
+        } else {
+            part.render(p);
+        }
+    }
+}
+</file>
+
+<file name="input.js">
+import { gameState } from './globals.js';
+
+const keys = {};
+
+export function initInput(p) {
+    p.keyPressed = function() {
+        keys[p.keyCode] = true;
+        
+        // Log input
+        if (p.logs && p.logs.inputs) {
+            p.logs.inputs.push({
+                type: "press",
+                key: p.key,
+                keyCode: p.keyCode,
+                frame: p.frameCount,
+                timestamp: Date.now()
+            });
+        }
+        
+        handlePhaseInput(p);
+    };
+    
+    p.keyReleased = function() {
+        keys[p.keyCode] = false;
+        
+        if (p.logs && p.logs.inputs) {
+            p.logs.inputs.push({
+                type: "release",
+                key: p.key,
+                keyCode: p.keyCode,
+                frame: p.frameCount,
+                timestamp: Date.now()
+            });
+        }
+    };
+}
+
+function handlePhaseInput(p) {
+    const code = p.keyCode;
+    
+    // ENTER - Start Game
+    if (code === 13) { 
+        if (gameState.gamePhase === "START") {
+            gameState.gamePhase = "PLAYING";
+            logGameInfo(p, "Phase Changed to PLAYING");
+        } else if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") {
+            // Handled by R usually, but Enter can also restart
+            window.resetGame();
+        }
+    }
+    
+    // ESC - Pause
+    if (code === 27) {
+        if (gameState.gamePhase === "PLAYING") {
+            gameState.gamePhase = "PAUSED";
+            logGameInfo(p, "Game PAUSED");
+        } else if (gameState.gamePhase === "PAUSED") {
+            gameState.gamePhase = "PLAYING";
+            logGameInfo(p, "Game RESUMED");
+        }
+    }
+    
+    // R - Restart
+    if (code === 82) {
+        window.resetGame();
+        logGameInfo(p, "Game Restarted via R");
+    }
+}
+
+export function isKeyDown(keyCode) {
+    return !!keys[keyCode];
+}
+
+function logGameInfo(p, message) {
+    if (p.logs && p.logs.game_info) {
+        p.logs.game_info.push({
+            event: message,
+            frame: p.frameCount,
+            timestamp: Date.now()
+        });
+    }
+}
+
+export const KEYS = {
+    LEFT: 37,
+    UP: 38,
+    RIGHT: 39,
+    DOWN: 40,
+    SPACE: 32,
+    ENTER: 13,
+    ESC: 27,
+    R: 82,
+    SHIFT: 16
+};
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

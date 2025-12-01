@@ -75,7 +75,17 @@ export function generatePuzzles() {
     connections: [[0,1], [1,2], [2,3], [3,7], [7,6], [6,5], [5,4], [4,0], [1,5], [5,9], [9,13], [13,14], [14,10], [10,6], [6,2], [9,10], [8,9], [8,12], [12,13], [4,8], [10,11], [11,15], [15,14]]
   });
   
-  return puzzles;
+  // Return exactly 6 levels with the requested distribution:
+  // 2 Easy, 2 Medium, 2 Hard.
+  // Replacing original Level 6 (Index 5) with Level 7 (Index 6).
+  return [
+    puzzles[0], // Easy
+    puzzles[1], // Easy
+    puzzles[2], // Medium (Starts getting tricky with diagonals)
+    puzzles[3], // Medium (Cross pattern)
+    puzzles[4], // Hard (Dense 3x3)
+    puzzles[6]  // Hard (4x3 with middle connections) - Replaces Puzzle 6
+  ];
 }
 
 export function getDotPosition(index, rows, cols, gridWidth, gridHeight, offsetX, offsetY) {

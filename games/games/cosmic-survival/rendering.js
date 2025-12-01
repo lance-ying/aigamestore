@@ -3,7 +3,7 @@ import { gameState, playerStats } from './globals.js';
 import {
   PHASE_START, PHASE_PLAYING, PHASE_PAUSED,
   PHASE_GAME_OVER_WIN, PHASE_GAME_OVER_LOSE,
-  CANVAS_WIDTH, CANVAS_HEIGHT, WIN_TIME_SECONDS
+  CANVAS_WIDTH, CANVAS_HEIGHT, STAGE_CONFIG
 } from './globals.js';
 
 export function drawGame(p) {
@@ -43,14 +43,14 @@ function drawStartScreen(p) {
   // Subtitle
   p.textSize(16);
   p.fill(150, 150, 255);
-  p.text("20 Minutes Till Dawn", CANVAS_WIDTH / 2, 120);
+  p.text("The 6 Stages of Fear", CANVAS_WIDTH / 2, 120);
 
   // Description
   p.textSize(14);
   p.fill(200);
   p.text("Survive waves of Cthulhu monsters!", CANVAS_WIDTH / 2, 160);
-  p.text("Collect XP to level up and gain powerful upgrades.", CANVAS_WIDTH / 2, 180);
-  p.text("Survive for 5 minutes to achieve victory!", CANVAS_WIDTH / 2, 200);
+  p.text("Complete 6 stages of increasing difficulty.", CANVAS_WIDTH / 2, 180);
+  p.text("Note: XP and stats reset every stage!", CANVAS_WIDTH / 2, 200);
 
   // Controls
   p.textSize(12);
@@ -85,6 +85,11 @@ function drawPlaying(p) {
     orb.draw(p);
   }
 
+  // Draw explosions (area damage)
+  for (let explosion of gameState.explosions) {
+    explosion.draw(p);
+  }
+
   // Draw bullets
   for (let bullet of gameState.bullets) {
     bullet.draw(p);
@@ -100,8 +105,26 @@ function drawPlaying(p) {
     gameState.player.draw(p);
   }
 
+  // Draw lightning bolts (on top)
+  for (let bolt of gameState.lightningBolts) {
+    bolt.draw(p);
+  }
+
   // Draw UI
   drawUI(p);
+  
+  // Draw Stage Message Overlay
+  if (gameState.stageMessageTimer > 0) {
+    p.push();
+    const alpha = Math.min(255, gameState.stageMessageTimer * 5);
+    p.fill(255, 255, 255, alpha);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(40);
+    p.text(`STAGE ${gameState.stage}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 20);
+    p.textSize(24);
+    p.text(STAGE_CONFIG[gameState.stage - 1].name, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 20);
+    p.pop();
+  }
 }
 
 function drawGrid(p) {
@@ -118,14 +141,18 @@ function drawGrid(p) {
 }
 
 function drawUI(p) {
-  // Time remaining
-  const timeRemaining = Math.max(0, WIN_TIME_SECONDS - gameState.elapsedTime);
-  const minutes = Math.floor(timeRemaining / 60);
-  const seconds = Math.floor(timeRemaining % 60);
+  const config = STAGE_CONFIG[gameState.stage - 1];
+
+  // Stage Info
   p.textAlign(p.CENTER, p.TOP);
   p.textSize(20);
   p.fill(255, 220, 100);
-  p.text(`${minutes}:${seconds.toString().padStart(2, '0')}`, CANVAS_WIDTH / 2, 10);
+  p.text(`Stage ${gameState.stage}: ${config.name}`, CANVAS_WIDTH / 2, 10);
+  
+  // Progress
+  p.textSize(14);
+  p.fill(200);
+  p.text(`Kills: ${gameState.stageKills} / ${config.killsRequired}`, CANVAS_WIDTH / 2, 35);
 
   // Level and XP bar
   p.textAlign(p.LEFT, p.TOP);
@@ -151,13 +178,27 @@ function drawUI(p) {
   p.textSize(14);
   p.fill(255);
   p.text(`Score: ${gameState.score}`, CANVAS_WIDTH - 10, 10);
-  p.text(`Kills: ${gameState.kills}`, CANVAS_WIDTH - 10, 30);
+  p.text(`Total Kills: ${gameState.kills}`, CANVAS_WIDTH - 10, 30);
 
   // Stats display
   p.textAlign(p.LEFT, p.TOP);
   p.textSize(10);
   p.fill(180);
   let statY = 55;
+  
+  // Core Stats - Always visible so upgrades are confirmed
+  p.text(`Damage: ${playerStats.damage}`, 10, statY); statY += 12;
+  p.text(`Fire Rate: ${(60/playerStats.fireRate).toFixed(1)}/s`, 10, statY); statY += 12;
+  p.text(`Speed: ${playerStats.moveSpeed.toFixed(1)}`, 10, statY); statY += 12;
+  
+  if (playerStats.maxHealth > 100) {
+    p.text(`Max HP: ${playerStats.maxHealth}`, 10, statY); statY += 12;
+  }
+  if (playerStats.healthRegen > 0) {
+    p.text(`Regen: ${playerStats.healthRegen.toFixed(1)}/s`, 10, statY); statY += 12;
+  }
+
+  // Special Stats
   if (playerStats.multishot > 1) {
     p.text(`Multishot: ${playerStats.multishot}`, 10, statY);
     statY += 12;
@@ -270,7 +311,7 @@ function drawGameOverScreen(p) {
     
     p.textSize(18);
     p.fill(200);
-    p.text("You survived the cosmic horrors!", CANVAS_WIDTH / 2, 170);
+    p.text("You conquered all 6 stages!", CANVAS_WIDTH / 2, 170);
   } else {
     p.textSize(48);
     p.fill(255, 100, 100);
@@ -278,16 +319,15 @@ function drawGameOverScreen(p) {
     
     p.textSize(18);
     p.fill(200);
-    p.text("The darkness consumed you...", CANVAS_WIDTH / 2, 170);
+    p.text(`Fallen at Stage ${gameState.stage}`, CANVAS_WIDTH / 2, 170);
   }
 
   // Stats
   p.textSize(16);
   p.fill(255);
   p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, 220);
-  p.text(`Kills: ${gameState.kills}`, CANVAS_WIDTH / 2, 245);
-  p.text(`Level Reached: ${gameState.level}`, CANVAS_WIDTH / 2, 270);
-  p.text(`Time Survived: ${Math.floor(gameState.elapsedTime)}s`, CANVAS_WIDTH / 2, 295);
+  p.text(`Total Kills: ${gameState.kills}`, CANVAS_WIDTH / 2, 245);
+  p.text(`Max Stage: ${gameState.stage}`, CANVAS_WIDTH / 2, 270);
 
   // Restart prompt
   p.textSize(20);

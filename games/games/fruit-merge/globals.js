@@ -9,8 +9,24 @@ export const CONTAINER_X = CANVAS_WIDTH / 2;
 export const CONTAINER_Y = CANVAS_HEIGHT - CONTAINER_HEIGHT / 2 - 10;
 export const CONTAINER_WALL_THICKNESS = 10;
 
-export const DANGER_LINE_Y = CONTAINER_Y - CONTAINER_HEIGHT / 2 + 60;
+// Calculated container top Y for reference
+const CONTAINER_TOP_Y = CONTAINER_Y - CONTAINER_HEIGHT / 2;
+
+// Default danger line (fallback)
+export const DANGER_LINE_Y = CONTAINER_TOP_Y + 60;
 export const DANGER_LINE_GRACE_FRAMES = 120; // 2 seconds at 60fps
+
+// Level definitions
+// dangerY: Y position of danger line. Smaller value = higher on screen = easier (more space).
+// CONTAINER_TOP_Y is approx 40.
+export const LEVELS = [
+  { name: "Easy I", threshold: 0, color: '#87CEEB', dangerY: CONTAINER_TOP_Y + 10 },      // Very high (Easy)
+  { name: "Easy II", threshold: 200, color: '#98FB98', dangerY: CONTAINER_TOP_Y + 30 },   // High
+  { name: "Medium I", threshold: 500, color: '#DDA0DD', dangerY: CONTAINER_TOP_Y + 60 },  // Standard
+  { name: "Medium II", threshold: 1000, color: '#F0E68C', dangerY: CONTAINER_TOP_Y + 80 },// Lower
+  { name: "Hard I", threshold: 2000, color: '#FFA07A', dangerY: CONTAINER_TOP_Y + 100 },  // Low (Hard)
+  { name: "Hard II", threshold: 3500, color: '#FF6347', dangerY: CONTAINER_TOP_Y + 120 }  // Very Low (Harder)
+];
 
 // Fruit types with sizes and colors
 export const FRUIT_TYPES = [
@@ -31,6 +47,7 @@ export const gameState = {
   entities: [],
   score: 0,
   highScore: 0,
+  currentLevelIndex: 0,
   gamePhase: "START",
   engine: null,
   world: null,
@@ -43,6 +60,8 @@ export const gameState = {
   isDropping: false,
   frameCount: 0,
   dangerFrameCount: 0,
+  dangerLineY: DANGER_LINE_Y,
+  dangerGraceFrames: DANGER_LINE_GRACE_FRAMES,
   container: null,
   walls: [],
   mergeQueue: []

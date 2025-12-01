@@ -140,11 +140,12 @@ export class Enemy {
   }
 
   getSpeed() {
+    // Reduced speeds for easier difficulty
     switch (this.type) {
-      case 'fast': return 2.0;
-      case 'tank': return 0.8;
-      case 'elite': return 1.5;
-      default: return 1.2;
+      case 'fast': return 1.5; // was 2.0
+      case 'tank': return 0.6; // was 0.8
+      case 'elite': return 1.1; // was 1.5
+      default: return 0.9; // was 1.2
     }
   }
 
@@ -383,5 +384,90 @@ export class Particle {
     p.fill(...this.color, alpha);
     p.noStroke();
     p.circle(this.x, this.y, this.size);
+  }
+}
+
+export class Explosion {
+  constructor(x, y, radius, color = [255, 100, 50]) {
+    this.x = x;
+    this.y = y;
+    this.maxRadius = radius;
+    this.currentRadius = 5;
+    this.life = 1.0;
+    this.decay = 0.08;
+    this.color = color;
+  }
+
+  update() {
+    this.currentRadius += (this.maxRadius - this.currentRadius) * 0.2;
+    this.life -= this.decay;
+    return this.life <= 0;
+  }
+
+  draw(p) {
+    p.push();
+    p.noFill();
+    p.strokeWeight(2);
+    const alpha = this.life * 255;
+    p.stroke(this.color[0], this.color[1], this.color[2], alpha);
+    p.circle(this.x, this.y, this.currentRadius * 2);
+    p.fill(this.color[0], this.color[1], this.color[2], alpha * 0.3);
+    p.circle(this.x, this.y, this.currentRadius * 2);
+    p.pop();
+  }
+}
+
+export class LightningBolt {
+  constructor(x1, y1, x2, y2) {
+    this.segments = [];
+    this.life = 15; // frames (0.25 seconds)
+    
+    // Generate jagged path
+    let currX = x1;
+    let currY = y1;
+    const dist = Math.sqrt(Math.pow(x2-x1, 2) + Math.pow(y2-y1, 2));
+    const steps = Math.max(2, Math.floor(dist / 15));
+    
+    this.segments.push({x: x1, y: y1});
+    
+    for (let i = 1; i < steps; i++) {
+      const t = i / steps;
+      // Base line position
+      let bx = x1 + (x2 - x1) * t;
+      let by = y1 + (y2 - y1) * t;
+      // Jitter
+      bx += (Math.random() - 0.5) * 30;
+      by += (Math.random() - 0.5) * 30;
+      this.segments.push({x: bx, y: by});
+    }
+    this.segments.push({x: x2, y: y2});
+  }
+
+  update() {
+    this.life--;
+    return this.life <= 0;
+  }
+
+  draw(p) {
+    p.push();
+    const alpha = (this.life / 15) * 255;
+    p.stroke(150, 220, 255, alpha);
+    p.strokeWeight(3);
+    p.noFill();
+    p.beginShape();
+    for (let point of this.segments) {
+      p.vertex(point.x, point.y);
+    }
+    p.endShape();
+    
+    // Glow effect
+    p.stroke(200, 230, 255, alpha * 0.5);
+    p.strokeWeight(6);
+    p.beginShape();
+    for (let point of this.segments) {
+      p.vertex(point.x, point.y);
+    }
+    p.endShape();
+    p.pop();
   }
 }

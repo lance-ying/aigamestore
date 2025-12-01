@@ -8,13 +8,21 @@ export const TARGET_ZONE_Y = CANVAS_HEIGHT - TARGET_ZONE_HEIGHT;
 export const TILE_HEIGHT = 120;
 export const PERFECT_SCORE = 10;
 export const GOOD_SCORE = 5;
-export const WIN_SCORE = 500;
-export const STARTING_SPEED = 3;
-export const MAX_SPEED = 12;
-export const SPEED_INCREMENT = 0.5;
-export const SPEED_INCREASE_THRESHOLD = 100;
 export const TAP_DEBOUNCE_MS = 150; // Minimum time between taps for same lane
 export const MAX_HEALTH = 3;
+
+// Level Configuration
+export const LEVEL_CONFIG = [
+  // Easy Levels
+  { level: 1, name: "Easy I", speed: 4, spawnInterval: 60, notesToAdvance: 20, color: [40, 40, 40] }, // Dark Grey
+  { level: 2, name: "Easy II", speed: 5, spawnInterval: 55, notesToAdvance: 30, color: [0, 100, 100] }, // Teal
+  // Medium Levels
+  { level: 3, name: "Medium I", speed: 7, spawnInterval: 50, notesToAdvance: 40, color: [0, 0, 150] }, // Blue
+  { level: 4, name: "Medium II", speed: 8, spawnInterval: 45, notesToAdvance: 50, color: [100, 0, 150] }, // Purple
+  // Hard Levels
+  { level: 5, name: "Hard I", speed: 10, spawnInterval: 40, notesToAdvance: 60, color: [150, 0, 100] }, // Magenta
+  { level: 6, name: "Hard II", speed: 12, spawnInterval: 35, notesToAdvance: 70, color: [150, 0, 0] }  // Red
+];
 
 // Game state object
 export const gameState = {
@@ -29,11 +37,12 @@ export const gameState = {
   tiles: [],
   gamePhase: "START",
   controlMode: "HUMAN",
-  speed: STARTING_SPEED,
+  speed: LEVEL_CONFIG[0].speed,
   lastSpawnTime: 0,
-  spawnInterval: 60,
-  spawnCountdown: 60,
+  spawnInterval: LEVEL_CONFIG[0].spawnInterval,
+  spawnCountdown: LEVEL_CONFIG[0].spawnInterval,
   difficultyLevel: 1,
+  notesHitInLevel: 0,
   damageFlash: 0,
   lanes: Array(LANE_COUNT).fill().map(() => ({
     active: false,
