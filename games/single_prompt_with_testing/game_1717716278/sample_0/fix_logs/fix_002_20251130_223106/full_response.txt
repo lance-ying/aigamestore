@@ -1,0 +1,476 @@
+<analysis>
+- Issue identified: The player is tunneling through the terrain due to high vertical velocity and insufficient physics solver iterations. Additionally, the "dive" mechanic applies purely vertical force, causing an unsatisfying vertical drop instead of a swooping motion, which exacerbates the tunneling on impact.
+- Files affected: `game.js`, `entities.js`
+- Changes needed:
+    1.  In `game.js`: Increase Matter.js `positionIterations` and `velocityIterations` to improve collision accuracy and prevent tunneling.
+    2.  In `entities.js`: 
+        - Update `Player.update()` to clamp vertical velocity (`vy`) specifically, ensuring it doesn't exceed a safe threshold (e.g., 20px/frame) to prevent passing through terrain.
+        - Modify the dive mechanic to add a small horizontal force component and reduce air friction, simulating aerodynamic swooping and preventing purely vertical drops.
+</analysis>
+
+<code filename="game.js">
+/**
+ * Main Game Loop and Initialization
+ */
+const p5 = window.p5;
+import Matter from 'https://cdn.jsdelivr.net/npm/matter-js@0.19.0/+esm';
+const { Engine, World, Bodies, Body, Composite } = Matter;
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, DAY_DURATION } from './globals.js';
+import { Player } from './entities.js';
+import { setupPhysics } from './physics.js';
+import { TerrainManager } from './terrain.js';
+import { renderBackground, renderUI, renderStartScreen, renderGameOver, renderPaused } from './renderer.js';
+import { updateCamera } from './camera.js';
+
+// Input tracking
+const keys = {
+    space: false,
+    down: false
+};
+
+let terrainManager;
+
+function initializeGame(p) {
+    // Reset Game State
+    gameState.score = 0;
+    gameState.distance = 0;
+    gameState.timeRemaining = DAY_DURATION;
+    gameState.entities = [];
+    gameState.coins = [];
+    gameState.isDiving = false;
+    
+    // Setup Terrain
+    if (!terrainManager) {
+        terrainManager = new TerrainManager(p);
+    }
+    terrainManager.reset();
+    
+    // Create Player
+    // Start x=100, y=200 to drop onto first hill
+    gameState.player = new Player(p, 100, 0);
+    gameState.entities.push(gameState.player);
+    
+    // Reset Camera
+    gameState.cameraX = 0;
+    gameState.cameraY = 0;
+}
+
+function handleInput(p) {
+    // Process input for gameplay
+    gameState.isDiving = keys.space || keys.down;
+    
+    // Test mode inputs (Automation)
+    if (gameState.controlMode === 'TEST_1') {
+        // Just start and do nothing (gravity test)
+    } else if (gameState.controlMode === 'TEST_2') {
+        // Auto play logic for testing
+        // Simple heuristic: Dive if going down, Glide if going up
+        if (gameState.player) {
+            const vy = gameState.player.body.velocity.y;
+            // Crude assumption: falling/moving down = downslope
+            gameState.isDiving = vy > 0;
+        }
+    }
+}
+
+function updateGameLogic(p) {
+    // Update Terrain (generation/culling)
+    terrainManager.update();
+    
+    // Update Physics Entities
+    gameState.entities.forEach(entity => entity.update());
+    
+    // Update Camera
+    updateCamera();
+    
+    // Update Game Progress
+    if (gameState.player) {
+        // Distance score
+        const currentDist = Math.max(0, gameState.player.body.position.x);
+        gameState.distance = currentDist / 10; // Scale down for meters
+        
+        // Add distance to score as well roughly
+        // gameState.score = Math.floor(gameState.distance) + coins... (coins handled in physics)
+        
+        // Check "Night" Catch up
+        gameState.timeRemaining--;
+        if (gameState.timeRemaining <= 0) {
+            gameState.gamePhase = "GAME_OVER_LOSE";
+            logGameState(p, "GAME_OVER_LOSE");
+        }
+    }
+}
+
+function logGameState(p, status) {
+    const logEntry = {
+        game_status: status || gameState.gamePhase,
+        data: {
+            score: gameState.score,
+            distance: gameState.distance,
+            playerX: gameState.player ? gameState.player.body.position.x : 0,
+            playerY: gameState.player ? gameState.player.body.position.y : 0
+        },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+    };
+    p.logs.game_info.push(logEntry);
+}
+
+// p5 Instance
+let gameInstance = new p5(p => {
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(60);
+        p.randomSeed(42);
+        
+        // Matter.js setup
+        // Increase iterations to prevent tunneling through floor
+        const engine = Engine.create({
+            positionIterations: 10,
+            velocityIterations: 10
+        });
+        gameState.engine = engine;
+        gameState.world = engine.world;
+        
+        // Physics collision events
+        setupPhysics(engine);
+        
+        // Initialize Logging
+        p.logs = {
+            game_info: [],
+            player_info: [],
+            inputs: []
+        };
+        
+        // Initialize game entities
+        initializeGame(p);
+        
+        logGameState(p, "START");
+    };
+    
+    p.draw = function() {
+        const currentTime = p.millis();
+        gameState.deltaTime = (currentTime - gameState.lastFrameTime) / 1000;
+        gameState.lastFrameTime = currentTime;
+        gameState.frameCount = p.frameCount;
+        
+        // Logic Step
+        if (gameState.gamePhase === "PLAYING") {
+            Engine.update(gameState.engine, 1000 / 60);
+            handleInput(p);
+            updateGameLogic(p);
+            
+            // Log Player info periodically
+            if (p.frameCount % 60 === 0 && gameState.player) {
+                p.logs.player_info.push({
+                    x: gameState.player.body.position.x,
+                    y: gameState.player.body.position.y,
+                    velocity: gameState.player.body.velocity,
+                    framecount: p.frameCount
+                });
+            }
+        }
+        
+        // Render Step
+        p.push();
+        // Camera Transform
+        if (gameState.gamePhase === "PLAYING" || gameState.gamePhase === "PAUSED" || gameState.gamePhase.startsWith("GAME_OVER")) {
+            renderBackground(p);
+            
+            p.translate(-gameState.cameraX, -gameState.cameraY);
+            
+            // Draw Terrain
+            if (terrainManager) terrainManager.render(p);
+            
+            // Draw Entities
+            gameState.entities.forEach(entity => entity.render(p));
+            
+            p.pop(); // Restore camera transform
+            
+            // UI Overlay
+            renderUI(p);
+        }
+        
+        // Phase Overlays
+        if (gameState.gamePhase === "START") {
+            renderStartScreen(p);
+        } else if (gameState.gamePhase === "PAUSED") {
+            renderPaused(p);
+        } else if (gameState.gamePhase.startsWith("GAME_OVER")) {
+            renderGameOver(p);
+        }
+        p.pop();
+    };
+    
+    p.keyPressed = function() {
+        // Input Logging
+        p.logs.inputs.push({
+            type: "keyPressed",
+            key: p.key,
+            keyCode: p.keyCode,
+            framecount: p.frameCount
+        });
+        
+        // Global Controls
+        if (p.keyCode === 13) { // ENTER
+            if (gameState.gamePhase === "START") {
+                gameState.gamePhase = "PLAYING";
+                logGameState(p, "PLAYING");
+            }
+        }
+        
+        if (p.keyCode === 82) { // R
+            if (gameState.gamePhase.startsWith("GAME_OVER")) {
+                initializeGame(p);
+                gameState.gamePhase = "START"; // Go back to start or instant play? Let's go to Start
+                logGameState(p, "START");
+            }
+        }
+        
+        if (p.keyCode === 27 || p.key === 'p' || p.key === 'P') { // ESC or P
+            if (gameState.gamePhase === "PLAYING") {
+                gameState.gamePhase = "PAUSED";
+            } else if (gameState.gamePhase === "PAUSED") {
+                gameState.gamePhase = "PLAYING";
+            }
+        }
+        
+        // Gameplay Controls
+        if (p.key === ' ' || p.keyCode === 32) keys.space = true;
+        if (p.keyCode === 40) keys.down = true; // Down Arrow
+        
+        return false; // Prevent default
+    };
+    
+    p.keyReleased = function() {
+        p.logs.inputs.push({
+            type: "keyReleased",
+            key: p.key,
+            keyCode: p.keyCode,
+            framecount: p.frameCount
+        });
+        
+        if (p.key === ' ' || p.keyCode === 32) keys.space = false;
+        if (p.keyCode === 40) keys.down = false;
+        
+        return false;
+    };
+});
+
+// Global helpers for HTML buttons
+window.setControlMode = function(mode) {
+    gameState.controlMode = mode;
+    console.log("Control Mode set to:", mode);
+    // Restart game to apply clean state for test
+    if (gameState.engine) {
+        World.clear(gameState.engine.world);
+        Engine.clear(gameState.engine);
+        // Re-init happens in next loop or manually:
+        // Ideally we just reset the phase to start
+        gameState.gamePhase = "START";
+        initializeGame(gameInstance);
+    }
+};
+</code>
+
+<code filename="entities.js">
+/**
+ * Game entities: Player, Coin
+ */
+import Matter from 'https://cdn.jsdelivr.net/npm/matter-js@0.19.0/+esm';
+const { Bodies, Body, World } = Matter;
+import { gameState, COLORS, DIVE_FORCE, GLIDE_LIFT } from './globals.js';
+import { drawBody } from './renderer.js';
+
+export class Player {
+    constructor(p, x, y) {
+        this.p = p;
+        this.radius = 15;
+        
+        // Create physics body
+        this.body = Bodies.circle(x, y, this.radius, {
+            label: 'player',
+            friction: 0.0, // Frictionless for sliding
+            frictionAir: 0.01,
+            restitution: 0.0, // No bounce
+            density: 0.002
+        });
+        
+        World.add(gameState.world, this.body);
+        
+        this.onGround = false;
+        this.trail = [];
+        this.maxTrail = 20;
+    }
+    
+    update() {
+        // Handle trail
+        if (this.p.frameCount % 5 === 0) {
+            this.trail.push({ x: this.body.position.x, y: this.body.position.y });
+            if (this.trail.length > this.maxTrail) this.trail.shift();
+        }
+        
+        // Apply physics based on input
+        if (gameState.isDiving) {
+            // Dive: Apply heavy downward force
+            // Also apply a small forward force to encourage horizontal momentum (swooping)
+            // and reduce air friction to simulate aerodynamic tuck
+            this.body.frictionAir = 0.001; 
+            
+            // Add forward component (0.001) to prevent feeling "stuck" vertically
+            Body.applyForce(this.body, this.body.position, { x: 0.001, y: DIVE_FORCE });
+        } else {
+            // Glide/Fly
+            this.body.frictionAir = 0.01; // Restore normal drag
+            
+            // If moving fast horizontally, generate some lift
+            if (!this.onGround && this.body.velocity.x > 5) {
+                // Lift is proportional to speed
+                const lift = Math.min(GLIDE_LIFT * this.body.velocity.x, 0.01); 
+                Body.applyForce(this.body, this.body.position, { x: 0, y: lift });
+            }
+        }
+        
+        // Rotate body to match velocity for visual effect
+        if (Math.abs(this.body.velocity.x) > 0.1 || Math.abs(this.body.velocity.y) > 0.1) {
+            const angle = Math.atan2(this.body.velocity.y, this.body.velocity.x);
+            Body.setAngle(this.body, angle);
+        }
+        
+        // Limit speed to prevent tunneling or game breaking
+        const maxSpeed = 30;
+        // Specific cap for vertical velocity to prevent tunneling through floor
+        const maxVerticalSpeed = 20;
+        
+        let vx = this.body.velocity.x;
+        let vy = this.body.velocity.y;
+        
+        // Clamp vertical velocity
+        if (vy > maxVerticalSpeed) {
+            vy = maxVerticalSpeed;
+        }
+        
+        // Clamp total speed
+        const speed = Math.sqrt(vx*vx + vy*vy);
+        if (speed > maxSpeed) {
+            const ratio = maxSpeed / speed;
+            vx *= ratio;
+            vy *= ratio;
+        }
+        
+        // Ensure x velocity doesn't go negative (move backwards)
+        if (vx < 0) {
+            vx = 0;
+        }
+        
+        // Apply clamped velocity if changed
+        if (vx !== this.body.velocity.x || vy !== this.body.velocity.y) {
+            Body.setVelocity(this.body, { x: vx, y: vy });
+        }
+    }
+    
+    render(p) {
+        // Draw trail
+        p.push();
+        p.noStroke();
+        for (let i = 0; i < this.trail.length; i++) {
+            const pos = this.trail[i];
+            const alpha = p.map(i, 0, this.trail.length, 0, 200);
+            p.fill(255, 255, 255, alpha);
+            p.circle(pos.x, pos.y, this.radius);
+        }
+        p.pop();
+        
+        // Draw Bird
+        p.push();
+        p.translate(this.body.position.x, this.body.position.y);
+        p.rotate(this.body.angle);
+        
+        // Body
+        p.fill(COLORS.player);
+        p.noStroke();
+        p.circle(0, 0, this.radius * 2);
+        
+        // Eye
+        p.fill(255);
+        p.circle(this.radius/2, -this.radius/2, this.radius/1.5);
+        p.fill(0);
+        p.circle(this.radius/2 + 2, -this.radius/2, 3);
+        
+        // Beak
+        p.fill(255, 200, 0);
+        p.triangle(this.radius/2, 0, this.radius * 1.5, 5, this.radius/2, 10);
+        
+        // Wing
+        p.fill(200, 50, 0);
+        if (gameState.isDiving) {
+            // Folded wing
+            p.ellipse(-5, 5, 15, 10);
+        } else {
+            // Open wing
+            p.push();
+            p.rotate(-0.5);
+            p.ellipse(0, -10, 20, 10);
+            p.pop();
+        }
+        
+        p.pop();
+    }
+}
+
+export class Coin {
+    constructor(p, x, y) {
+        this.p = p;
+        this.value = 50;
+        this.collected = false;
+        this.startY = y;
+        
+        // Sensor body for collision
+        this.body = Bodies.circle(x, y, 10, {
+            label: 'coin',
+            isStatic: true,
+            isSensor: true
+        });
+        
+        World.add(gameState.world, this.body);
+    }
+    
+    update() {
+        if (this.collected) return;
+        // Bob animation
+        const offset = Math.sin(this.p.frameCount * 0.1) * 5;
+        // We can't move static bodies easily without recreating or setting position
+        Body.setPosition(this.body, { x: this.body.position.x, y: this.startY + offset });
+    }
+    
+    render(p) {
+        if (this.collected) return;
+        
+        p.push();
+        p.translate(this.body.position.x, this.body.position.y);
+        p.rotate(this.p.frameCount * 0.05);
+        
+        p.fill(COLORS.coin);
+        p.stroke(255, 165, 0);
+        p.strokeWeight(2);
+        
+        // Draw star-like coin
+        p.beginShape();
+        for (let i = 0; i < 5; i++) {
+            const angle = Math.PI * 2 * i / 5 - Math.PI / 2;
+            const x = Math.cos(angle) * 12;
+            const y = Math.sin(angle) * 12;
+            p.vertex(x, y);
+            
+            const angleInner = Math.PI * 2 * (i + 0.5) / 5 - Math.PI / 2;
+            const xi = Math.cos(angleInner) * 5;
+            const yi = Math.sin(angleInner) * 5;
+            p.vertex(xi, yi);
+        }
+        p.endShape(p.CLOSE);
+        
+        p.pop();
+    }
+}
+</code>

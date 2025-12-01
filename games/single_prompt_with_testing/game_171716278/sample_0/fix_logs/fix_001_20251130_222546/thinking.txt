@@ -1,0 +1,71 @@
+Let me analyze the issue. The user says "when i try to fly down, I just clip through the ground and stay there."
+
+Looking at the physics.js file, I can see the collision detection and resolution logic. Let me trace through what happens:
+
+1. In `applyPhysics()`:
+   - Gravity is applied
+   - Position is updated: `entity.x += entity.vx; entity.y += entity.vy;`
+   - Then terrain collision is checked
+   - If penetration is detected (`penetration > 0`), the entity is snapped to the surface: `entity.y = terrainY - entity.radius;`
+
+The issue seems to be in the collision detection logic. Let me look more carefully:
+
+```javascript
+const terrainY = getTerrainHeight(p, entity.x);
+const penetration = (entity.y + entity.radius) - terrainY;
+
+entity.onGround = false;
+
+if (penetration > 0) {
+    // Collision detected
+    entity.onGround = true;
+    
+    // Snap to surface
+    entity.y = terrainY - entity.radius;
+```
+
+Wait, I see the problem! The penetration calculation and the collision check logic seems correct. But let me trace through what happens when the player is diving down:
+
+1. Player is above ground, diving down (high vy due to DIVE_GRAVITY)
+2. Next frame: `entity.y += entity.vy` moves them down
+3. `penetration = (entity.y + entity.radius) - terrainY`
+4. If `penetration > 0`, snap to surface
+
+Actually, the logic looks mostly correct. But I notice something in the velocity decomposition and reconstruction:
+
+```javascript
+if (vDotN > 0) {
+    // Apply slope acceleration (sliding down adds speed)
+    const slideForce = currentGravity * Math.sin(angle) * 3.0;
+    vDotT += slideForce;
+
+
+```
+
+I'll adjust the friction mechanics to handle diving scenarios more precisely. The system now dynamically modulates friction based on diving state and terrain angle. For diving scenarios, it introduces a nuanced friction model that rewards smooth downward movement while penalizing awkward descent angles. This approach ensures more realistic ground interaction during high-speed vertical movement, potentially resolving the clipping issue by providing better velocity management.
+
+The core problem seems rooted in how velocity gets reconstructed after collision, particularly when normal velocity indicates ground penetration. The current method might not fully prevent re-penetration in subsequent frames, suggesting a need for more robust velocity transformation logic.
+
+The decomposition of velocity into normal and tangential components appears critical, with potential instabilities emerging during edge cases of ground interaction. Careful examination of the angle-based velocity reconstruction will be essential to prevent unintended entity behavior.
+
+The key insight is that the current collision resolution mechanism fails to comprehensively handle scenarios where entity velocity doesn't cleanly map to expected surface physics, potentially leaving residual penetration vectors unaddressed.
+
+When an entity intersects terrain, simply reconstructing tangential velocity might not prevent subsequent frame penetration if downward momentum persists. The critical observation is that velocity reconstruction must actively counteract potential ground penetration, not just preserve tangential movement.
+
+The proposed solution requires carefully tracking penetration state and ensuring reconstructed velocity eliminates downward trajectory components that could cause repeated ground intersection.
+
+Specifically, on slopes where angle and velocity align downward, standard velocity reconstruction might inadvertently maintain penetration-prone motion, necessitating a more nuanced collision response mechanism that prioritizes surface alignment.
+
+The core challenge emerges from sequential frame processing: position updates precede collision detection, potentially causing momentary terrain penetration. This sequence risks computational instability, especially with steep terrain or rapid velocity changes.
+
+The proposed code snippet reveals a critical conditional constraint - velocity reconstruction only triggers under specific directional conditions, which might not comprehensively address complex terrain interaction scenarios.
+
+By mandating velocity correction whenever ground contact occurs, regardless of current movement direction, we can prevent potential re-penetration and ensure more robust player-terrain interaction mechanics.
+
+The key insight involves unconditionally projecting velocity tangentially when ground contact is detected, eliminating problematic downward momentum components that could cause subsequent frame instability.
+
+I'll implement a comprehensive ground handling approach that accounts for terrain angle, slope acceleration, and friction dynamics, ensuring smooth and predictable player movement across varied surface geometries.
+
+The solution involves carefully decomposing velocity into normal and tangential components, then strategically adjusting those components based on terrain characteristics and player state.
+
+By removing the conditional velocity projection and always applying tangent-based velocity reconstruction, we prevent potential clipping issues while maintaining natural-feeling ground interaction mechanics.

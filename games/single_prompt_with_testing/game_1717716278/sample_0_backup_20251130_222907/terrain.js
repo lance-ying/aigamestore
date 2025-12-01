@@ -1,0 +1,173 @@
+/**
+ * Procedural Terrain Generation
+ */
+import Matter from 'https://cdn.jsdelivr.net/npm/matter-js@0.19.0/+esm';
+const { Bodies, World, Vertices, Body } = Matter;
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, COLORS } from './globals.js';
+import { Coin } from './entities.js';
+
+const SEGMENT_WIDTH = 40;
+const BUFFER_ZONE = 1000; // Generate terrain this far ahead
+
+export class TerrainManager {
+    constructor(p) {
+        this.p = p;
+        this.noiseOffset = 0;
+        this.currentX = 0;
+        this.amplitude = 100;
+        this.frequency = 0.002;
+        this.baseHeight = CANVAS_HEIGHT - 100;
+    }
+
+    reset() {
+        this.currentX = -200; // Start slightly behind
+        this.noiseOffset = 0;
+        
+        // Clear existing terrain
+        gameState.terrainBodies.forEach(body => World.remove(gameState.world, body));
+        gameState.terrainBodies = [];
+        gameState.terrainVertices = [];
+        
+        // Initial generation
+        this.generateChunk(CANVAS_WIDTH + BUFFER_ZONE);
+    }
+
+    update() {
+        // Check if we need to generate more terrain
+        const rightEdge = gameState.cameraX + CANVAS_WIDTH + BUFFER_ZONE;
+        
+        if (this.currentX < rightEdge) {
+            this.generateChunk(rightEdge - this.currentX);
+        }
+        
+        // Cleanup old terrain (performance optimization)
+        this.cleanupTerrain();
+    }
+
+    generateChunk(width) {
+        const startX = this.currentX;
+        const endX = startX + width;
+        const p = this.p;
+
+        let prevY = this.getTerrainHeight(startX);
+
+        for (let x = startX + SEGMENT_WIDTH; x <= endX; x += SEGMENT_WIDTH) {
+            const nextY = this.getTerrainHeight(x);
+            
+            // Create a polygon for this segment
+            // We create a trapezoid connecting (x-w, prevY) to (x, nextY) extending down
+            const groundDepth = 400; // How deep the ground goes
+            
+            const vertices = [
+                { x: x - SEGMENT_WIDTH, y: prevY },
+                { x: x, y: nextY },
+                { x: x, y: nextY + groundDepth },
+                { x: x - SEGMENT_WIDTH, y: prevY + groundDepth }
+            ];
+
+            const center = Vertices.centre(vertices);
+            
+            const body = Bodies.fromVertices(center.x, center.y, [vertices], {
+                isStatic: true,
+                friction: 0, // IMPORTANT: No friction for sliding
+                frictionStatic: 0,
+                label: 'terrain',
+                render: { visible: false } // We draw it ourselves
+            });
+
+            // Sometimes Bodies.fromVertices offsets the body, we assume it's roughly correct for static terrain
+            // but for precise lining up, strict rectangles rotated might be safer. 
+            // However, fromVertices handles the connecting seam better visually if physics works.
+            // Let's ensure smooth sliding by chamfering or just using high vertex count? 
+            // Actually, for sliding games, line segments or chamfered rectangles are best. 
+            // Let's try simple rectangle segments rotated to slope.
+            
+            World.add(gameState.world, body);
+            gameState.terrainBodies.push(body);
+            
+            // Store visual data
+            gameState.terrainVertices.push({
+                x1: x - SEGMENT_WIDTH, 
+                y1: prevY,
+                x2: x, 
+                y2: nextY
+            });
+
+            // Chance to spawn coin
+            if (p.random() < 0.3) {
+                // Spawn coin in an arc above the slope
+                const coinHeight = 100; // Height above ground
+                // Place where slope is going down (perfect for sliding)
+                const slope = nextY - prevY;
+                if (slope > 0) { // Downhill
+                    const coin = new Coin(p, x - SEGMENT_WIDTH/2, prevY - coinHeight);
+                    gameState.coins.push(coin);
+                    gameState.entities.push(coin);
+                }
+            }
+
+            prevY = nextY;
+            this.currentX = x;
+        }
+    }
+    
+    // Sine wave based terrain for smooth hills
+    getTerrainHeight(x) {
+        // Use p5 noise for variety in amplitude, but sine for the curve
+        // Combine a big sine wave with a smaller one
+        const y1 = Math.sin(x * 0.005) * 100;
+        const y2 = Math.sin(x * 0.01 + 100) * 50;
+        
+        // Add some noise to the amplitude to vary hill height over time
+        const ampNoise = this.p.noise(x * 0.001) * 200;
+        
+        return this.baseHeight + y1 + y2 + (ampNoise - 100);
+    }
+
+    cleanupTerrain() {
+        const removeThreshold = gameState.cameraX - 200;
+        
+        // Remove physics bodies
+        gameState.terrainBodies = gameState.terrainBodies.filter(body => {
+            if (body.position.x < removeThreshold) {
+                World.remove(gameState.world, body);
+                return false;
+            }
+            return true;
+        });
+        
+        // Remove visual vertices
+        gameState.terrainVertices = gameState.terrainVertices.filter(v => v.x2 > removeThreshold);
+    }
+
+    render(p) {
+        p.push();
+        p.noStroke();
+        p.fill(COLORS.hill);
+        
+        p.beginShape();
+        // Start from bottom left of first visible segment
+        if (gameState.terrainVertices.length > 0) {
+            p.vertex(gameState.terrainVertices[0].x1, CANVAS_HEIGHT + 200);
+            
+            // Trace top edge
+            for (let v of gameState.terrainVertices) {
+                // Optimization: only draw if on screen
+                if (v.x2 > gameState.cameraX - 100 && v.x1 < gameState.cameraX + CANVAS_WIDTH + 100) {
+                    p.vertex(v.x1, v.y1);
+                    p.vertex(v.x2, v.y2);
+                }
+            }
+            
+            // Close shape at bottom right
+            const last = gameState.terrainVertices[gameState.terrainVertices.length - 1];
+            p.vertex(last.x2, CANVAS_HEIGHT + 200);
+        }
+        p.endShape(p.CLOSE);
+        
+        // Draw highlights/stripes (Tiny Wings style)
+        // Simply draw a second layer slightly offset or with different color logic
+        // For this implementation, simple green hills are sufficient as per primitive requirements.
+        p.pop();
+    }
+}

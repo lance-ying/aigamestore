@@ -1,0 +1,1026 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+terrain.js:32 Uncaught ReferenceError: CANVAS_WIDTH is not defined
+    at TerrainManager.reset (terrain.js:32:28)
+    at initializeGame (game.js:36:20)
+    at p.setup (game.js:132:9)
+    at v._setup (p5.min.js:2:461622)
+    at v._start (p5.min.js:2:460389)
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Tiny Gliders</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; font-family: sans-serif; transition: background 0.2s; }
+      .control-button:hover { background: #555; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">Tiny Gliders</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN'); updateActiveBtn(this);">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1'); updateActiveBtn(this);">TEST (Gravity)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2'); updateActiveBtn(this);">TEST (Auto Play)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">
+        Slide down hills to gain speed, soar into the sky, and race against the setting sun!
+      </p>
+      <p id="gameControls" style="color: #888; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; font-size: 0.9em;">
+        Controls: SPACE/DOWN to Dive, ENTER to Start, R to Restart
+      </p>
+    </div>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.7.0/p5.min.js"></script>
+    <script>window.p5 = p5;</script>
+    <script type="module" src="game.js"></script>
+    
+    <script>
+      function updateActiveBtn(clickedBtn) {
+        document.querySelectorAll('.control-button').forEach(btn => btn.classList.remove('active'));
+        clickedBtn.classList.add('active');
+      }
+    </script>
+  </body>
+</html>
+</file>
+
+<file name="globals.js">
+/**
+ * Global constants and state management for Tiny Gliders.
+ */
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+// Game constants
+export const WORLD_GRAVITY = 1.5; // Matter.js scaled gravity
+export const DIVE_FORCE = 0.003; // Force applied when diving
+export const GLIDE_LIFT = -0.0005; // Slight lift when gliding fast
+export const FRICTION_AIR = 0.01;
+export const FRICTION_GROUND = 0.00; // No friction for sliding
+export const DAY_DURATION = 60 * 60; // Frames (60 seconds)
+
+export const COLORS = {
+    skyStart: [135, 206, 235], // Day
+    skyEnd: [25, 25, 112],     // Night
+    hill: [34, 139, 34],
+    hillHighlight: [50, 205, 50],
+    player: [255, 69, 0],
+    sun: [255, 215, 0],
+    coin: [255, 223, 0],
+    text: [255, 255, 255]
+};
+
+export const gameState = {
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    controlMode: "HUMAN",
+    
+    // Matter.js
+    engine: null,
+    world: null,
+    
+    // Entities
+    player: null,
+    entities: [],
+    coins: [],
+    
+    // Terrain
+    terrainBodies: [], // Physics bodies for terrain
+    terrainVertices: [], // Visual vertices for smooth drawing
+    lastTerrainX: 0,
+    
+    // Camera
+    cameraX: 0,
+    cameraY: 0,
+    cameraOffset: { x: 150, y: 0 },
+    
+    // Game Status
+    score: 0,
+    distance: 0,
+    timeRemaining: DAY_DURATION,
+    sunPosition: { x: 0, y: 0 },
+    
+    // Input state
+    isDiving: false,
+    
+    // Time tracking
+    frameCount: 0,
+    lastFrameTime: 0,
+    deltaTime: 0
+};
+
+export function getGameState() {
+    return gameState;
+}
+
+// Expose globally
+window.getGameState = getGameState;
+</file>
+
+<file name="game.js">
+/**
+ * Main Game Loop and Initialization
+ */
+const p5 = window.p5;
+import Matter from 'https://cdn.jsdelivr.net/npm/matter-js@0.19.0/+esm';
+const { Engine, World, Bodies, Body, Composite } = Matter;
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, DAY_DURATION } from './globals.js';
+import { Player } from './entities.js';
+import { setupPhysics } from './physics.js';
+import { TerrainManager } from './terrain.js';
+import { renderBackground, renderUI, renderStartScreen, renderGameOver, renderPaused } from './renderer.js';
+import { updateCamera } from './camera.js';
+
+// Input tracking
+const keys = {
+    space: false,
+    down: false
+};
+
+let terrainManager;
+
+function initializeGame(p) {
+    // Reset Game State
+    gameState.score = 0;
+    gameState.distance = 0;
+    gameState.timeRemaining = DAY_DURATION;
+    gameState.entities = [];
+    gameState.coins = [];
+    gameState.isDiving = false;
+    
+    // Setup Terrain
+    if (!terrainManager) {
+        terrainManager = new TerrainManager(p);
+    }
+    terrainManager.reset();
+    
+    // Create Player
+    // Start x=100, y=200 to drop onto first hill
+    gameState.player = new Player(p, 100, 0);
+    gameState.entities.push(gameState.player);
+    
+    // Reset Camera
+    gameState.cameraX = 0;
+    gameState.cameraY = 0;
+}
+
+function handleInput(p) {
+    // Process input for gameplay
+    gameState.isDiving = keys.space || keys.down;
+    
+    // Test mode inputs (Automation)
+    if (gameState.controlMode === 'TEST_1') {
+        // Just start and do nothing (gravity test)
+    } else if (gameState.controlMode === 'TEST_2') {
+        // Auto play logic for testing
+        // Simple heuristic: Dive if going down, Glide if going up
+        if (gameState.player) {
+            const vy = gameState.player.body.velocity.y;
+            // Crude assumption: falling/moving down = downslope
+            gameState.isDiving = vy > 0;
+        }
+    }
+}
+
+function updateGameLogic(p) {
+    // Update Terrain (generation/culling)
+    terrainManager.update();
+    
+    // Update Physics Entities
+    gameState.entities.forEach(entity => entity.update());
+    
+    // Update Camera
+    updateCamera();
+    
+    // Update Game Progress
+    if (gameState.player) {
+        // Distance score
+        const currentDist = Math.max(0, gameState.player.body.position.x);
+        gameState.distance = currentDist / 10; // Scale down for meters
+        
+        // Add distance to score as well roughly
+        // gameState.score = Math.floor(gameState.distance) + coins... (coins handled in physics)
+        
+        // Check "Night" Catch up
+        gameState.timeRemaining--;
+        if (gameState.timeRemaining <= 0) {
+            gameState.gamePhase = "GAME_OVER_LOSE";
+            logGameState(p, "GAME_OVER_LOSE");
+        }
+    }
+}
+
+function logGameState(p, status) {
+    const logEntry = {
+        game_status: status || gameState.gamePhase,
+        data: {
+            score: gameState.score,
+            distance: gameState.distance,
+            playerX: gameState.player ? gameState.player.body.position.x : 0,
+            playerY: gameState.player ? gameState.player.body.position.y : 0
+        },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+    };
+    p.logs.game_info.push(logEntry);
+}
+
+// p5 Instance
+let gameInstance = new p5(p => {
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(60);
+        p.randomSeed(42);
+        
+        // Matter.js setup
+        const engine = Engine.create();
+        gameState.engine = engine;
+        gameState.world = engine.world;
+        
+        // Physics collision events
+        setupPhysics(engine);
+        
+        // Initialize Logging
+        p.logs = {
+            game_info: [],
+            player_info: [],
+            inputs: []
+        };
+        
+        // Initialize game entities
+        initializeGame(p);
+        
+        logGameState(p, "START");
+    };
+    
+    p.draw = function() {
+        const currentTime = p.millis();
+        gameState.deltaTime = (currentTime - gameState.lastFrameTime) / 1000;
+        gameState.lastFrameTime = currentTime;
+        gameState.frameCount = p.frameCount;
+        
+        // Logic Step
+        if (gameState.gamePhase === "PLAYING") {
+            Engine.update(gameState.engine, 1000 / 60);
+            handleInput(p);
+            updateGameLogic(p);
+            
+            // Log Player info periodically
+            if (p.frameCount % 60 === 0 && gameState.player) {
+                p.logs.player_info.push({
+                    x: gameState.player.body.position.x,
+                    y: gameState.player.body.position.y,
+                    velocity: gameState.player.body.velocity,
+                    framecount: p.frameCount
+                });
+            }
+        }
+        
+        // Render Step
+        p.push();
+        // Camera Transform
+        if (gameState.gamePhase === "PLAYING" || gameState.gamePhase === "PAUSED" || gameState.gamePhase.startsWith("GAME_OVER")) {
+            renderBackground(p);
+            
+            p.translate(-gameState.cameraX, -gameState.cameraY);
+            
+            // Draw Terrain
+            if (terrainManager) terrainManager.render(p);
+            
+            // Draw Entities
+            gameState.entities.forEach(entity => entity.render(p));
+            
+            p.pop(); // Restore camera transform
+            
+            // UI Overlay
+            renderUI(p);
+        }
+        
+        // Phase Overlays
+        if (gameState.gamePhase === "START") {
+            renderStartScreen(p);
+        } else if (gameState.gamePhase === "PAUSED") {
+            renderPaused(p);
+        } else if (gameState.gamePhase.startsWith("GAME_OVER")) {
+            renderGameOver(p);
+        }
+        p.pop();
+    };
+    
+    p.keyPressed = function() {
+        // Input Logging
+        p.logs.inputs.push({
+            type: "keyPressed",
+            key: p.key,
+            keyCode: p.keyCode,
+            framecount: p.frameCount
+        });
+        
+        // Global Controls
+        if (p.keyCode === 13) { // ENTER
+            if (gameState.gamePhase === "START") {
+                gameState.gamePhase = "PLAYING";
+                logGameState(p, "PLAYING");
+            }
+        }
+        
+        if (p.keyCode === 82) { // R
+            if (gameState.gamePhase.startsWith("GAME_OVER")) {
+                initializeGame(p);
+                gameState.gamePhase = "START"; // Go back to start or instant play? Let's go to Start
+                logGameState(p, "START");
+            }
+        }
+        
+        if (p.keyCode === 27 || p.key === 'p' || p.key === 'P') { // ESC or P
+            if (gameState.gamePhase === "PLAYING") {
+                gameState.gamePhase = "PAUSED";
+            } else if (gameState.gamePhase === "PAUSED") {
+                gameState.gamePhase = "PLAYING";
+            }
+        }
+        
+        // Gameplay Controls
+        if (p.key === ' ' || p.keyCode === 32) keys.space = true;
+        if (p.keyCode === 40) keys.down = true; // Down Arrow
+        
+        return false; // Prevent default
+    };
+    
+    p.keyReleased = function() {
+        p.logs.inputs.push({
+            type: "keyReleased",
+            key: p.key,
+            keyCode: p.keyCode,
+            framecount: p.frameCount
+        });
+        
+        if (p.key === ' ' || p.keyCode === 32) keys.space = false;
+        if (p.keyCode === 40) keys.down = false;
+        
+        return false;
+    };
+});
+
+// Global helpers for HTML buttons
+window.setControlMode = function(mode) {
+    gameState.controlMode = mode;
+    console.log("Control Mode set to:", mode);
+    // Restart game to apply clean state for test
+    if (gameState.engine) {
+        World.clear(gameState.engine.world);
+        Engine.clear(gameState.engine);
+        // Re-init happens in next loop or manually:
+        // Ideally we just reset the phase to start
+        gameState.gamePhase = "START";
+        initializeGame(gameInstance);
+    }
+};
+</file>
+
+<file name="renderer.js">
+/**
+ * Rendering functions
+ */
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, COLORS } from './globals.js';
+
+export function drawBody(p, body, color) {
+    p.push();
+    p.fill(color);
+    p.noStroke();
+    
+    p.beginShape();
+    body.vertices.forEach(v => {
+        p.vertex(v.x, v.y);
+    });
+    p.endShape(p.CLOSE);
+    p.pop();
+}
+
+export function renderBackground(p) {
+    // Lerp sky color based on time
+    const ratio = 1 - (gameState.timeRemaining / (60 * 60)); // 0 to 1
+    const r = p.lerp(COLORS.skyStart[0], COLORS.skyEnd[0], ratio);
+    const g = p.lerp(COLORS.skyStart[1], COLORS.skyEnd[1], ratio);
+    const b = p.lerp(COLORS.skyStart[2], COLORS.skyEnd[2], ratio);
+    
+    p.background(r, g, b);
+    
+    // Draw Sun setting
+    const sunX = CANVAS_WIDTH - 50 - (ratio * (CANVAS_WIDTH - 100));
+    const sunY = 50 + (ratio * 100);
+    
+    p.push();
+    // Do not translate sun by camera, make it sticky to screen or parallax
+    // We want it to be "UI" layer for the timer effect, or "World" layer for immersion
+    // Let's make it screen space for the "timer" visual
+    p.resetMatrix(); 
+    p.fill(COLORS.sun);
+    p.noStroke();
+    p.circle(sunX, sunY, 60);
+    p.pop();
+}
+
+export function renderUI(p) {
+    p.push();
+    p.resetMatrix(); // Ensure UI is drawn on top relative to screen
+    
+    // Score
+    p.fill(COLORS.text);
+    p.textSize(24);
+    p.textAlign(p.LEFT, p.TOP);
+    p.text(`Distance: ${Math.floor(gameState.distance)}m`, 20, 20);
+    p.text(`Score: ${gameState.score}`, 20, 50);
+    
+    // Time/Sun bar
+    // const barWidth = 200;
+    // p.noFill();
+    // p.stroke(255);
+    // p.rect(CANVAS_WIDTH - barWidth - 20, 20, barWidth, 15);
+    // p.fill(255, 200, 0);
+    // p.noStroke();
+    // const timeRatio = gameState.timeRemaining / (60*60);
+    // p.rect(CANVAS_WIDTH - barWidth - 20, 20, barWidth * timeRatio, 15);
+    
+    // Debug state info
+    if (gameState.controlMode !== "HUMAN") {
+        p.fill(255, 0, 0);
+        p.textSize(12);
+        p.text(`MODE: ${gameState.controlMode}`, 20, 80);
+    }
+    
+    p.pop();
+}
+
+export function renderStartScreen(p) {
+    p.background(COLORS.skyStart);
+    p.fill(0, 0, 0, 100);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.fill(255);
+    p.textAlign(p.CENTER, p.CENTER);
+    
+    p.textSize(48);
+    p.text("TINY GLIDERS", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 60);
+    
+    p.textSize(18);
+    p.text("Press ENTER to Start", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 20);
+    p.text("SPACE to Dive (Downhill)", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 50);
+    p.text("Release to Glide (Uphill)", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 80);
+}
+
+export function renderGameOver(p) {
+    p.push();
+    p.resetMatrix();
+    p.fill(0, 0, 0, 200);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.fill(255);
+    p.textAlign(p.CENTER, p.CENTER);
+    
+    const isWin = gameState.gamePhase === "GAME_OVER_WIN";
+    const title = isWin ? "YOU ESCAPED THE NIGHT!" : "THE SUN HAS SET";
+    
+    p.textSize(36);
+    p.text(title, CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 40);
+    
+    p.textSize(24);
+    p.text(`Total Distance: ${Math.floor(gameState.distance)}m`, CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 10);
+    p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 40);
+    
+    p.textSize(16);
+    p.text("Press R to Play Again", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 90);
+    p.pop();
+}
+
+export function renderPaused(p) {
+    p.push();
+    p.resetMatrix();
+    p.fill(0, 0, 0, 100);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.fill(255);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(40);
+    p.text("PAUSED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+    p.pop();
+}
+</file>
+
+<file name="terrain.js">
+/**
+ * Procedural Terrain Generation
+ */
+import Matter from 'https://cdn.jsdelivr.net/npm/matter-js@0.19.0/+esm';
+const { Bodies, World, Vertices, Body } = Matter;
+import { gameState, CANVAS_HEIGHT, COLORS } from './globals.js';
+import { Coin } from './entities.js';
+
+const SEGMENT_WIDTH = 40;
+const BUFFER_ZONE = 1000; // Generate terrain this far ahead
+
+export class TerrainManager {
+    constructor(p) {
+        this.p = p;
+        this.noiseOffset = 0;
+        this.currentX = 0;
+        this.amplitude = 100;
+        this.frequency = 0.002;
+        this.baseHeight = CANVAS_HEIGHT - 100;
+    }
+
+    reset() {
+        this.currentX = -200; // Start slightly behind
+        this.noiseOffset = 0;
+        
+        // Clear existing terrain
+        gameState.terrainBodies.forEach(body => World.remove(gameState.world, body));
+        gameState.terrainBodies = [];
+        gameState.terrainVertices = [];
+        
+        // Initial generation
+        this.generateChunk(CANVAS_WIDTH + BUFFER_ZONE);
+    }
+
+    update() {
+        // Check if we need to generate more terrain
+        const rightEdge = gameState.cameraX + CANVAS_WIDTH + BUFFER_ZONE;
+        
+        if (this.currentX < rightEdge) {
+            this.generateChunk(rightEdge - this.currentX);
+        }
+        
+        // Cleanup old terrain (performance optimization)
+        this.cleanupTerrain();
+    }
+
+    generateChunk(width) {
+        const startX = this.currentX;
+        const endX = startX + width;
+        const p = this.p;
+
+        let prevY = this.getTerrainHeight(startX);
+
+        for (let x = startX + SEGMENT_WIDTH; x <= endX; x += SEGMENT_WIDTH) {
+            const nextY = this.getTerrainHeight(x);
+            
+            // Create a polygon for this segment
+            // We create a trapezoid connecting (x-w, prevY) to (x, nextY) extending down
+            const groundDepth = 400; // How deep the ground goes
+            
+            const vertices = [
+                { x: x - SEGMENT_WIDTH, y: prevY },
+                { x: x, y: nextY },
+                { x: x, y: nextY + groundDepth },
+                { x: x - SEGMENT_WIDTH, y: prevY + groundDepth }
+            ];
+
+            const center = Vertices.centre(vertices);
+            
+            const body = Bodies.fromVertices(center.x, center.y, [vertices], {
+                isStatic: true,
+                friction: 0, // IMPORTANT: No friction for sliding
+                frictionStatic: 0,
+                label: 'terrain',
+                render: { visible: false } // We draw it ourselves
+            });
+
+            // Sometimes Bodies.fromVertices offsets the body, we assume it's roughly correct for static terrain
+            // but for precise lining up, strict rectangles rotated might be safer. 
+            // However, fromVertices handles the connecting seam better visually if physics works.
+            // Let's ensure smooth sliding by chamfering or just using high vertex count? 
+            // Actually, for sliding games, line segments or chamfered rectangles are best. 
+            // Let's try simple rectangle segments rotated to slope.
+            
+            World.add(gameState.world, body);
+            gameState.terrainBodies.push(body);
+            
+            // Store visual data
+            gameState.terrainVertices.push({
+                x1: x - SEGMENT_WIDTH, 
+                y1: prevY,
+                x2: x, 
+                y2: nextY
+            });
+
+            // Chance to spawn coin
+            if (p.random() < 0.3) {
+                // Spawn coin in an arc above the slope
+                const coinHeight = 100; // Height above ground
+                // Place where slope is going down (perfect for sliding)
+                const slope = nextY - prevY;
+                if (slope > 0) { // Downhill
+                    const coin = new Coin(p, x - SEGMENT_WIDTH/2, prevY - coinHeight);
+                    gameState.coins.push(coin);
+                    gameState.entities.push(coin);
+                }
+            }
+
+            prevY = nextY;
+            this.currentX = x;
+        }
+    }
+    
+    // Sine wave based terrain for smooth hills
+    getTerrainHeight(x) {
+        // Use p5 noise for variety in amplitude, but sine for the curve
+        // Combine a big sine wave with a smaller one
+        const y1 = Math.sin(x * 0.005) * 100;
+        const y2 = Math.sin(x * 0.01 + 100) * 50;
+        
+        // Add some noise to the amplitude to vary hill height over time
+        const ampNoise = this.p.noise(x * 0.001) * 200;
+        
+        return this.baseHeight + y1 + y2 + (ampNoise - 100);
+    }
+
+    cleanupTerrain() {
+        const removeThreshold = gameState.cameraX - 200;
+        
+        // Remove physics bodies
+        gameState.terrainBodies = gameState.terrainBodies.filter(body => {
+            if (body.position.x < removeThreshold) {
+                World.remove(gameState.world, body);
+                return false;
+            }
+            return true;
+        });
+        
+        // Remove visual vertices
+        gameState.terrainVertices = gameState.terrainVertices.filter(v => v.x2 > removeThreshold);
+    }
+
+    render(p) {
+        p.push();
+        p.noStroke();
+        p.fill(COLORS.hill);
+        
+        p.beginShape();
+        // Start from bottom left of first visible segment
+        if (gameState.terrainVertices.length > 0) {
+            p.vertex(gameState.terrainVertices[0].x1, CANVAS_HEIGHT + 200);
+            
+            // Trace top edge
+            for (let v of gameState.terrainVertices) {
+                // Optimization: only draw if on screen
+                if (v.x2 > gameState.cameraX - 100 && v.x1 < gameState.cameraX + CANVAS_WIDTH + 100) {
+                    p.vertex(v.x1, v.y1);
+                    p.vertex(v.x2, v.y2);
+                }
+            }
+            
+            // Close shape at bottom right
+            const last = gameState.terrainVertices[gameState.terrainVertices.length - 1];
+            p.vertex(last.x2, CANVAS_HEIGHT + 200);
+        }
+        p.endShape(p.CLOSE);
+        
+        // Draw highlights/stripes (Tiny Wings style)
+        // Simply draw a second layer slightly offset or with different color logic
+        // For this implementation, simple green hills are sufficient as per primitive requirements.
+        p.pop();
+    }
+}
+</file>
+
+<file name="entities.js">
+/**
+ * Game entities: Player, Coin
+ */
+import Matter from 'https://cdn.jsdelivr.net/npm/matter-js@0.19.0/+esm';
+const { Bodies, Body, World } = Matter;
+import { gameState, COLORS, DIVE_FORCE, GLIDE_LIFT } from './globals.js';
+import { drawBody } from './renderer.js';
+
+export class Player {
+    constructor(p, x, y) {
+        this.p = p;
+        this.radius = 15;
+        
+        // Create physics body
+        this.body = Bodies.circle(x, y, this.radius, {
+            label: 'player',
+            friction: 0.0, // Frictionless for sliding
+            frictionAir: 0.01,
+            restitution: 0.0, // No bounce
+            density: 0.002
+        });
+        
+        World.add(gameState.world, this.body);
+        
+        this.onGround = false;
+        this.trail = [];
+        this.maxTrail = 20;
+    }
+    
+    update() {
+        // Handle trail
+        if (this.p.frameCount % 5 === 0) {
+            this.trail.push({ x: this.body.position.x, y: this.body.position.y });
+            if (this.trail.length > this.maxTrail) this.trail.shift();
+        }
+        
+        // Apply physics based on input
+        if (gameState.isDiving) {
+            // Dive: Apply heavy downward force
+            // If on ground, this increases speed on downslope due to physics engine resolution
+            // If in air, falls faster
+            Body.applyForce(this.body, this.body.position, { x: 0, y: DIVE_FORCE });
+        } else {
+            // Glide/Fly
+            // If moving fast horizontally, generate some lift
+            if (!this.onGround && this.body.velocity.x > 5) {
+                // Lift is proportional to speed
+                const lift = Math.min(GLIDE_LIFT * this.body.velocity.x, 0.01); 
+                Body.applyForce(this.body, this.body.position, { x: 0, y: lift });
+            }
+        }
+        
+        // Rotate body to match velocity for visual effect
+        if (Math.abs(this.body.velocity.x) > 0.1 || Math.abs(this.body.velocity.y) > 0.1) {
+            const angle = Math.atan2(this.body.velocity.y, this.body.velocity.x);
+            Body.setAngle(this.body, angle);
+        }
+        
+        // Limit speed to prevent tunneling or game breaking
+        const maxSpeed = 30;
+        const speed = Math.sqrt(this.body.velocity.x**2 + this.body.velocity.y**2);
+        if (speed > maxSpeed) {
+            const ratio = maxSpeed / speed;
+            Body.setVelocity(this.body, {
+                x: this.body.velocity.x * ratio,
+                y: this.body.velocity.y * ratio
+            });
+        }
+        
+        // Ensure x velocity doesn't go negative (move backwards)
+        if (this.body.velocity.x < 0) {
+            Body.setVelocity(this.body, { x: 0, y: this.body.velocity.y });
+        }
+    }
+    
+    render(p) {
+        // Draw trail
+        p.push();
+        p.noStroke();
+        for (let i = 0; i < this.trail.length; i++) {
+            const pos = this.trail[i];
+            const alpha = p.map(i, 0, this.trail.length, 0, 200);
+            p.fill(255, 255, 255, alpha);
+            p.circle(pos.x, pos.y, this.radius);
+        }
+        p.pop();
+        
+        // Draw Bird
+        p.push();
+        p.translate(this.body.position.x, this.body.position.y);
+        p.rotate(this.body.angle);
+        
+        // Body
+        p.fill(COLORS.player);
+        p.noStroke();
+        p.circle(0, 0, this.radius * 2);
+        
+        // Eye
+        p.fill(255);
+        p.circle(this.radius/2, -this.radius/2, this.radius/1.5);
+        p.fill(0);
+        p.circle(this.radius/2 + 2, -this.radius/2, 3);
+        
+        // Beak
+        p.fill(255, 200, 0);
+        p.triangle(this.radius/2, 0, this.radius * 1.5, 5, this.radius/2, 10);
+        
+        // Wing
+        p.fill(200, 50, 0);
+        if (gameState.isDiving) {
+            // Folded wing
+            p.ellipse(-5, 5, 15, 10);
+        } else {
+            // Open wing
+            p.push();
+            p.rotate(-0.5);
+            p.ellipse(0, -10, 20, 10);
+            p.pop();
+        }
+        
+        p.pop();
+    }
+}
+
+export class Coin {
+    constructor(p, x, y) {
+        this.p = p;
+        this.value = 50;
+        this.collected = false;
+        this.startY = y;
+        
+        // Sensor body for collision
+        this.body = Bodies.circle(x, y, 10, {
+            label: 'coin',
+            isStatic: true,
+            isSensor: true
+        });
+        
+        World.add(gameState.world, this.body);
+    }
+    
+    update() {
+        if (this.collected) return;
+        // Bob animation
+        const offset = Math.sin(this.p.frameCount * 0.1) * 5;
+        // We can't move static bodies easily without recreating or setting position
+        Body.setPosition(this.body, { x: this.body.position.x, y: this.startY + offset });
+    }
+    
+    render(p) {
+        if (this.collected) return;
+        
+        p.push();
+        p.translate(this.body.position.x, this.body.position.y);
+        p.rotate(this.p.frameCount * 0.05);
+        
+        p.fill(COLORS.coin);
+        p.stroke(255, 165, 0);
+        p.strokeWeight(2);
+        
+        // Draw star-like coin
+        p.beginShape();
+        for (let i = 0; i < 5; i++) {
+            const angle = Math.PI * 2 * i / 5 - Math.PI / 2;
+            const x = Math.cos(angle) * 12;
+            const y = Math.sin(angle) * 12;
+            p.vertex(x, y);
+            
+            const angleInner = Math.PI * 2 * (i + 0.5) / 5 - Math.PI / 2;
+            const xi = Math.cos(angleInner) * 5;
+            const yi = Math.sin(angleInner) * 5;
+            p.vertex(xi, yi);
+        }
+        p.endShape(p.CLOSE);
+        
+        p.pop();
+    }
+}
+</file>
+
+<file name="camera.js">
+/**
+ * Camera logic for scrolling
+ */
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export function updateCamera() {
+    if (!gameState.player) return;
+
+    // Target position: Player is at 1/4 of the screen width
+    const targetX = gameState.player.body.position.x - gameState.cameraOffset.x;
+    
+    // Smooth lerp for X
+    gameState.cameraX += (targetX - gameState.cameraX) * 0.1;
+    
+    // Y Axis logic: Keep player vertically visible but don't follow small bumps too jittery
+    // Calculate desired Y to keep player somewhat centered but bias towards seeing the ground
+    // Default Y is 0 (top of screen). If player goes high (negative Y), camera moves up (negative Y)
+    let targetY = 0;
+    const playerY = gameState.player.body.position.y;
+    
+    if (playerY < 100) {
+        // Player is flying high
+        targetY = playerY - 200;
+    } else if (playerY > CANVAS_HEIGHT - 100) {
+        // Player is deep down (shouldn't happen much with terrain)
+        targetY = playerY - (CANVAS_HEIGHT - 100);
+    }
+    
+    // Clamp Y to not show below terrain too much
+    // Assuming base terrain is around CANVAS_HEIGHT
+    // We want cameraY to be roughly 0 most of the time
+    
+    gameState.cameraY += (targetY - gameState.cameraY) * 0.05;
+}
+</file>
+
+<file name="physics.js">
+/**
+ * Physics setup and collision handling using Matter.js
+ */
+import Matter from 'https://cdn.jsdelivr.net/npm/matter-js@0.19.0/+esm';
+const { Events, World, Body, Vector, Composite } = Matter;
+import { gameState, WORLD_GRAVITY } from './globals.js';
+
+export function setupPhysics(engine) {
+    // Basic configuration
+    engine.world.gravity.y = WORLD_GRAVITY;
+    engine.world.gravity.x = 0;
+    
+    // Collision Events
+    Events.on(engine, 'collisionStart', (event) => {
+        event.pairs.forEach((pair) => {
+            const { bodyA, bodyB } = pair;
+            
+            // Check Player vs Terrain (Ground detection)
+            if (isPlayer(bodyA) && isTerrain(bodyB) || isPlayer(bodyB) && isTerrain(bodyA)) {
+                if (gameState.player) {
+                    gameState.player.onGround = true;
+                }
+            }
+            
+            // Check Player vs Coin
+            if (isPlayer(bodyA) && isCoin(bodyB)) {
+                collectCoin(bodyB);
+            } else if (isPlayer(bodyB) && isCoin(bodyA)) {
+                collectCoin(bodyA);
+            }
+        });
+    });
+
+    Events.on(engine, 'collisionEnd', (event) => {
+        event.pairs.forEach((pair) => {
+            const { bodyA, bodyB } = pair;
+            
+            // Player left ground
+            if (isPlayer(bodyA) && isTerrain(bodyB) || isPlayer(bodyB) && isTerrain(bodyA)) {
+                if (gameState.player) {
+                    gameState.player.onGround = false;
+                }
+            }
+        });
+    });
+}
+
+// Helper functions for identifying bodies
+function isPlayer(body) {
+    return body.label === 'player';
+}
+
+function isTerrain(body) {
+    return body.label === 'terrain';
+}
+
+function isCoin(body) {
+    return body.label === 'coin';
+}
+
+function collectCoin(coinBody) {
+    // Find coin entity to remove
+    const coinIndex = gameState.coins.findIndex(c => c.body === coinBody);
+    if (coinIndex !== -1) {
+        const coin = gameState.coins[coinIndex];
+        gameState.score += coin.value;
+        coin.collected = true;
+        
+        // Remove physics body
+        World.remove(gameState.world, coinBody);
+        
+        // Remove from array
+        gameState.coins.splice(coinIndex, 1);
+        
+        // Also remove from main entities list if present
+        const entityIndex = gameState.entities.indexOf(coin);
+        if (entityIndex !== -1) {
+            gameState.entities.splice(entityIndex, 1);
+        }
+    }
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>
