@@ -1,0 +1,1260 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+can you make the jump higher, and the shoot button doesn't do anything
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Gato Roboto - JS Clone</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; font-family: monospace; }
+      .control-button:hover { background: #555; }
+      .control-button:active { background: #007bff; }
+      h1 { color: #fff; font-family: 'Courier New', monospace; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 2px; }
+      p { color: #aaa; font-family: monospace; font-size: 12px; margin: 5px; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle">Gato Roboto</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Win Strategy)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Fuzz)</button>
+      </div>
+      <p>Arrows: Move | Space: Jump | Z: Shoot/Action | Shift: Eject/Enter Mech</p>
+      <p>Enter: Start | R: Restart | Esc: Pause</p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="automated_testing_controller.js">
+// Automated Testing Controller
+// Provides logic for automated tests to control the game
+
+export function get_automated_testing_action(gameState) {
+    if (!gameState.player) return null;
+
+    const player = gameState.player;
+    const nearbyEnemies = gameState.enemies.filter(e => 
+        Math.abs(e.x - player.x) < 300 && Math.abs(e.y - player.y) < 100
+    );
+    const nearbyWalls = gameState.platforms.filter(p => 
+        p.x > player.x && p.x < player.x + 100 && p.y < player.y + player.height
+    );
+
+    switch (gameState.controlMode) {
+        case "TEST_1": // Win Strategy
+            // 1. Attack enemies
+            if (nearbyEnemies.length > 0 && player.mode === 'MECH' && player.cooldown <= 0) {
+                return { keyCode: 90 }; // Z to shoot
+            }
+            
+            // 2. Jump over obstacles
+            // Simple check: if wall is close in front, jump
+            let needsJump = false;
+            for (let wall of nearbyWalls) {
+                // If wall bottom is below player top (it's in the way)
+                if (wall.y + wall.height > player.y && wall.y < player.y + player.height) {
+                    needsJump = true;
+                }
+            }
+            // Pit check: Cast ray down ahead
+            // (Simulated by checking if there's no platform ahead)
+            let groundAhead = false;
+            for (let plat of gameState.platforms) {
+                if (plat.x < player.x + 50 && plat.x + plat.width > player.x + 50 && 
+                    plat.y >= player.y + player.height) {
+                    groundAhead = true;
+                }
+            }
+            if (!groundAhead && player.onGround) needsJump = true;
+            
+            if (needsJump && player.onGround) {
+                return { keyCode: 32 }; // Space
+            }
+            
+            // 3. Move Right towards goal
+            return { keyCode: 39 }; // Right Arrow
+
+        case "TEST_2": // Random Fuzzing
+            const keys = [37, 38, 39, 40, 32, 90, 16]; // All keys
+            const randKey = keys[Math.floor(Math.random() * keys.length)];
+            // Bias towards movement
+            if (Math.random() < 0.5) return { keyCode: 39 }; // Right
+            return { keyCode: randKey };
+            
+        default:
+            return null;
+    }
+}
+</file>
+
+<file name="globals.js">
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const FPS = 60;
+
+// Physics Constants
+export const GRAVITY = 0.6;
+export const TERMINAL_VELOCITY = 15;
+export const FRICTION = 0.85;
+export const AIR_RESISTANCE = 0.95;
+
+// Player Constants
+export const MECH_SPEED = 4;
+export const CAT_SPEED = 6;
+export const MECH_JUMP_FORCE = -11;
+export const CAT_JUMP_FORCE = -9;
+export const MECH_WIDTH = 32;
+export const MECH_HEIGHT = 48;
+export const CAT_WIDTH = 14;
+export const CAT_HEIGHT = 14;
+
+// Game State Container
+export const gameState = {
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    controlMode: "HUMAN", // HUMAN, TEST_1, TEST_2
+    
+    player: null,
+    level: null,
+    
+    // Entity lists
+    entities: [],
+    platforms: [],
+    enemies: [],
+    projectiles: [],
+    particles: [],
+    collectibles: [],
+    
+    // Camera
+    cameraX: 0,
+    cameraY: 0,
+    cameraShake: 0,
+    
+    // State
+    score: 0,
+    frameCount: 0,
+    
+    // Key States (for continuous input)
+    keys: {}
+};
+
+// Expose globally
+window.getGameState = () => gameState;
+
+// Logging Helper
+export function logGameEvent(p, type, data) {
+    if (p.logs && p.logs.game_info) {
+        p.logs.game_info.push({
+            type: type,
+            data: data,
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+    }
+}
+</file>
+
+<file name="game.js">
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, logGameEvent } from './globals.js';
+import { initInput, handleInput, setInitGameCallback } from './input.js';
+import { renderStartScreen, renderUI, renderPausedOverlay, renderGameOver } from './ui.js';
+import { generateLevel } from './level.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+    
+    p.logs = {
+        "game_info": [],
+        "inputs": [],
+        "player_info": []
+    };
+
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(60);
+        p.randomSeed(42);
+        
+        gameState.gamePhase = "START";
+        gameState.controlMode = "HUMAN";
+        
+        // Setup input listeners
+        initInput(p);
+        
+        // Setup restart callback
+        setInitGameCallback(() => {
+            generateLevel();
+            gameState.score = 0;
+            gameState.frameCount = 0;
+            gameState.cameraX = 0;
+            
+            logGameEvent(p, "GAME_START", { mode: gameState.controlMode });
+        });
+        
+        logGameEvent(p, "INIT", { phase: gameState.gamePhase });
+    };
+
+    p.draw = function() {
+        // Global Update
+        gameState.frameCount = p.frameCount;
+        
+        // Render
+        p.background(20); // Dark background
+        
+        if (gameState.gamePhase === "START") {
+            renderStartScreen(p);
+        } else if (gameState.gamePhase === "PLAYING" || gameState.gamePhase === "PAUSED" || gameState.gamePhase.startsWith("GAME_OVER")) {
+            
+            // Logic Update (only if playing)
+            if (gameState.gamePhase === "PLAYING") {
+                updateGameLogic(p);
+            }
+            
+            // Render Game World
+            renderGameWorld(p);
+            
+            // UI Overlay
+            renderUI(p);
+            
+            if (gameState.gamePhase === "PAUSED") renderPausedOverlay(p);
+            if (gameState.gamePhase.startsWith("GAME_OVER")) renderGameOver(p);
+        }
+        
+        // Shake decay
+        if (gameState.cameraShake > 0) gameState.cameraShake *= 0.9;
+    };
+});
+
+function updateGameLogic(p) {
+    handleInput(p);
+    
+    // Update Camera
+    if (gameState.player) {
+        // Target: Center on player, clamped to bounds
+        let targetX = gameState.player.x - CANVAS_WIDTH / 2;
+        targetX = Math.max(0, targetX); // Left bound
+        // Right bound: assume level is long
+        
+        gameState.cameraX += (targetX - gameState.cameraX) * 0.1;
+    }
+    
+    // Update Entities
+    // Iterate backwards to allow safe removal
+    for (let i = gameState.entities.length - 1; i >= 0; i--) {
+        const ent = gameState.entities[i];
+        ent.update(p);
+        if (ent.dead) {
+            gameState.entities.splice(i, 1);
+            // Also remove from specific lists if needed (optimization)
+            const projIdx = gameState.projectiles.indexOf(ent);
+            if (projIdx > -1) gameState.projectiles.splice(projIdx, 1);
+            const enemIdx = gameState.enemies.indexOf(ent);
+            if (enemIdx > -1) gameState.enemies.splice(enemIdx, 1);
+            const colIdx = gameState.collectibles.indexOf(ent);
+            if (colIdx > -1) gameState.collectibles.splice(colIdx, 1);
+        }
+    }
+    
+    // Update Particles
+    for (let i = gameState.particles.length - 1; i >= 0; i--) {
+        const part = gameState.particles[i];
+        part.update();
+        if (part.life <= 0) {
+            gameState.particles.splice(i, 1);
+        }
+    }
+}
+
+function renderGameWorld(p) {
+    p.push();
+    
+    // Camera Transform
+    let shakeX = (Math.random() - 0.5) * gameState.cameraShake;
+    let shakeY = (Math.random() - 0.5) * gameState.cameraShake;
+    p.translate(-gameState.cameraX + shakeX, shakeY);
+    
+    // Draw Platforms
+    p.fill(255);
+    p.noStroke();
+    for (let plat of gameState.platforms) {
+        // Culling
+        if (plat.x - gameState.cameraX < CANVAS_WIDTH && plat.x + plat.width - gameState.cameraX > 0) {
+            p.fill(80); // Darker grey walls
+            p.rect(plat.x, plat.y, plat.width, plat.height);
+            // Texture
+            p.stroke(100);
+            p.line(plat.x, plat.y, plat.x + plat.width, plat.y);
+            p.noStroke();
+        }
+    }
+    
+    // Draw Entities
+    for (let ent of gameState.entities) {
+        if (ent.x - gameState.cameraX < CANVAS_WIDTH && ent.x + ent.width - gameState.cameraX > 0) {
+            ent.renderAt(p, ent.x, ent.y);
+        }
+    }
+    
+    // Draw Particles
+    for (let part of gameState.particles) {
+        part.render(p);
+    }
+    
+    p.pop();
+}
+
+// Expose instance
+window.gameInstance = gameInstance;
+
+// Control Mode Setter for HTML buttons
+window.setControlMode = function(mode) {
+    gameState.controlMode = mode;
+    console.log("Control Mode set to: " + mode);
+};
+</file>
+
+<file name="ui.js">
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export function renderUI(p) {
+    p.push();
+    
+    // HUD
+    p.fill(255);
+    p.textSize(16);
+    p.textAlign(p.LEFT, p.TOP);
+    
+    // Health Bar
+    p.noStroke();
+    p.fill(50);
+    p.rect(20, 20, 200, 20); // BG
+    
+    if (gameState.player) {
+        const hp = gameState.player.mode === 'MECH' ? gameState.player.mechHealth : gameState.player.catHealth * 33;
+        const maxHp = 100;
+        const ratio = Math.max(0, hp / maxHp);
+        
+        p.fill(ratio > 0.3 ? p.color(0, 255, 0) : p.color(255, 0, 0));
+        p.rect(20, 20, 200 * ratio, 20);
+        
+        p.fill(255);
+        p.text(gameState.player.mode === 'MECH' ? "MECH SUIT" : "CAT FORM", 20, 45);
+    }
+    
+    p.textAlign(p.RIGHT, p.TOP);
+    p.text("SCORE: " + gameState.score, CANVAS_WIDTH - 20, 20);
+    
+    p.pop();
+}
+
+export function renderStartScreen(p) {
+    p.background(10, 10, 20);
+    p.fill(255);
+    p.textAlign(p.CENTER, p.CENTER);
+    
+    p.textSize(40);
+    p.text("GATO ROBOTO", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 60);
+    
+    p.textSize(16);
+    p.text("Pilot the Mech. Save the Captain.", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+    p.text("Arrows: Move | Space: Jump | Z: Shoot | Shift: Eject", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 30);
+    
+    if (p.frameCount % 60 < 40) {
+        p.textSize(20);
+        p.fill(0, 255, 0);
+        p.text("PRESS ENTER TO START", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 80);
+    }
+}
+
+export function renderPausedOverlay(p) {
+    p.push();
+    p.fill(0, 0, 0, 150);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.fill(255);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(30);
+    p.text("PAUSED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+    p.pop();
+}
+
+export function renderGameOver(p) {
+    p.push();
+    p.fill(0, 0, 0, 200);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    const win = gameState.gamePhase === "GAME_OVER_WIN";
+    p.fill(win ? p.color(0, 255, 0) : p.color(255, 0, 0));
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(40);
+    p.text(win ? "MISSION ACCOMPLISHED" : "CRITICAL FAILURE", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 40);
+    
+    p.fill(255);
+    p.textSize(20);
+    p.text("Final Score: " + gameState.score, CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 10);
+    p.text("Press R to Restart", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 50);
+    p.pop();
+}
+</file>
+
+<file name="entities.js">
+import { 
+    gameState, CANVAS_WIDTH, CANVAS_HEIGHT, 
+    GRAVITY, FRICTION, MECH_SPEED, CAT_SPEED, 
+    MECH_JUMP_FORCE, CAT_JUMP_FORCE,
+    MECH_WIDTH, MECH_HEIGHT, CAT_WIDTH, CAT_HEIGHT
+} from './globals.js';
+import { checkCollisions, checkEntityCollision } from './physics.js';
+import { spawnExplosion, Particle } from './particles.js';
+
+export class Entity {
+    constructor(x, y, w, h) {
+        this.x = x;
+        this.y = y;
+        this.width = w;
+        this.height = h;
+        this.vx = 0;
+        this.vy = 0;
+        this.prevX = x;
+        this.prevY = y;
+        this.onGround = false;
+        this.dead = false;
+    }
+    
+    updatePhysics() {
+        this.prevX = this.x;
+        this.prevY = this.y;
+        
+        this.vy += GRAVITY;
+        
+        this.x += this.vx;
+        this.y += this.vy;
+        
+        checkCollisions(this);
+    }
+    
+    renderAt(p, screenX, screenY) {
+        // Base render
+        p.fill(255);
+        p.rect(screenX, screenY, this.width, this.height);
+    }
+}
+
+export class Player extends Entity {
+    constructor(x, y) {
+        super(x, y, MECH_WIDTH, MECH_HEIGHT);
+        this.mode = 'MECH'; // 'MECH' or 'CAT'
+        this.facing = 1; // 1 = right, -1 = left
+        this.mechHealth = 100;
+        this.catHealth = 3; // 3 hits
+        this.invincibleTimer = 0;
+        this.cooldown = 0;
+        
+        // Track the empty mech entity
+        this.emptyMech = null;
+        this.p = null; // Store p5 instance for collision checks in nested methods
+    }
+    
+    handleInput(inputs) {
+        const speed = this.mode === 'MECH' ? MECH_SPEED : CAT_SPEED;
+        const jumpForce = this.mode === 'MECH' ? MECH_JUMP_FORCE : CAT_JUMP_FORCE;
+        
+        // Horizontal Movement
+        if (inputs.left) {
+            this.vx = -speed;
+            this.facing = -1;
+        } else if (inputs.right) {
+            this.vx = speed;
+            this.facing = 1;
+        } else {
+            this.vx *= FRICTION;
+            if (Math.abs(this.vx) < 0.1) this.vx = 0;
+        }
+        
+        // Jump
+        if (inputs.jump && this.onGround) {
+            this.vy = jumpForce;
+            this.onGround = false;
+            // Spawn jump particles
+            gameState.particles.push(new Particle(this.x + this.width/2, this.y + this.height, 'JUMP_DUST'));
+        }
+        
+        // Eject / Enter Mech
+        if (inputs.action && this.cooldown <= 0) {
+            this.toggleMode();
+            this.cooldown = 30;
+        }
+        
+        // Fire
+        if (inputs.fire && this.cooldown <= 0) {
+            if (this.mode === 'MECH') {
+                this.fireWeapon();
+                this.cooldown = 15;
+            } else {
+                // Cat Meow (visual effect only)
+                gameState.particles.push(new Particle(this.x + (this.facing > 0 ? this.width : 0), this.y, 'SPARK'));
+                this.cooldown = 20;
+            }
+        }
+    }
+    
+    fireWeapon() {
+        const px = this.facing === 1 ? this.x + this.width : this.x - 10;
+        const py = this.y + 15;
+        gameState.projectiles.push(new Projectile(px, py, this.facing));
+        gameState.cameraShake = 2;
+    }
+    
+    toggleMode() {
+        if (!this.p) { // Should not happen if update(p) is called first
+            console.error("p5 instance not set for Player!");
+            return;
+        }
+
+        if (this.mode === 'MECH') {
+            // Eject
+            this.mode = 'CAT';
+            
+            // Create empty mech entity at current position
+            this.emptyMech = new EmptyMech(this.x, this.y, this.mechHealth);
+            gameState.entities.push(this.emptyMech);
+            
+            // Resize player to cat
+            this.width = CAT_WIDTH;
+            this.height = CAT_HEIGHT;
+            
+            // Reposition cat to center of mech
+            this.x = this.x + (MECH_WIDTH - CAT_WIDTH) / 2;
+            this.y = this.y + (MECH_HEIGHT - CAT_HEIGHT) / 2;
+            
+            // Pop effect
+            spawnExplosion(this.x, this.y, 5);
+            
+        } else {
+            // Try to Enter
+            // Check collision with empty mech
+            if (this.emptyMech && checkEntityCollision(this.p, this, this.emptyMech)) { // Pass p here
+                this.mode = 'MECH';
+                
+                // Restore stats
+                this.mechHealth = this.emptyMech.health;
+                this.x = this.emptyMech.x;
+                this.y = this.emptyMech.y;
+                this.width = MECH_WIDTH;
+                this.height = MECH_HEIGHT;
+                
+                // Remove empty mech
+                this.emptyMech.dead = true;
+                const idx = gameState.entities.indexOf(this.emptyMech);
+                if (idx > -1) gameState.entities.splice(idx, 1);
+                this.emptyMech = null;
+                
+                spawnExplosion(this.x, this.y, 5);
+            }
+        }
+    }
+    
+    update(p) { // Ensure p is received
+        this.p = p; // Store p5 instance
+        if (this.cooldown > 0) this.cooldown--;
+        if (this.invincibleTimer > 0) this.invincibleTimer--;
+        
+        // Physics logic
+        this.updatePhysics();
+        
+        // Log info for player
+        if (p.frameCount % 60 === 0) {
+            p.logs.player_info.push({
+                x: this.x,
+                y: this.y,
+                mode: this.mode,
+                health: this.mode === 'MECH' ? this.mechHealth : this.catHealth
+            });
+        }
+        
+        if (this.y > CANVAS_HEIGHT + 200) {
+            // Fell off world
+            this.takeDamage(999);
+        }
+    }
+    
+    takeDamage(amount) {
+        if (this.invincibleTimer > 0) return;
+        
+        if (this.mode === 'MECH') {
+            this.mechHealth -= amount;
+            gameState.cameraShake = 5;
+            spawnExplosion(this.x + this.width/2, this.y + this.height/2, 5);
+            if (this.mechHealth <= 0) {
+                // Force eject or die
+                // For simplicity, mech explodes and you are forced to cat mode or game over?
+                // Game Over if mech dies for now, or just critical damage
+                gameState.gamePhase = "GAME_OVER_LOSE";
+                spawnExplosion(this.x, this.y, 30);
+            } else {
+                this.invincibleTimer = 60;
+            }
+        } else {
+            this.catHealth--;
+            gameState.cameraShake = 5;
+            if (this.catHealth <= 0) {
+                gameState.gamePhase = "GAME_OVER_LOSE";
+            } else {
+                this.invincibleTimer = 60;
+            }
+        }
+    }
+    
+    renderAt(p, x, y) {
+        if (this.invincibleTimer > 0 && Math.floor(gameState.frameCount / 4) % 2 === 0) return;
+        
+        p.push();
+        p.translate(x, y);
+        
+        // Flip if facing left
+        if (this.facing === -1) {
+            p.translate(this.width, 0);
+            p.scale(-1, 1);
+        }
+        
+        if (this.mode === 'MECH') {
+            // Draw Mech
+            p.fill(200);
+            p.stroke(0);
+            p.strokeWeight(2);
+            p.rect(0, 0, this.width, this.height, 4);
+            
+            // Cockpit
+            p.fill(0);
+            p.rect(4, 4, this.width - 8, 12, 2);
+            
+            // Arm cannon
+            p.fill(150);
+            p.rect(10, 20, 20, 10);
+            
+            // Legs
+            p.fill(100);
+            const legOffset = Math.sin(gameState.frameCount * 0.2) * 5 * (Math.abs(this.vx) > 0 ? 1 : 0);
+            p.rect(4 + legOffset, this.height - 10, 8, 10);
+            p.rect(this.width - 12 - legOffset, this.height - 10, 8, 10);
+            
+        } else {
+            // Draw Cat
+            p.fill(255, 150, 50); // Orange
+            p.noStroke();
+            p.rect(0, 4, this.width, this.height - 4);
+            
+            // Ears
+            p.triangle(0, 4, 4, 0, 5, 4);
+            p.triangle(this.width, 4, this.width - 4, 0, this.width - 5, 4);
+            
+            // Tail
+            p.stroke(255, 150, 50);
+            p.strokeWeight(2);
+            const tailWag = Math.sin(gameState.frameCount * 0.5) * 5;
+            p.line(0, this.height - 4, -5, this.height - 10 + tailWag);
+        }
+        
+        p.pop();
+    }
+}
+
+export class EmptyMech extends Entity {
+    constructor(x, y, health) {
+        super(x, y, MECH_WIDTH, MECH_HEIGHT);
+        this.health = health;
+    }
+    
+    update() {
+        this.updatePhysics();
+    }
+    
+    renderAt(p, x, y) {
+        p.push();
+        p.translate(x, y);
+        p.fill(100);
+        p.stroke(50);
+        p.rect(0, 0, this.width, this.height, 4);
+        
+        // Open Cockpit
+        p.fill(20);
+        p.rect(4, 2, this.width - 8, 12, 2);
+        
+        // Blinking light
+        if (Math.floor(gameState.frameCount / 30) % 2 === 0) {
+            p.fill(255, 0, 0);
+            p.circle(this.width / 2, -5, 4);
+        }
+        
+        p.pop();
+    }
+}
+
+export class Enemy extends Entity {
+    constructor(x, y, type = 'WALKER') {
+        super(x, y, 30, 30);
+        this.type = type;
+        this.speed = 1.5;
+        this.health = 30;
+        this.vx = -this.speed; // Start moving left
+        this.patrolDistance = 0;
+        this.maxPatrol = 100;
+        
+        if (type === 'FLYER') {
+            this.vx = 0;
+            this.vy = 0;
+            this.startY = y;
+        }
+    }
+    
+    update(p) { // Ensure p is received
+        if (this.type === 'WALKER') {
+            // Simple Patrol
+            this.updatePhysics();
+            
+            // Turn around at walls or edges
+            if (this.vx === 0 && Math.abs(this.prevX - this.x) < 0.1) {
+                this.vx = -this.vx || this.speed; // Flip or start
+            }
+            
+            // AI: Turn around if about to fall (optional, simple bounce for now)
+            
+        } else if (this.type === 'FLYER') {
+            // Bob and weave
+            this.y = this.startY + Math.sin(gameState.frameCount * 0.05) * 30;
+            
+            // Move towards player slowly if close
+            if (gameState.player) {
+                const dx = gameState.player.x - this.x;
+                if (Math.abs(dx) < 300) {
+                    this.x += Math.sign(dx) * 1;
+                }
+            }
+        }
+        
+        // Collision with player
+        if (gameState.player && checkEntityCollision(p, this, gameState.player)) { // Pass p here
+            gameState.player.takeDamage(10);
+            // Bounce enemy back
+            if (this.type === 'WALKER') {
+                this.vx = -this.vx;
+            }
+        }
+    }
+    
+    takeDamage(amount) {
+        this.health -= amount;
+        spawnExplosion(this.x + this.width/2, this.y + this.height/2, 3);
+        if (this.health <= 0) {
+            this.dead = true;
+            gameState.score += 100;
+        }
+    }
+    
+    renderAt(p, x, y) {
+        p.push();
+        p.translate(x, y);
+        
+        if (this.type === 'WALKER') {
+            p.fill(200, 50, 50);
+            p.rect(0, 0, this.width, this.height);
+            // Eye
+            p.fill(255, 255, 0);
+            p.rect(this.vx > 0 ? 15 : 5, 5, 10, 5);
+        } else {
+            p.fill(150, 50, 200);
+            p.circle(this.width/2, this.height/2, this.width);
+            // Wings
+            p.fill(200, 100, 255);
+            const flap = Math.sin(gameState.frameCount * 0.5) * 10;
+            p.triangle(0, 10, -10, 5 + flap, 0, 20);
+            p.triangle(this.width, 10, this.width + 10, 5 + flap, this.width, 20);
+        }
+        p.pop();
+    }
+}
+
+export class Projectile extends Entity {
+    constructor(x, y, dir) {
+        super(x, y, 10, 4);
+        this.vx = dir * 10;
+        this.damage = 10;
+        this.life = 60; // frames
+    }
+    
+    update(p) { // Ensure p is received
+        this.x += this.vx;
+        this.life--;
+        
+        if (this.life <= 0) this.dead = true;
+        
+        // Hit enemies
+        for (let enemy of gameState.enemies) {
+            if (checkEntityCollision(p, this, enemy)) { // Pass p here
+                enemy.takeDamage(this.damage);
+                this.dead = true;
+                return;
+            }
+        }
+        
+        // Hit walls
+        for (let plat of gameState.platforms) {
+            if (checkEntityCollision(p, this, plat)) { // Pass p here
+                this.dead = true;
+                spawnExplosion(this.x, this.y, 2);
+                return;
+            }
+        }
+    }
+    
+    renderAt(p, x, y) {
+        p.fill(0, 255, 255);
+        p.noStroke();
+        p.rect(x, y, this.width, this.height);
+    }
+}
+
+export class Collectible extends Entity {
+    constructor(x, y, type) {
+        super(x, y, 20, 20);
+        this.type = type; // 'HEALTH', 'GOAL'
+    }
+    
+    update(p) { // Ensure p is received
+        if (gameState.player && checkEntityCollision(p, this, gameState.player)) { // Pass p here
+            if (this.type === 'GOAL') {
+                gameState.gamePhase = "GAME_OVER_WIN";
+            } else if (this.type === 'HEALTH') {
+                if (gameState.player.mode === 'MECH') gameState.player.mechHealth = Math.min(100, gameState.player.mechHealth + 25);
+                this.dead = true;
+            }
+        }
+    }
+    
+    renderAt(p, x, y) {
+        const offset = Math.sin(gameState.frameCount * 0.1) * 5;
+        p.push();
+        p.translate(x, y + offset);
+        
+        if (this.type === 'GOAL') {
+            p.fill(0, 255, 0);
+            p.rect(0, 0, 30, 40);
+            p.fill(255);
+            p.textSize(10);
+            p.textAlign(p.CENTER, p.CENTER);
+            p.text("SHIP", 15, 20);
+        } else {
+            p.fill(255, 100, 100);
+            p.circle(10, 10, 15);
+            p.fill(255);
+            p.rect(8, 5, 4, 10);
+            p.rect(5, 8, 10, 4);
+        }
+        
+        p.pop();
+    }
+}
+</file>
+
+<file name="physics.js">
+// Removed: import { collideRectRect } from 'https://cdn.jsdelivr.net/npm/p5.collide2d@1.0.0/+esm';
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export class AABB {
+    constructor(x, y, w, h) {
+        this.x = x;
+        this.y = y;
+        this.w = w;
+        this.h = h;
+    }
+}
+
+export function checkCollisions(entity) {
+    // Wall/Ground Collisions
+    entity.onGround = false;
+    entity.pushRight = false;
+    entity.pushLeft = false;
+    entity.pushTop = false;
+
+    // Check against Platforms
+    for (let plat of gameState.platforms) {
+        // Broad phase check using simple AABB expansion
+        if (entity.x + entity.width + Math.abs(entity.vx) > plat.x &&
+            entity.x - Math.abs(entity.vx) < plat.x + plat.width &&
+            entity.y + entity.height + Math.abs(entity.vy) > plat.y &&
+            entity.y - Math.abs(entity.vy) < plat.y + plat.height) {
+            
+            resolveCollision(entity, plat);
+        }
+    }
+
+    // Screen Bounds
+    if (entity.x < 0) {
+        entity.x = 0;
+        entity.vx = 0;
+    }
+    // Don't clamp right side to allow level progression, but level should have walls
+}
+
+function resolveCollision(entity, obstacle) {
+    // Previous positions
+    const prevBottom = entity.prevY + entity.height;
+    const prevTop = entity.prevY;
+    const prevRight = entity.prevX + entity.width;
+    const prevLeft = entity.prevX;
+
+    const bottom = entity.y + entity.height;
+    const top = entity.y;
+    const right = entity.x + entity.width;
+    const left = entity.x;
+
+    // Determine direction of collision based on previous frame relative position
+    
+    // Landing on top
+    if (prevBottom <= obstacle.y && bottom >= obstacle.y) {
+        entity.y = obstacle.y - entity.height;
+        entity.vy = 0;
+        entity.onGround = true;
+        return;
+    }
+    
+    // Hitting bottom (ceiling)
+    if (prevTop >= obstacle.y + obstacle.height && top <= obstacle.y + obstacle.height) {
+        entity.y = obstacle.y + obstacle.height;
+        entity.vy = 0;
+        return;
+    }
+    
+    // Hitting left side of obstacle
+    if (prevRight <= obstacle.x && right >= obstacle.x) {
+        entity.x = obstacle.x - entity.width;
+        entity.vx = 0;
+        return;
+    }
+    
+    // Hitting right side of obstacle
+    if (prevLeft >= obstacle.x + obstacle.width && left <= obstacle.x + obstacle.width) {
+        entity.x = obstacle.x + obstacle.width;
+        entity.vx = 0;
+        return;
+    }
+}
+
+export function checkEntityCollision(p, ent1, ent2) {
+    // Use the p5 instance's collideRectRect function
+    return p.collideRectRect(ent1.x, ent1.y, ent1.width, ent1.height, ent2.x, ent2.y, ent2.width, ent2.height);
+}
+</file>
+
+<file name="particles.js">
+import { gameState } from './globals.js';
+
+export class Particle {
+    constructor(x, y, type) {
+        this.x = x;
+        this.y = y;
+        this.type = type;
+        this.life = 1.0;
+        this.decay = 0.05;
+        
+        if (type === 'EXPLOSION') {
+            this.vx = (Math.random() - 0.5) * 6;
+            this.vy = (Math.random() - 0.5) * 6;
+            this.size = Math.random() * 15 + 5;
+            this.color = [255, 200, 0];
+        } else if (type === 'SMOKE') {
+            this.vx = (Math.random() - 0.5) * 2;
+            this.vy = -Math.random() * 2 - 1;
+            this.size = Math.random() * 8 + 4;
+            this.color = [100, 100, 100];
+            this.decay = 0.02;
+        } else if (type === 'JUMP_DUST') {
+            this.vx = (Math.random() - 0.5) * 4;
+            this.vy = 0;
+            this.size = Math.random() * 6 + 2;
+            this.color = [200, 200, 200];
+            this.decay = 0.1;
+        } else if (type === 'SPARK') {
+            this.vx = (Math.random() - 0.5) * 10;
+            this.vy = (Math.random() - 0.5) * 10;
+            this.size = 3;
+            this.color = [0, 255, 255];
+            this.decay = 0.1;
+        }
+    }
+    
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.life -= this.decay;
+        
+        if (this.type === 'EXPLOSION') {
+            this.size *= 0.9;
+        } else if (this.type === 'SMOKE') {
+            this.size *= 1.05;
+            this.vx *= 0.9;
+        }
+    }
+    
+    render(p) {
+        if (this.life <= 0) return;
+        
+        p.push();
+        p.noStroke();
+        p.fill(this.color[0], this.color[1], this.color[2], this.life * 255);
+        
+        if (this.type === 'SPARK') {
+            p.rect(this.x, this.y, this.size, this.size);
+        } else {
+            p.circle(this.x, this.y, this.size);
+        }
+        
+        p.pop();
+    }
+}
+
+export function spawnExplosion(x, y, count = 10) {
+    for (let i = 0; i < count; i++) {
+        gameState.particles.push(new Particle(x, y, 'EXPLOSION'));
+    }
+    for (let i = 0; i < count / 2; i++) {
+        gameState.particles.push(new Particle(x, y, 'SMOKE'));
+    }
+}
+</file>
+
+<file name="input.js">
+import { gameState } from './globals.js';
+import { get_automated_testing_action } from './automated_testing_controller.js';
+
+// Key Codes
+const K_LEFT = 37;
+const K_UP = 38;
+const K_RIGHT = 39;
+const K_DOWN = 40;
+const K_SPACE = 32;
+const K_SHIFT = 16;
+const K_Z = 90;
+const K_ENTER = 13;
+const K_ESC = 27;
+const K_R = 82;
+
+export function initInput(p) {
+    p.keyPressed = function() {
+        gameState.keys[p.keyCode] = true;
+        
+        // Log input
+        p.logs.inputs.push({
+            type: 'press',
+            keyCode: p.keyCode,
+            frame: p.frameCount
+        });
+
+        handlePhaseInput(p.keyCode, p);
+    };
+
+    p.keyReleased = function() {
+        gameState.keys[p.keyCode] = false;
+        
+        p.logs.inputs.push({
+            type: 'release',
+            keyCode: p.keyCode,
+            frame: p.frameCount
+        });
+    };
+}
+
+function handlePhaseInput(code, p) {
+    // Handle Global Phase transitions
+    if (code === K_ENTER) {
+        if (gameState.gamePhase === "START") {
+            gameState.gamePhase = "PLAYING";
+            initGame(p);
+        }
+    }
+    
+    if (code === K_ESC) {
+        if (gameState.gamePhase === "PLAYING") {
+            gameState.gamePhase = "PAUSED";
+        } else if (gameState.gamePhase === "PAUSED") {
+            gameState.gamePhase = "PLAYING";
+        }
+    }
+    
+    if (code === K_R) {
+        if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") {
+            gameState.gamePhase = "START";
+        }
+    }
+}
+
+// Function to reset/init game (hoisted/imported logic wrapper)
+let initGameCallback = null;
+export function setInitGameCallback(cb) {
+    initGameCallback = cb;
+}
+
+function initGame(p) {
+    if (initGameCallback) initGameCallback(p);
+}
+
+export function handleInput(p) {
+    // Determine active input source
+    let inputs = {};
+    
+    if (gameState.controlMode === "HUMAN") {
+        inputs = {
+            left: gameState.keys[K_LEFT],
+            right: gameState.keys[K_RIGHT],
+            up: gameState.keys[K_UP],
+            down: gameState.keys[K_DOWN],
+            jump: gameState.keys[K_SPACE],
+            fire: gameState.keys[K_Z],
+            action: gameState.keys[K_SHIFT] // Eject or Enter
+        };
+    } else {
+        // Automated Test Inputs
+        const action = get_automated_testing_action(gameState);
+        if (action) {
+            // Map action keyCode to logical input
+            inputs = {
+                left: action.keyCode === K_LEFT,
+                right: action.keyCode === K_RIGHT,
+                up: action.keyCode === K_UP,
+                down: action.keyCode === K_DOWN,
+                jump: action.keyCode === K_SPACE,
+                fire: action.keyCode === K_Z,
+                action: action.keyCode === K_SHIFT
+            };
+        }
+    }
+    
+    // Pass inputs to player
+    if (gameState.player && gameState.gamePhase === "PLAYING") {
+        gameState.player.handleInput(inputs);
+    }
+}
+</file>
+
+<file name="level.js">
+import { gameState, CANVAS_HEIGHT } from './globals.js';
+import { Player, Enemy, Collectible } from './entities.js';
+
+export class Platform {
+    constructor(x, y, w, h) {
+        this.x = x;
+        this.y = y;
+        this.width = w;
+        this.height = h;
+    }
+}
+
+export function generateLevel() {
+    gameState.entities = [];
+    gameState.platforms = [];
+    gameState.enemies = [];
+    gameState.projectiles = [];
+    gameState.particles = [];
+    gameState.collectibles = [];
+    
+    // Create Ground
+    createPlatform(0, CANVAS_HEIGHT - 40, 3000, 40);
+    
+    // Walls
+    createPlatform(-20, 0, 20, CANVAS_HEIGHT * 2);
+    createPlatform(3000, 0, 20, CANVAS_HEIGHT * 2);
+    
+    // Level Design
+    // 1. Initial platforms
+    createPlatform(300, 250, 100, 20);
+    createPlatform(500, 200, 100, 20);
+    
+    // 2. High wall requiring jump
+    createPlatform(700, 200, 50, 200);
+    
+    // 3. Floating islands
+    createPlatform(800, 150, 200, 20);
+    createPlatform(1100, 250, 150, 20);
+    
+    // 4. Tunnel section (Cat specific area, technically optional for win, but good for bonus)
+    // A low ceiling tunnel
+    createPlatform(1300, 200, 400, 20); // Ceiling
+    createPlatform(1300, 250, 400, 20); // Floor (tight squeeze 30px, Mech is 48px)
+    // Wait, if Mech is 48 high, gap needs to be < 48 to block it. 
+    // Gap: 250 - (200 + 20) = 30px. Mech height 48. Cat height 14. Perfect.
+    
+    // Route above tunnel for Mech?
+    createPlatform(1300, 100, 100, 20);
+    createPlatform(1500, 100, 100, 20);
+    
+    // 5. Boss/End area
+    createPlatform(1800, 200, 200, 20);
+    createPlatform(2100, 300, 300, 20);
+    
+    // Entities
+    gameState.player = new Player(100, 300);
+    gameState.entities.push(gameState.player);
+    
+    // Enemies
+    gameState.enemies.push(new Enemy(500, 100, 'FLYER'));
+    gameState.enemies.push(new Enemy(900, 120, 'WALKER'));
+    gameState.enemies.push(new Enemy(1400, 220, 'WALKER')); // In tunnel? No, walker fits? Walker is 30x30, fits exactly.
+    gameState.enemies.push(new Enemy(1900, 150, 'FLYER'));
+    
+    gameState.enemies.forEach(e => gameState.entities.push(e));
+    
+    // Collectibles
+    const ship = new Collectible(2300, 250, 'GOAL');
+    gameState.collectibles.push(ship);
+    gameState.entities.push(ship);
+    
+    const hp = new Collectible(1500, 225, 'HEALTH'); // Inside tunnel
+    gameState.collectibles.push(hp);
+    gameState.entities.push(hp);
+}
+
+function createPlatform(x, y, w, h) {
+    gameState.platforms.push(new Platform(x, y, w, h));
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

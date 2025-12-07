@@ -34,6 +34,15 @@ Write the automated testing plan:
 - Do NOT leave placeholder comments like "// TODO" or "// implement later"
 - Write COMPREHENSIVE code - be thorough and detailed
 
+**TARGET CODE LENGTH:**
+- Aim for 2000+ total lines of code across all files
+- Each major file (game.js, entities.js) should be 400-800+ lines
+- Smaller utility files (physics.js, input.js, ui.js) should be 100-300+ lines each
+- Include extensive helper functions, utility methods, and edge case handling
+- Add detailed comments and documentation throughout
+- Implement multiple entity types, complex game mechanics, and rich interactions
+- DO NOT stop early - use the full token budget to create comprehensive, production-quality code
+
 <code filename="{name}.{extension}">
 ... (javascript code - be COMPREHENSIVE and COMPLETE)
 </code>

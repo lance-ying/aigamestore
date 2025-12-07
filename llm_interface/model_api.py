@@ -74,13 +74,14 @@ class ModelAPI:
     ) -> Union[str, Dict[str, Any]]:
         messages: List[Dict[str, str]] = []
 
-        MAX_ALLOWED_TOKENS = 40000
+        # Model-specific maximum token limits
         model_max_tokens = {
             "openai": {"o3-mini": 100000, "o4-mini": 100000},
             "anthropic": {
                 "claude-3-5-sonnet-20241022": 8192,
                 "claude-3-7-sonnet-20250219": 128000,
                 "claude-sonnet-4-20250514": 128000,
+                "claude-4.5-sonnet": 128000,  # Add common alias
             },
             "google": {
                 "gemini-2.0-flash": 8192,
@@ -91,9 +92,32 @@ class ModelAPI:
             },
         }
 
+        # Get model-specific max tokens limit
+        model_limit = None
+        if self.model_provider in model_max_tokens:
+            provider_models = model_max_tokens[self.model_provider]
+            # Try exact match first
+            if self.model in provider_models:
+                model_limit = provider_models[self.model]
+            else:
+                # Try partial match (e.g., "claude-4.5-sonnet" might match "claude-sonnet-4-20250514")
+                for model_key, limit in provider_models.items():
+                    if self.model in model_key or model_key in self.model:
+                        model_limit = limit
+                        break
+
+        # Determine the effective max_tokens
         if max_tokens is None:
-            max_tokens = 40000
-        max_tokens = min(MAX_ALLOWED_TOKENS, max_tokens)
+            # Use model limit if available, otherwise default to 40k
+            max_tokens = model_limit if model_limit else 40000
+        else:
+            # If config specifies max_tokens, respect it but cap at model's limit
+            if model_limit:
+                max_tokens = min(model_limit, max_tokens)
+            # If no model limit found, allow config value (but warn if very high)
+            elif max_tokens > 100000:
+                # Very high values without known model limit - cap at 131k for safety
+                max_tokens = min(131072, max_tokens)
 
         if thinking and thinking_budget:
             max_tokens = max(1, max_tokens - thinking_budget)
@@ -283,6 +307,7 @@ class ModelAPI:
                 prompt = self._format_messages_for_gemini(messages)
                 try:
                     result_text = ""
+                    finish_reason = None
                     for chunk in model.generate_content(
                         prompt,
                         generation_config={"max_output_tokens": max_tokens, "temperature": temperature, **kwargs},
@@ -293,6 +318,13 @@ class ModelAPI:
                             if verbose and piece:
                                 print(piece, end="", flush=True)
                             result_text += piece
+                        # Capture finish reason if available
+                        try:
+                            candidates = getattr(chunk, "candidates", [])
+                            if candidates and len(candidates) > 0:
+                                finish_reason = getattr(candidates[0], "finish_reason", None)
+                        except Exception:
+                            pass
                         # Attempt to capture usage metadata if present on chunks
                         try:
                             usage_md = getattr(chunk, "usage_metadata", None)
@@ -310,13 +342,22 @@ class ModelAPI:
                             pass
                     if verbose:
                         print()
+                    if finish_reason and verbose:
+                        print(f"\n[Finish reason: {finish_reason}, Max tokens: {max_tokens}, Used: {completion_tokens if completion_tokens else 'unknown'}]", flush=True)
                 except Exception:
                     response = model.generate_content(
                         prompt,
                         generation_config={"max_output_tokens": max_tokens, "temperature": temperature, **kwargs},
                     )
                     result_text = getattr(response, "text", None) or ""  # Handle None case
-                    # Capture usage metadata for non-streaming response
+                    # Capture finish reason and usage metadata for non-streaming response
+                    finish_reason = None
+                    try:
+                        candidates = getattr(response, "candidates", [])
+                        if candidates and len(candidates) > 0:
+                            finish_reason = getattr(candidates[0], "finish_reason", None)
+                    except Exception:
+                        pass
                     try:
                         usage_md = getattr(response, "usage_metadata", None)
                         if usage_md is not None:
@@ -331,6 +372,8 @@ class ModelAPI:
                                 total_tokens = tt
                     except Exception:
                         pass
+                    if finish_reason and verbose:
+                        print(f"\n[Finish reason: {finish_reason}, Max tokens: {max_tokens}, Used: {completion_tokens if completion_tokens else 'unknown'}]", flush=True)
                 # Ensure result_text is always a string
                 if result_text is None:
                     result_text = ""

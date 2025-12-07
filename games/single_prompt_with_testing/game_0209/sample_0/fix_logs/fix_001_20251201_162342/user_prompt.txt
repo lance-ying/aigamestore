@@ -1,0 +1,2098 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+can you make it so that I can jump off ladders? 
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">Spelunky Cave Explorer</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Basic Testing)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Win Strategy)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Explore dangerous procedurally-generated caves filled with treasures, traps, and enemies! As a daring spelunker, descend through multiple levels collecting gems and gold while avoiding deadly hazards. Use bombs to blast through obstacles and ropes to navigate carefully. Defeat or avoid monsters, discover secret areas, and try to reach the exit alive. Each run is unique with randomized layouts - how far can you delve into the depths?</p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">
+        <strong>Arrow Left/Right:</strong> Move left and right<br>
+        <strong>Arrow Up:</strong> Climb ladders, enter doors, use rope<br>
+        <strong>Arrow Down:</strong> Crouch, descend through platforms<br>
+        <strong>Space:</strong> Jump<br>
+        <strong>Z:</strong> Throw bomb (if available)<br>
+        <strong>Shift:</strong> Use rope (if available)
+      </p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="automated_testing_controller.js">
+// automated_testing_controller.js - Automated testing AI
+
+import { gameState } from './globals.js';
+import { worldToTile, getTile, isSolid, distance } from './utils.js';
+
+// Simple A* pathfinding for TEST_2
+class PathNode {
+  constructor(x, y, g, h, parent) {
+    this.x = x;
+    this.y = y;
+    this.g = g; // Cost from start
+    this.h = h; // Heuristic to goal
+    this.f = g + h; // Total cost
+    this.parent = parent;
+  }
+}
+
+function heuristic(x1, y1, x2, y2) {
+  return Math.abs(x2 - x1) + Math.abs(y2 - y1);
+}
+
+function findPath(startX, startY, goalX, goalY) {
+  const openList = [];
+  const closedList = new Set();
+  
+  const startNode = new PathNode(startX, startY, 0, heuristic(startX, startY, goalX, goalY), null);
+  openList.push(startNode);
+  
+  let iterations = 0;
+  const maxIterations = 500;
+  
+  while (openList.length > 0 && iterations < maxIterations) {
+    iterations++;
+    
+    // Find node with lowest f cost
+    openList.sort((a, b) => a.f - b.f);
+    const current = openList.shift();
+    
+    // Check if reached goal
+    if (Math.abs(current.x - goalX) < 2 && Math.abs(current.y - goalY) < 2) {
+      // Reconstruct path
+      const path = [];
+      let node = current;
+      while (node) {
+        path.unshift({ x: node.x, y: node.y });
+        node = node.parent;
+      }
+      return path;
+    }
+    
+    closedList.add(`${current.x},${current.y}`);
+    
+    // Check neighbors
+    const neighbors = [
+      { dx: -1, dy: 0 },  // Left
+      { dx: 1, dy: 0 },   // Right
+      { dx: 0, dy: -1 },  // Up
+      { dx: 0, dy: 1 }    // Down
+    ];
+    
+    for (const { dx, dy } of neighbors) {
+      const nx = current.x + dx * 20;
+      const ny = current.y + dy * 20;
+      const key = `${nx},${ny}`;
+      
+      if (closedList.has(key)) continue;
+      
+      const { tx, ty } = worldToTile(nx, ny);
+      if (isSolid(tx, ty)) continue;
+      
+      const g = current.g + 1;
+      const h = heuristic(nx, ny, goalX, goalY);
+      const neighbor = new PathNode(nx, ny, g, h, current);
+      
+      const existingIndex = openList.findIndex(n => n.x === nx && n.y === ny);
+      if (existingIndex === -1 || g < openList[existingIndex].g) {
+        if (existingIndex !== -1) {
+          openList.splice(existingIndex, 1);
+        }
+        openList.push(neighbor);
+      }
+    }
+  }
+  
+  return null; // No path found
+}
+
+function getTestWinAction(gameState) {
+  if (!gameState.player) return null;
+  
+  // Priority 1: Collect gems
+  if (gameState.gemsCollected < gameState.totalGems) {
+    // Find nearest uncollected gem
+    let nearestGem = null;
+    let minDist = Infinity;
+    
+    for (const gem of gameState.gems) {
+      if (!gem.collected) {
+        const dist = distance(gameState.player.x, gameState.player.y, gem.x, gem.y);
+        if (dist < minDist) {
+          minDist = dist;
+          nearestGem = gem;
+        }
+      }
+    }
+    
+    if (nearestGem) {
+      // Move towards gem
+      const dx = nearestGem.x - gameState.player.x;
+      const dy = nearestGem.y - gameState.player.y;
+      
+      if (Math.abs(dx) > 10) {
+        return { keyCode: dx > 0 ? 39 : 37 }; // Right or Left
+      } else if (dy < -20) {
+        return { keyCode: 32 }; // Jump up
+      } else if (dy > 20) {
+        return { keyCode: 40 }; // Down
+      }
+    }
+  }
+  
+  // Priority 2: Go to exit door
+  if (gameState.exitDoor && gameState.exitDoor.unlocked) {
+    const dx = gameState.exitDoor.x - gameState.player.x;
+    const dy = gameState.exitDoor.y - gameState.player.y;
+    
+    const dist = distance(gameState.player.x, gameState.player.y, 
+                         gameState.exitDoor.x, gameState.exitDoor.y);
+    
+    if (dist < 30) {
+      return { keyCode: 38 }; // Enter door
+    }
+    
+    if (Math.abs(dx) > 10) {
+      return { keyCode: dx > 0 ? 39 : 37 }; // Right or Left
+    } else if (dy < -20 && gameState.player.onGround) {
+      return { keyCode: 32 }; // Jump
+    }
+  }
+  
+  // Default: explore right
+  return { keyCode: 39 };
+}
+
+function getBasicTestingAction(gameState) {
+  if (!gameState.player) return null;
+  
+  // Random movement with some structure
+  const actions = [];
+  
+  // Favor horizontal movement
+  actions.push({ keyCode: 37, weight: 3 }); // Left
+  actions.push({ keyCode: 39, weight: 3 }); // Right
+  
+  // Occasional jumps
+  if (gameState.player.onGround && Math.random() < 0.1) {
+    actions.push({ keyCode: 32, weight: 2 }); // Jump
+  }
+  
+  // Climb ladders if on one
+  if (gameState.player.onLadder) {
+    actions.push({ keyCode: 38, weight: 2 }); // Up
+    actions.push({ keyCode: 40, weight: 2 }); // Down
+  }
+  
+  // Use items occasionally
+  if (gameState.player.bombs > 0 && Math.random() < 0.05) {
+    actions.push({ keyCode: 90, weight: 1 }); // Bomb
+  }
+  
+  if (gameState.player.ropes > 0 && Math.random() < 0.05) {
+    actions.push({ keyCode: 16, weight: 1 }); // Rope
+  }
+  
+  // Weighted random selection
+  const totalWeight = actions.reduce((sum, a) => sum + a.weight, 0);
+  let random = Math.random() * totalWeight;
+  
+  for (const action of actions) {
+    random -= action.weight;
+    if (random <= 0) {
+      return { keyCode: action.keyCode };
+    }
+  }
+  
+  return actions.length > 0 ? actions[0] : null;
+}
+
+export function get_automated_testing_action(gameState) {
+  switch (gameState.controlMode) {
+    case "TEST_1":
+      return getBasicTestingAction(gameState);
+    case "TEST_2":
+      return getTestWinAction(gameState);
+    default:
+      return null;
+  }
+}
+
+window.get_automated_testing_action = get_automated_testing_action;
+</file>
+
+<file name="globals.js">
+// globals.js - Global constants and game state
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+// Tile system
+export const TILE_SIZE = 20;
+export const GRID_WIDTH = Math.floor(CANVAS_WIDTH / TILE_SIZE);
+export const GRID_HEIGHT = Math.floor(CANVAS_HEIGHT / TILE_SIZE);
+
+// Game constants
+export const PLAYER_SPEED = 3;
+export const PLAYER_JUMP_POWER = -8;
+export const GRAVITY = 0.4;
+export const MAX_FALL_SPEED = 10;
+export const BOMB_TIMER = 90; // frames
+export const BOMB_RADIUS = 40;
+export const STARTING_BOMBS = 4;
+export const STARTING_ROPES = 4;
+export const STARTING_HEALTH = 4;
+
+// Tile types
+export const TILE_EMPTY = 0;
+export const TILE_SOLID = 1;
+export const TILE_DESTRUCTIBLE = 2;
+export const TILE_LADDER = 3;
+export const TILE_PLATFORM = 4; // One-way platform
+
+// Game state object
+export const gameState = {
+  player: null,
+  entities: [],
+  score: 0,
+  gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+  controlMode: "HUMAN", // HUMAN, TEST_1, TEST_2, etc.
+  
+  // Level data
+  tiles: [],
+  levelWidth: GRID_WIDTH,
+  levelHeight: GRID_HEIGHT,
+  
+  // Entity arrays
+  gems: [],
+  enemies: [],
+  bombs: [],
+  ropes: [],
+  particles: [],
+  explosions: [],
+  
+  // Exit door
+  exitDoor: null,
+  
+  // Camera
+  cameraX: 0,
+  cameraY: 0,
+  
+  // Physics
+  gravity: GRAVITY,
+  
+  // Frame tracking
+  frameCount: 0,
+  lastFrameTime: 0,
+  deltaTime: 0,
+  
+  // Level generation
+  currentLevel: 1,
+  gemsCollected: 0,
+  totalGems: 0,
+  
+  // Animation frame counter
+  animationFrame: 0
+};
+
+// Expose getGameState globally
+export function getGameState() {
+  return gameState;
+}
+
+window.getGameState = getGameState;
+</file>
+
+<file name="game.js">
+// game.js - Main game file with p5.js instance mode
+
+import { 
+  gameState, 
+  CANVAS_WIDTH, 
+  CANVAS_HEIGHT,
+  getGameState 
+} from './globals.js';
+import { setupInput, handleInput } from './input.js';
+import { renderGame } from './render.js';
+import { renderStartScreen, renderPausedOverlay, renderGameOver } from './ui.js';
+import { get_automated_testing_action } from './automated_testing_controller.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+  // Initialize logs - DO NOT RESET DURING GAME
+  p.logs = {
+    "game_info": [],
+    "inputs": [],
+    "player_info": []
+  };
+  
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(60);
+    p.randomSeed(42); // Set seed once
+    
+    // Initialize game state
+    gameState.gamePhase = "START";
+    gameState.controlMode = "HUMAN";
+    gameState.lastFrameTime = p.millis();
+    
+    // Setup input handlers
+    setupInput(p);
+    
+    // Log initial state
+    p.logs.game_info.push({
+      data: { gamePhase: gameState.gamePhase },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  };
+  
+  p.draw = function() {
+    // Update frame tracking
+    gameState.frameCount = p.frameCount;
+    const currentTime = p.millis();
+    gameState.deltaTime = (currentTime - gameState.lastFrameTime) / 1000;
+    gameState.lastFrameTime = currentTime;
+    gameState.animationFrame++;
+    
+    // Handle automated testing
+    if (gameState.controlMode !== "HUMAN" && gameState.gamePhase === "PLAYING") {
+      const action = get_automated_testing_action(gameState);
+      if (action && action.keyCode) {
+        // Simulate key press
+        p.keyPressed = () => {};
+        p.keyCode = action.keyCode;
+        handleInput(p);
+      }
+    }
+    
+    // Render based on game phase
+    switch (gameState.gamePhase) {
+      case "START":
+        renderStartScreen(p);
+        break;
+        
+      case "PLAYING":
+        // Handle input
+        if (gameState.controlMode === "HUMAN") {
+          handleInput(p);
+        }
+        
+        // Update game entities
+        updateGame(p);
+        
+        // Render game
+        renderGame(p);
+        break;
+        
+      case "PAUSED":
+        renderGame(p);
+        renderPausedOverlay(p);
+        break;
+        
+      case "GAME_OVER_WIN":
+      case "GAME_OVER_LOSE":
+        renderGame(p);
+        renderGameOver(p);
+        break;
+    }
+  };
+});
+
+function updateGame(p) {
+  // Update player
+  if (gameState.player) {
+    gameState.player.update(p);
+  }
+  
+  // Update gems
+  for (const gem of gameState.gems) {
+    gem.update(p);
+  }
+  
+  // Update enemies
+  for (let i = gameState.enemies.length - 1; i >= 0; i--) {
+    gameState.enemies[i].update(p);
+  }
+  
+  // Update bombs
+  for (let i = gameState.bombs.length - 1; i >= 0; i--) {
+    gameState.bombs[i].update(p);
+  }
+  
+  // Update ropes
+  for (const rope of gameState.ropes) {
+    rope.update(p);
+  }
+  
+  // Update exit door
+  if (gameState.exitDoor) {
+    gameState.exitDoor.update(p);
+  }
+  
+  // Update particles
+  for (let i = gameState.particles.length - 1; i >= 0; i--) {
+    gameState.particles[i].update(p);
+    if (gameState.particles[i].isDead()) {
+      gameState.particles.splice(i, 1);
+    }
+  }
+  
+  // Update explosions
+  for (let i = gameState.explosions.length - 1; i >= 0; i--) {
+    gameState.explosions[i].update(p);
+    if (gameState.explosions[i].isDead()) {
+      gameState.explosions.splice(i, 1);
+    }
+  }
+}
+
+// Expose game instance globally
+window.gameInstance = gameInstance;
+
+// Control mode switcher for testing
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  
+  // Update button styles
+  const buttons = document.querySelectorAll('.control-button');
+  buttons.forEach(btn => btn.classList.remove('active'));
+  
+  if (mode === 'HUMAN') {
+    document.getElementById('humanModeBtn').classList.add('active');
+  } else if (mode === 'TEST_1') {
+    document.getElementById('test_1_ModeBtn').classList.add('active');
+  } else if (mode === 'TEST_2') {
+    document.getElementById('test_2_ModeBtn').classList.add('active');
+  }
+  
+  console.log('Control mode set to:', mode);
+};
+</file>
+
+<file name="ui.js">
+// ui.js - UI rendering
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export function renderStartScreen(p) {
+  p.background(20, 15, 30);
+  
+  // Title with shadow effect
+  p.fill(0, 0, 0, 100);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(52);
+  p.text('SPELUNKY CAVE', CANVAS_WIDTH / 2 + 2, 80 + 2);
+  
+  p.fill(255, 200, 50);
+  p.textSize(52);
+  p.text('SPELUNKY CAVE', CANVAS_WIDTH / 2, 80);
+  
+  // Subtitle
+  p.fill(200, 180, 160);
+  p.textSize(18);
+  p.text('Explore • Collect • Survive', CANVAS_WIDTH / 2, 120);
+  
+  // Instructions box
+  p.fill(40, 35, 50, 200);
+  p.rect(CANVAS_WIDTH / 2 - 200, 160, 400, 160, 8);
+  
+  p.fill(255, 255, 200);
+  p.textSize(16);
+  p.textAlign(p.LEFT, p.TOP);
+  const instructionsX = CANVAS_WIDTH / 2 - 180;
+  let instructionsY = 175;
+  
+  p.text('Arrow Keys: Move and climb', instructionsX, instructionsY);
+  instructionsY += 25;
+  p.text('Space: Jump', instructionsX, instructionsY);
+  instructionsY += 25;
+  p.text('Z: Throw bomb (destroy blocks)', instructionsX, instructionsY);
+  instructionsY += 25;
+  p.text('Shift: Deploy rope (climb down)', instructionsX, instructionsY);
+  instructionsY += 25;
+  p.text('Collect all gems to unlock the exit!', instructionsX, instructionsY);
+  
+  // Start prompt (pulsing)
+  const pulseAlpha = 150 + Math.sin(gameState.frameCount * 0.1) * 100;
+  p.fill(100, 255, 100, pulseAlpha);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(24);
+  p.text('PRESS ENTER TO START', CANVAS_WIDTH / 2, CANVAS_HEIGHT - 40);
+}
+
+export function renderPausedOverlay(p) {
+  // Semi-transparent overlay
+  p.fill(0, 0, 0, 180);
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  // Paused text
+  p.fill(255, 255, 100);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text('PAUSED', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 20);
+  
+  p.fill(255);
+  p.textSize(20);
+  p.text('Press ESC to Resume', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 20);
+}
+
+export function renderGameOver(p) {
+  // Background overlay
+  p.fill(0, 0, 0, 220);
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  const isWin = gameState.gamePhase === "GAME_OVER_WIN";
+  
+  // Game over text
+  if (isWin) {
+    p.fill(100, 255, 100);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(56);
+    p.text('VICTORY!', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 80);
+    
+    p.fill(255, 255, 200);
+    p.textSize(20);
+    p.text('You escaped the caves!', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 30);
+  } else {
+    p.fill(255, 100, 100);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(56);
+    p.text('GAME OVER', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 80);
+    
+    p.fill(255, 255, 200);
+    p.textSize(20);
+    p.text('The caves claimed another soul...', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 30);
+  }
+  
+  // Final score
+  p.fill(255, 215, 0);
+  p.textSize(28);
+  p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 20);
+  
+  p.fill(200, 200, 255);
+  p.textSize(18);
+  p.text(`Gems Collected: ${gameState.gemsCollected} / ${gameState.totalGems}`, 
+         CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 55);
+  
+  // Restart instruction
+  const pulseAlpha = 150 + Math.sin(gameState.frameCount * 0.1) * 100;
+  p.fill(255, 255, 255, pulseAlpha);
+  p.textSize(20);
+  p.text('Press R to Restart', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 100);
+}
+
+export function renderHUD(p) {
+  // Background for HUD
+  p.fill(0, 0, 0, 150);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, 50);
+  
+  // Score
+  p.fill(255, 215, 0);
+  p.textAlign(p.LEFT, p.TOP);
+  p.textSize(18);
+  p.text(`Score: ${gameState.score}`, 10, 10);
+  
+  // Gems collected
+  p.fill(255, 215, 0);
+  p.text(`💎 ${gameState.gemsCollected}/${gameState.totalGems}`, 10, 28);
+  
+  if (gameState.player) {
+    // Health hearts
+    p.fill(255, 50, 50);
+    p.textAlign(p.LEFT, p.TOP);
+    p.textSize(18);
+    let heartsText = '';
+    for (let i = 0; i < gameState.player.health; i++) {
+      heartsText += '❤️';
+    }
+    p.text(heartsText, 160, 10);
+    
+    // Items inventory
+    p.fill(100, 100, 100);
+    p.textSize(16);
+    p.textAlign(p.LEFT, p.TOP);
+    
+    // Bombs
+    p.fill(255);
+    p.text(`💣 ${gameState.player.bombs}`, 160, 28);
+    
+    // Ropes
+    p.text(`🪢 ${gameState.player.ropes}`, 220, 28);
+  }
+  
+  // Exit door status
+  if (gameState.exitDoor && !gameState.exitDoor.unlocked) {
+    p.fill(255, 200, 0);
+    p.textAlign(p.RIGHT, p.TOP);
+    p.textSize(14);
+    p.text('🔒 Collect all gems!', CANVAS_WIDTH - 10, 10);
+  } else if (gameState.exitDoor && gameState.exitDoor.unlocked) {
+    p.fill(100, 255, 100);
+    p.textAlign(p.RIGHT, p.TOP);
+    p.textSize(14);
+    const pulseAlpha = 150 + Math.sin(gameState.frameCount * 0.15) * 100;
+    p.fill(100, 255, 100, pulseAlpha);
+    p.text('✓ Exit unlocked!', CANVAS_WIDTH - 10, 10);
+  }
+}
+</file>
+
+<file name="render.js">
+// render.js - Main rendering functions
+
+import { gameState, TILE_SIZE, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { getTile } from './utils.js';
+import { renderHUD, renderStartScreen, renderPausedOverlay, renderGameOver } from './ui.js';
+
+export function renderGame(p) {
+  // Background gradient
+  for (let y = 0; y < CANVAS_HEIGHT; y++) {
+    const t = y / CANVAS_HEIGHT;
+    const r = 20 + t * 10;
+    const g = 15 + t * 10;
+    const b = 30 + t * 20;
+    p.stroke(r, g, b);
+    p.line(0, y, CANVAS_WIDTH, y);
+  }
+  
+  // Render tiles
+  renderTiles(p);
+  
+  // Render exit door
+  if (gameState.exitDoor) {
+    gameState.exitDoor.render(p);
+  }
+  
+  // Render ropes
+  for (const rope of gameState.ropes) {
+    rope.render(p);
+  }
+  
+  // Render gems
+  for (const gem of gameState.gems) {
+    if (!gem.collected) {
+      gem.render(p);
+    }
+  }
+  
+  // Render enemies
+  for (const enemy of gameState.enemies) {
+    enemy.render(p);
+  }
+  
+  // Render bombs
+  for (const bomb of gameState.bombs) {
+    bomb.render(p);
+  }
+  
+  // Render player
+  if (gameState.player) {
+    gameState.player.render(p);
+  }
+  
+  // Render explosions
+  for (const explosion of gameState.explosions) {
+    explosion.render(p);
+  }
+  
+  // Render particles
+  for (const particle of gameState.particles) {
+    particle.render(p);
+  }
+  
+  // Render HUD
+  renderHUD(p);
+}
+
+function renderTiles(p) {
+  for (let y = 0; y < gameState.levelHeight; y++) {
+    for (let x = 0; x < gameState.levelWidth; x++) {
+      const tile = getTile(x, y);
+      if (tile === 0) continue; // Empty
+      
+      const worldX = x * TILE_SIZE;
+      const worldY = y * TILE_SIZE;
+      
+      p.push();
+      
+      switch (tile) {
+        case 1: // Solid
+          p.fill(80, 70, 60);
+          p.stroke(60, 50, 40);
+          p.strokeWeight(1);
+          p.rect(worldX, worldY, TILE_SIZE, TILE_SIZE);
+          // Add some texture
+          p.noStroke();
+          p.fill(90, 80, 70, 100);
+          p.circle(worldX + 5, worldY + 5, 3);
+          p.circle(worldX + 15, worldY + 12, 2);
+          break;
+          
+        case 2: // Destructible
+          p.fill(120, 100, 70);
+          p.stroke(90, 70, 50);
+          p.strokeWeight(1);
+          p.rect(worldX, worldY, TILE_SIZE, TILE_SIZE);
+          // Cracked appearance
+          p.stroke(80, 60, 40);
+          p.line(worldX + 5, worldY, worldX + 5, worldY + TILE_SIZE);
+          p.line(worldX + 15, worldY, worldX + 15, worldY + TILE_SIZE);
+          break;
+          
+        case 3: // Ladder
+          p.stroke(140, 100, 60);
+          p.strokeWeight(3);
+          p.line(worldX + 5, worldY, worldX + 5, worldY + TILE_SIZE);
+          p.line(worldX + 15, worldY, worldX + 15, worldY + TILE_SIZE);
+          p.strokeWeight(2);
+          p.line(worldX + 5, worldY + 5, worldX + 15, worldY + 5);
+          p.line(worldX + 5, worldY + 12, worldX + 15, worldY + 12);
+          p.line(worldX + 5, worldY + 19, worldX + 15, worldY + 19);
+          break;
+          
+        case 4: // Platform (one-way)
+          p.fill(100, 80, 60);
+          p.noStroke();
+          p.rect(worldX, worldY, TILE_SIZE, 4);
+          break;
+      }
+      
+      p.pop();
+    }
+  }
+}
+</file>
+
+<file name="entities.js">
+// entities.js - Game entity classes
+
+import { 
+  gameState, 
+  TILE_SIZE, 
+  PLAYER_SPEED, 
+  PLAYER_JUMP_POWER, 
+  GRAVITY,
+  MAX_FALL_SPEED,
+  STARTING_BOMBS,
+  STARTING_ROPES,
+  STARTING_HEALTH,
+  BOMB_TIMER,
+  BOMB_RADIUS
+} from './globals.js';
+import { 
+  worldToTile, 
+  getTile, 
+  isSolid, 
+  distance,
+  clamp 
+} from './utils.js';
+
+// Player class
+export class Player {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.width = 14;
+    this.height = 18;
+    this.vx = 0;
+    this.vy = 0;
+    this.onGround = false;
+    this.onLadder = false;
+    this.facing = 1; // 1 = right, -1 = left
+    this.crouching = false;
+    
+    // Game properties
+    this.health = STARTING_HEALTH;
+    this.maxHealth = STARTING_HEALTH;
+    this.bombs = STARTING_BOMBS;
+    this.ropes = STARTING_ROPES;
+    this.invulnerable = 0; // Invulnerability frames after taking damage
+    
+    // Animation
+    this.animFrame = 0;
+    this.walkCycle = 0;
+    
+    // State tracking
+    this.lastPosition = { x: x, y: y };
+    
+    gameState.player = this;
+    gameState.entities.push(this);
+  }
+  
+  update(p) {
+    // Update invulnerability
+    if (this.invulnerable > 0) {
+      this.invulnerable--;
+    }
+    
+    // Check if on ladder
+    const { tx, ty } = worldToTile(this.x, this.y);
+    this.onLadder = getTile(tx, ty) === 3;
+    
+    // Apply gravity if not on ladder
+    if (!this.onLadder) {
+      this.vy += GRAVITY;
+      this.vy = Math.min(this.vy, MAX_FALL_SPEED);
+    } else {
+      // On ladder, cancel vertical velocity if not pressing up/down
+      this.vy *= 0.7;
+    }
+    
+    // Apply horizontal velocity
+    this.x += this.vx;
+    this.checkHorizontalCollision();
+    
+    // Apply vertical velocity
+    this.y += this.vy;
+    this.checkVerticalCollision();
+    
+    // Apply friction
+    if (this.onGround) {
+      this.vx *= 0.8;
+    }
+    
+    // Update animation
+    if (Math.abs(this.vx) > 0.5) {
+      this.walkCycle += 0.2;
+    }
+    
+    // Log position if changed significantly
+    if (Math.abs(this.x - this.lastPosition.x) > 2 || 
+        Math.abs(this.y - this.lastPosition.y) > 2) {
+      this.logPosition(p);
+      this.lastPosition.x = this.x;
+      this.lastPosition.y = this.y;
+    }
+    
+    // Check for falling death
+    if (this.y > gameState.levelHeight * TILE_SIZE) {
+      this.die();
+    }
+  }
+  
+  checkHorizontalCollision() {
+    const left = this.x - this.width / 2;
+    const right = this.x + this.width / 2;
+    const top = this.y - this.height / 2;
+    const bottom = this.y + this.height / 2;
+    
+    // Check left side
+    if (this.vx < 0) {
+      const { tx: tl, ty: tt } = worldToTile(left, top + 2);
+      const { ty: tb } = worldToTile(left, bottom - 2);
+      
+      for (let ty = tt; ty <= tb; ty++) {
+        if (isSolid(tl, ty)) {
+          this.x = tl * TILE_SIZE + TILE_SIZE + this.width / 2;
+          this.vx = 0;
+          break;
+        }
+      }
+    }
+    
+    // Check right side
+    if (this.vx > 0) {
+      const { tx: tr, ty: tt } = worldToTile(right, top + 2);
+      const { ty: tb } = worldToTile(right, bottom - 2);
+      
+      for (let ty = tt; ty <= tb; ty++) {
+        if (isSolid(tr, ty)) {
+          this.x = tr * TILE_SIZE - this.width / 2;
+          this.vx = 0;
+          break;
+        }
+      }
+    }
+  }
+  
+  checkVerticalCollision() {
+    const left = this.x - this.width / 2;
+    const right = this.x + this.width / 2;
+    const top = this.y - this.height / 2;
+    const bottom = this.y + this.height / 2;
+    
+    this.onGround = false;
+    
+    // Check bottom (ground)
+    if (this.vy >= 0) {
+      const { tx: tl, ty: tb } = worldToTile(left + 2, bottom);
+      const { tx: tr } = worldToTile(right - 2, bottom);
+      
+      for (let tx = tl; tx <= tr; tx++) {
+        const tile = getTile(tx, tb);
+        // Solid or platform (can pass through platforms from below)
+        if (isSolid(tx, tb) || (tile === 4 && this.vy > 0 && bottom <= tb * TILE_SIZE + 4)) {
+          this.y = tb * TILE_SIZE - this.height / 2;
+          this.vy = 0;
+          this.onGround = true;
+          break;
+        }
+      }
+    }
+    
+    // Check top (ceiling)
+    if (this.vy < 0) {
+      const { tx: tl, ty: tt } = worldToTile(left + 2, top);
+      const { tx: tr } = worldToTile(right - 2, top);
+      
+      for (let tx = tl; tx <= tr; tx++) {
+        if (isSolid(tx, tt)) {
+          this.y = tt * TILE_SIZE + TILE_SIZE + this.height / 2;
+          this.vy = 0;
+          break;
+        }
+      }
+    }
+  }
+  
+  moveLeft() {
+    this.vx = -PLAYER_SPEED;
+    this.facing = -1;
+  }
+  
+  moveRight() {
+    this.vx = PLAYER_SPEED;
+    this.facing = 1;
+  }
+  
+  jump() {
+    if (this.onGround && !this.crouching) {
+      this.vy = PLAYER_JUMP_POWER;
+      this.onGround = false;
+    }
+  }
+  
+  climbUp() {
+    if (this.onLadder) {
+      this.vy = -2;
+    } else if (gameState.exitDoor && this.canEnterDoor()) {
+      this.enterDoor();
+    }
+  }
+  
+  climbDown() {
+    if (this.onLadder) {
+      this.vy = 2;
+    }
+    this.crouching = true;
+  }
+  
+  stopCrouching() {
+    this.crouching = false;
+  }
+  
+  canEnterDoor() {
+    if (!gameState.exitDoor) return false;
+    const dist = distance(this.x, this.y, gameState.exitDoor.x, gameState.exitDoor.y);
+    return dist < 30 && gameState.gemsCollected >= gameState.totalGems;
+  }
+  
+  enterDoor() {
+    // Win condition
+    gameState.gamePhase = "GAME_OVER_WIN";
+  }
+  
+  throwBomb(p) {
+    if (this.bombs > 0) {
+      const bombX = this.x + this.facing * 20;
+      const bombY = this.y - 5;
+      const bomb = new Bomb(bombX, bombY, this.facing * 4, -3);
+      gameState.bombs.push(bomb);
+      this.bombs--;
+      
+      if (p && p.logs) {
+        p.logs.inputs.push({
+          input_type: 'throwBomb',
+          data: { x: bombX, y: bombY },
+          framecount: gameState.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    }
+  }
+  
+  useRope(p) {
+    if (this.ropes > 0) {
+      const ropeX = this.x;
+      const ropeY = this.y;
+      const rope = new Rope(ropeX, ropeY);
+      gameState.ropes.push(rope);
+      this.ropes--;
+      
+      if (p && p.logs) {
+        p.logs.inputs.push({
+          input_type: 'useRope',
+          data: { x: ropeX, y: ropeY },
+          framecount: gameState.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    }
+  }
+  
+  takeDamage(amount) {
+    if (this.invulnerable > 0) return;
+    
+    this.health -= amount;
+    this.invulnerable = 90; // 1.5 seconds of invulnerability
+    
+    if (this.health <= 0) {
+      this.die();
+    }
+  }
+  
+  die() {
+    gameState.gamePhase = "GAME_OVER_LOSE";
+  }
+  
+  logPosition(p) {
+    if (p && p.logs && p.logs.player_info) {
+      p.logs.player_info.push({
+        screen_x: this.x,
+        screen_y: this.y,
+        game_x: this.x,
+        game_y: this.y,
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  }
+  
+  render(p) {
+    p.push();
+    p.translate(this.x, this.y);
+    
+    // Flip sprite based on facing direction
+    if (this.facing < 0) {
+      p.scale(-1, 1);
+    }
+    
+    // Blink when invulnerable
+    if (this.invulnerable > 0 && Math.floor(gameState.frameCount / 4) % 2 === 0) {
+      p.pop();
+      return;
+    }
+    
+    // Body
+    p.fill(220, 180, 140);
+    p.noStroke();
+    p.rectMode(p.CENTER);
+    p.rect(0, 0, this.width, this.height, 2);
+    
+    // Hat
+    p.fill(160, 100, 60);
+    p.rect(0, -this.height / 2 - 2, this.width - 2, 4);
+    
+    // Eyes
+    p.fill(255);
+    p.circle(-3, -3, 4);
+    p.circle(3, -3, 4);
+    p.fill(0);
+    p.circle(-3, -3, 2);
+    p.circle(3, -3, 2);
+    
+    // Legs (simple animation)
+    const legOffset = Math.sin(this.walkCycle) * 2;
+    p.stroke(100, 70, 40);
+    p.strokeWeight(2);
+    p.line(-3, this.height / 2, -3, this.height / 2 + 3 + legOffset);
+    p.line(3, this.height / 2, 3, this.height / 2 + 3 - legOffset);
+    
+    p.pop();
+  }
+}
+
+// Gem class
+export class Gem {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.radius = 6;
+    this.value = 100;
+    this.collected = false;
+    this.bobOffset = 0;
+    this.rotation = 0;
+    
+    gameState.entities.push(this);
+  }
+  
+  update(p) {
+    if (this.collected) return;
+    
+    // Bob animation
+    this.bobOffset = Math.sin(gameState.frameCount * 0.1) * 2;
+    this.rotation += 0.05;
+    
+    // Check collision with player
+    if (gameState.player) {
+      const dist = distance(gameState.player.x, gameState.player.y, this.x, this.y);
+      if (dist < this.radius + 10) {
+        this.collect();
+      }
+    }
+  }
+  
+  collect() {
+    this.collected = true;
+    gameState.score += this.value;
+    gameState.gemsCollected++;
+    
+    // Create particle effect
+    for (let i = 0; i < 8; i++) {
+      const angle = (Math.PI * 2 / 8) * i;
+      const vx = Math.cos(angle) * 2;
+      const vy = Math.sin(angle) * 2;
+      gameState.particles.push(new Particle(this.x, this.y, vx, vy, [255, 215, 0]));
+    }
+  }
+  
+  render(p) {
+    if (this.collected) return;
+    
+    p.push();
+    p.translate(this.x, this.y + this.bobOffset);
+    p.rotate(this.rotation);
+    
+    // Gem shape
+    p.fill(255, 215, 0);
+    p.stroke(200, 170, 0);
+    p.strokeWeight(1);
+    p.beginShape();
+    for (let i = 0; i < 6; i++) {
+      const angle = (Math.PI * 2 / 6) * i;
+      const r = i % 2 === 0 ? this.radius : this.radius * 0.6;
+      const px = Math.cos(angle) * r;
+      const py = Math.sin(angle) * r;
+      p.vertex(px, py);
+    }
+    p.endShape(p.CLOSE);
+    
+    p.pop();
+  }
+}
+
+// Enemy class
+export class Enemy {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.width = 16;
+    this.height = 16;
+    this.vx = 0;
+    this.vy = 0;
+    this.health = 1;
+    this.direction = 1;
+    this.speed = 1;
+    this.patrolDistance = 60;
+    this.startX = x;
+    this.onGround = false;
+    
+    gameState.entities.push(this);
+  }
+  
+  update(p) {
+    // Apply gravity
+    this.vy += GRAVITY;
+    this.vy = Math.min(this.vy, MAX_FALL_SPEED);
+    
+    // Patrol movement
+    this.vx = this.direction * this.speed;
+    
+    // Check if reached patrol boundary or edge
+    if (Math.abs(this.x - this.startX) > this.patrolDistance) {
+      this.direction *= -1;
+    }
+    
+    // Apply velocity
+    this.x += this.vx;
+    this.y += this.vy;
+    
+    // Collision detection
+    this.checkCollisions();
+    
+    // Check collision with player
+    if (gameState.player && !gameState.player.invulnerable) {
+      const dist = distance(this.x, this.y, gameState.player.x, gameState.player.y);
+      if (dist < 15) {
+        // Check if player is above (stomping)
+        if (gameState.player.vy > 0 && gameState.player.y < this.y - 5) {
+          this.die();
+          gameState.player.vy = -5; // Bounce
+          gameState.score += 50;
+        } else {
+          gameState.player.takeDamage(1);
+        }
+      }
+    }
+  }
+  
+  checkCollisions() {
+    const left = this.x - this.width / 2;
+    const right = this.x + this.width / 2;
+    const top = this.y - this.height / 2;
+    const bottom = this.y + this.height / 2;
+    
+    this.onGround = false;
+    
+    // Check ground
+    const { tx: tl, ty: tb } = worldToTile(left, bottom);
+    const { tx: tr } = worldToTile(right, bottom);
+    
+    for (let tx = tl; tx <= tr; tx++) {
+      if (isSolid(tx, tb)) {
+        this.y = tb * TILE_SIZE - this.height / 2;
+        this.vy = 0;
+        this.onGround = true;
+        break;
+      }
+    }
+    
+    // Check walls and turn around
+    const { tx: tleft } = worldToTile(left, this.y);
+    const { tx: tright } = worldToTile(right, this.y);
+    
+    if (isSolid(tleft, worldToTile(this.x, this.y).ty) && this.vx < 0) {
+      this.direction = 1;
+    }
+    if (isSolid(tright, worldToTile(this.x, this.y).ty) && this.vx > 0) {
+      this.direction = -1;
+    }
+    
+    // Check for edge (turn around if no ground ahead)
+    const aheadX = this.x + this.direction * (this.width / 2 + 5);
+    const aheadY = this.y + this.height / 2 + 5;
+    const { tx: tahead, ty: tyahead } = worldToTile(aheadX, aheadY);
+    if (!isSolid(tahead, tyahead) && this.onGround) {
+      this.direction *= -1;
+    }
+  }
+  
+  die() {
+    const index = gameState.enemies.indexOf(this);
+    if (index > -1) {
+      gameState.enemies.splice(index, 1);
+    }
+    const entityIndex = gameState.entities.indexOf(this);
+    if (entityIndex > -1) {
+      gameState.entities.splice(entityIndex, 1);
+    }
+    
+    // Particle effect
+    for (let i = 0; i < 12; i++) {
+      const angle = (Math.PI * 2 / 12) * i;
+      const vx = Math.cos(angle) * 3;
+      const vy = Math.sin(angle) * 3;
+      gameState.particles.push(new Particle(this.x, this.y, vx, vy, [200, 50, 50]));
+    }
+  }
+  
+  render(p) {
+    p.push();
+    p.translate(this.x, this.y);
+    
+    // Body
+    p.fill(200, 50, 50);
+    p.noStroke();
+    p.ellipse(0, 0, this.width, this.height);
+    
+    // Eyes
+    p.fill(255);
+    p.circle(-4, -2, 5);
+    p.circle(4, -2, 5);
+    p.fill(0);
+    p.circle(-4, -2, 3);
+    p.circle(4, -2, 3);
+    
+    // Angry mouth
+    p.stroke(0);
+    p.strokeWeight(1);
+    p.noFill();
+    p.arc(0, 2, 6, 4, 0, Math.PI);
+    
+    p.pop();
+  }
+}
+
+// Bomb class
+export class Bomb {
+  constructor(x, y, vx, vy) {
+    this.x = x;
+    this.y = y;
+    this.vx = vx;
+    this.vy = vy;
+    this.radius = 5;
+    this.timer = BOMB_TIMER;
+    this.onGround = false;
+    
+    gameState.entities.push(this);
+  }
+  
+  update(p) {
+    this.timer--;
+    
+    if (this.timer <= 0) {
+      this.explode();
+      return;
+    }
+    
+    // Apply gravity
+    this.vy += GRAVITY * 0.5;
+    
+    // Apply velocity
+    this.x += this.vx;
+    this.y += this.vy;
+    
+    // Simple ground collision
+    const { tx, ty } = worldToTile(this.x, this.y + this.radius);
+    if (isSolid(tx, ty)) {
+      this.y = ty * TILE_SIZE - this.radius;
+      this.vy = 0;
+      this.vx *= 0.8;
+      this.onGround = true;
+    }
+    
+    // Wall collision
+    const { tx: txLeft } = worldToTile(this.x - this.radius, this.y);
+    const { tx: txRight } = worldToTile(this.x + this.radius, this.y);
+    if (isSolid(txLeft, worldToTile(this.x, this.y).ty) || isSolid(txRight, worldToTile(this.x, this.y).ty)) {
+      this.vx *= -0.5;
+    }
+  }
+  
+  explode() {
+    // Create explosion effect
+    gameState.explosions.push(new Explosion(this.x, this.y, BOMB_RADIUS));
+    
+    // Damage enemies in radius
+    for (const enemy of gameState.enemies) {
+      const dist = distance(this.x, this.y, enemy.x, enemy.y);
+      if (dist < BOMB_RADIUS) {
+        enemy.die();
+      }
+    }
+    
+    // Destroy tiles in radius
+    const { tx: centerTx, ty: centerTy } = worldToTile(this.x, this.y);
+    const tileRadius = Math.ceil(BOMB_RADIUS / TILE_SIZE);
+    
+    for (let dx = -tileRadius; dx <= tileRadius; dx++) {
+      for (let dy = -tileRadius; dy <= tileRadius; dy++) {
+        const tx = centerTx + dx;
+        const ty = centerTy + dy;
+        const worldX = tx * TILE_SIZE + TILE_SIZE / 2;
+        const worldY = ty * TILE_SIZE + TILE_SIZE / 2;
+        const dist = distance(this.x, this.y, worldX, worldY);
+        
+        if (dist < BOMB_RADIUS && getTile(tx, ty) === 2) {
+          gameState.tiles[ty][tx] = 0; // Destroy destructible tile
+        }
+      }
+    }
+    
+    // Remove bomb
+    const index = gameState.bombs.indexOf(this);
+    if (index > -1) {
+      gameState.bombs.splice(index, 1);
+    }
+    const entityIndex = gameState.entities.indexOf(this);
+    if (entityIndex > -1) {
+      gameState.entities.splice(entityIndex, 1);
+    }
+  }
+  
+  render(p) {
+    p.push();
+    
+    // Flash when about to explode
+    if (this.timer < 30 && Math.floor(gameState.frameCount / 5) % 2 === 0) {
+      p.fill(255, 200, 0);
+    } else {
+      p.fill(50, 50, 50);
+    }
+    
+    p.noStroke();
+    p.circle(this.x, this.y, this.radius * 2);
+    
+    // Fuse
+    p.stroke(255, 100, 0);
+    p.strokeWeight(2);
+    const fuseLength = 8;
+    const fuseAngle = (gameState.frameCount * 0.1) % (Math.PI * 2);
+    p.line(this.x, this.y - this.radius, 
+           this.x + Math.cos(fuseAngle) * fuseLength, 
+           this.y - this.radius + Math.sin(fuseAngle) * fuseLength);
+    
+    p.pop();
+  }
+}
+
+// Rope class
+export class Rope {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.segments = [];
+    this.maxLength = 100;
+    
+    // Create rope segments downward
+    let currentY = y;
+    while (currentY < y + this.maxLength) {
+      currentY += 8;
+      const { tx, ty } = worldToTile(x, currentY);
+      if (isSolid(tx, ty)) {
+        break;
+      }
+      this.segments.push(currentY);
+    }
+    
+    gameState.entities.push(this);
+  }
+  
+  update(p) {
+    // Check if player is climbing this rope
+    if (gameState.player) {
+      const dist = Math.abs(gameState.player.x - this.x);
+      if (dist < 10 && gameState.player.y > this.y && gameState.player.y < this.y + this.segments.length * 8) {
+        // Player can climb this rope
+        if (gameState.player.onLadder) {
+          gameState.player.x = this.x; // Snap to rope
+        }
+      }
+    }
+  }
+  
+  render(p) {
+    p.push();
+    p.stroke(150, 100, 50);
+    p.strokeWeight(2);
+    
+    let prevY = this.y;
+    for (const segY of this.segments) {
+      p.line(this.x, prevY, this.x, segY);
+      prevY = segY;
+    }
+    
+    p.pop();
+  }
+}
+
+// Exit door class
+export class ExitDoor {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.width = 20;
+    this.height = 30;
+    this.unlocked = false;
+    
+    gameState.entities.push(this);
+  }
+  
+  update(p) {
+    // Unlock if all gems collected
+    if (gameState.gemsCollected >= gameState.totalGems) {
+      this.unlocked = true;
+    }
+  }
+  
+  render(p) {
+    p.push();
+    p.translate(this.x, this.y);
+    
+    // Door color based on locked status
+    if (this.unlocked) {
+      p.fill(100, 200, 100);
+    } else {
+      p.fill(100, 100, 100);
+    }
+    
+    p.stroke(60);
+    p.strokeWeight(2);
+    p.rectMode(p.CENTER);
+    p.rect(0, 0, this.width, this.height);
+    
+    // Door handle
+    p.fill(200, 180, 100);
+    p.noStroke();
+    p.circle(6, 0, 4);
+    
+    // Lock indicator
+    if (!this.unlocked) {
+      p.fill(255, 200, 0);
+      p.textSize(12);
+      p.textAlign(p.CENTER, p.CENTER);
+      p.text('🔒', 0, -15);
+    }
+    
+    p.pop();
+  }
+}
+
+// Particle class
+export class Particle {
+  constructor(x, y, vx, vy, color) {
+    this.x = x;
+    this.y = y;
+    this.vx = vx;
+    this.vy = vy;
+    this.color = color;
+    this.lifetime = 30;
+    this.age = 0;
+    this.size = 3;
+  }
+  
+  update(p) {
+    this.x += this.vx;
+    this.y += this.vy;
+    this.vy += 0.2; // Gravity
+    this.age++;
+  }
+  
+  isDead() {
+    return this.age >= this.lifetime;
+  }
+  
+  render(p) {
+    const alpha = 1 - (this.age / this.lifetime);
+    p.push();
+    p.fill(this.color[0], this.color[1], this.color[2], alpha * 255);
+    p.noStroke();
+    p.circle(this.x, this.y, this.size);
+    p.pop();
+  }
+}
+
+// Explosion effect class
+export class Explosion {
+  constructor(x, y, radius) {
+    this.x = x;
+    this.y = y;
+    this.radius = radius;
+    this.maxRadius = radius;
+    this.age = 0;
+    this.lifetime = 20;
+    
+    // Create particles
+    for (let i = 0; i < 30; i++) {
+      const angle = (Math.PI * 2 / 30) * i;
+      const speed = 3 + Math.random() * 3;
+      const vx = Math.cos(angle) * speed;
+      const vy = Math.sin(angle) * speed;
+      gameState.particles.push(new Particle(x, y, vx, vy, [255, 150, 0]));
+    }
+  }
+  
+  update(p) {
+    this.age++;
+  }
+  
+  isDead() {
+    return this.age >= this.lifetime;
+  }
+  
+  render(p) {
+    const alpha = 1 - (this.age / this.lifetime);
+    const currentRadius = this.radius * (this.age / this.lifetime);
+    
+    p.push();
+    p.noFill();
+    p.stroke(255, 150, 0, alpha * 255);
+    p.strokeWeight(3);
+    p.circle(this.x, this.y, currentRadius * 2);
+    
+    p.fill(255, 200, 0, alpha * 150);
+    p.noStroke();
+    p.circle(this.x, this.y, currentRadius);
+    p.pop();
+  }
+}
+</file>
+
+<file name="utils.js">
+// utils.js - Utility functions
+
+import { TILE_SIZE, gameState } from './globals.js';
+
+// Convert world coordinates to tile coordinates
+export function worldToTile(x, y) {
+  return {
+    tx: Math.floor(x / TILE_SIZE),
+    ty: Math.floor(y / TILE_SIZE)
+  };
+}
+
+// Convert tile coordinates to world coordinates
+export function tileToWorld(tx, ty) {
+  return {
+    x: tx * TILE_SIZE,
+    y: ty * TILE_SIZE
+  };
+}
+
+// Check if tile coordinates are valid
+export function isValidTile(tx, ty) {
+  return tx >= 0 && tx < gameState.levelWidth && ty >= 0 && ty < gameState.levelHeight;
+}
+
+// Get tile at position
+export function getTile(tx, ty) {
+  if (!isValidTile(tx, ty)) return 1; // Treat out of bounds as solid
+  return gameState.tiles[ty][tx];
+}
+
+// Set tile at position
+export function setTile(tx, ty, value) {
+  if (isValidTile(tx, ty)) {
+    gameState.tiles[ty][tx] = value;
+  }
+}
+
+// Check if tile is solid
+export function isSolid(tx, ty) {
+  const tile = getTile(tx, ty);
+  return tile === 1 || tile === 2;
+}
+
+// Distance between two points
+export function distance(x1, y1, x2, y2) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+// Lerp function
+export function lerp(start, end, t) {
+  return start + (end - start) * t;
+}
+
+// Clamp function
+export function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+// Random integer between min and max (inclusive)
+export function randomInt(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+// Random element from array
+export function randomChoice(arr) {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+// Shuffle array
+export function shuffleArray(array) {
+  for (let i = array.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [array[i], array[j]] = [array[j], array[i]];
+  }
+  return array;
+}
+</file>
+
+<file name="levelgen.js">
+// levelgen.js - Procedural level generation
+
+import { 
+  gameState, 
+  GRID_WIDTH, 
+  GRID_HEIGHT, 
+  TILE_EMPTY, 
+  TILE_SOLID, 
+  TILE_DESTRUCTIBLE, 
+  TILE_LADDER,
+  TILE_PLATFORM
+} from './globals.js';
+import { randomInt, randomChoice } from './utils.js';
+import { Gem } from './entities.js';
+import { Enemy } from './entities.js';
+import { ExitDoor } from './entities.js';
+
+export function generateLevel() {
+  // Initialize empty grid
+  gameState.tiles = [];
+  for (let y = 0; y < GRID_HEIGHT; y++) {
+    gameState.tiles[y] = [];
+    for (let x = 0; x < GRID_WIDTH; x++) {
+      gameState.tiles[y][x] = TILE_EMPTY;
+    }
+  }
+  
+  // Create solid borders
+  for (let x = 0; x < GRID_WIDTH; x++) {
+    gameState.tiles[0][x] = TILE_SOLID; // Top
+    gameState.tiles[GRID_HEIGHT - 1][x] = TILE_SOLID; // Bottom
+  }
+  for (let y = 0; y < GRID_HEIGHT; y++) {
+    gameState.tiles[y][0] = TILE_SOLID; // Left
+    gameState.tiles[y][GRID_WIDTH - 1] = TILE_SOLID; // Right
+  }
+  
+  // Create floor with some variation
+  const floorLevel = GRID_HEIGHT - 3;
+  for (let x = 1; x < GRID_WIDTH - 1; x++) {
+    const height = randomInt(0, 1);
+    for (let y = floorLevel + height; y < GRID_HEIGHT - 1; y++) {
+      gameState.tiles[y][x] = Math.random() < 0.7 ? TILE_SOLID : TILE_DESTRUCTIBLE;
+    }
+  }
+  
+  // Create platforms at different heights
+  const numPlatforms = randomInt(8, 12);
+  for (let i = 0; i < numPlatforms; i++) {
+    const x = randomInt(2, GRID_WIDTH - 8);
+    const y = randomInt(5, GRID_HEIGHT - 8);
+    const width = randomInt(3, 6);
+    const isOneWay = Math.random() < 0.4;
+    
+    for (let dx = 0; dx < width; dx++) {
+      if (x + dx < GRID_WIDTH - 1) {
+        if (isOneWay) {
+          gameState.tiles[y][x + dx] = TILE_PLATFORM;
+        } else {
+          gameState.tiles[y][x + dx] = Math.random() < 0.6 ? TILE_SOLID : TILE_DESTRUCTIBLE;
+        }
+      }
+    }
+  }
+  
+  // Add some vertical structures
+  const numColumns = randomInt(3, 5);
+  for (let i = 0; i < numColumns; i++) {
+    const x = randomInt(3, GRID_WIDTH - 4);
+    const startY = randomInt(8, GRID_HEIGHT - 8);
+    const height = randomInt(3, 6);
+    
+    for (let dy = 0; dy < height; dy++) {
+      if (startY + dy < GRID_HEIGHT - 2) {
+        gameState.tiles[startY + dy][x] = TILE_DESTRUCTIBLE;
+      }
+    }
+  }
+  
+  // Add ladders connecting platforms
+  const numLadders = randomInt(4, 7);
+  for (let i = 0; i < numLadders; i++) {
+    const x = randomInt(3, GRID_WIDTH - 4);
+    const startY = randomInt(3, GRID_HEIGHT - 10);
+    const height = randomInt(4, 8);
+    
+    for (let dy = 0; dy < height; dy++) {
+      if (startY + dy < GRID_HEIGHT - 2 && gameState.tiles[startY + dy][x] === TILE_EMPTY) {
+        gameState.tiles[startY + dy][x] = TILE_LADDER;
+      }
+    }
+  }
+  
+  // Clear spawn area for player
+  for (let x = 2; x < 5; x++) {
+    for (let y = GRID_HEIGHT - 7; y < GRID_HEIGHT - 3; y++) {
+      if (gameState.tiles[y][x] !== TILE_LADDER) {
+        gameState.tiles[y][x] = TILE_EMPTY;
+      }
+    }
+  }
+  
+  // Place exit door (top right area)
+  const doorX = GRID_WIDTH - 4;
+  const doorY = randomInt(3, 7);
+  // Clear area around door
+  for (let dx = -1; dx <= 1; dx++) {
+    for (let dy = -2; dy <= 1; dy++) {
+      const tx = doorX + dx;
+      const ty = doorY + dy;
+      if (tx > 0 && tx < GRID_WIDTH - 1 && ty > 0 && ty < GRID_HEIGHT - 1) {
+        gameState.tiles[ty][tx] = TILE_EMPTY;
+      }
+    }
+  }
+  // Place platform under door
+  gameState.tiles[doorY + 1][doorX] = TILE_SOLID;
+  gameState.tiles[doorY + 1][doorX - 1] = TILE_SOLID;
+  gameState.tiles[doorY + 1][doorX + 1] = TILE_SOLID;
+  
+  gameState.exitDoor = new ExitDoor(doorX * 20 + 10, doorY * 20 + 10);
+  
+  // Place gems in interesting locations
+  const numGems = randomInt(8, 12);
+  gameState.gems = [];
+  for (let i = 0; i < numGems; i++) {
+    let placed = false;
+    let attempts = 0;
+    while (!placed && attempts < 50) {
+      const x = randomInt(4, GRID_WIDTH - 5);
+      const y = randomInt(3, GRID_HEIGHT - 8);
+      
+      // Check if position is empty and not too close to player spawn
+      if (gameState.tiles[y][x] === TILE_EMPTY && 
+          (x > 8 || y < GRID_HEIGHT - 10)) {
+        const gem = new Gem(x * 20 + 10, y * 20 + 10);
+        gameState.gems.push(gem);
+        placed = true;
+      }
+      attempts++;
+    }
+  }
+  gameState.totalGems = gameState.gems.length;
+  gameState.gemsCollected = 0;
+  
+  // Place enemies
+  const numEnemies = randomInt(4, 7);
+  gameState.enemies = [];
+  for (let i = 0; i < numEnemies; i++) {
+    let placed = false;
+    let attempts = 0;
+    while (!placed && attempts < 50) {
+      const x = randomInt(8, GRID_WIDTH - 5);
+      const y = randomInt(5, GRID_HEIGHT - 8);
+      
+      // Check if position is empty and has ground below
+      if (gameState.tiles[y][x] === TILE_EMPTY && 
+          (gameState.tiles[y + 1][x] === TILE_SOLID || 
+           gameState.tiles[y + 1][x] === TILE_DESTRUCTIBLE ||
+           gameState.tiles[y + 1][x] === TILE_PLATFORM)) {
+        const enemy = new Enemy(x * 20 + 10, y * 20 + 8);
+        gameState.enemies.push(enemy);
+        placed = true;
+      }
+      attempts++;
+    }
+  }
+}
+</file>
+
+<file name="input.js">
+// input.js - Input handling
+
+import { gameState } from './globals.js';
+import { Player } from './entities.js';
+import { generateLevel } from './levelgen.js';
+
+// Key state tracking
+const keys = {};
+
+export function setupInput(p) {
+  p.keyPressed = function() {
+    keys[p.keyCode] = true;
+    
+    // Log input
+    if (p.logs && p.logs.inputs) {
+      p.logs.inputs.push({
+        input_type: 'keyPressed',
+        data: { key: p.key, keyCode: p.keyCode },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+    
+    // Handle phase controls
+    if (p.keyCode === 13) { // ENTER
+      if (gameState.gamePhase === "START") {
+        startGame(p);
+      }
+    }
+    
+    if (p.keyCode === 27) { // ESC
+      if (gameState.gamePhase === "PLAYING") {
+        gameState.gamePhase = "PAUSED";
+        if (p.logs && p.logs.game_info) {
+          p.logs.game_info.push({
+            data: { gamePhase: "PAUSED" },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+          });
+        }
+      } else if (gameState.gamePhase === "PAUSED") {
+        gameState.gamePhase = "PLAYING";
+        if (p.logs && p.logs.game_info) {
+          p.logs.game_info.push({
+            data: { gamePhase: "PLAYING" },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+          });
+        }
+      }
+    }
+    
+    if (p.keyCode === 82) { // R - Restart
+      if (gameState.gamePhase === "GAME_OVER_WIN" || 
+          gameState.gamePhase === "GAME_OVER_LOSE") {
+        resetGame(p);
+      }
+    }
+    
+    return false; // Prevent default behavior
+  };
+  
+  p.keyReleased = function() {
+    keys[p.keyCode] = false;
+    
+    // Log input
+    if (p.logs && p.logs.inputs) {
+      p.logs.inputs.push({
+        input_type: 'keyReleased',
+        data: { key: p.key, keyCode: p.keyCode },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+    
+    return false;
+  };
+}
+
+export function handleInput(p) {
+  if (gameState.gamePhase !== "PLAYING" || !gameState.player) return;
+  
+  // Reset crouching if not holding down
+  if (!isKeyPressed(40)) {
+    gameState.player.stopCrouching();
+  }
+  
+  // Handle movement
+  if (isKeyPressed(37)) { // Left
+    gameState.player.moveLeft();
+  } else if (isKeyPressed(39)) { // Right
+    gameState.player.moveRight();
+  } else {
+    // No horizontal input, slow down
+    gameState.player.vx *= 0.8;
+  }
+  
+  // Jump
+  if (isKeyPressed(32)) { // Space
+    gameState.player.jump();
+  }
+  
+  // Climb up (or enter door)
+  if (isKeyPressed(38)) { // Up
+    gameState.player.climbUp();
+  }
+  
+  // Climb down / crouch
+  if (isKeyPressed(40)) { // Down
+    gameState.player.climbDown();
+  }
+  
+  // Throw bomb (one-shot action)
+  if (keys[90] && !keys.zPressed) { // Z
+    gameState.player.throwBomb(p);
+    keys.zPressed = true;
+  }
+  if (!keys[90]) {
+    keys.zPressed = false;
+  }
+  
+  // Use rope (one-shot action)
+  if (keys[16] && !keys.shiftPressed) { // Shift
+    gameState.player.useRope(p);
+    keys.shiftPressed = true;
+  }
+  if (!keys[16]) {
+    keys.shiftPressed = false;
+  }
+}
+
+export function isKeyPressed(keyCode) {
+  return keys[keyCode] === true;
+}
+
+function startGame(p) {
+  gameState.gamePhase = "PLAYING";
+  
+  // Initialize level
+  generateLevel();
+  
+  // Create player at spawn
+  gameState.player = new Player(60, 320);
+  
+  if (p.logs && p.logs.game_info) {
+    p.logs.game_info.push({
+      data: { gamePhase: "PLAYING" },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+}
+
+function resetGame(p) {
+  // Clear all game state
+  gameState.entities = [];
+  gameState.gems = [];
+  gameState.enemies = [];
+  gameState.bombs = [];
+  gameState.ropes = [];
+  gameState.particles = [];
+  gameState.explosions = [];
+  gameState.player = null;
+  gameState.exitDoor = null;
+  gameState.score = 0;
+  gameState.gemsCollected = 0;
+  gameState.totalGems = 0;
+  gameState.gamePhase = "START";
+  
+  if (p.logs && p.logs.game_info) {
+    p.logs.game_info.push({
+      data: { gamePhase: "START" },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

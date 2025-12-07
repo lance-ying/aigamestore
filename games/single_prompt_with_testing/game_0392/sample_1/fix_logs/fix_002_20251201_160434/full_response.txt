@@ -1,0 +1,347 @@
+<analysis>
+- Issue identified: The game crashes when the player gets hit because `Player.takeDamage` replaces the `gameState.bullets` array (using `filter`) while that same array is being iterated over in `updateEntities`. This causes the loop index to access out-of-bounds or undefined elements in the new, shorter array. The "yellow star" crash is likely a symptom of the same issue (getting hit while trying to collect items) or a similar array modification conflict.
+- Files affected: `entities.js`, `game_logic.js`
+- Changes needed: 
+  1.  In `entities.js`, modify `EnemyBullet` to include a `markedForRemoval` flag.
+  2.  In `entities.js`, update `Player.takeDamage` to set `markedForRemoval = true` on bullets instead of replacing the entire `gameState.bullets` array immediately.
+  3.  In `game_logic.js`, update `updateEntities` to filter out bullets marked for removal *after* the bullet update loop has finished, ensuring safe array modification.
+</analysis>
+
+<code filename="entities.js">
+// entities.js - Entity classes for player, enemies, items, etc.
+
+import {
+  gameState,
+  CANVAS_WIDTH,
+  CANVAS_HEIGHT,
+  PLAY_AREA_LEFT,
+  PLAY_AREA_RIGHT,
+  PLAY_AREA_TOP,
+  PLAY_AREA_BOTTOM,
+  ITEM_COLLECTION_LINE,
+  BENTLER_RED,
+  BENTLER_BLUE,
+  BENTLER_GREEN,
+  UFO_RED,
+  UFO_BLUE,
+  UFO_GREEN,
+  UFO_RAINBOW,
+  randomRange,
+  randomInt,
+  randomChoice,
+  clamp,
+  distance
+} from './globals.js';
+
+import { createExplosion, createParticles } from './particles.js';
+
+// Player class
+export class Player {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.width = 6;
+    this.height = 6;
+    this.hitboxRadius = 2; // Small hitbox for precise dodging
+    this.speed = 4;
+    this.slowSpeed = 1.8;
+    this.isFocused = false; // Slow movement mode
+    this.shooting = false;
+    this.shootCooldown = 0;
+    this.shootInterval = 4; // Frames between shots
+    this.invincible = false;
+    this.invincibleTimer = 0;
+    this.invincibleDuration = 120; // 2 seconds
+    
+    // Options (support orbs)
+    this.options = [];
+    this.optionCount = 1; // Start with 1 option
+    this.maxOptions = 4;
+    
+    // Visual
+    this.angle = 0;
+    this.animFrame = 0;
+    
+    gameState.player = this;
+    gameState.entities.push(this);
+  }
+  
+  update(p) {
+    // Update invincibility
+    if (this.invincible) {
+      this.invincibleTimer--;
+      if (this.invincibleTimer <= 0) {
+        this.invincible = false;
+      }
+    }
+    
+    // Update shoot cooldown
+    if (this.shootCooldown > 0) {
+      this.shootCooldown--;
+    }
+    
+    // Animation
+    this.animFrame++;
+    this.angle += 0.1;
+    
+    // Update options
+    this.updateOptions(p);
+    
+    // Item attraction when focused
+    if (this.isFocused) {
+      this.attractItems();
+    }
+    
+    // Auto-collect items at top of screen
+    if (this.y < ITEM_COLLECTION_LINE) {
+      gameState.itemAutoCollect = true;
+      this.collectAllItems();
+    } else {
+      gameState.itemAutoCollect = false;
+    }
+  }
+  
+  updateOptions(p) {
+    // Calculate option count based on power
+    const targetOptionCount = Math.min(this.maxOptions, Math.floor(gameState.power));
+    
+    // Add options if needed
+    while (this.options.length < targetOptionCount) {
+      this.options.push({
+        angle: (this.options.length * Math.PI * 2 / targetOptionCount),
+        distance: 30
+      });
+    }
+    
+    // Remove options if needed
+    while (this.options.length > targetOptionCount) {
+      this.options.pop();
+    }
+    
+    // Update option positions
+    this.options.forEach((option, index) => {
+      option.angle += 0.05;
+      const totalOptions = this.options.length;
+      const baseAngle = (index * Math.PI * 2 / totalOptions);
+      option.angle = baseAngle + this.animFrame * 0.02;
+    });
+  }
+  
+  attractItems() {
+    const attractRadius = 80; // Larger radius when focused
+    
+    gameState.collectibles.forEach(item => {
+      if (item.isAttractable && distance(this.x, this.y, item.x, item.y) < attractRadius) {
+        const dx = this.x - item.x;
+        const dy = this.y - item.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist > 0) {
+          item.vx += (dx / dist) * 0.5;
+          item.vy += (dy / dist) * 0.5;
+        }
+      }
+    });
+    
+    gameState.bentlerItems.forEach(item => {
+      if (distance(this.x, this.y, item.x, item.y) < attractRadius) {
+        const dx = this.x - item.x;
+        const dy = this.y - item.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist > 0) {
+          item.vx += (dx / dist) * 0.5;
+          item.vy += (dy / dist) * 0.5;
+        }
+      }
+    });
+  }
+  
+  collectAllItems() {
+    // Collect all collectibles
+    gameState.collectibles.forEach(item => {
+      if (item.isAttractable) {
+        const dx = this.x - item.x;
+        const dy = this.y - item.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist > 0) {
+          item.vx = (dx / dist) * 15;
+          item.vy = (dy / dist) * 15;
+        }
+      }
+    });
+    
+    // Collect all bentler items
+    gameState.bentlerItems.forEach(item => {
+      const dx = this.x - item.x;
+      const dy = this.y - item.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist > 0) {
+        item.vx = (dx / dist) * 15;
+        item.vy = (dy / dist) * 15;
+      }
+    });
+  }
+  
+  move(dx, dy) {
+    const speed = this.isFocused ? this.slowSpeed : this.speed;
+    this.x += dx * speed;
+    this.y += dy * speed;
+    
+    // Keep in bounds
+    this.x = clamp(this.x, PLAY_AREA_LEFT + 10, PLAY_AREA_RIGHT - 10);
+    this.y = clamp(this.y, PLAY_AREA_TOP + 10, PLAY_AREA_BOTTOM - 10);
+  }
+  
+  shoot(p) {
+    if (this.shootCooldown > 0) return;
+    
+    this.shooting = true;
+    this.shootCooldown = this.shootInterval;
+    
+    // Player main shot
+    const bullet = new PlayerBullet(this.x, this.y - 10, 0, -12);
+    gameState.playerBullets.push(bullet);
+    
+    // Option shots
+    this.options.forEach(option => {
+      const ox = this.x + Math.cos(option.angle) * option.distance;
+      const oy = this.y + Math.sin(option.angle) * option.distance;
+      const bullet = new PlayerBullet(ox, oy, 0, -12);
+      gameState.playerBullets.push(bullet);
+    });
+  }
+  
+  useSpellCard(p) {
+    if (gameState.spellCards <= 0) return;
+    
+    gameState.spellCards--;
+    
+    // Clear all bullets
+    gameState.bullets.forEach(bullet => {
+      createExplosion(p, bullet.x, bullet.y, [100, 200, 255], 5);
+    });
+    gameState.bullets = [];
+    
+    // Damage all enemies
+    gameState.enemies.forEach(enemy => {
+      enemy.takeDamage(50);
+    });
+    
+    // Damage boss if present
+    if (gameState.boss) {
+      gameState.boss.takeDamage(100);
+    }
+    
+    // Make invincible
+    this.invincible = true;
+    this.invincibleTimer = 60;
+    
+    // Visual effect
+    createParticles(p, this.x, this.y, 30, [255, 255, 255]);
+  }
+  
+  takeDamage(p) {
+    if (this.invincible) return;
+    
+    gameState.lives--;
+    
+    if (gameState.lives <= 0) {
+      this.die(p);
+      return;
+    }
+    
+    // Reset position
+    this.x = PLAY_AREA_LEFT + PLAY_AREA_WIDTH / 2;
+    this.y = PLAY_AREA_BOTTOM - 50;
+    
+    // Lose an option
+    if (this.options.length > 0) {
+      this.options.pop();
+    }
+    
+    // Reduce power slightly
+    gameState.power = Math.max(1.0, gameState.power - 0.5);
+    
+    // Grant spell cards if low
+    if (gameState.spellCards < 2) {
+      gameState.spellCards = 2;
+    }
+    
+    // Make invincible
+    this.invincible = true;
+    this.invincibleTimer = this.invincibleDuration;
+    
+    // Clear bullets near player
+    // IMPORTANT: Do not replace the array while it's being iterated in updateEntities
+    // Instead, mark bullets for removal or use a separate loop strategy
+    gameState.bullets.forEach(bullet => {
+      const dist = distance(this.x, this.y, bullet.x, bullet.y);
+      if (dist < 100) {
+        createExplosion(p, bullet.x, bullet.y, [255, 100, 100], 3);
+        bullet.markedForRemoval = true;
+      }
+    });
+    
+    // Visual effect
+    createExplosion(p, this.x, this.y, [255, 0, 0], 15);
+  }
+  
+  die(p) {
+    createExplosion(p, this.x, this.y, [255, 0, 0], 30);
+    gameState.gamePhase = "GAME_OVER_LOSE";
+  }
+  
+  render(p) {
+    p.push();
+    
+    // Render options first (behind player)
+    this.options.forEach(option => {
+      const ox = this.x + Math.cos(option.angle) * option.distance;
+      const oy = this.y + Math.sin(option.angle) * option.distance;
+      
+      p.fill(100, 200, 255, 200);
+      p.noStroke();
+      p.circle(ox, oy, 12);
+      
+      p.fill(255);
+      p.circle(ox, oy, 6);
+    });
+    
+    // Flash when invincible
+    if (this.invincible && Math.floor(this.invincibleTimer / 5) % 2 === 0) {
+      p.fill(255, 255, 255, 150);
+    } else {
+      p.fill(255, 100, 100);
+    }
+    
+    // Player body
+    p.stroke(255, 200, 200);
+    p.strokeWeight(2);
+    p.circle(this.x, this.y, 16);
+    
+    // Draw bow/ribbon
+    p.noStroke();
+    p.fill(255, 50, 50);
+    p.circle(this.x - 6, this.y - 8, 6);
+    p.circle(this.x + 6, this.y - 8, 6);
+    
+    // Hitbox indicator when focused
+    if (this.isFocused) {
+      p.noFill();
+      p.stroke(255, 0, 0);
+      p.strokeWeight(1);
+      p.circle(this.x, this.y, this.hitboxRadius * 2);
+    }
+    
+    p.pop();
+  }
+}
+
+// Enemy class
+export class Enemy {
+  constructor(x, y, type = 'basic') {
+    this.x = x;
+    this.y = y;
+    this.type = type;
+    this.width = 20;
+    this.height = 20;
+    this.

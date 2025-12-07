@@ -1,0 +1,1306 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+GET https://cdn.jsdelivr.net/npm/p5.collide2d@1.0.0/+esm net::ERR_ABORTED 404 (Not Found)physics.js:3  GET 
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Öoo: The Bomb Caterpillar</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; font-family: sans-serif; transition: background 0.2s; }
+      .control-button:hover { background: #555; }
+      .control-button.active { background: #007bff; }
+      #gameTitle { color: #fff; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin-bottom: 5px; text-shadow: 0 2px 4px rgba(0,0,0,0.5); }
+      #gameDescription { color: #ccc; font-family: sans-serif; max-width: 600px; margin: 0 auto 10px auto; line-height: 1.4; font-size: 14px; }
+      #gameControls { color: #888; font-family: monospace; max-width: 600px; margin: 0 auto 20px auto; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle">Öoo: The Bomb Caterpillar</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="updateActiveBtn(this); window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test1ModeBtn" class="control-button" onclick="updateActiveBtn(this); window.setControlMode('TEST_1')">TEST (Win Path)</button>
+        <button id="test2ModeBtn" class="control-button" onclick="updateActiveBtn(this); window.setControlMode('TEST_2')">TEST (Stress)</button>
+      </div>
+      <p id="gameDescription">Navigate the mysterious underground, use bombs to clear paths and jump gaps, and find the Golden Leaf!</p>
+      <p id="gameControls">Arrows: Move | Space: Jump | Z: Bomb | Esc: Pause | R: Restart</p>
+    </div>
+    
+    <script>
+      function updateActiveBtn(btn) {
+        document.querySelectorAll('.control-button').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+      }
+    </script>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="globals.js">
+// globals.js - Game State and Constants
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const TILE_SIZE = 40;
+
+// Physics Constants
+export const GRAVITY = 0.5;
+export const TERMINAL_VELOCITY = 12;
+export const FRICTION = 0.85;
+export const AIR_RESISTANCE = 0.95;
+export const MOVE_SPEED = 0.5;
+export const JUMP_FORCE = -10;
+export const BOMB_FUSE_TIME = 120; // Frames (2 seconds)
+export const BOMB_BLAST_RADIUS = 100;
+export const BOMB_FORCE = 15;
+
+// Global Game State
+export const gameState = {
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    controlMode: "HUMAN", // HUMAN, TEST_1, TEST_2
+    
+    // Time tracking
+    frameCount: 0,
+    lastFrameTime: 0,
+    deltaTime: 0,
+    
+    // World State
+    levelW: 0,
+    levelH: 0,
+    camera: { x: 0, y: 0 },
+    
+    // Entities
+    player: null,
+    platforms: [],      // Static geometry
+    blocks: [],         // Destructible blocks
+    bombs: [],          // Active bombs
+    collectibles: [],   // Star Spores
+    hazards: [],        // Spikes, etc.
+    particles: [],      // Visual effects
+    goal: null,         // Win condition
+    
+    // Player State
+    score: 0,
+    
+    // Debug/Logging
+    debugMode: false
+};
+
+// Expose gameState globally
+export function getGameState() {
+    return gameState;
+}
+window.getGameState = getGameState;
+
+// Reset function for game restart
+export function resetGameState() {
+    gameState.gamePhase = "START";
+    gameState.frameCount = 0;
+    gameState.score = 0;
+    gameState.player = null;
+    gameState.platforms = [];
+    gameState.blocks = [];
+    gameState.bombs = [];
+    gameState.collectibles = [];
+    gameState.hazards = [];
+    gameState.particles = [];
+    gameState.goal = null;
+    gameState.camera = { x: 0, y: 0 };
+}
+</file>
+
+<file name="game.js">
+// game.js - Main Entry Point
+import { gameState, getGameState, resetGameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { loadLevel } from './level.js';
+import { Player } from './entities.js';
+import { handleInput, keyPressed, keyReleased } from './input.js';
+import { updateEntityPhysics } from './physics.js';
+import { renderUI, renderStartScreen, renderGameOver, renderPaused, drawBackground } from './ui.js';
+import { get_automated_testing_action } from './automated_test.js';
+import { particleSystem } from './particles.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+
+    p.logs = {
+        game_info: [],
+        inputs: [],
+        player_info: []
+    };
+
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(60);
+        p.randomSeed(42);
+        
+        // Initialize
+        resetGameState();
+        loadLevel();
+        
+        // Log start
+        p.logs.game_info.push({
+            event: "setup",
+            timestamp: Date.now()
+        });
+    };
+
+    p.draw = function() {
+        const startTime = p.millis();
+        
+        // Global Update Logic
+        gameState.frameCount = p.frameCount;
+        
+        // State Machine
+        switch (gameState.gamePhase) {
+            case "START":
+                renderStartScreen(p);
+                break;
+            case "PLAYING":
+                updateGame(p);
+                renderGame(p);
+                renderUI(p);
+                break;
+            case "PAUSED":
+                renderGame(p); // Render underlying game frozen
+                renderPaused(p);
+                break;
+            case "GAME_OVER_WIN":
+                renderGame(p);
+                renderGameOver(p, true);
+                break;
+            case "GAME_OVER_LOSE":
+                renderGame(p);
+                renderGameOver(p, false);
+                break;
+        }
+        
+        // Calculate Delta (simple version)
+        gameState.deltaTime = (p.millis() - startTime) / 1000;
+    };
+
+    function updateGame(p) {
+        // 1. Input / AI
+        if (gameState.controlMode === "HUMAN") {
+            handleInput(p);
+        } else {
+            get_automated_testing_action();
+        }
+
+        // 2. Update Entities
+        if (gameState.player) gameState.player.update(p);
+        
+        gameState.bombs.forEach(b => b.update());
+        // Remove inactive bombs
+        gameState.bombs = gameState.bombs.filter(b => b.active);
+        
+        gameState.collectibles.forEach(c => c.update());
+        gameState.collectibles = gameState.collectibles.filter(c => c.active);
+        
+        gameState.blocks = gameState.blocks.filter(b => b.active); // Just clean up destroyed ones
+        
+        // 3. Particles
+        gameState.particles.forEach(pt => pt.update());
+        gameState.particles = gameState.particles.filter(pt => pt.active);
+
+        // 4. Camera Update
+        updateCamera();
+    }
+
+    function updateCamera() {
+        if (!gameState.player) return;
+        
+        // Target: Center player
+        let targetX = gameState.player.x - CANVAS_WIDTH / 2;
+        let targetY = gameState.player.y - CANVAS_HEIGHT / 2;
+        
+        // Smooth lerp
+        gameState.camera.x += (targetX - gameState.camera.x) * 0.1;
+        gameState.camera.y += (targetY - gameState.camera.y) * 0.1;
+        
+        // Clamp
+        gameState.camera.x = Math.max(0, Math.min(gameState.camera.x, gameState.levelW - CANVAS_WIDTH));
+        gameState.camera.y = Math.max(0, Math.min(gameState.camera.y, gameState.levelH - CANVAS_HEIGHT));
+    }
+
+    function renderGame(p) {
+        drawBackground(p);
+        
+        p.push();
+        // Apply Camera Transform
+        p.translate(-gameState.camera.x, -gameState.camera.y);
+
+        // Render Order:
+        // 1. World Static (Platforms)
+        gameState.platforms.forEach(plat => plat.render(p));
+        
+        // 2. Objects (Blocks, Goal, Hazards)
+        if (gameState.goal) gameState.goal.render(p);
+        gameState.hazards.forEach(h => h.render(p));
+        gameState.blocks.forEach(b => b.render(p));
+        gameState.collectibles.forEach(c => c.render(p));
+        
+        // 3. Bombs
+        gameState.bombs.forEach(b => b.render(p));
+        
+        // 4. Player
+        if (gameState.player) gameState.player.render(p);
+        
+        // 5. Particles
+        gameState.particles.forEach(pt => pt.render(p));
+
+        p.pop();
+    }
+
+    p.keyPressed = function() {
+        keyPressed(p);
+    };
+
+    p.keyReleased = function() {
+        keyReleased(p);
+    };
+});
+
+window.gameInstance = gameInstance;
+
+// Control Mode Setter for HTML buttons
+window.setControlMode = function(mode) {
+    gameState.controlMode = mode;
+    console.log("Control Mode set to:", mode);
+    // Restart game to apply mode cleanly
+    resetGameState();
+    loadLevel();
+    // If setting to test, start playing immediately
+    if (mode !== "HUMAN") {
+        gameState.gamePhase = "PLAYING";
+    } else {
+        gameState.gamePhase = "START";
+    }
+};
+</file>
+
+<file name="ui.js">
+// ui.js - User Interface
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export function renderUI(p) {
+    // HUD
+    p.push();
+    p.resetMatrix(); // Ensure UI is drawn on top screen space
+    
+    // Score
+    p.textAlign(p.LEFT, p.TOP);
+    p.textSize(20);
+    p.fill(255, 255, 100);
+    p.noStroke();
+    p.text(`Spores: ${gameState.score}`, 10, 10);
+
+    // Tutorial text in start area
+    // Just a simple check if player is near start
+    if (gameState.player && gameState.player.x < 300) {
+        p.textAlign(p.CENTER);
+        p.fill(255, 255, 255, 150);
+        p.textSize(14);
+        p.text("Arrows: Move | Space: Jump | Z: Bomb", CANVAS_WIDTH/2, CANVAS_HEIGHT - 30);
+    }
+    
+    p.pop();
+}
+
+export function renderStartScreen(p) {
+    // Background gradient
+    drawBackground(p);
+    
+    p.fill(0, 0, 0, 150);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+    p.textAlign(p.CENTER, p.CENTER);
+    
+    // Title
+    p.textSize(60);
+    p.fill(100, 255, 100);
+    p.stroke(0);
+    p.strokeWeight(4);
+    p.text("Öoo", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 60);
+    
+    p.textSize(24);
+    p.fill(200, 255, 200);
+    p.noStroke();
+    p.text("The Bomb Caterpillar", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+    
+    p.textSize(16);
+    p.fill(255);
+    p.text("Press ENTER to Start", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 60);
+    
+    // Instructions
+    p.textSize(14);
+    p.fill(200);
+    p.text("Collect Star Spores and find the Golden Leaf!", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 100);
+}
+
+export function renderGameOver(p, won) {
+    p.fill(0, 0, 0, 200);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.textAlign(p.CENTER, p.CENTER);
+    
+    if (won) {
+        p.textSize(48);
+        p.fill(255, 215, 0);
+        p.text("YOU WIN!", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 40);
+        p.textSize(20);
+        p.fill(255);
+        p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 10);
+    } else {
+        p.textSize(48);
+        p.fill(255, 50, 50);
+        p.text("GAME OVER", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 40);
+        p.textSize(20);
+        p.fill(255);
+        p.text("Öoo has perished...", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 10);
+    }
+    
+    p.textSize(16);
+    p.fill(150);
+    p.text("Press R to Restart", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 60);
+}
+
+export function renderPaused(p) {
+    p.fill(0, 0, 0, 100);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(40);
+    p.fill(255);
+    p.text("PAUSED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+}
+
+// Background render helper
+export function drawBackground(p) {
+    // Dark underground theme
+    p.background(20, 15, 25);
+    
+    // Distant shapes/particles could go here
+    p.noStroke();
+    p.fill(30, 25, 40);
+    p.circle(100, 100, 200);
+    p.circle(500, 300, 300);
+}
+</file>
+
+<file name="entities.js">
+// entities.js - Game Objects
+import { gameState, FRICTION, MOVE_SPEED, JUMP_FORCE, BOMB_FUSE_TIME, BOMB_BLAST_RADIUS, BOMB_FORCE, GRAVITY, TILE_SIZE, AIR_RESISTANCE } from './globals.js';
+import { updateEntityPhysics, checkExplosion, checkAABB } from './physics.js';
+import { particleSystem } from './particles.js';
+
+export class Entity {
+    constructor(x, y, width, height, type) {
+        this.x = x;
+        this.y = y;
+        this.width = width;
+        this.height = height;
+        this.type = type; // "PLAYER", "PLATFORM", "BLOCK", "BOMB", "COLLECTIBLE", "HAZARD", "GOAL"
+        this.vx = 0;
+        this.vy = 0;
+        this.active = true;
+    }
+    
+    update() {
+        // Base update
+    }
+
+    render(p) {
+        // Base render
+    }
+}
+
+export class Player extends Entity {
+    constructor(x, y) {
+        super(x, y, 24, 24, "PLAYER");
+        this.color = [100, 255, 100];
+        this.onGround = false;
+        this.facing = 1; // 1 Right, -1 Left
+        this.isDead = false;
+        
+        // Caterpillar tail segments
+        this.tail = [];
+        this.tailLength = 4;
+        for(let i=0; i<this.tailLength; i++) {
+            this.tail.push({x: x, y: y});
+        }
+        
+        this.bombCooldown = 0;
+    }
+
+    update(p) {
+        if (this.isDead) return;
+
+        // Decrease cooldowns
+        if (this.bombCooldown > 0) this.bombCooldown--;
+
+        // Tail logic (follow head)
+        // Store current head pos history slightly delayed or spring interp would be better
+        // Simple follow:
+        let targetX = this.x;
+        let targetY = this.y;
+        
+        for (let i = 0; i < this.tail.length; i++) {
+            let seg = this.tail[i];
+            let dx = targetX - seg.x;
+            let dy = targetY - seg.y;
+            let dist = Math.sqrt(dx*dx + dy*dy);
+            
+            if (dist > 10) { // Spacing
+                seg.x += dx * 0.2;
+                seg.y += dy * 0.2;
+            }
+            // Update target for next segment
+            targetX = seg.x;
+            targetY = seg.y;
+        }
+
+        // Apply friction
+        this.vx *= this.onGround ? FRICTION : AIR_RESISTANCE;
+
+        // Physics Update
+        updateEntityPhysics(this);
+
+        // Interaction with Collectibles
+        for (let i = gameState.collectibles.length - 1; i >= 0; i--) {
+            let c = gameState.collectibles[i];
+            if (checkAABB(this, c)) {
+                c.collect();
+            }
+        }
+
+        // Interaction with Hazards
+        for (let h of gameState.hazards) {
+            // Precise hitbox for spikes (usually smaller than tile)
+            let hitbox = { x: h.x + 5, y: h.y + 10, width: h.width - 10, height: h.height - 10};
+            if (checkAABB(this, hitbox)) {
+                this.die();
+            }
+        }
+
+        // Interaction with Goal
+        if (gameState.goal && checkAABB(this, gameState.goal)) {
+            gameState.gamePhase = "GAME_OVER_WIN";
+        }
+
+        // Log Position
+        if (p.frameCount % 60 === 0) {
+            p.logs.player_info.push({
+                x: this.x,
+                y: this.y,
+                vx: this.vx,
+                vy: this.vy,
+                timestamp: Date.now()
+            });
+        }
+    }
+
+    placeBomb() {
+        if (this.bombCooldown > 0) return;
+        
+        const bombX = this.x + this.width/2 - 10;
+        const bombY = this.y + this.height/2 - 10;
+        const bomb = new Bomb(bombX, bombY);
+        gameState.bombs.push(bomb);
+        
+        this.bombCooldown = 30; // Half second cooldown
+    }
+
+    jump() {
+        if (this.onGround) {
+            this.vy = JUMP_FORCE;
+            this.onGround = false;
+        }
+    }
+
+    die() {
+        if (this.isDead) return;
+        this.isDead = true;
+        particleSystem.createExplosion(this.x, this.y, 30);
+        setTimeout(() => {
+            gameState.gamePhase = "GAME_OVER_LOSE";
+        }, 1000);
+    }
+
+    render(p) {
+        if (this.isDead) return;
+
+        // Draw Tail
+        p.fill(50, 200, 50);
+        p.stroke(30, 100, 30);
+        p.strokeWeight(1);
+        
+        for(let i = this.tail.length-1; i >= 0; i--) {
+            let seg = this.tail[i];
+            let size = 18 - i * 2; // Tapering
+            p.circle(seg.x + this.width/2, seg.y + this.height/2, size);
+        }
+
+        // Draw Head
+        p.fill(100, 255, 100);
+        p.circle(this.x + this.width/2, this.y + this.height/2, 24);
+        
+        // Face
+        p.fill(0);
+        // Eyes
+        let eyeOffsetX = this.facing * 5;
+        p.circle(this.x + this.width/2 + eyeOffsetX + 3, this.y + 10, 4);
+        p.circle(this.x + this.width/2 + eyeOffsetX - 3, this.y + 10, 4);
+        
+        // Antennae
+        p.stroke(100, 255, 100);
+        p.strokeWeight(2);
+        p.line(this.x + this.width/2, this.y + 5, this.x + this.width/2 + 5, this.y - 5);
+        p.line(this.x + this.width/2, this.y + 5, this.x + this.width/2 - 5, this.y - 5);
+    }
+}
+
+export class Bomb extends Entity {
+    constructor(x, y) {
+        super(x, y, 20, 20, "BOMB");
+        this.timer = BOMB_FUSE_TIME;
+        this.fuseColor = 0;
+    }
+
+    update() {
+        this.timer--;
+        
+        // Physics for bomb (falls)
+        updateEntityPhysics(this);
+        // Apply significant friction so it doesn't slide forever
+        this.vx *= 0.8; 
+
+        if (this.timer <= 0) {
+            this.explode();
+        }
+    }
+
+    explode() {
+        this.active = false;
+        // Visuals
+        particleSystem.createExplosion(this.x + this.width/2, this.y + this.height/2);
+        
+        // Logic
+        checkExplosion(this.x + this.width/2, this.y + this.height/2, BOMB_BLAST_RADIUS, BOMB_FORCE);
+    }
+
+    render(p) {
+        const pulse = Math.abs(Math.sin(p.frameCount * 0.2)) * 5;
+        
+        // Flash red near explosion
+        if (this.timer < 30 && (Math.floor(this.timer / 4) % 2 === 0)) {
+            p.fill(255, 0, 0);
+        } else {
+            p.fill(50);
+        }
+        
+        p.stroke(0);
+        p.strokeWeight(1);
+        p.circle(this.x + 10, this.y + 10, 20 + pulse);
+        
+        // Fuse spark
+        p.stroke(255, 200, 0);
+        p.strokeWeight(2);
+        p.line(this.x + 10, this.y, this.x + 10, this.y - 8);
+        
+        if (Math.random() > 0.5) {
+            particleSystem.createSparkles(this.x + 10, this.y - 8);
+        }
+    }
+}
+
+export class Platform extends Entity {
+    constructor(x, y, w, h) {
+        super(x, y, w, h, "PLATFORM");
+    }
+
+    render(p) {
+        // Tiled rendering
+        p.fill(40, 30, 50); // Dark purple/brown soil
+        p.stroke(60, 50, 70);
+        p.strokeWeight(1);
+        p.rect(this.x, this.y, this.width, this.height);
+        
+        // Grass top
+        p.fill(50, 100, 60);
+        p.noStroke();
+        p.rect(this.x, this.y, this.width, 5);
+    }
+}
+
+export class DestructibleBlock extends Entity {
+    constructor(x, y) {
+        super(x, y, TILE_SIZE, TILE_SIZE, "BLOCK");
+    }
+
+    destroy() {
+        if (!this.active) return;
+        this.active = false;
+        particleSystem.createBlockDebris(this.x, this.y);
+    }
+
+    render(p) {
+        p.fill(120, 100, 80); // Cracked stone/wood color
+        p.stroke(0);
+        p.strokeWeight(2);
+        p.rect(this.x, this.y, this.width, this.height);
+        
+        // Cracks
+        p.stroke(60, 40, 20);
+        p.line(this.x + 5, this.y + 5, this.x + 20, this.y + 20);
+        p.line(this.x + 35, this.y + 5, this.x + 20, this.y + 20);
+    }
+}
+
+export class Collectible extends Entity {
+    constructor(x, y) {
+        super(x, y, 20, 20, "COLLECTIBLE");
+        this.baseY = y;
+        this.offset = Math.random() * Math.PI * 2;
+    }
+
+    update() {
+        // Bobbing motion
+        this.y = this.baseY + Math.sin(gameState.frameCount * 0.05 + this.offset) * 5;
+    }
+
+    collect() {
+        if (!this.active) return;
+        this.active = false;
+        gameState.score += 100;
+        particleSystem.createSparkles(this.x + 10, this.y + 10);
+    }
+
+    render(p) {
+        p.push();
+        p.translate(this.x + 10, this.y + 10);
+        p.rotate(gameState.frameCount * 0.05);
+        p.fill(255, 255, 100);
+        p.noStroke();
+        // Draw star
+        p.beginShape();
+        for (let i = 0; i < 5; i++) {
+            let angle = (Math.PI * 2 * i) / 5 - Math.PI / 2;
+            let r1 = 10;
+            let r2 = 5;
+            p.vertex(Math.cos(angle) * r1, Math.sin(angle) * r1);
+            angle += (Math.PI * 2) / 10;
+            p.vertex(Math.cos(angle) * r2, Math.sin(angle) * r2);
+        }
+        p.endShape(p.CLOSE);
+        p.pop();
+    }
+}
+
+export class Hazard extends Entity {
+    constructor(x, y, w, h) {
+        super(x, y, w, h, "HAZARD");
+    }
+    
+    render(p) {
+        // Spikes
+        p.fill(200, 50, 50);
+        p.noStroke();
+        
+        const spikeWidth = 10;
+        const spikeCount = this.width / spikeWidth;
+        
+        for(let i=0; i<spikeCount; i++) {
+            p.triangle(
+                this.x + i * spikeWidth, this.y + this.height,
+                this.x + i * spikeWidth + spikeWidth/2, this.y,
+                this.x + (i+1) * spikeWidth, this.y + this.height
+            );
+        }
+    }
+}
+
+export class Goal extends Entity {
+    constructor(x, y) {
+        super(x, y, 40, 40, "GOAL");
+    }
+
+    render(p) {
+        // Golden Leaf
+        p.push();
+        p.translate(this.x + 20, this.y + 20);
+        // Glow
+        p.noStroke();
+        p.fill(255, 215, 0, 100 + Math.sin(gameState.frameCount * 0.1) * 50);
+        p.circle(0, 0, 60);
+        
+        // Leaf shape
+        p.fill(255, 215, 0);
+        p.rotate(Math.sin(gameState.frameCount * 0.02) * 0.2);
+        p.ellipse(0, 0, 30, 50);
+        p.stroke(200, 150, 0);
+        p.strokeWeight(2);
+        p.line(0, -20, 0, 20); // Vein
+        p.pop();
+    }
+}
+</file>
+
+<file name="automated_test.js">
+// automated_test.js - Bot logic
+import { gameState } from './globals.js';
+import { checkAABB } from './physics.js';
+
+// Predefined actions for Test 1
+// Each step: { x: targetX, action: 'JUMP'|'BOMB'|'WAIT', condition: fn }
+// This is a simplified behavior tree
+let currentStep = 0;
+let waitTimer = 0;
+
+export function get_automated_testing_action() {
+    if (!gameState.player) return;
+    const player = gameState.player;
+    
+    if (gameState.controlMode === "TEST_2") {
+        // Random Chaos
+        const r = Math.random();
+        if (r < 0.05) player.jump();
+        if (r < 0.01) player.placeBomb();
+        
+        if (Math.random() < 0.4) {
+             player.vx = -4; // Left
+        } else if (Math.random() < 0.8) {
+             player.vx = 4; // Right
+        }
+        return;
+    }
+
+    if (gameState.controlMode === "TEST_1") {
+        // Structured Walkthrough to win
+        
+        // Very basic AI: Move right, jump over holes, bomb walls
+        
+        // 1. Move Right primarily
+        player.vx = 4;
+        player.facing = 1;
+
+        // 2. Check for Obstacles ahead
+        // Look ahead for walls
+        let blocked = false;
+        // Simple raycast logic using existing blocks
+        for (let block of gameState.blocks) {
+            if (Math.abs(block.y - player.y) < 50 && block.x > player.x && block.x < player.x + 60) {
+                blocked = true;
+                break;
+            }
+        }
+        
+        // 3. Look for gaps (lack of platforms)
+        let groundAhead = false;
+        const checkX = player.x + 40;
+        const checkY = player.y + 40;
+        for (let plat of gameState.platforms) {
+            if (plat.x < checkX && plat.x + plat.width > checkX && plat.y > player.y) {
+                groundAhead = true;
+                break;
+            }
+        }
+
+        // Actions
+        
+        if (blocked) {
+            // Stop, place bomb, wait
+            player.vx = 0;
+            if (player.bombCooldown <= 0 && gameState.bombs.length === 0) {
+                player.placeBomb();
+                waitTimer = 140; // Wait for explosion
+            }
+        }
+        
+        if (waitTimer > 0) {
+            player.vx = -2; // Back up slightly to avoid own bomb
+            waitTimer--;
+            return;
+        }
+
+        if (!groundAhead && player.onGround) {
+            player.jump();
+        }
+        
+        // Handle high walls (bomb jump)
+        // If stopped but no block, maybe a high wall?
+        if (Math.abs(player.vx) < 0.1 && !blocked && player.onGround) {
+             // Try to jump
+             player.jump();
+        }
+    }
+}
+</file>
+
+<file name="physics.js">
+// physics.js - Collision detection and physics helpers
+import { gameState, TILE_SIZE, GRAVITY, TERMINAL_VELOCITY } from './globals.js';
+import { collideRectRect, collideRectCircle } from 'https://cdn.jsdelivr.net/npm/p5.collide2d@1.0.0/+esm';
+
+// Check AABB collision between two rectangle objects
+// Expected objects: {x, y, width, height}
+export function checkAABB(rect1, rect2) {
+    return (
+        rect1.x < rect2.x + rect2.width &&
+        rect1.x + rect1.width > rect2.x &&
+        rect1.y < rect2.y + rect2.height &&
+        rect1.y + rect1.height > rect2.y
+    );
+}
+
+// Resolve collision between a dynamic entity and static map objects (platforms/blocks)
+export function resolveMapCollisions(entity) {
+    entity.onGround = false;
+    
+    // Get potential colliders (optimization: only check nearby tiles would be better, but checking all for this scale is fine)
+    const colliders = [...gameState.platforms, ...gameState.blocks];
+
+    // Horizontal Collision
+    entity.x += entity.vx;
+    for (let box of colliders) {
+        if (checkAABB(entity, box)) {
+            if (entity.vx > 0) { // Moving right
+                entity.x = box.x - entity.width;
+            } else if (entity.vx < 0) { // Moving left
+                entity.x = box.x + box.width;
+            }
+            entity.vx = 0;
+        }
+    }
+
+    // Vertical Collision
+    entity.y += entity.vy;
+    for (let box of colliders) {
+        if (checkAABB(entity, box)) {
+            if (entity.vy > 0) { // Falling
+                entity.y = box.y - entity.height;
+                entity.onGround = true;
+                entity.vy = 0;
+            } else if (entity.vy < 0) { // Jumping up
+                entity.y = box.y + box.height;
+                entity.vy = 0;
+            }
+        }
+    }
+}
+
+// Apply physics forces to an entity
+export function updateEntityPhysics(entity) {
+    // Apply Gravity
+    entity.vy += GRAVITY;
+    
+    // Cap terminal velocity
+    if (entity.vy > TERMINAL_VELOCITY) {
+        entity.vy = TERMINAL_VELOCITY;
+    }
+
+    // Move (collision resolution handles the actual x/y updates)
+    resolveMapCollisions(entity);
+    
+    // Check world bounds (fall off map)
+    if (entity.y > gameState.levelH + 100) {
+        // Kill player if they fall out of the world
+        if (entity.type === 'PLAYER') {
+            entity.die();
+        } else {
+            entity.active = false; // Remove other entities
+        }
+    }
+}
+
+// Check explosion interaction
+export function checkExplosion(explosionX, explosionY, radius, force) {
+    // 1. Check Destructible Blocks
+    for (let i = gameState.blocks.length - 1; i >= 0; i--) {
+        const block = gameState.blocks[i];
+        const centerBlockX = block.x + block.width / 2;
+        const centerBlockY = block.y + block.height / 2;
+        
+        const dist = Math.sqrt(Math.pow(centerBlockX - explosionX, 2) + Math.pow(centerBlockY - explosionY, 2));
+        
+        if (dist < radius + block.width / 2) {
+            // Destroy block
+            block.destroy();
+        }
+    }
+
+    // 2. Check Player (Knockback)
+    const player = gameState.player;
+    if (player) {
+        const playerCX = player.x + player.width / 2;
+        const playerCY = player.y + player.height / 2;
+        const dist = Math.sqrt(Math.pow(playerCX - explosionX, 2) + Math.pow(playerCY - explosionY, 2));
+
+        if (dist < radius + player.width / 2) {
+            // Calculate vector from explosion to player
+            let dx = playerCX - explosionX;
+            let dy = playerCY - explosionY;
+            
+            // Normalize
+            const len = Math.sqrt(dx*dx + dy*dy);
+            if (len > 0) {
+                dx /= len;
+                dy /= len;
+            } else {
+                dy = -1; // Default to Up if exactly on top
+            }
+
+            // Apply force inversely proportional to distance (closer = stronger)
+            const forceFactor = 1 - (dist / (radius + player.width));
+            const actualForce = force * Math.max(0.2, forceFactor); // Min force guarantees some push
+
+            player.vx += dx * actualForce;
+            player.vy += dy * actualForce;
+            player.onGround = false; // Ensure they are airborne
+        }
+    }
+}
+</file>
+
+<file name="particles.js">
+// particles.js - Visual effects system
+import { gameState } from './globals.js';
+
+export class Particle {
+    constructor(x, y, type) {
+        this.x = x;
+        this.y = y;
+        this.type = type; // "EXPLOSION", "SMOKE", "SPARKLE", "DEBRIS"
+        this.age = 0;
+        this.active = true;
+        
+        this.vx = (Math.random() - 0.5) * 5;
+        this.vy = (Math.random() - 0.5) * 5;
+        
+        // Customize based on type
+        switch(type) {
+            case "EXPLOSION":
+                this.lifetime = 30 + Math.random() * 20;
+                this.size = 10 + Math.random() * 20;
+                this.color = [255, 100 + Math.random() * 100, 0];
+                this.drag = 0.9;
+                break;
+            case "SMOKE":
+                this.lifetime = 60;
+                this.size = 5 + Math.random() * 10;
+                this.color = [100, 100, 100];
+                this.vy = -1 - Math.random(); // Float up
+                this.drag = 0.95;
+                break;
+            case "SPARKLE":
+                this.lifetime = 40;
+                this.size = 2 + Math.random() * 3;
+                this.color = [255, 255, 150];
+                this.drag = 0.9;
+                break;
+            case "DEBRIS":
+                this.lifetime = 50;
+                this.size = 4 + Math.random() * 4;
+                this.color = [100, 50, 20];
+                this.vy = -5; // Pop up
+                this.drag = 0.98;
+                this.gravity = 0.4;
+                break;
+        }
+    }
+
+    update() {
+        this.age++;
+        if (this.age > this.lifetime) {
+            this.active = false;
+            return;
+        }
+
+        this.x += this.vx;
+        this.y += this.vy;
+
+        if (this.gravity) this.vy += this.gravity;
+        if (this.drag) {
+            this.vx *= this.drag;
+            this.vy *= this.drag;
+        }
+
+        // Shrink or fade
+        this.alpha = 1 - (this.age / this.lifetime);
+    }
+
+    render(p) {
+        p.noStroke();
+        const c = p.color(...this.color);
+        c.setAlpha(this.alpha * 255);
+        p.fill(c);
+        p.circle(this.x, this.y, this.size * this.alpha);
+    }
+}
+
+export class ParticleSystem {
+    constructor() {
+        this.particles = [];
+    }
+
+    createExplosion(x, y, count = 20) {
+        for(let i=0; i<count; i++) {
+            gameState.particles.push(new Particle(x, y, "EXPLOSION"));
+        }
+        for(let i=0; i<count/2; i++) {
+            gameState.particles.push(new Particle(x, y, "SMOKE"));
+        }
+    }
+
+    createBlockDebris(x, y) {
+        for(let i=0; i<10; i++) {
+            gameState.particles.push(new Particle(x + Math.random()*20, y + Math.random()*20, "DEBRIS"));
+        }
+    }
+
+    createSparkles(x, y) {
+        gameState.particles.push(new Particle(x, y, "SPARKLE"));
+    }
+}
+
+export const particleSystem = new ParticleSystem();
+</file>
+
+<file name="input.js">
+// input.js - Input handling
+import { gameState } from './globals.js';
+import { resetGameState } from './globals.js';
+import { loadLevel } from './level.js';
+
+export const keys = {};
+
+export function handleInput(p) {
+    // Only process inputs in PLAYING phase
+    if (gameState.gamePhase !== "PLAYING") return;
+
+    const player = gameState.player;
+    if (!player) return;
+
+    let dx = 0;
+    
+    // Human Controls
+    if (gameState.controlMode === "HUMAN") {
+        const speed = keys[16] ? 2 : 5; // Shift for slow
+        
+        if (keys[p.LEFT_ARROW]) {
+            player.vx -= 1; // Acceleration feel
+            if(player.vx < -speed) player.vx = -speed;
+            player.facing = -1;
+            dx = -1;
+        }
+        if (keys[p.RIGHT_ARROW]) {
+            player.vx += 1;
+            if(player.vx > speed) player.vx = speed;
+            player.facing = 1;
+            dx = 1;
+        }
+        
+        if (!keys[p.LEFT_ARROW] && !keys[p.RIGHT_ARROW]) {
+            // Decel happens in entity update via friction
+        }
+
+        if (keys[32]) { // Space
+            player.jump();
+            // Prevent holding space for rapid fire jumps (optional, but better feel)
+            keys[32] = false; 
+        }
+
+        if (keys[90]) { // Z
+            player.placeBomb();
+            keys[90] = false; // Single press
+        }
+    }
+    // Automated modes handled in game loop via automated_test.js
+}
+
+export function keyPressed(p) {
+    keys[p.keyCode] = true;
+
+    p.logs.inputs.push({
+        type: 'press',
+        keyCode: p.keyCode,
+        frame: p.frameCount,
+        time: Date.now()
+    });
+
+    // Phase Transitions
+    if (p.keyCode === 13) { // ENTER
+        if (gameState.gamePhase === "START") {
+            gameState.gamePhase = "PLAYING";
+            // Start bg music if we had any
+        }
+    }
+
+    if (p.keyCode === 27) { // ESC
+        if (gameState.gamePhase === "PLAYING") {
+            gameState.gamePhase = "PAUSED";
+        } else if (gameState.gamePhase === "PAUSED") {
+            gameState.gamePhase = "PLAYING";
+        }
+    }
+
+    if (p.keyCode === 82) { // R
+        if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") {
+            resetGameState();
+            loadLevel(); // Rebuild level
+            gameState.gamePhase = "START";
+        }
+    }
+}
+
+export function keyReleased(p) {
+    keys[p.keyCode] = false;
+    p.logs.inputs.push({
+        type: 'release',
+        keyCode: p.keyCode,
+        frame: p.frameCount,
+        time: Date.now()
+    });
+}
+</file>
+
+<file name="level.js">
+// level.js - Level generation
+import { gameState, TILE_SIZE, CANVAS_HEIGHT } from './globals.js';
+import { Platform, DestructibleBlock, Collectible, Hazard, Player, Goal } from './entities.js';
+
+// Simple tile map:
+// # = Wall/Platform
+// P = Player Start
+// B = Breakable Block
+// S = Spikes
+// C = Collectible
+// G = Goal
+// . = Empty
+
+const levelMap = [
+    "...............................................................................................",
+    "...............................................................................................",
+    "...............................................................................................",
+    "...............................................................................................",
+    "...............................................................................................",
+    "...............................................................................................",
+    "..................C.........................................................C.................G",
+    "............####.###....................................................#########.............#",
+    "...........#........#........................................C.........#.........#...........##",
+    "..........#..........#..................###................####.......#...........#.........###",
+    "P........#............#...............##...##........................#.............#.......####",
+    "#####...#..............B.............#.......#.............B........#...............#.....#####",
+    "#####..#................B...#######.#.........#...#######..#...B...#.................#...######",
+    "#########################...#######.###########...#######.##########.................##########",
+    "#########################SSS#######.###########SSS#######.##########SSSSSSSSSSSSSSSSS##########"
+];
+
+// Note: The map needs to be designed such that bombs are required.
+// Let's refine the map for mechanics.
+// 1. Wall blocking path (needs bomb)
+// 2. High ledge (needs bomb jump)
+
+const refinedMap = [
+    "..........................................................................................................",
+    "..........................................................................................................",
+    "..........................................................................................................",
+    "..........................................................................................................",
+    "..................................................C.......................................................",
+    ".................................................###...........C..........................................",
+    "................................................#...#.........###......................................G..",
+    "...............................................#.....#.......#...#....................................###.",
+    ".....................................C........#.......#.....#.....#..........C.......................#####",
+    "...................................#####.....#.........#...#.......#.......#####....................######",
+    "...........................................B#...........#B#.........#..............................#######",
+    "...........................B...............B#...........#B#.........#..............B..............########",
+    "P..............B...........#..............##.............#...........#.............#.............#########",
+    "#####.......#######.......###............###.............#...........#.............#............##########",
+    "#####.......#######.......###SSSSSSSSSSSS###.............#...........#SSSSSSSSSSSSS#...........###########",
+    "#####.......#######.......##################.............#...........###############...........###########"
+];
+
+export function loadLevel() {
+    gameState.platforms = [];
+    gameState.blocks = [];
+    gameState.collectibles = [];
+    gameState.hazards = [];
+    
+    const map = refinedMap;
+    gameState.levelH = map.length * TILE_SIZE;
+    gameState.levelW = map[0].length * TILE_SIZE;
+
+    for (let row = 0; row < map.length; row++) {
+        for (let col = 0; col < map[row].length; col++) {
+            const char = map[row][col];
+            const x = col * TILE_SIZE;
+            const y = row * TILE_SIZE;
+
+            switch (char) {
+                case '#':
+                    gameState.platforms.push(new Platform(x, y, TILE_SIZE, TILE_SIZE));
+                    break;
+                case 'B':
+                    gameState.blocks.push(new DestructibleBlock(x, y));
+                    break;
+                case 'P':
+                    gameState.player = new Player(x, y);
+                    break;
+                case 'S':
+                    gameState.hazards.push(new Hazard(x, y + TILE_SIZE/2, TILE_SIZE, TILE_SIZE/2));
+                    break;
+                case 'C':
+                    gameState.collectibles.push(new Collectible(x + TILE_SIZE/4, y + TILE_SIZE/4));
+                    break;
+                case 'G':
+                    gameState.goal = new Goal(x, y);
+                    // Add a platform under goal if needed
+                    gameState.platforms.push(new Platform(x, y + TILE_SIZE, TILE_SIZE, TILE_SIZE)); 
+                    break;
+            }
+        }
+    }
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

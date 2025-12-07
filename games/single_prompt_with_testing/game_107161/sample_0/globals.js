@@ -9,6 +9,9 @@ export const PALETTE = {
     SHADOW: '#222222'       // Depth cues
 };
 
+// Game Constants
+export const INVULNERABILITY_FRAMES = 60; // Number of frames player is invincible after taking damage (1 second at 60 FPS)
+
 export const gameState = {
     gamePhase: "START",     // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
     controlMode: "HUMAN",   // HUMAN, TEST_1, TEST_2, etc.

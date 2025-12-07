@@ -1,0 +1,108 @@
+/**
+ * physics.js
+ * Handles collision detection, resolution, and physics utilities.
+ * Uses p5.collide2d for entity-entity collision and custom grid logic for terrain.
+ */
+
+import { TILE_SIZE, TILE_TYPE, WORLD_COLS, WORLD_ROWS, gameState } from './globals.js';
+// The p5.collide2d library is loaded globally in index.html and extends p5.prototype.
+// We need to access the global p5 object to use its collision functions.
+const p5 = window.p5; 
+
+/**
+ * Check collision between an entity and the tilemap.
+ * Returns true if colliding with a solid tile.
+ */
+export function checkMapCollision(x, y, w, h) {
+    // Calculate tile range to check
+    const startCol = Math.floor(x / TILE_SIZE);
+    const endCol = Math.floor((x + w) / TILE_SIZE);
+    const startRow = Math.floor(y / TILE_SIZE);
+    const endRow = Math.floor((y + h) / TILE_SIZE);
+
+    for (let c = startCol; c <= endCol; c++) {
+        for (let r = startRow; r <= endRow; r++) {
+            // Check bounds
+            if (c < 0 || c >= WORLD_COLS || r < 0 || r >= WORLD_ROWS) {
+                return true; // Treat world bounds as solid
+            }
+            
+            const tile = gameState.tiles[c][r];
+            if (tile === TILE_TYPE.DIRT || tile === TILE_TYPE.STONE) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+/**
+ * Resolves collisions for a physics body against the map.
+ * Modifies the entity's position and velocity directly.
+ */
+export function resolveMapCollision(entity) {
+    // We separate axes to prevent getting stuck in corners
+    
+    // Horizontal
+    entity.x += entity.vx;
+    if (checkMapCollision(entity.x, entity.y, entity.width, entity.height)) {
+        if (entity.vx > 0) {
+            // Moving right, snap to left edge of tile
+            entity.x = Math.floor((entity.x + entity.width) / TILE_SIZE) * TILE_SIZE - entity.width - 0.01;
+        } else if (entity.vx < 0) {
+            // Moving left, snap to right edge of tile
+            entity.x = Math.floor(entity.x / TILE_SIZE) * TILE_SIZE + TILE_SIZE + 0.01;
+        }
+        entity.vx = 0;
+    }
+
+    // Vertical
+    entity.y += entity.vy;
+    entity.onGround = false; // Reset ground flag
+    
+    if (checkMapCollision(entity.x, entity.y, entity.width, entity.height)) {
+        if (entity.vy > 0) {
+            // Falling, snap to top of tile (Ground)
+            entity.y = Math.floor((entity.y + entity.height) / TILE_SIZE) * TILE_SIZE - entity.height - 0.01;
+            entity.onGround = true;
+        } else if (entity.vy < 0) {
+            // Jumping up, snap to bottom of tile (Ceiling)
+            entity.y = Math.floor(entity.y / TILE_SIZE) * TILE_SIZE + TILE_SIZE + 0.01;
+        }
+        entity.vy = 0;
+    }
+}
+
+/**
+ * Entity-Entity AABB Collision
+ */
+export function checkEntityCollision(ent1, ent2) {
+    // Use the globally loaded p5.collide2d function from p5.prototype
+    return p5.prototype.collideRectRect(ent1.x, ent1.y, ent1.width, ent1.height, ent2.x, ent2.y, ent2.width, ent2.height);
+}
+
+/**
+ * Raycast for AI Line of Sight
+ * Checks if a line from (x1,y1) to (x2,y2) is clear of solid tiles.
+ */
+export function raycastMap(x1, y1, x2, y2) {
+    const dist = Math.hypot(x2 - x1, y2 - y1);
+    const steps = Math.ceil(dist / (TILE_SIZE / 2));
+    
+    for (let i = 0; i <= steps; i++) {
+        const t = i / steps;
+        const checkX = x1 + (x2 - x1) * t;
+        const checkY = y1 + (y2 - y1) * t;
+        
+        const c = Math.floor(checkX / TILE_SIZE);
+        const r = Math.floor(checkY / TILE_SIZE);
+        
+        if (c < 0 || c >= WORLD_COLS || r < 0 || r >= WORLD_ROWS) return true; // Blocked by bounds
+        
+        const tile = gameState.tiles[c][r];
+        if (tile !== TILE_TYPE.EMPTY && tile !== TILE_TYPE.PLATFORM) {
+            return true; // Blocked
+        }
+    }
+    return false; // Clear
+}

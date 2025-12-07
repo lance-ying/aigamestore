@@ -1,0 +1,1074 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+can you make sure the levels are procedurally generated so that I don't die so easily, right now the levels are pretty open ended and I die so easily to an enemy when I press up, there should be more tunnels, make sure the level generation is more careful, execute!
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Tomb of the Mask: P5 Edition</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #1a1a2e; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; color: white; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+      canvas { border: 2px solid #0f3460; box-shadow: 0 0 20px rgba(233, 69, 96, 0.2); }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #16213e; color: #fff; border: 1px solid #0f3460; border-radius: 4px; transition: all 0.2s; }
+      .control-button:hover { background: #0f3460; }
+      .control-button.active { background: #e94560; border-color: #e94560; }
+      h1 { margin-bottom: 15px; text-transform: uppercase; letter-spacing: 2px; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle">Tomb of the Mask: P5 Edition</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="setMode('HUMAN', this)">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="setMode('TEST_1', this)">TEST 1 (Bot)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="setMode('TEST_2', this)">TEST 2 (Random)</button>
+        <button id="test_3_ModeBtn" class="control-button" onclick="setMode('TEST_3', this)">TEST 3 (Shield)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; max-width: 600px; margin: 0 auto 10px auto; font-size: 14px;">
+        Dash through an infinite vertical maze. You cannot stop until you hit a wall. Avoid spikes and the rising neon tide.
+      </p>
+      <p id="gameControls" style="color: #888; font-size: 12px;">
+        Arrows: Dash | Space: Shield (50c) | R: Restart | Esc: Pause
+      </p>
+    </div>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    
+    <script>
+        function setMode(mode, btn) {
+            if(window.setControlMode) window.setControlMode(mode);
+            document.querySelectorAll('.control-button').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            // Reset focus to body so keyboard works immediately
+            document.body.focus();
+        }
+    </script>
+    
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="automated_testing_controller.js">
+import { gameState, TILE_SIZE, COLORS } from './globals.js';
+import { worldToGrid, getMapKey } from './utils.js';
+import { TILE_WALL, TILE_SPIKE } from './map.js';
+
+// Helper to simulate path validity
+function isMoveSafe(startGridX, startGridY, dx, dy) {
+    let x = startGridX;
+    let y = startGridY;
+    let steps = 0;
+    
+    // Simulate sliding until hit wall
+    while(true) {
+        x += dx;
+        y += dy;
+        steps++;
+        const key = getMapKey(x, y);
+        const tile = gameState.map[key];
+        
+        if (tile === TILE_WALL) {
+            // Hit wall, check where we stopped (x-dx, y-dy)
+            const stopX = x - dx;
+            const stopY = y - dy;
+            // Safe spot?
+            // Check immediate surroundings for spikes?
+            // For now, assume landing next to a wall is generally safe unless ON a spike
+            // But we can check if the tile we ARE on is safe.
+            return { safe: true, stopX, stopY, dist: steps };
+        }
+        
+        if (tile === TILE_SPIKE) {
+            return { safe: false }; // Dies on path
+        }
+        
+        if (steps > 50) return { safe: true, stopX: x, stopY: y, dist: steps }; // Infinite loop guard
+    }
+}
+
+let actionCooldown = 0;
+
+export function get_automated_testing_action(gs) {
+    if (gs.gamePhase !== 'PLAYING') {
+        if (gs.gamePhase === 'START' || gs.gamePhase.includes('GAME_OVER')) {
+             return { keyCode: 13 }; // Press ENTER
+        }
+        return null;
+    }
+    
+    if (gs.player.state !== 'IDLE') return null; // Wait until stopped
+    
+    if (actionCooldown > 0) {
+        actionCooldown--;
+        return null;
+    }
+    
+    const p = gs.player;
+    const gx = Math.round(p.x / TILE_SIZE);
+    const gy = Math.round(p.y / TILE_SIZE);
+    
+    if (gs.controlMode === 'TEST_1') {
+        // Pathfinder
+        const directions = [
+            { dx: 0, dy: -1, key: 38 }, // Up (Preferred)
+            { dx: -1, dy: 0, key: 37 }, // Left
+            { dx: 1, dy: 0, key: 39 },  // Right
+            { dx: 0, dy: 1, key: 40 }   // Down
+        ];
+        
+        let bestDir = null;
+        let maxScore = -Infinity;
+        
+        for (let dir of directions) {
+            const result = isMoveSafe(gx, gy, dir.dx, dir.dy);
+            if (result.safe) {
+                // Heuristic: Height gained (negative Y is up) + safety
+                let score = (gy - result.stopY) * 2; // Gaining height is good
+                
+                // Avoid going down unless necessary
+                if (dir.dy > 0) score -= 100;
+                
+                // Avoid Tide
+                if (result.stopY * TILE_SIZE > gs.tideY - 100) score -= 500;
+                
+                if (score > maxScore) {
+                    maxScore = score;
+                    bestDir = dir;
+                }
+            }
+        }
+        
+        if (bestDir) {
+            actionCooldown = 5;
+            return { keyCode: bestDir.key };
+        }
+        
+        // Stuck? Random move to unstick
+        return { keyCode: 38 };
+    }
+    
+    if (gs.controlMode === 'TEST_2') {
+        // Random Chaos
+        actionCooldown = 10;
+        const keys = [37, 38, 39, 40];
+        return { keyCode: keys[Math.floor(Math.random() * keys.length)] };
+    }
+    
+    if (gs.controlMode === 'TEST_3') {
+        // Shield Test
+        if (gs.coins < 50) gs.coins = 50; // Cheat
+        if (!p.shieldActive) return { keyCode: 32 };
+        return null;
+    }
+
+    return null;
+}
+</file>
+
+<file name="globals.js">
+// Game Constants
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const TARGET_FPS = 60;
+
+// Dimensions
+export const TILE_SIZE = 25;
+export const PLAYER_SIZE = 20;
+export const PLAYER_SPEED = 18; // Pixels per frame during dash
+
+// Colors (Neon Palette)
+export const COLORS = {
+    BACKGROUND: '#1a1a2e',
+    WALL: '#16213e',
+    WALL_STROKE: '#0f3460',
+    PLAYER: '#e94560',
+    PLAYER_MASK: '#ffd700',
+    COIN: '#f9a826',
+    SPIKE: '#ff0040',
+    ENEMY: '#533483',
+    TIDE: '#e94560aa', // Transparent red
+    TEXT: '#ffffff',
+    SHIELD: '#00ffff'
+};
+
+// Global Game State
+export const gameState = {
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    controlMode: "HUMAN", // HUMAN, TEST_1, TEST_2, etc.
+    
+    // Core Gameplay Data
+    player: null,
+    score: 0,
+    highScore: 0,
+    coins: 0,
+    
+    // World Data
+    entities: [], // Flat list for updates/rendering
+    map: {}, // Spatial hash map for tiles: "x,y" -> Type
+    activeChunks: [], // Track generated chunks
+    cameraY: 0, // Vertical scroll position
+    tideY: 0, // Rising death wall Y position
+    tideSpeed: 1.0,
+    
+    // Input Buffer
+    queuedMove: null, // Stores the next move if pressed while moving
+    
+    // Frame Timing
+    frameCount: 0,
+    lastFrameTime: 0,
+    deltaTime: 0
+};
+
+// Initialize logs structure (Write-Only)
+export function initLogs(p) {
+    p.logs = {
+        "game_info": [],
+        "inputs": [],
+        "player_info": []
+    };
+}
+
+// Global Accessor
+export function getGameState() {
+    return gameState;
+}
+window.getGameState = getGameState;
+</file>
+
+<file name="game.js">
+import { gameState, initLogs, CANVAS_WIDTH, CANVAS_HEIGHT, TILE_SIZE, COLORS } from './globals.js';
+import { Player } from './entities.js';
+import { LevelManager } from './map.js';
+import { particleSystem } from './particles.js';
+import { handleInput, handleKeyPress } from './input.js';
+import { renderUI, renderStartScreen, renderGameOver, renderPaused } from './ui.js';
+
+const p5 = window.p5;
+const levelManager = new LevelManager();
+
+window.resetGame = function() {
+    gameState.score = 0;
+    gameState.coins = 0;
+    gameState.frameCount = 0;
+    gameState.tideSpeed = 1.0;
+    
+    // Player Start
+    const startX = Math.floor(CANVAS_WIDTH / TILE_SIZE / 2) * TILE_SIZE + (TILE_SIZE - 20)/2;
+    const startY = (Math.floor(CANVAS_HEIGHT / TILE_SIZE) - 4) * TILE_SIZE + (TILE_SIZE - 20)/2;
+    
+    gameState.player = new Player(startX, startY);
+    gameState.tideY = startY + 300; // Start tide well below
+    gameState.cameraY = startY - 200;
+    
+    levelManager.reset();
+    
+    gameState.gamePhase = "START";
+    gameState.entities = [gameState.player];
+}
+
+window.setControlMode = function(mode) {
+    gameState.controlMode = mode;
+    console.log(`Control Mode set to: ${mode}`);
+    // Restart game to apply clean state for tests if needed
+    if (gameState.gamePhase !== 'START') window.resetGame();
+};
+
+let gameInstance = new p5(p => {
+    initLogs(p);
+
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(60);
+        p.randomSeed(42);
+        
+        window.resetGame();
+    };
+
+    p.draw = function() {
+        // Time management
+        const now = p.millis();
+        gameState.deltaTime = (now - gameState.lastFrameTime) / 1000;
+        gameState.lastFrameTime = now;
+        gameState.frameCount = p.frameCount;
+        
+        // Log info
+        if (gameState.frameCount % 60 === 0) {
+            p.logs.game_info.push({
+                phase: gameState.gamePhase,
+                score: gameState.score,
+                fps: p.frameRate().toFixed(1)
+            });
+        }
+
+        // State Machine
+        switch (gameState.gamePhase) {
+            case "START":
+                renderStartScreen(p);
+                handleInput(p); // Allow automated start
+                break;
+                
+            case "PLAYING":
+                updateGame(p);
+                renderGame(p);
+                renderUI(p);
+                break;
+                
+            case "PAUSED":
+                renderGame(p); // Render background but don't update
+                renderPaused(p);
+                break;
+                
+            case "GAME_OVER_WIN":
+            case "GAME_OVER_LOSE":
+                renderGame(p);
+                renderGameOver(p);
+                handleInput(p); // Allow automated restart
+                break;
+        }
+    };
+
+    p.keyPressed = function() {
+        handleKeyPress(p);
+    };
+});
+
+function updateGame(p) {
+    handleInput(p); // Continuous input check for automation/buffer
+    
+    const player = gameState.player;
+    
+    // Update Map Generation
+    levelManager.update(p);
+    
+    // Update Entities
+    gameState.entities.forEach(e => e.update(p));
+    particleSystem.update();
+    
+    // Update Tide
+    gameState.tideY -= gameState.tideSpeed;
+    gameState.tideSpeed += 0.0005; // Slowly increase difficulty
+    
+    // Update Camera (Smooth Follow Player)
+    const targetCamY = player.y - CANVAS_HEIGHT * 0.6;
+    gameState.cameraY = p.lerp(gameState.cameraY, targetCamY, 0.1);
+    
+    // High Score Update
+    if (gameState.score > gameState.highScore) gameState.highScore = gameState.score;
+}
+
+function renderGame(p) {
+    p.background(COLORS.BACKGROUND);
+    
+    // Render Map
+    levelManager.render(p);
+    
+    // Render Tide
+    const screenTideY = gameState.tideY - gameState.cameraY;
+    if (screenTideY < CANVAS_HEIGHT) {
+        p.push();
+        p.fill(COLORS.TIDE);
+        p.noStroke();
+        p.rect(0, screenTideY, CANVAS_WIDTH, CANVAS_HEIGHT * 2); // Extend downwards
+        
+        // Wave effect
+        p.stroke(COLORS.PLAYER);
+        p.strokeWeight(2);
+        p.beginShape();
+        for(let x=0; x<=CANVAS_WIDTH; x+=20) {
+            p.vertex(x, screenTideY + Math.sin(x*0.05 + gameState.frameCount*0.1)*10);
+        }
+        p.endShape();
+        p.pop();
+    }
+    
+    // Render Entities
+    gameState.entities.forEach(e => e.render(p));
+    particleSystem.render(p);
+}
+
+window.gameInstance = gameInstance;
+</file>
+
+<file name="ui.js">
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, COLORS } from './globals.js';
+
+export function renderUI(p) {
+    p.push();
+    p.textAlign(p.LEFT, p.TOP);
+    p.textSize(16);
+    p.fill(COLORS.TEXT);
+    
+    // Score
+    p.text(`Score: ${gameState.score}`, 10, 10);
+    p.text(`Coins: ${gameState.coins}`, 10, 30);
+    
+    // High Score
+    p.textAlign(p.RIGHT, p.TOP);
+    p.text(`High Score: ${gameState.highScore}`, CANVAS_WIDTH - 10, 10);
+    
+    // Shield Status
+    if (gameState.player && gameState.player.shieldActive) {
+        p.textAlign(p.CENTER, p.TOP);
+        p.fill(COLORS.SHIELD);
+        p.text(`SHIELD ACTIVE: ${(gameState.player.shieldTimer/60).toFixed(1)}s`, CANVAS_WIDTH/2, 10);
+    } else if (gameState.coins >= 50) {
+        p.textAlign(p.CENTER, p.TOP);
+        p.fill(COLORS.TEXT);
+        p.textSize(12);
+        p.text(`[SPACE] SHIELD (50c)`, CANVAS_WIDTH/2, 10);
+    }
+    
+    p.pop();
+}
+
+export function renderStartScreen(p) {
+    p.background(COLORS.BACKGROUND);
+    p.push();
+    p.textAlign(p.CENTER, p.CENTER);
+    p.fill(COLORS.PLAYER);
+    p.textSize(48);
+    p.text("TOMB OF THE MASK", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 60);
+    p.textSize(24);
+    p.fill(COLORS.TEXT);
+    p.text("P5 EDITION", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 20);
+    
+    p.textSize(16);
+    p.text("PRESS ENTER TO START", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 40);
+    p.fill(COLORS.COIN);
+    p.text("Arrow Keys to Move | Space for Shield", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 70);
+    p.pop();
+}
+
+export function renderGameOver(p) {
+    p.push();
+    p.fill(0, 0, 0, 200);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.textAlign(p.CENTER, p.CENTER);
+    p.fill(COLORS.SPIKE);
+    p.textSize(48);
+    p.text("GAME OVER", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 40);
+    
+    p.fill(COLORS.TEXT);
+    p.textSize(24);
+    p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 10);
+    
+    p.textSize(16);
+    p.text("Press R to Restart", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 50);
+    p.pop();
+}
+
+export function renderPaused(p) {
+    p.push();
+    p.fill(0, 0, 0, 150);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.fill(COLORS.TEXT);
+    p.textSize(32);
+    p.text("PAUSED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+    p.pop();
+}
+</file>
+
+<file name="entities.js">
+import { gameState, TILE_SIZE, PLAYER_SIZE, PLAYER_SPEED, CANVAS_WIDTH, CANVAS_HEIGHT, COLORS } from './globals.js';
+import { getMapKey, worldToGrid, checkAABB } from './utils.js';
+import { particleSystem } from './particles.js';
+import { TILE_WALL, TILE_SPIKE, TILE_COIN } from './map.js';
+
+export class Player {
+    constructor(x, y) {
+        this.type = 'PLAYER';
+        this.x = x;
+        this.y = y;
+        this.width = PLAYER_SIZE;
+        this.height = PLAYER_SIZE;
+        
+        this.vx = 0;
+        this.vy = 0;
+        
+        this.state = 'IDLE'; // IDLE, MOVING
+        this.queuedDir = null; // {x, y}
+        
+        this.shieldActive = false;
+        this.shieldTimer = 0;
+    }
+    
+    update(p) {
+        // Handle Shield
+        if (this.shieldActive) {
+            this.shieldTimer--;
+            if (this.shieldTimer <= 0) this.shieldActive = false;
+        }
+    
+        // Movement Logic
+        if (this.state === 'MOVING') {
+            // Apply velocity
+            // We use small steps to avoid tunneling
+            const speed = PLAYER_SPEED;
+            const steps = 4;
+            const stepSize = speed / steps;
+            
+            for (let i = 0; i < steps; i++) {
+                this.x += (this.vx / speed) * stepSize;
+                this.y += (this.vy / speed) * stepSize;
+                
+                // Spawn trail
+                if (gameState.frameCount % 5 === 0) {
+                    particleSystem.spawnTrail(this.x + this.width/2, this.y + this.height/2, COLORS.PLAYER);
+                }
+                
+                // Collision Check
+                if (this.checkCollision()) {
+                    // Backtrack slightly and align to grid
+                    // Find nearest grid center
+                    const gridX = Math.round(this.x / TILE_SIZE) * TILE_SIZE;
+                    const gridY = Math.round(this.y / TILE_SIZE) * TILE_SIZE;
+                    
+                    // Simple snap for now - in a full physics engine we'd resolve properly
+                    // But since we only move orthogonally, we can snap the axis we were moving on
+                    if (this.vx !== 0) this.x = this.vx > 0 ? Math.floor(this.x/TILE_SIZE)*TILE_SIZE + (TILE_SIZE - this.width)/2 : Math.ceil(this.x/TILE_SIZE)*TILE_SIZE + (TILE_SIZE - this.width)/2;
+                    if (this.vy !== 0) this.y = this.vy > 0 ? Math.floor(this.y/TILE_SIZE)*TILE_SIZE + (TILE_SIZE - this.height)/2 : Math.ceil(this.y/TILE_SIZE)*TILE_SIZE + (TILE_SIZE - this.height)/2;
+                    
+                    // Stop
+                    this.vx = 0;
+                    this.vy = 0;
+                    this.state = 'IDLE';
+                    
+                    // Process queued move if any
+                    if (this.queuedDir) {
+                        this.move(this.queuedDir.x, this.queuedDir.y);
+                        this.queuedDir = null;
+                    }
+                    break;
+                }
+            }
+            
+            // Check interactions (Coins, Spikes)
+            this.checkInteractions();
+            
+        } else if (this.state === 'IDLE') {
+            // Align perfectly to grid just in case
+            // this.x = Math.round(this.x / TILE_SIZE) * TILE_SIZE + (TILE_SIZE - this.width)/2;
+        }
+        
+        // Log player info
+        if (p.logs && p.logs.player_info) {
+             p.logs.player_info.push({
+                x: this.x,
+                y: this.y,
+                state: this.state,
+                coins: gameState.coins,
+                frame: gameState.frameCount
+            });
+        }
+        
+        // Check Tide Death
+        if (this.y + this.height > gameState.tideY) {
+            this.die();
+        }
+    }
+    
+    checkCollision() {
+        // Check corners against map
+        const buffer = 2; // Pixel buffer
+        const points = [
+            {x: this.x + buffer, y: this.y + buffer},
+            {x: this.x + this.width - buffer, y: this.y + buffer},
+            {x: this.x + buffer, y: this.y + this.height - buffer},
+            {x: this.x + this.width - buffer, y: this.y + this.height - buffer}
+        ];
+        
+        for (let pt of points) {
+            const gx = worldToGrid(pt.x);
+            const gy = worldToGrid(pt.y);
+            const key = getMapKey(gx, gy);
+            if (gameState.map[key] === TILE_WALL) return true;
+        }
+        
+        // Canvas bounds (Side walls are generated, but top/bottom constraints?)
+        if (this.x < 0 || this.x > CANVAS_WIDTH - this.width) return true;
+        
+        return false;
+    }
+    
+    checkInteractions() {
+        const cx = this.x + this.width/2;
+        const cy = this.y + this.height/2;
+        const gx = worldToGrid(cx);
+        const gy = worldToGrid(cy);
+        const key = getMapKey(gx, gy);
+        const tile = gameState.map[key];
+        
+        if (tile === TILE_COIN) {
+            gameState.coins++;
+            gameState.score += 10;
+            delete gameState.map[key];
+            particleSystem.spawnExplosion(cx, cy, COLORS.COIN, 5);
+        } else if (tile === TILE_SPIKE) {
+            if (!this.shieldActive) {
+                this.die();
+            }
+        }
+    }
+    
+    move(dx, dy) {
+        if (this.state === 'MOVING') {
+            this.queuedDir = {x: dx, y: dy};
+            return;
+        }
+        
+        // Check if immediate wall in that direction
+        const checkDist = 5;
+        const testX = this.x + dx * checkDist;
+        const testY = this.y + dy * checkDist;
+        // Simple 1-point check center for start
+        const cx = this.x + this.width/2 + dx * checkDist;
+        const cy = this.y + this.height/2 + dy * checkDist;
+        const key = getMapKey(worldToGrid(cx), worldToGrid(cy));
+        
+        if (gameState.map[key] === TILE_WALL) {
+            return; // Can't move there
+        }
+        
+        this.vx = dx * PLAYER_SPEED;
+        this.vy = dy * PLAYER_SPEED;
+        this.state = 'MOVING';
+    }
+    
+    activateShield() {
+        if (gameState.coins >= 50 && !this.shieldActive) {
+            gameState.coins -= 50;
+            this.shieldActive = true;
+            this.shieldTimer = 300; // 5 seconds at 60fps
+        }
+    }
+    
+    die() {
+        if (gameState.gamePhase !== 'PLAYING') return;
+        gameState.gamePhase = "GAME_OVER_LOSE";
+        particleSystem.spawnExplosion(this.x + this.width/2, this.y + this.height/2, COLORS.PLAYER, 50);
+    }
+    
+    render(p) {
+        const ry = this.y - gameState.cameraY;
+        
+        p.push();
+        // Shield Effect
+        if (this.shieldActive) {
+            p.noFill();
+            p.stroke(COLORS.SHIELD);
+            p.strokeWeight(2);
+            p.circle(this.x + this.width/2, ry + this.height/2, this.width * 1.5);
+        }
+        
+        p.fill(COLORS.PLAYER);
+        p.rect(this.x, ry, this.width, this.height, 4);
+        
+        // Mask details
+        p.fill(COLORS.PLAYER_MASK);
+        p.noStroke();
+        // Eyes
+        p.rect(this.x + 4, ry + 6, 4, 4);
+        p.rect(this.x + 12, ry + 6, 4, 4);
+        p.pop();
+    }
+}
+</file>
+
+<file name="utils.js">
+import { TILE_SIZE } from './globals.js';
+
+// Convert world coordinate to grid coordinate
+export function worldToGrid(val) {
+    return Math.floor(val / TILE_SIZE);
+}
+
+// Generate spatial key for map
+export function getMapKey(col, row) {
+    return `${col},${row}`;
+}
+
+// Check AABB Intersection
+export function checkAABB(rect1, rect2) {
+    return (
+        rect1.x < rect2.x + rect2.width &&
+        rect1.x + rect1.width > rect2.x &&
+        rect1.y < rect2.y + rect2.height &&
+        rect1.y + rect1.height > rect2.y
+    );
+}
+
+// Random Range with Seed (using p5 instance)
+export function randomRange(p, min, max) {
+    return p.random(min, max);
+}
+
+// Pick random from array
+export function randomChoice(p, arr) {
+    return arr[Math.floor(p.random(arr.length))];
+}
+</file>
+
+<file name="particles.js">
+import { gameState, COLORS } from './globals.js';
+
+export class Particle {
+    constructor(x, y, color, speed, size, life) {
+        this.x = x;
+        this.y = y;
+        this.color = color;
+        this.size = size;
+        this.initialSize = size;
+        this.life = life;
+        this.maxLife = life;
+        
+        const angle = Math.random() * Math.PI * 2;
+        this.vx = Math.cos(angle) * speed;
+        this.vy = Math.sin(angle) * speed;
+        
+        // Add minimal gravity/friction
+        this.friction = 0.95;
+    }
+    
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.vx *= this.friction;
+        this.vy *= this.friction;
+        
+        this.life--;
+        this.size = (this.life / this.maxLife) * this.initialSize;
+    }
+    
+    render(p) {
+        p.push();
+        p.noStroke();
+        p.fill(this.color);
+        p.circle(this.x, this.y - gameState.cameraY, this.size);
+        p.pop();
+    }
+}
+
+export class ParticleSystem {
+    constructor() {
+        this.particles = [];
+    }
+    
+    spawnExplosion(x, y, color, count = 10) {
+        for (let i = 0; i < count; i++) {
+            this.particles.push(new Particle(x, y, color, 3, 5, 30));
+        }
+    }
+    
+    spawnTrail(x, y, color) {
+        // Square particle for trail
+        const p = new Particle(x, y, color, 0.5, 10, 15);
+        p.render = function(p5) {
+            p5.push();
+            p5.noStroke();
+            // Alpha fade
+            const alpha = Math.floor((this.life / this.maxLife) * 150);
+            const c = p5.color(this.color);
+            c.setAlpha(alpha);
+            p5.fill(c);
+            p5.rectMode(p5.CENTER);
+            p5.rect(this.x, this.y - gameState.cameraY, this.size, this.size);
+            p5.pop();
+        };
+        this.particles.push(p);
+    }
+    
+    update() {
+        for (let i = this.particles.length - 1; i >= 0; i--) {
+            this.particles[i].update();
+            if (this.particles[i].life <= 0) {
+                this.particles.splice(i, 1);
+            }
+        }
+    }
+    
+    render(p) {
+        this.particles.forEach(pt => pt.render(p));
+    }
+}
+
+export const particleSystem = new ParticleSystem();
+</file>
+
+<file name="map.js">
+import { gameState, TILE_SIZE, CANVAS_WIDTH, CANVAS_HEIGHT, COLORS } from './globals.js';
+import { getMapKey, worldToGrid } from './utils.js';
+
+// Tile Types
+export const TILE_EMPTY = 0;
+export const TILE_WALL = 1;
+export const TILE_SPIKE = 2;
+export const TILE_COIN = 3;
+
+export class LevelManager {
+    constructor() {
+        this.gridCols = Math.ceil(CANVAS_WIDTH / TILE_SIZE);
+        this.lastGeneratedY = 0; // The Y coordinate (grid) of the top generated row
+        this.noiseOffset = 0;
+    }
+    
+    reset() {
+        gameState.map = {};
+        gameState.entities = gameState.entities.filter(e => e.type === 'PLAYER'); // Keep player, clear others
+        this.lastGeneratedY = Math.ceil(CANVAS_HEIGHT / TILE_SIZE) + 2;
+        this.generateChunk(window.gameInstance, 0, this.lastGeneratedY); // Generate initial area
+        
+        // Initial safe zone
+        for (let x = 0; x < this.gridCols; x++) {
+             for (let y = 0; y < 10; y++) {
+                 // Clear starting area
+                 const key = getMapKey(x, Math.floor(gameState.player.y/TILE_SIZE) - y);
+                 delete gameState.map[key];
+             }
+        }
+        
+        // Floor
+        for (let x = 0; x < this.gridCols; x++) {
+            const key = getMapKey(x, worldToGrid(CANVAS_HEIGHT - TILE_SIZE));
+            gameState.map[key] = TILE_WALL;
+        }
+    }
+    
+    update(p) {
+        // Generate new chunks as player moves up
+        // Player moves into negative Y.
+        // If playerY is close to lastGeneratedY * TILE_SIZE, generate more
+        const playerGridY = worldToGrid(gameState.player.y);
+        const buffer = 20; // Generate 20 rows ahead
+        
+        if (playerGridY - buffer < this.lastGeneratedY) {
+            this.generateChunk(p, this.lastGeneratedY - 20, this.lastGeneratedY);
+            this.lastGeneratedY -= 20;
+        }
+        
+        // Cleanup old chunks (below tide) to save memory
+        const tideGridY = worldToGrid(gameState.tideY);
+        Object.keys(gameState.map).forEach(key => {
+            const [x, y] = key.split(',').map(Number);
+            if (y > tideGridY + 5) {
+                delete gameState.map[key];
+            }
+        });
+    }
+    
+    generateChunk(p, startY, endY) {
+        // Procedural generation using a drunkard's walk or noise for paths
+        // For a tomb/maze feel, we want corridors.
+        
+        for (let y = startY; y < endY; y++) {
+            for (let x = 0; x < this.gridCols; x++) {
+                // Borders
+                if (x === 0 || x === this.gridCols - 1) {
+                    gameState.map[getMapKey(x, y)] = TILE_WALL;
+                    continue;
+                }
+                
+                // Noise based walls
+                const n = p.noise(x * 0.1, y * 0.1);
+                if (n > 0.55) {
+                    gameState.map[getMapKey(x, y)] = TILE_WALL;
+                    
+                    // Chance for spike on wall
+                    if (p.random() < 0.05) {
+                         // Check neighbors to place spike correctly? 
+                         // For simplicity, spikes are separate tiles that kill you
+                         // We'll overlay a spike object later or just use tile ID
+                    }
+                } else {
+                    // Empty space
+                    // Chance for coin
+                    if (p.random() < 0.05) {
+                        gameState.map[getMapKey(x, y)] = TILE_COIN;
+                    } 
+                    // Chance for spike trap in open
+                    else if (p.random() < 0.01) {
+                        gameState.map[getMapKey(x, y)] = TILE_SPIKE;
+                    }
+                }
+            }
+        }
+        
+        // Ensure a path exists (rudimentary)
+        // Carve a winding path up the center
+        let cx = Math.floor(this.gridCols / 2);
+        for (let y = endY; y > startY; y--) {
+            // Wiggle x
+            cx += Math.floor(p.random(-2, 3));
+            cx = p.constrain(cx, 1, this.gridCols - 2);
+            
+            // Clear path 
+            for(let w = -1; w <= 1; w++) {
+                const key = getMapKey(cx + w, y);
+                if (gameState.map[key] === TILE_WALL) {
+                    delete gameState.map[key];
+                }
+                // Ensure no spikes on the safe path
+                if (gameState.map[key] === TILE_SPIKE) {
+                    delete gameState.map[key];
+                }
+            }
+        }
+    }
+    
+    render(p) {
+        // Render visible tiles
+        const startCol = 0;
+        const endCol = this.gridCols;
+        const startRow = worldToGrid(gameState.cameraY);
+        const endRow = startRow + Math.ceil(CANVAS_HEIGHT / TILE_SIZE) + 1;
+        
+        p.push();
+        p.strokeWeight(1);
+        
+        for (let y = startRow; y <= endRow; y++) {
+            for (let x = startCol; x < endCol; x++) {
+                const key = getMapKey(x, y);
+                const tile = gameState.map[key];
+                
+                if (tile) {
+                    const px = x * TILE_SIZE;
+                    const py = y * TILE_SIZE - gameState.cameraY;
+                    
+                    if (tile === TILE_WALL) {
+                        p.fill(COLORS.WALL);
+                        p.stroke(COLORS.WALL_STROKE);
+                        p.rect(px, py, TILE_SIZE, TILE_SIZE);
+                        
+                        // Inner detail for aesthetic
+                        p.noStroke();
+                        p.fill(COLORS.WALL_STROKE);
+                        p.rect(px + 5, py + 5, TILE_SIZE - 10, TILE_SIZE - 10);
+                    } else if (tile === TILE_SPIKE) {
+                        p.fill(COLORS.SPIKE);
+                        p.noStroke();
+                        // Draw spike triangle
+                        p.triangle(
+                            px + TILE_SIZE/2, py,
+                            px, py + TILE_SIZE,
+                            px + TILE_SIZE, py + TILE_SIZE
+                        );
+                    } else if (tile === TILE_COIN) {
+                        // Coins are rendered as entities usually, but for tile map efficiency we can draw here
+                        // Or spawn entities. Let's draw here for performance.
+                        p.fill(COLORS.COIN);
+                        p.noStroke();
+                        const s = TILE_SIZE * 0.6 + Math.sin(gameState.frameCount * 0.1) * 2;
+                        p.circle(px + TILE_SIZE/2, py + TILE_SIZE/2, s);
+                    }
+                }
+            }
+        }
+        p.pop();
+    }
+}
+</file>
+
+<file name="input.js">
+import { gameState } from './globals.js';
+import { get_automated_testing_action } from './automated_testing_controller.js';
+
+export function handleInput(p) {
+    // Automated testing input injection
+    const autoAction = get_automated_testing_action(gameState);
+    if (autoAction) {
+        processKey(p, autoAction.keyCode);
+    }
+}
+
+export function handleKeyPress(p) {
+    // Log physical input
+    p.logs.inputs.push({
+        type: 'pressed',
+        key: p.key,
+        keyCode: p.keyCode,
+        frame: p.frameCount
+    });
+    
+    processKey(p, p.keyCode);
+}
+
+function processKey(p, keyCode) {
+    const { player, gamePhase } = gameState;
+    
+    // Global State Controls
+    if (keyCode === 13) { // ENTER
+        if (gamePhase === "START") {
+            gameState.gamePhase = "PLAYING";
+        }
+    }
+    else if (keyCode === 27) { // ESC
+        if (gamePhase === "PLAYING") gameState.gamePhase = "PAUSED";
+        else if (gamePhase === "PAUSED") gameState.gamePhase = "PLAYING";
+    }
+    else if (keyCode === 82) { // R
+        if (gamePhase === "GAME_OVER_LOSE" || gamePhase === "GAME_OVER_WIN") {
+            window.resetGame();
+        }
+    }
+    
+    // Gameplay Controls
+    if (gamePhase === "PLAYING" && player) {
+        switch(keyCode) {
+            case 37: // LEFT
+                player.move(-1, 0);
+                break;
+            case 38: // UP
+                player.move(0, -1);
+                break;
+            case 39: // RIGHT
+                player.move(1, 0);
+                break;
+            case 40: // DOWN
+                player.move(0, 1);
+                break;
+            case 32: // SPACE
+            case 90: // Z
+            case 16: // SHIFT
+                player.activateShield();
+                break;
+        }
+    }
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

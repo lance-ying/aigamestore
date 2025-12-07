@@ -1,0 +1,123 @@
+// physics.js - Collision detection and physics helpers
+import { gameState, TILE_SIZE, GRAVITY, TERMINAL_VELOCITY } from './globals.js';
+// The following import is causing a 404 error and is not used in the current physics logic.
+// import { collideRectRect, collideRectCircle } from 'https://cdn.jsdelivr.net/npm/p5.collide2d@1.0.0/+esm';
+
+// Check AABB collision between two rectangle objects
+// Expected objects: {x, y, width, height}
+export function checkAABB(rect1, rect2) {
+    return (
+        rect1.x < rect2.x + rect2.width &&
+        rect1.x + rect1.width > rect2.x &&
+        rect1.y < rect2.y + rect2.height &&
+        rect1.y + rect1.height > rect2.y
+    );
+}
+
+// Resolve collision between a dynamic entity and static map objects (platforms/blocks)
+export function resolveMapCollisions(entity) {
+    entity.onGround = false;
+    
+    // Get potential colliders (optimization: only check nearby tiles would be better, but checking all for this scale is fine)
+    const colliders = [...gameState.platforms, ...gameState.blocks];
+
+    // Horizontal Collision
+    entity.x += entity.vx;
+    for (let box of colliders) {
+        if (checkAABB(entity, box)) {
+            if (entity.vx > 0) { // Moving right
+                entity.x = box.x - entity.width;
+            } else if (entity.vx < 0) { // Moving left
+                entity.x = box.x + box.width;
+            }
+            entity.vx = 0;
+        }
+    }
+
+    // Vertical Collision
+    entity.y += entity.vy;
+    for (let box of colliders) {
+        if (checkAABB(entity, box)) {
+            if (entity.vy > 0) { // Falling
+                entity.y = box.y - entity.height;
+                entity.onGround = true;
+                entity.vy = 0;
+            } else if (entity.vy < 0) { // Jumping up
+                entity.y = box.y + box.height;
+                entity.vy = 0;
+            }
+        }
+    }
+}
+
+// Apply physics forces to an entity
+export function updateEntityPhysics(entity) {
+    // Apply Gravity
+    entity.vy += GRAVITY;
+    
+    // Cap terminal velocity
+    if (entity.vy > TERMINAL_VELOCITY) {
+        entity.vy = TERMINAL_VELOCITY;
+    }
+
+    // Move (collision resolution handles the actual x/y updates)
+    resolveMapCollisions(entity);
+    
+    // Check world bounds (fall off map)
+    if (entity.y > gameState.levelH + 100) {
+        // Kill player if they fall out of the world
+        if (entity.type === 'PLAYER') {
+            entity.die();
+        } else {
+            entity.active = false; // Remove other entities
+        }
+    }
+}
+
+// Check explosion interaction
+export function checkExplosion(explosionX, explosionY, radius, force) {
+    // 1. Check Destructible Blocks
+    for (let i = gameState.blocks.length - 1; i >= 0; i--) {
+        const block = gameState.blocks[i];
+        const centerBlockX = block.x + block.width / 2;
+        const centerBlockY = block.y + block.height / 2;
+        
+        const dist = Math.sqrt(Math.pow(centerBlockX - explosionX, 2) + Math.pow(centerBlockY - explosionY, 2));
+        
+        if (dist < radius + block.width / 2) {
+            // Destroy block
+            block.destroy();
+        }
+    }
+
+    // 2. Check Player (Knockback)
+    const player = gameState.player;
+    if (player) {
+        const playerCX = player.x + player.width / 2;
+        const playerCY = player.y + player.height / 2;
+        const dist = Math.sqrt(Math.pow(playerCX - explosionX, 2) + Math.pow(playerCY - explosionY, 2));
+
+        if (dist < radius + player.width / 2) {
+            // Calculate vector from explosion to player
+            let dx = playerCX - explosionX;
+            let dy = playerCY - explosionY;
+            
+            // Normalize
+            const len = Math.sqrt(dx*dx + dy*dy);
+            if (len > 0) {
+                dx /= len;
+                dy /= len;
+            } else {
+                dy = -1; // Default to Up if exactly on top
+            }
+
+            // Apply force inversely proportional to distance (closer = stronger)
+            const forceFactor = 1 - (dist / (radius + player.width));
+            const actualForce = force * Math.max(0.2, forceFactor); // Min force guarantees some push
+
+            player.vx += dx * actualForce;
+            player.vy += dy * actualForce;
+            player.onGround = false; // Ensure they are airborne
+        }
+    }
+}

@@ -1,0 +1,183 @@
+<analysis>
+- Issue identified: The external dependency `p5.collide2d` is failing to load via ES module import in `physics.js` (404 error), causing the game physics to crash.
+- Files affected: `physics.js`, `index.html`
+- Changes needed: 
+    1. Remove the failing import in `physics.js`.
+    2. Implement a local `checkRectCircleCollision` function in `physics.js` to replace the library dependency.
+    3. Update `PhysicsEngine.checkLanding` to use the local function.
+    4. Fix a coordinate alignment bug: `tile.x` represents the center of the tile, but collision logic expects the top-left corner. The new implementation correctly calculates `tileLeft = tile.x - tile.width / 2`.
+    5. Remove the unused `p5.collide2d` script tag from `index.html`.
+</analysis>
+
+<code filename="physics.js">
+/**
+ * physics.js
+ * Handles movement integration, collision detection, and physics resolution.
+ */
+
+import { gameState, CONSTANTS } from './globals.js';
+
+// Local helper for collision detection to avoid external dependencies
+function checkRectCircleCollision(rx, ry, rw, rh, cx, cy, r) {
+    // rx, ry: Top-Left corner of rectangle
+    // rw, rh: Width and Height
+    // cx, cy: Center of circle
+    // r: Radius of circle
+
+    let testX = cx;
+    let testY = cy;
+
+    // Find closest point on rect to circle center
+    if (cx < rx) testX = rx;
+    else if (cx > rx + rw) testX = rx + rw;
+
+    if (cy < ry) testY = ry;
+    else if (cy > ry + rh) testY = ry + rh;
+
+    const distX = cx - testX;
+    const distY = cy - testY;
+    const distance = Math.sqrt((distX * distX) + (distY * distY));
+
+    return distance <= r;
+}
+
+export class PhysicsEngine {
+    static update(entity) {
+        // Apply Lateral (X) Physics
+        entity.vx += entity.ax;
+        entity.vx *= CONSTANTS.LATERAL_FRICTION;
+        entity.x += entity.vx;
+        entity.ax = 0; // Reset acceleration
+        
+        // Apply Forward (Y) Physics
+        // In this game, entities might move forward automatically or be static
+        entity.y += entity.vy;
+        
+        // Apply Vertical (Z) Physics (Bounce/Gravity)
+        if (entity.useGravity) {
+            entity.vz -= CONSTANTS.GRAVITY;
+            entity.z += entity.vz;
+        }
+    }
+
+    /**
+     * Checks if the player (ball) has landed on any tile.
+     * Only checks when ball is falling and near z=0.
+     */
+    static checkLanding(player, tiles) {
+        // Only check collision if player is falling and close to ground plane (z=0)
+        if (player.vz < 0 && player.z <= 5 && player.z >= -CONSTANTS.GRAVITY * 2) {
+            
+            // Define player footprint (circle/point) on the ground
+            // We give a little leeway by using a smaller radius for the "feet"
+            const footprintRadius = player.radius * 0.5;
+
+            for (let tile of tiles) {
+                // Determine collision box
+                // Tile.x is the Center X (based on rendering logic), but collision math expects Top-Left
+                const tileLeft = tile.x - tile.width / 2;
+                const tileTop = tile.y;
+
+                if (checkRectCircleCollision(
+                    tileLeft, tileTop, 
+                    tile.width, tile.height,
+                    player.x, player.y,
+                    footprintRadius
+                )) {
+                    return tile; // Return the tile we landed on
+                }
+            }
+        }
+        return null;
+    }
+
+    static checkCollectibleCollision(player, collectibles) {
+        // Check if player center is close to collectible center
+        // Collectibles are floating, so we check X, Y and Z range
+        
+        for (let i = collectibles.length - 1; i >= 0; i--) {
+            const c = collectibles[i];
+            
+            // 2D distance check
+            const distSq = (player.x - c.x)**2 + (player.y - c.y)**2;
+            const threshold = (player.radius + c.radius)**2;
+            
+            if (distSq < threshold) {
+                // Height check: ball must be within reasonable Z range of the gem
+                // Gems hover around z=20-40. Ball jumps up to z=100+.
+                // Let's make collection generous: if you jump "through" it (xy align), you get it.
+                if (Math.abs(player.z - c.z) < 60) {
+                    return i; // Return index of collected item
+                }
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Apply forces to keep player within world bounds (X-axis)
+     */
+    static constrainPlayerBounds(player) {
+        const halfWidth = CONSTANTS.LANE_WIDTH / 2;
+        if (player.x < -halfWidth) {
+            player.x = -halfWidth;
+            player.vx *= -0.5; // Bounce off wall with damping
+        } else if (player.x > halfWidth) {
+            player.x = halfWidth;
+            player.vx *= -0.5;
+        }
+    }
+}
+</code>
+
+<code filename="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Neon Hop</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #111; color: #eee; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 2px solid #333; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #333; color: #fff; border: 1px solid #555; border-radius: 4px; transition: background 0.2s; }
+      .control-button:hover { background: #444; }
+      .control-button.active { background: #3498db; border-color: #2980b9; }
+      h1 { text-transform: uppercase; letter-spacing: 2px; text-shadow: 0 0 10px #3498db; margin-top: 0; }
+    </style>
+    <script>
+      function updateActiveButton(mode) {
+        document.querySelectorAll('.control-button').forEach(btn => btn.classList.remove('active'));
+        const idMap = { 'HUMAN': 'humanModeBtn', 'TEST_1': 'test1Btn', 'TEST_2': 'test2Btn' };
+        if(idMap[mode]) document.getElementById(idMap[mode]).classList.add('active');
+      }
+      window.setControlModeWrapper = function(mode) {
+        if(window.setControlMode) {
+            window.setControlMode(mode);
+            updateActiveButton(mode);
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle">Neon Hop</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlModeWrapper('HUMAN')">Human Mode</button>
+        <button id="test1Btn" class="control-button" onclick="window.setControlModeWrapper('TEST_1')">TEST 1 (Survival Bot)</button>
+        <button id="test2Btn" class="control-button" onclick="window.setControlModeWrapper('TEST_2')">TEST 2 (Random Fail)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; max-width: 600px; margin: 0 auto 10px auto; line-height: 1.4; font-size: 14px;">
+        Bounce to the rhythm! Guide the ball onto the neon tiles. Don't fall into the void.
+      </p>
+      <p id="gameControls" style="color: #888; max-width: 600px; margin: 0 auto 20px auto; font-size: 12px;">
+        ARROWS: Steer | SPACE: Boost | SHIFT: Slam | ENTER: Start | ESC: Pause | R: Restart
+      </p>
+    </div>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.7.0/p5.min.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</code>

@@ -1,0 +1,842 @@
+// entities.js - Game entity classes
+
+import { 
+  gameState, 
+  TILE_SIZE, 
+  PLAYER_SPEED, 
+  PLAYER_JUMP_POWER, 
+  GRAVITY,
+  MAX_FALL_SPEED,
+  STARTING_BOMBS,
+  STARTING_ROPES,
+  STARTING_HEALTH,
+  BOMB_TIMER,
+  BOMB_RADIUS
+} from './globals.js';
+import { 
+  worldToTile, 
+  getTile, 
+  isSolid, 
+  distance,
+  clamp 
+} from './utils.js';
+
+// Player class
+export class Player {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.width = 14;
+    this.height = 18;
+    this.vx = 0;
+    this.vy = 0;
+    this.onGround = false;
+    this.onLadder = false;
+    this.facing = 1; // 1 = right, -1 = left
+    this.crouching = false;
+    
+    // Game properties
+    this.health = STARTING_HEALTH;
+    this.maxHealth = STARTING_HEALTH;
+    this.bombs = STARTING_BOMBS;
+    this.ropes = STARTING_ROPES;
+    this.invulnerable = 0; // Invulnerability frames after taking damage
+    
+    // Animation
+    this.animFrame = 0;
+    this.walkCycle = 0;
+    
+    // State tracking
+    this.lastPosition = { x: x, y: y };
+    
+    gameState.player = this;
+    gameState.entities.push(this);
+  }
+  
+  update(p) {
+    // Update invulnerability
+    if (this.invulnerable > 0) {
+      this.invulnerable--;
+    }
+    
+    // Check if on ladder
+    const { tx, ty } = worldToTile(this.x, this.y);
+    this.onLadder = getTile(tx, ty) === 3;
+    
+    // Apply gravity if not on ladder
+    if (!this.onLadder) {
+      this.vy += GRAVITY;
+      this.vy = Math.min(this.vy, MAX_FALL_SPEED);
+    } else {
+      // On ladder, cancel vertical velocity if not pressing up/down
+      this.vy *= 0.7;
+    }
+    
+    // Apply horizontal velocity
+    this.x += this.vx;
+    this.checkHorizontalCollision();
+    
+    // Apply vertical velocity
+    this.y += this.vy;
+    this.checkVerticalCollision();
+    
+    // Apply friction
+    if (this.onGround) {
+      this.vx *= 0.8;
+    }
+    
+    // Update animation
+    if (Math.abs(this.vx) > 0.5) {
+      this.walkCycle += 0.2;
+    }
+    
+    // Log position if changed significantly
+    if (Math.abs(this.x - this.lastPosition.x) > 2 || 
+        Math.abs(this.y - this.lastPosition.y) > 2) {
+      this.logPosition(p);
+      this.lastPosition.x = this.x;
+      this.lastPosition.y = this.y;
+    }
+    
+    // Check for falling death
+    if (this.y > gameState.levelHeight * TILE_SIZE) {
+      this.die();
+    }
+  }
+  
+  checkHorizontalCollision() {
+    const left = this.x - this.width / 2;
+    const right = this.x + this.width / 2;
+    const top = this.y - this.height / 2;
+    const bottom = this.y + this.height / 2;
+    
+    // Check left side
+    if (this.vx < 0) {
+      const { tx: tl, ty: tt } = worldToTile(left, top + 2);
+      const { ty: tb } = worldToTile(left, bottom - 2);
+      
+      for (let ty = tt; ty <= tb; ty++) {
+        if (isSolid(tl, ty)) {
+          this.x = tl * TILE_SIZE + TILE_SIZE + this.width / 2;
+          this.vx = 0;
+          break;
+        }
+      }
+    }
+    
+    // Check right side
+    if (this.vx > 0) {
+      const { tx: tr, ty: tt } = worldToTile(right, top + 2);
+      const { ty: tb } = worldToTile(right, bottom - 2);
+      
+      for (let ty = tt; ty <= tb; ty++) {
+        if (isSolid(tr, ty)) {
+          this.x = tr * TILE_SIZE - this.width / 2;
+          this.vx = 0;
+          break;
+        }
+      }
+    }
+  }
+  
+  checkVerticalCollision() {
+    const left = this.x - this.width / 2;
+    const right = this.x + this.width / 2;
+    const top = this.y - this.height / 2;
+    const bottom = this.y + this.height / 2;
+    
+    this.onGround = false;
+    
+    // Check bottom (ground)
+    if (this.vy >= 0) {
+      const { tx: tl, ty: tb } = worldToTile(left + 2, bottom);
+      const { tx: tr } = worldToTile(right - 2, bottom);
+      
+      for (let tx = tl; tx <= tr; tx++) {
+        const tile = getTile(tx, tb);
+        // Solid or platform (can pass through platforms from below)
+        if (isSolid(tx, tb) || (tile === 4 && this.vy > 0 && bottom <= tb * TILE_SIZE + 4)) {
+          this.y = tb * TILE_SIZE - this.height / 2;
+          this.vy = 0;
+          this.onGround = true;
+          break;
+        }
+      }
+    }
+    
+    // Check top (ceiling)
+    if (this.vy < 0) {
+      const { tx: tl, ty: tt } = worldToTile(left + 2, top);
+      const { tx: tr } = worldToTile(right - 2, top);
+      
+      for (let tx = tl; tx <= tr; tx++) {
+        if (isSolid(tx, tt)) {
+          this.y = tt * TILE_SIZE + TILE_SIZE + this.height / 2;
+          this.vy = 0;
+          break;
+        }
+      }
+    }
+  }
+  
+  moveLeft() {
+    this.vx = -PLAYER_SPEED;
+    this.facing = -1;
+  }
+  
+  moveRight() {
+    this.vx = PLAYER_SPEED;
+    this.facing = 1;
+  }
+  
+  jump() {
+    if (this.onGround && !this.crouching) {
+      this.vy = PLAYER_JUMP_POWER;
+      this.onGround = false;
+    }
+  }
+  
+  climbUp() {
+    if (this.onLadder) {
+      this.vy = -2;
+    } else if (gameState.exitDoor && this.canEnterDoor()) {
+      this.enterDoor();
+    }
+  }
+  
+  climbDown() {
+    if (this.onLadder) {
+      this.vy = 2;
+    }
+    this.crouching = true;
+  }
+  
+  stopCrouching() {
+    this.crouching = false;
+  }
+  
+  canEnterDoor() {
+    if (!gameState.exitDoor) return false;
+    const dist = distance(this.x, this.y, gameState.exitDoor.x, gameState.exitDoor.y);
+    return dist < 30 && gameState.gemsCollected >= gameState.totalGems;
+  }
+  
+  enterDoor() {
+    // Win condition
+    gameState.gamePhase = "GAME_OVER_WIN";
+  }
+  
+  throwBomb(p) {
+    if (this.bombs > 0) {
+      const bombX = this.x + this.facing * 20;
+      const bombY = this.y - 5;
+      const bomb = new Bomb(bombX, bombY, this.facing * 4, -3);
+      gameState.bombs.push(bomb);
+      this.bombs--;
+      
+      if (p && p.logs) {
+        p.logs.inputs.push({
+          input_type: 'throwBomb',
+          data: { x: bombX, y: bombY },
+          framecount: gameState.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    }
+  }
+  
+  useRope(p) {
+    if (this.ropes > 0) {
+      const ropeX = this.x;
+      const ropeY = this.y;
+      const rope = new Rope(ropeX, ropeY);
+      gameState.ropes.push(rope);
+      this.ropes--;
+      
+      if (p && p.logs) {
+        p.logs.inputs.push({
+          input_type: 'useRope',
+          data: { x: ropeX, y: ropeY },
+          framecount: gameState.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    }
+  }
+  
+  takeDamage(amount) {
+    if (this.invulnerable > 0) return;
+    
+    this.health -= amount;
+    this.invulnerable = 90; // 1.5 seconds of invulnerability
+    
+    if (this.health <= 0) {
+      this.die();
+    }
+  }
+  
+  die() {
+    gameState.gamePhase = "GAME_OVER_LOSE";
+  }
+  
+  logPosition(p) {
+    if (p && p.logs && p.logs.player_info) {
+      p.logs.player_info.push({
+        screen_x: this.x,
+        screen_y: this.y,
+        game_x: this.x,
+        game_y: this.y,
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  }
+  
+  render(p) {
+    p.push();
+    p.translate(this.x, this.y);
+    
+    // Flip sprite based on facing direction
+    if (this.facing < 0) {
+      p.scale(-1, 1);
+    }
+    
+    // Blink when invulnerable
+    if (this.invulnerable > 0 && Math.floor(gameState.frameCount / 4) % 2 === 0) {
+      p.pop();
+      return;
+    }
+    
+    // Body
+    p.fill(220, 180, 140);
+    p.noStroke();
+    p.rectMode(p.CENTER);
+    p.rect(0, 0, this.width, this.height, 2);
+    
+    // Hat
+    p.fill(160, 100, 60);
+    p.rect(0, -this.height / 2 - 2, this.width - 2, 4);
+    
+    // Eyes
+    p.fill(255);
+    p.circle(-3, -3, 4);
+    p.circle(3, -3, 4);
+    p.fill(0);
+    p.circle(-3, -3, 2);
+    p.circle(3, -3, 2);
+    
+    // Legs (simple animation)
+    const legOffset = Math.sin(this.walkCycle) * 2;
+    p.stroke(100, 70, 40);
+    p.strokeWeight(2);
+    p.line(-3, this.height / 2, -3, this.height / 2 + 3 + legOffset);
+    p.line(3, this.height / 2, 3, this.height / 2 + 3 - legOffset);
+    
+    p.pop();
+  }
+}
+
+// Gem class
+export class Gem {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.radius = 6;
+    this.value = 100;
+    this.collected = false;
+    this.bobOffset = 0;
+    this.rotation = 0;
+    
+    gameState.entities.push(this);
+  }
+  
+  update(p) {
+    if (this.collected) return;
+    
+    // Bob animation
+    this.bobOffset = Math.sin(gameState.frameCount * 0.1) * 2;
+    this.rotation += 0.05;
+    
+    // Check collision with player
+    if (gameState.player) {
+      const dist = distance(gameState.player.x, gameState.player.y, this.x, this.y);
+      if (dist < this.radius + 10) {
+        this.collect();
+      }
+    }
+  }
+  
+  collect() {
+    this.collected = true;
+    gameState.score += this.value;
+    gameState.gemsCollected++;
+    
+    // Create particle effect
+    for (let i = 0; i < 8; i++) {
+      const angle = (Math.PI * 2 / 8) * i;
+      const vx = Math.cos(angle) * 2;
+      const vy = Math.sin(angle) * 2;
+      gameState.particles.push(new Particle(this.x, this.y, vx, vy, [255, 215, 0]));
+    }
+  }
+  
+  render(p) {
+    if (this.collected) return;
+    
+    p.push();
+    p.translate(this.x, this.y + this.bobOffset);
+    p.rotate(this.rotation);
+    
+    // Gem shape
+    p.fill(255, 215, 0);
+    p.stroke(200, 170, 0);
+    p.strokeWeight(1);
+    p.beginShape();
+    for (let i = 0; i < 6; i++) {
+      const angle = (Math.PI * 2 / 6) * i;
+      const r = i % 2 === 0 ? this.radius : this.radius * 0.6;
+      const px = Math.cos(angle) * r;
+      const py = Math.sin(angle) * r;
+      p.vertex(px, py);
+    }
+    p.endShape(p.CLOSE);
+    
+    p.pop();
+  }
+}
+
+// Enemy class
+export class Enemy {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.width = 16;
+    this.height = 16;
+    this.vx = 0;
+    this.vy = 0;
+    this.health = 1;
+    this.direction = 1;
+    this.speed = 1;
+    this.patrolDistance = 60;
+    this.startX = x;
+    this.onGround = false;
+    
+    gameState.entities.push(this);
+  }
+  
+  update(p) {
+    // Apply gravity
+    this.vy += GRAVITY;
+    this.vy = Math.min(this.vy, MAX_FALL_SPEED);
+    
+    // Patrol movement
+    this.vx = this.direction * this.speed;
+    
+    // Check if reached patrol boundary or edge
+    if (Math.abs(this.x - this.startX) > this.patrolDistance) {
+      this.direction *= -1;
+    }
+    
+    // Apply velocity
+    this.x += this.vx;
+    this.y += this.vy;
+    
+    // Collision detection
+    this.checkCollisions();
+    
+    // Check collision with player
+    if (gameState.player && !gameState.player.invulnerable) {
+      const dist = distance(this.x, this.y, gameState.player.x, gameState.player.y);
+      if (dist < 15) {
+        // Check if player is above (stomping)
+        if (gameState.player.vy > 0 && gameState.player.y < this.y - 5) {
+          this.die();
+          gameState.player.vy = -5; // Bounce
+          gameState.score += 50;
+        } else {
+          gameState.player.takeDamage(1);
+        }
+      }
+    }
+  }
+  
+  checkCollisions() {
+    const left = this.x - this.width / 2;
+    const right = this.x + this.width / 2;
+    const top = this.y - this.height / 2;
+    const bottom = this.y + this.height / 2;
+    
+    this.onGround = false;
+    
+    // Check ground
+    const { tx: tl, ty: tb } = worldToTile(left, bottom);
+    const { tx: tr } = worldToTile(right, bottom);
+    
+    for (let tx = tl; tx <= tr; tx++) {
+      if (isSolid(tx, tb)) {
+        this.y = tb * TILE_SIZE - this.height / 2;
+        this.vy = 0;
+        this.onGround = true;
+        break;
+      }
+    }
+    
+    // Check walls and turn around
+    const { tx: tleft } = worldToTile(left, this.y);
+    const { tx: tright } = worldToTile(right, this.y);
+    
+    if (isSolid(tleft, worldToTile(this.x, this.y).ty) && this.vx < 0) {
+      this.direction = 1;
+    }
+    if (isSolid(tright, worldToTile(this.x, this.y).ty) && this.vx > 0) {
+      this.direction = -1;
+    }
+    
+    // Check for edge (turn around if no ground ahead)
+    const aheadX = this.x + this.direction * (this.width / 2 + 5);
+    const aheadY = this.y + this.height / 2 + 5;
+    const { tx: tahead, ty: tyahead } = worldToTile(aheadX, aheadY);
+    if (!isSolid(tahead, tyahead) && this.onGround) {
+      this.direction *= -1;
+    }
+  }
+  
+  die() {
+    const index = gameState.enemies.indexOf(this);
+    if (index > -1) {
+      gameState.enemies.splice(index, 1);
+    }
+    const entityIndex = gameState.entities.indexOf(this);
+    if (entityIndex > -1) {
+      gameState.entities.splice(entityIndex, 1);
+    }
+    
+    // Particle effect
+    for (let i = 0; i < 12; i++) {
+      const angle = (Math.PI * 2 / 12) * i;
+      const vx = Math.cos(angle) * 3;
+      const vy = Math.sin(angle) * 3;
+      gameState.particles.push(new Particle(this.x, this.y, vx, vy, [200, 50, 50]));
+    }
+  }
+  
+  render(p) {
+    p.push();
+    p.translate(this.x, this.y);
+    
+    // Body
+    p.fill(200, 50, 50);
+    p.noStroke();
+    p.ellipse(0, 0, this.width, this.height);
+    
+    // Eyes
+    p.fill(255);
+    p.circle(-4, -2, 5);
+    p.circle(4, -2, 5);
+    p.fill(0);
+    p.circle(-4, -2, 3);
+    p.circle(4, -2, 3);
+    
+    // Angry mouth
+    p.stroke(0);
+    p.strokeWeight(1);
+    p.noFill();
+    p.arc(0, 2, 6, 4, 0, Math.PI);
+    
+    p.pop();
+  }
+}
+
+// Bomb class
+export class Bomb {
+  constructor(x, y, vx, vy) {
+    this.x = x;
+    this.y = y;
+    this.vx = vx;
+    this.vy = vy;
+    this.radius = 5;
+    this.timer = BOMB_TIMER;
+    this.onGround = false;
+    
+    gameState.entities.push(this);
+  }
+  
+  update(p) {
+    this.timer--;
+    
+    if (this.timer <= 0) {
+      this.explode();
+      return;
+    }
+    
+    // Apply gravity
+    this.vy += GRAVITY * 0.5;
+    
+    // Apply velocity
+    this.x += this.vx;
+    this.y += this.vy;
+    
+    // Simple ground collision
+    const { tx, ty } = worldToTile(this.x, this.y + this.radius);
+    if (isSolid(tx, ty)) {
+      this.y = ty * TILE_SIZE - this.radius;
+      this.vy = 0;
+      this.vx *= 0.8;
+      this.onGround = true;
+    }
+    
+    // Wall collision
+    const { tx: txLeft } = worldToTile(this.x - this.radius, this.y);
+    const { tx: txRight } = worldToTile(this.x + this.radius, this.y);
+    if (isSolid(txLeft, worldToTile(this.x, this.y).ty) || isSolid(txRight, worldToTile(this.x, this.y).ty)) {
+      this.vx *= -0.5;
+    }
+  }
+  
+  explode() {
+    // Create explosion effect
+    gameState.explosions.push(new Explosion(this.x, this.y, BOMB_RADIUS));
+    
+    // Damage enemies in radius
+    for (const enemy of gameState.enemies) {
+      const dist = distance(this.x, this.y, enemy.x, enemy.y);
+      if (dist < BOMB_RADIUS) {
+        enemy.die();
+      }
+    }
+    
+    // Destroy tiles in radius
+    const { tx: centerTx, ty: centerTy } = worldToTile(this.x, this.y);
+    const tileRadius = Math.ceil(BOMB_RADIUS / TILE_SIZE);
+    
+    for (let dx = -tileRadius; dx <= tileRadius; dx++) {
+      for (let dy = -tileRadius; dy <= tileRadius; dy++) {
+        const tx = centerTx + dx;
+        const ty = centerTy + dy;
+        const worldX = tx * TILE_SIZE + TILE_SIZE / 2;
+        const worldY = ty * TILE_SIZE + TILE_SIZE / 2;
+        const dist = distance(this.x, this.y, worldX, worldY);
+        
+        if (dist < BOMB_RADIUS && getTile(tx, ty) === 2) {
+          gameState.tiles[ty][tx] = 0; // Destroy destructible tile
+        }
+      }
+    }
+    
+    // Remove bomb
+    const index = gameState.bombs.indexOf(this);
+    if (index > -1) {
+      gameState.bombs.splice(index, 1);
+    }
+    const entityIndex = gameState.entities.indexOf(this);
+    if (entityIndex > -1) {
+      gameState.entities.splice(entityIndex, 1);
+    }
+  }
+  
+  render(p) {
+    p.push();
+    
+    // Flash when about to explode
+    if (this.timer < 30 && Math.floor(gameState.frameCount / 5) % 2 === 0) {
+      p.fill(255, 200, 0);
+    } else {
+      p.fill(50, 50, 50);
+    }
+    
+    p.noStroke();
+    p.circle(this.x, this.y, this.radius * 2);
+    
+    // Fuse
+    p.stroke(255, 100, 0);
+    p.strokeWeight(2);
+    const fuseLength = 8;
+    const fuseAngle = (gameState.frameCount * 0.1) % (Math.PI * 2);
+    p.line(this.x, this.y - this.radius, 
+           this.x + Math.cos(fuseAngle) * fuseLength, 
+           this.y - this.radius + Math.sin(fuseAngle) * fuseLength);
+    
+    p.pop();
+  }
+}
+
+// Rope class
+export class Rope {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.segments = [];
+    this.maxLength = 100;
+    
+    // Create rope segments downward
+    let currentY = y;
+    while (currentY < y + this.maxLength) {
+      currentY += 8;
+      const { tx, ty } = worldToTile(x, currentY);
+      if (isSolid(tx, ty)) {
+        break;
+      }
+      this.segments.push(currentY);
+    }
+    
+    gameState.entities.push(this);
+  }
+  
+  update(p) {
+    // Check if player is climbing this rope
+    if (gameState.player) {
+      const dist = Math.abs(gameState.player.x - this.x);
+      if (dist < 10 && gameState.player.y > this.y && gameState.player.y < this.y + this.segments.length * 8) {
+        // Player can climb this rope
+        if (gameState.player.onLadder) {
+          gameState.player.x = this.x; // Snap to rope
+        }
+      }
+    }
+  }
+  
+  render(p) {
+    p.push();
+    p.stroke(150, 100, 50);
+    p.strokeWeight(2);
+    
+    let prevY = this.y;
+    for (const segY of this.segments) {
+      p.line(this.x, prevY, this.x, segY);
+      prevY = segY;
+    }
+    
+    p.pop();
+  }
+}
+
+// Exit door class
+export class ExitDoor {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.width = 20;
+    this.height = 30;
+    this.unlocked = false;
+    
+    gameState.entities.push(this);
+  }
+  
+  update(p) {
+    // Unlock if all gems collected
+    if (gameState.gemsCollected >= gameState.totalGems) {
+      this.unlocked = true;
+    }
+  }
+  
+  render(p) {
+    p.push();
+    p.translate(this.x, this.y);
+    
+    // Door color based on locked status
+    if (this.unlocked) {
+      p.fill(100, 200, 100);
+    } else {
+      p.fill(100, 100, 100);
+    }
+    
+    p.stroke(60);
+    p.strokeWeight(2);
+    p.rectMode(p.CENTER);
+    p.rect(0, 0, this.width, this.height);
+    
+    // Door handle
+    p.fill(200, 180, 100);
+    p.noStroke();
+    p.circle(6, 0, 4);
+    
+    // Lock indicator
+    if (!this.unlocked) {
+      p.fill(255, 200, 0);
+      p.textSize(12);
+      p.textAlign(p.CENTER, p.CENTER);
+      p.text('🔒', 0, -15);
+    }
+    
+    p.pop();
+  }
+}
+
+// Particle class
+export class Particle {
+  constructor(x, y, vx, vy, color) {
+    this.x = x;
+    this.y = y;
+    this.vx = vx;
+    this.vy = vy;
+    this.color = color;
+    this.lifetime = 30;
+    this.age = 0;
+    this.size = 3;
+  }
+  
+  update(p) {
+    this.x += this.vx;
+    this.y += this.vy;
+    this.vy += 0.2; // Gravity
+    this.age++;
+  }
+  
+  isDead() {
+    return this.age >= this.lifetime;
+  }
+  
+  render(p) {
+    const alpha = 1 - (this.age / this.lifetime);
+    p.push();
+    p.fill(this.color[0], this.color[1], this.color[2], alpha * 255);
+    p.noStroke();
+    p.circle(this.x, this.y, this.size);
+    p.pop();
+  }
+}
+
+// Explosion effect class
+export class Explosion {
+  constructor(x, y, radius) {
+    this.x = x;
+    this.y = y;
+    this.radius = radius;
+    this.maxRadius = radius;
+    this.age = 0;
+    this.lifetime = 20;
+    
+    // Create particles
+    for (let i = 0; i < 30; i++) {
+      const angle = (Math.PI * 2 / 30) * i;
+      const speed = 3 + Math.random() * 3;
+      const vx = Math.cos(angle) * speed;
+      const vy = Math.sin(angle) * speed;
+      gameState.particles.push(new Particle(x, y, vx, vy, [255, 150, 0]));
+    }
+  }
+  
+  update(p) {
+    this.age++;
+  }
+  
+  isDead() {
+    return this.age >= this.lifetime;
+  }
+  
+  render(p) {
+    const alpha = 1 - (this.age / this.lifetime);
+    const currentRadius = this.radius * (this.age / this.lifetime);
+    
+    p.push();
+    p.noFill();
+    p.stroke(255, 150, 0, alpha * 255);
+    p.strokeWeight(3);
+    p.circle(this.x, this.y, currentRadius * 2);
+    
+    p.fill(255, 200, 0, alpha * 150);
+    p.noStroke();
+    p.circle(this.x, this.y, currentRadius);
+    p.pop();
+  }
+}

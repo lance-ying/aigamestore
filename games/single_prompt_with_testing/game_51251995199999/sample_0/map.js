@@ -59,59 +59,183 @@ export class LevelManager {
     }
     
     generateChunk(p, startY, endY) {
-        // Procedural generation using a drunkard's walk or noise for paths
-        // For a tomb/maze feel, we want corridors.
-        
+        // Structured tunnel-based generation ensuring no traps
+        // First, fill everything with walls
         for (let y = startY; y < endY; y++) {
             for (let x = 0; x < this.gridCols; x++) {
-                // Borders
-                if (x === 0 || x === this.gridCols - 1) {
-                    gameState.map[getMapKey(x, y)] = TILE_WALL;
-                    continue;
+                gameState.map[getMapKey(x, y)] = TILE_WALL;
+            }
+        }
+        
+        // Create multiple vertical shafts with guaranteed width
+        const numPaths = 2 + Math.floor(p.random(2)); // 2-3 vertical paths
+        const pathPositions = [];
+        
+        // Generate path positions with spacing
+        for (let i = 0; i < numPaths; i++) {
+            const minX = 3 + i * Math.floor((this.gridCols - 6) / numPaths);
+            const maxX = minX + Math.floor((this.gridCols - 6) / numPaths) - 2;
+            pathPositions.push(Math.floor(p.random(minX, maxX)));
+        }
+        
+        // Carve vertical shafts - ALWAYS keep them open vertically
+        for (let pathX of pathPositions) {
+            for (let y = startY; y < endY; y++) {
+                // Carve a 3-tile wide vertical shaft (always consistent)
+                for (let dx = -1; dx <= 1; dx++) {
+                    const x = pathX + dx;
+                    if (x > 0 && x < this.gridCols - 1) {
+                        const key = getMapKey(x, y);
+                        delete gameState.map[key];
+                    }
                 }
                 
-                // Noise based walls
-                const n = p.noise(x * 0.1, y * 0.1);
-                if (n > 0.55) {
-                    gameState.map[getMapKey(x, y)] = TILE_WALL;
-                    
-                    // Chance for spike on wall
-                    if (p.random() < 0.05) {
-                         // Check neighbors to place spike correctly? 
-                         // For simplicity, spikes are separate tiles that kill you
-                         // We'll overlay a spike object later or just use tile ID
-                    }
-                } else {
-                    // Empty space
-                    // Chance for coin
-                    if (p.random() < 0.05) {
-                        gameState.map[getMapKey(x, y)] = TILE_COIN;
-                    } 
-                    // Chance for spike trap in open
-                    else if (p.random() < 0.01) {
-                        gameState.map[getMapKey(x, y)] = TILE_SPIKE;
+                // Add coins occasionally in the center
+                if (p.random() < 0.06) {
+                    gameState.map[getMapKey(pathX, y)] = TILE_COIN;
+                }
+            }
+        }
+        
+        // Create horizontal connecting corridors MORE FREQUENTLY to prevent isolation
+        for (let y = startY; y < endY; y += Math.floor(p.random(2, 4))) {
+            // Connect adjacent paths with horizontal corridors
+            for (let i = 0; i < pathPositions.length - 1; i++) {
+                const startPath = pathPositions[i];
+                const endPath = pathPositions[i + 1];
+                
+                const minX = Math.min(startPath, endPath);
+                const maxX = Math.max(startPath, endPath);
+                
+                // Carve horizontal corridor - 2 tiles high for safety
+                for (let x = minX; x <= maxX; x++) {
+                    delete gameState.map[getMapKey(x, y)];
+                    // Add a second row to create a proper corridor
+                    if (y > startY) {
+                        delete gameState.map[getMapKey(x, y - 1)];
                     }
                 }
             }
         }
         
-        // Ensure a path exists (rudimentary)
-        // Carve a winding path up the center
-        let cx = Math.floor(this.gridCols / 2);
-        for (let y = endY; y > startY; y--) {
-            // Wiggle x
-            cx += Math.floor(p.random(-2, 3));
-            cx = p.constrain(cx, 1, this.gridCols - 2);
+        // Add extra horizontal passages at regular intervals to guarantee connectivity
+        for (let y = startY; y < endY; y += 3) {
+            // Create a full-width passage every 3 rows to ensure no traps
+            const passageWidth = Math.floor(this.gridCols * 0.7);
+            const startX = Math.floor((this.gridCols - passageWidth) / 2);
             
-            // Clear path 
-            for(let w = -1; w <= 1; w++) {
-                const key = getMapKey(cx + w, y);
-                if (gameState.map[key] === TILE_WALL) {
-                    delete gameState.map[key];
+            for (let x = startX; x < startX + passageWidth; x++) {
+                if (x > 0 && x < this.gridCols - 1) {
+                    delete gameState.map[getMapKey(x, y)];
                 }
-                // Ensure no spikes on the safe path
-                if (gameState.map[key] === TILE_SPIKE) {
-                    delete gameState.map[key];
+            }
+        }
+        
+        // Add side alcoves for variety (but ensure they don't block main paths)
+        for (let y = startY; y < endY; y++) {
+            if (p.random() < 0.1) {
+                for (let x = 1; x < this.gridCols - 1; x++) {
+                    const key = getMapKey(x, y);
+                    if (gameState.map[key] === TILE_WALL) {
+                        // Check if next to an empty space
+                        const leftEmpty = !gameState.map[getMapKey(x-1, y)];
+                        const rightEmpty = !gameState.map[getMapKey(x+1, y)];
+                        
+                        if (leftEmpty || rightEmpty) {
+                            // Small alcove
+                            delete gameState.map[key];
+                            break; // One per row
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Place coins in safe locations
+        for (let y = startY; y < endY; y++) {
+            for (let x = 2; x < this.gridCols - 2; x++) {
+                const key = getMapKey(x, y);
+                if (!gameState.map[key] && p.random() < 0.03) {
+                    // Ensure space above for collection
+                    const hasSpaceAbove = !gameState.map[getMapKey(x, y-1)];
+                    if (hasSpaceAbove) {
+                        gameState.map[key] = TILE_COIN;
+                    }
+                }
+            }
+        }
+        
+        // CAREFULLY place spikes - only on floors/ceilings in side areas
+        for (let y = startY; y < endY; y++) {
+            for (let x = 2; x < this.gridCols - 2; x++) {
+                const key = getMapKey(x, y);
+                if (!gameState.map[key] && gameState.map[key] !== TILE_COIN) {
+                    // Check if this is in a main vertical path (safe zone)
+                    let inSafePath = false;
+                    for (let pathX of pathPositions) {
+                        if (Math.abs(x - pathX) <= 1) {
+                            inSafePath = true;
+                            break;
+                        }
+                    }
+                    
+                    // Only place spikes OUTSIDE main safe paths with LOW probability
+                    if (!inSafePath && p.random() < 0.015) {
+                        // Make sure spike is on a floor or ceiling, not floating
+                        const hasFloor = gameState.map[getMapKey(x, y + 1)] === TILE_WALL;
+                        const hasCeiling = gameState.map[getMapKey(x, y - 1)] === TILE_WALL;
+                        
+                        // Also ensure there's a way to avoid it (space on sides)
+                        const leftClear = !gameState.map[getMapKey(x - 1, y)];
+                        const rightClear = !gameState.map[getMapKey(x + 1, y)];
+                        
+                        if ((hasFloor || hasCeiling) && (leftClear || rightClear)) {
+                            gameState.map[key] = TILE_SPIKE;
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Ensure borders are always walls
+        for (let y = startY; y < endY; y++) {
+            gameState.map[getMapKey(0, y)] = TILE_WALL;
+            gameState.map[getMapKey(this.gridCols - 1, y)] = TILE_WALL;
+        }
+        
+        // ENHANCED safety pass: ensure continuous upward paths with horizontal access
+        for (let y = startY; y < endY; y++) {
+            let hasAccessibleUpwardPath = false;
+            
+            // Check if there's a vertical passage with horizontal access
+            for (let x = 2; x < this.gridCols - 2; x++) {
+                const current = getMapKey(x, y);
+                const above = getMapKey(x, y - 1);
+                const left = getMapKey(x - 1, y);
+                const right = getMapKey(x + 1, y);
+                
+                // Empty tile with empty above AND accessible from sides
+                if (!gameState.map[current] && !gameState.map[above]) {
+                    if (!gameState.map[left] || !gameState.map[right]) {
+                        hasAccessibleUpwardPath = true;
+                        break;
+                    }
+                }
+            }
+            
+            // If no accessible upward path found, create one in the center
+            if (!hasAccessibleUpwardPath) {
+                const safeX = Math.floor(this.gridCols / 2);
+                // Create a 5-wide passage to guarantee accessibility
+                for (let dx = -2; dx <= 2; dx++) {
+                    const x = safeX + dx;
+                    if (x > 0 && x < this.gridCols - 1) {
+                        delete gameState.map[getMapKey(x, y)];
+                        delete gameState.map[getMapKey(x, y - 1)];
+                        if (y < endY - 1) {
+                            delete gameState.map[getMapKey(x, y + 1)];
+                        }
+                    }
                 }
             }
         }

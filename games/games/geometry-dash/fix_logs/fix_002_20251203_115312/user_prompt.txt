@@ -1,0 +1,1488 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+level 4 is also too hard, can you make the spacing between the spieks and obstacles a bit wider as well? 
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; }
+      .control-buttons { display: none; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; } /* active button for current control mode */
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">Geometry Dash</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Basic testing)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Win)</button>
+        <button id="test_3_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_3')">TEST (Mode Transitions)</button>
+        <button id="test_4_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_4')">TEST (Collision)</button>
+        <button id="test_5_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_5')">TEST (Restart)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Geometry Dash is a rhythm-based platformer where you control a geometric icon that automatically moves forward. Navigate through obstacles, spikes, and platforms by holding the jump key. Progress through 4 levels of increasing difficulty - complete each level to unlock the next challenge!</p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">HOLD SPACE/UP ARROW: Jump (in cube mode) or fly (in ship mode)<br>ESC: Pause/unpause the game<br>R: Restart level (or advance after completing a level)<br><br><strong>Hold the key to jump continuously in cube mode and fly in ship mode!</strong></p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script src="../../dev_mode.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="automated_testing_controller.js">
+import { PLAYER_MODES, GROUND_Y, BLOCK_SIZE } from './globals.js';
+
+// Helper function to find the next obstacle or portal in the player's path
+function findNextObstacle(gameState, lookAheadDistance = 300) {
+  const playerX = gameState.player.x;
+  const playerY = gameState.player.y;
+  let closestObstacle = null;
+  let minDistance = Infinity;
+  
+  // Check obstacles
+  for (const obstacle of gameState.obstacles) {
+    // Skip ground
+    if (obstacle.type === 'block' && obstacle.y >= GROUND_Y) {
+      continue;
+    }
+    
+    // Only consider obstacles ahead of the player and within look-ahead distance
+    if (obstacle.x > playerX && obstacle.x - playerX < lookAheadDistance) {
+      const distance = obstacle.x - playerX;
+      if (distance < minDistance) {
+        minDistance = distance;
+        closestObstacle = { type: 'obstacle', object: obstacle, distance };
+      }
+    }
+  }
+  
+  // Check portals
+  for (const portal of gameState.portals) {
+    if (portal.x > playerX && portal.x - playerX < lookAheadDistance) {
+      const distance = portal.x - playerX;
+      if (distance < minDistance) {
+        minDistance = distance;
+        closestObstacle = { type: 'portal', object: portal, distance };
+      }
+    }
+  }
+  
+  // Check finish line
+  const finishDistance = gameState.level.endX - playerX;
+  if (finishDistance > 0 && finishDistance < lookAheadDistance && finishDistance < minDistance) {
+    closestObstacle = { type: 'finish', distance: finishDistance };
+  }
+  
+  return closestObstacle;
+}
+
+// TEST_1: Basic sticky keys test
+function getStickyKeysAction(gameState) {
+  if (gameState.gamePhase !== "PLAYING") return null;
+  
+  // Change jump pattern every 60 frames (1 second)
+  const jumpPattern = Math.floor(gameState.elapsedTime / 1000) % 3;
+  
+  // Different jump patterns
+  switch (jumpPattern) {
+    case 0: // Jump frequently
+      return Math.random() < 0.3 ? 32 : null; // 30% chance to jump
+    case 1: // Jump occasionally
+      return Math.random() < 0.1 ? 32 : null; // 10% chance to jump
+    case 2: // Hold jump (for ship mode)
+      return Math.random() < 0.7 ? 32 : null; // 70% chance to jump
+    default:
+      return null;
+  }
+}
+
+// TEST_2: Win strategy
+function getTestWinAction(gameState) {
+  if (gameState.gamePhase !== "PLAYING") return null;
+  
+  const player = gameState.player;
+  const nextObstacle = findNextObstacle(gameState);
+  
+  // No obstacle ahead, don't jump
+  if (!nextObstacle) return null;
+  
+  // Handle different player modes
+  if (player.mode === PLAYER_MODES.CUBE) {
+    // For cube mode, jump over obstacles
+    if (nextObstacle.type === 'obstacle') {
+      const obstacle = nextObstacle.object;
+      
+      // Jump when close to an obstacle
+      if (nextObstacle.distance < 100 && nextObstacle.distance > 20 && player.onGround) {
+        return 32; // SPACE to jump
+      }
+    } 
+    // For portals, make sure we're on the ground to enter properly
+    else if (nextObstacle.type === 'portal' && nextObstacle.distance < 50) {
+      return player.onGround ? null : 32;
+    }
+  } 
+  // For ship mode, navigate through gaps
+  else if (player.mode === PLAYER_MODES.SHIP) {
+    if (nextObstacle.type === 'obstacle') {
+      const obstacle = nextObstacle.object;
+      
+      // If ceiling obstacle, move down
+      if (obstacle.y < GROUND_Y / 2) {
+        return player.y > GROUND_Y - BLOCK_SIZE * 3 ? 32 : null;
+      } 
+      // If floor obstacle, move up
+      else {
+        return player.y < GROUND_Y - BLOCK_SIZE * 4 ? null : 32;
+      }
+    }
+    // For portals, aim to be at mid-height
+    else if (nextObstacle.type === 'portal') {
+      const targetY = GROUND_Y - BLOCK_SIZE * 3;
+      return player.y > targetY ? 32 : null;
+    }
+  }
+  
+  return null;
+}
+
+// TEST_3: Mode transition test
+function getTestModeTransitionAction(gameState) {
+  if (gameState.gamePhase !== "PLAYING") return null;
+  
+  const player = gameState.player;
+  const nextObstacle = findNextObstacle(gameState);
+  
+  // Focus on getting to and through portals
+  if (nextObstacle && nextObstacle.type === 'portal') {
+    // Navigate to portal height
+    const portalY = nextObstacle.object.y + nextObstacle.object.height / 2;
+    const targetY = portalY - player.height / 2;
+    
+    if (player.mode === PLAYER_MODES.CUBE) {
+      // Jump to reach portal height if needed
+      if (nextObstacle.distance < 100 && player.y > targetY && player.onGround) {
+        return 32; // Jump
+      }
+    } else if (player.mode === PLAYER_MODES.SHIP) {
+      // Fly to portal height
+      if (player.y > targetY) {
+        return 32; // Fly up
+      }
+    }
+  } else {
+    // Use win strategy for normal navigation
+    return getTestWinAction(gameState);
+  }
+  
+  return null;
+}
+
+// TEST_4: Collision test
+function getTestCollisionAction(gameState) {
+  if (gameState.gamePhase !== "PLAYING") return null;
+  
+  const player = gameState.player;
+  const nextObstacle = findNextObstacle(gameState);
+  
+  // No obstacle ahead, don't jump
+  if (!nextObstacle) return null;
+  
+  // Alternate between avoiding and hitting obstacles
+  const shouldCollide = Math.floor(gameState.elapsedTime / 5000) % 2 === 1;
+  
+  if (shouldCollide && nextObstacle.type === 'obstacle' && nextObstacle.distance < 50) {
+    // Don't jump to test collision
+    return null;
+  } else {
+    // Otherwise use winning strategy
+    return getTestWinAction(gameState);
+  }
+}
+
+// TEST_5: Restart test
+function getTestRestartAction(gameState) {
+  if (gameState.gamePhase !== "PLAYING") return null;
+  
+  // Play normally for a bit then deliberately crash
+  if (gameState.elapsedTime < 3000) {
+    return getTestWinAction(gameState);
+  } else {
+    // After 3 seconds, just drop to test death and restart
+    return null;
+  }
+}
+
+// Main testing controller
+export function game_testing_controller(gameState) {
+  switch (gameState.controlMode) {
+    case "TEST_1":
+      return getStickyKeysAction(gameState);
+    case "TEST_2":
+      return getTestWinAction(gameState);
+    case "TEST_3":
+      return getTestModeTransitionAction(gameState);
+    case "TEST_4":
+      return getTestCollisionAction(gameState);
+    case "TEST_5":
+      return getTestRestartAction(gameState);
+    default:
+      return null;
+  }
+}
+
+// Expose the game_testing_controller function globally
+window.game_testing_controller = game_testing_controller;
+export default game_testing_controller;
+</file>
+
+<file name="globals.js">
+// Game state and constants
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const GRAVITY = 0.7;
+export const JUMP_FORCE = -12;
+export const SHIP_LIFT = -1.2; // Continuous lift for holding key - increased for better responsiveness
+export const GROUND_Y = 300;
+export const SCROLL_SPEED = 5;
+export const BLOCK_SIZE = 30;
+
+// Player modes
+export const PLAYER_MODES = {
+  CUBE: 'cube',
+  SHIP: 'ship'
+};
+
+// Game state object
+export const gameState = {
+  player: null,
+  obstacles: [],
+  portals: [],
+  gamePhase: "TITLE_SCREEN", // Start with title screen
+  controlMode: "HUMAN", // "HUMAN", "TEST_1", "TEST_2", etc.
+  level: null,
+  camera: {
+    x: 0
+  },
+  progress: 0, // Progress percentage (0-100)
+  deathCount: 0,
+  currentCheckpoint: 0,
+  levelLength: 0,
+  startTime: 0,
+  elapsedTime: 0,
+  currentLevel: 1 // Current level number (1-4)
+};
+
+// Export the getGameState function
+export function getGameState() {
+  return gameState;
+}
+
+// Set control mode function
+export function setControlMode(mode) {
+  gameState.controlMode = mode;
+  
+  // Update button states
+  const buttons = document.querySelectorAll('.control-button');
+  buttons.forEach(button => {
+    button.classList.remove('active');
+    if (button.id === 'humanModeBtn' && mode === 'HUMAN') {
+      button.classList.add('active');
+    } else if (button.id === `test_1_ModeBtn` && mode === 'TEST_1') {
+      button.classList.add('active');
+    } else if (button.id === `test_2_ModeBtn` && mode === 'TEST_2') {
+      button.classList.add('active');
+    } else if (button.id === `test_3_ModeBtn` && mode === 'TEST_3') {
+      button.classList.add('active');
+    } else if (button.id === `test_4_ModeBtn` && mode === 'TEST_4') {
+      button.classList.add('active');
+    } else if (button.id === `test_5_ModeBtn` && mode === 'TEST_5') {
+      button.classList.add('active');
+    }
+  });
+}
+
+// Expose functions globally
+window.getGameState = getGameState;
+window.setControlMode = setControlMode;
+</file>
+
+<file name="game.js">
+import { CANVAS_WIDTH, CANVAS_HEIGHT, GROUND_Y, SCROLL_SPEED, gameState, setControlMode } from './globals.js';
+import { Player } from './player.js';
+import { Level } from './level.js';
+import { checkCollisions } from './collision.js';
+import { game_testing_controller } from './automated_testing_controller.js';
+
+// Create p5 instance
+const p5 = window.p5;
+let gameInstance = new p5(p => {
+  // Initialize variables
+  let lastTime = 0;
+
+  // Initialize the logs
+  p.logs = {
+    "game_info": [],
+    "player_info": [],
+    "inputs": []
+  };
+
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(60);
+    p.randomSeed(42);
+    
+    // Initialize game state (but don't start playing yet - we're on title screen)
+    // Level will be initialized when game starts
+    
+    // Log initial game state
+    logGameInfo("Game initialized", {});
+  };
+
+  p.draw = function() {
+    const currentTime = Date.now();
+    const deltaTime = currentTime - lastTime;
+    lastTime = currentTime;
+    
+    // Update game based on current phase
+    switch (gameState.gamePhase) {
+      case "TITLE_SCREEN":
+        drawTitleScreen();
+        break;
+      case "PLAYING":
+        updateGame(deltaTime);
+        drawGame();
+        break;
+      case "PAUSED":
+        drawGame();
+        drawPauseScreen();
+        break;
+      case "GAME_OVER_WIN":
+        drawGame();
+        drawGameOverScreen(true);
+        break;
+      case "GAME_OVER_LOSE":
+        drawGame();
+        drawGameOverScreen(false);
+        break;
+    }
+  };
+
+  function drawTitleScreen() {
+    p.background(50, 50, 80);
+    
+    // Draw animated background grid
+    p.push();
+    p.stroke(70, 70, 100, 100);
+    p.strokeWeight(1);
+    const offset = (p.frameCount * 2) % 100;
+    for (let i = 0; i < 20; i++) {
+      let gridX = (i * 100) - offset;
+      p.line(gridX, 0, gridX, CANVAS_HEIGHT);
+    }
+    p.pop();
+    
+    // Title
+    p.push();
+    p.fill(255, 255, 0);
+    p.textSize(48);
+    p.textAlign(p.CENTER);
+    p.text("GEOMETRY DASH", CANVAS_WIDTH / 2, 80);
+    p.pop();
+    
+    // Instructions
+    p.push();
+    p.fill(255);
+    p.textSize(16);
+    p.textAlign(p.CENTER);
+    p.text("Navigate through obstacles, spikes, and platforms", CANVAS_WIDTH / 2, 130);
+    p.text("by holding the jump key!", CANVAS_WIDTH / 2, 150);
+    p.pop();
+    
+    // Controls
+    p.push();
+    p.fill(200, 200, 255);
+    p.textSize(14);
+    p.textAlign(p.CENTER);
+    p.text("CONTROLS", CANVAS_WIDTH / 2, 190);
+    
+    p.fill(255);
+    p.textSize(13);
+    p.text("HOLD SPACE/UP ARROW: Jump (cube) or Fly (ship)", CANVAS_WIDTH / 2, 215);
+    p.text("ESC: Pause/Unpause", CANVAS_WIDTH / 2, 235);
+    p.text("R: Restart Level", CANVAS_WIDTH / 2, 255);
+    p.pop();
+    
+    // Game info
+    p.push();
+    p.fill(255, 255, 100);
+    p.textSize(13);
+    p.textAlign(p.CENTER);
+    p.text("Progress through 4 levels of increasing difficulty!", CANVAS_WIDTH / 2, 290);
+    p.text("Complete each level to unlock the next challenge!", CANVAS_WIDTH / 2, 310);
+    p.pop();
+    
+    // Start prompt (blinking)
+    p.push();
+    const blinkRate = Math.floor(p.frameCount / 30) % 2;
+    if (blinkRate === 0) {
+      p.fill(255, 255, 0);
+      p.textSize(20);
+      p.textAlign(p.CENTER);
+      p.text("PRESS SPACE TO START", CANVAS_WIDTH / 2, 360);
+    }
+    p.pop();
+  }
+
+  function updateGame(deltaTime) {
+    // Update elapsed time
+    gameState.elapsedTime = Date.now() - gameState.startTime;
+    
+    // Handle player input
+    handleInput();
+    
+    // Update player
+    gameState.player.update(p);
+    
+    // Move player forward
+    gameState.player.x += SCROLL_SPEED;
+    
+    // Update camera
+    gameState.camera.x = gameState.player.x - 200;
+    
+    // Check collisions
+    const collisionResult = checkCollisions(p, gameState.player, gameState.obstacles, gameState.portals, gameState);
+    
+    if (collisionResult === true) {
+      // Player died
+      gameState.deathCount++;
+      logGameInfo("Player died", { deathCount: gameState.deathCount });
+      gameState.gamePhase = "GAME_OVER_LOSE";
+    } else if (collisionResult === 'win') {
+      // Player won - advance to next level
+      logGameInfo("Player won", { time: gameState.elapsedTime, level: gameState.currentLevel });
+      gameState.gamePhase = "GAME_OVER_WIN";
+    }
+    
+    // Update progress
+    gameState.progress = Math.min(100, Math.floor((gameState.player.x / gameState.level.length) * 100));
+    
+    // Log player position periodically
+    if (p.frameCount % 10 === 0) {
+      logPlayerInfo();
+    }
+  }
+
+  function drawGame() {
+    // Draw level
+    gameState.level.draw(p, gameState.camera.x);
+    
+    // Draw player
+    gameState.player.draw(p, gameState.camera.x);
+    
+    // Draw UI
+    drawUI();
+  }
+
+  function drawUI() {
+    // Draw progress bar
+    p.push();
+    p.noStroke();
+    p.fill(50, 50, 50, 150);
+    p.rect(20, 20, CANVAS_WIDTH - 40, 10);
+    p.fill(255, 255, 0);
+    p.rect(20, 20, (CANVAS_WIDTH - 40) * (gameState.progress / 100), 10);
+    p.pop();
+    
+    // Draw progress percentage and level number
+    p.push();
+    p.fill(255);
+    p.textSize(12);
+    p.textAlign(p.RIGHT);
+    p.text(`Level ${gameState.currentLevel} - ${gameState.progress}%`, CANVAS_WIDTH - 20, 45);
+    p.pop();
+    
+    // Draw mode indicator
+    p.push();
+    p.fill(255);
+    p.textSize(14);
+    p.textAlign(p.LEFT);
+    p.text(`Mode: ${gameState.player.mode.toUpperCase()}`, 20, 45);
+    p.pop();
+    
+    // Draw attempt counter
+    p.push();
+    p.fill(255);
+    p.textSize(14);
+    p.textAlign(p.CENTER);
+    p.text(`Attempt ${gameState.deathCount + 1}`, CANVAS_WIDTH / 2, 45);
+    p.pop();
+  }
+
+  function drawPauseScreen() {
+    p.push();
+    p.fill(0, 0, 0, 150);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.fill(255);
+    p.textSize(30);
+    p.textAlign(p.CENTER);
+    p.text("PAUSED", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+    
+    p.textSize(16);
+    p.text("Press ESC to resume", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 30);
+    p.text("Press R to restart", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 60);
+    p.pop();
+  }
+
+  function drawGameOverScreen(isWin) {
+    p.push();
+    p.fill(0, 0, 0, 150);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    if (isWin) {
+      p.fill(255, 255, 0);
+      p.textSize(40);
+      p.textAlign(p.CENTER);
+      p.text("LEVEL COMPLETE!", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 40);
+      
+      p.fill(255);
+      p.textSize(20);
+      p.text(`Level ${gameState.currentLevel}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 10);
+      p.text(`Time: ${(gameState.elapsedTime / 1000).toFixed(2)}s`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 20);
+      p.text(`Attempts: ${gameState.deathCount + 1}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 50);
+    } else {
+      p.fill(255, 50, 50);
+      p.textSize(40);
+      p.textAlign(p.CENTER);
+      p.text("GAME OVER", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 40);
+      
+      p.fill(255);
+      p.textSize(20);
+      p.text(`Level ${gameState.currentLevel}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 10);
+      p.text(`Progress: ${gameState.progress}%`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 20);
+      p.text(`Attempts: ${gameState.deathCount + 1}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 50);
+    }
+    
+    // Restart prompt
+    p.fill(255);
+    p.textSize(20);
+    const blinkRate = Math.floor(p.frameCount / 30) % 2;
+    if (blinkRate === 0) {
+      if (isWin) {
+        p.text("PRESS R TO CONTINUE", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 100);
+      } else {
+        p.text("PRESS R TO RESTART", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 100);
+      }
+    }
+    p.pop();
+  }
+
+  function handleInput() {
+    // If in test mode, get input from test controller
+    if (gameState.controlMode !== "HUMAN") {
+      const testAction = game_testing_controller(gameState);
+      if (testAction === 32 || testAction === 38) { // SPACE or UP
+        gameState.player.jump();
+      }
+      return;
+    }
+    
+    // Human controls - Continuous (hold key to keep action)
+    const spacePressed = p.keyIsDown(32);
+    const upPressed = p.keyIsDown(38);
+    
+    // Apply jump/fly continuously while key is held
+    if (spacePressed || upPressed) {
+      gameState.player.jump();
+    }
+  }
+
+  p.keyPressed = function() {
+    // Log key input
+    logKeyInput("keyPressed", { key: p.key, keyCode: p.keyCode });
+    
+    // Handle key presses based on game phase
+    switch (gameState.gamePhase) {
+      case "TITLE_SCREEN":
+        if (p.keyCode === 32 || p.keyCode === 13) { // SPACE or ENTER
+          startGame();
+        }
+        break;
+      case "PLAYING":
+        if (p.keyCode === 27) { // ESC
+          pauseGame();
+        } else if (p.keyCode === 82) { // R
+          resetGame();
+        }
+        break;
+      case "PAUSED":
+        if (p.keyCode === 27) { // ESC
+          resumeGame();
+        } else if (p.keyCode === 82) { // R
+          resetGame();
+        }
+        break;
+      case "GAME_OVER_WIN":
+        if (p.keyCode === 82) { // R
+          // Advance to next level
+          advanceLevel();
+        }
+        break;
+      case "GAME_OVER_LOSE":
+        if (p.keyCode === 82) { // R
+          resetGame();
+        }
+        break;
+    }
+    
+    // Prevent default for game keys
+    if ([32, 38, 37, 39, 40, 27, 13, 82].includes(p.keyCode)) {
+      return false;
+    }
+  };
+
+  function startGame() {
+    logGameInfo("Starting game", { level: gameState.currentLevel });
+    resetGame();
+  }
+
+  function pauseGame() {
+    gameState.gamePhase = "PAUSED";
+    logGameInfo("Game paused", {});
+  }
+
+  function resumeGame() {
+    gameState.gamePhase = "PLAYING";
+    logGameInfo("Game resumed", {});
+  }
+
+  function advanceLevel() {
+    // Move to next level (cycle back to 1 after level 4)
+    gameState.currentLevel = (gameState.currentLevel % 4) + 1;
+    logGameInfo("Advanced to next level", { level: gameState.currentLevel });
+    resetGame();
+  }
+
+  function resetGame() {
+    // Initialize level with current level number
+    gameState.level = new Level(gameState.currentLevel);
+    gameState.obstacles = gameState.level.obstacles;
+    gameState.portals = gameState.level.portals;
+    
+    // Initialize player
+    gameState.player = new Player(gameState.level.startX, gameState.level.startY);
+    
+    // Reset game state
+    gameState.camera = { x: 0 };
+    gameState.progress = 0;
+    gameState.deathCount = 0;
+    gameState.gamePhase = "PLAYING";
+    gameState.levelLength = gameState.level.length;
+    gameState.startTime = Date.now();
+    gameState.elapsedTime = 0;
+    
+    logGameInfo("Game reset", { level: gameState.currentLevel });
+  }
+
+  // Logging functions
+  function logGameInfo(status, data) {
+    p.logs.game_info.push({
+      "game_status": status,
+      "data": data,
+      "framecount": p.frameCount,
+      "timestamp": Date.now()
+    });
+  }
+
+  function logPlayerInfo() {
+    if (gameState.player) {
+      p.logs.player_info.push({
+        "screen_x": gameState.player.x - gameState.camera.x,
+        "screen_y": gameState.player.y,
+        "game_x": gameState.player.x,
+        "game_y": gameState.player.y,
+        "framecount": p.frameCount,
+        "timestamp": Date.now()
+      });
+    }
+  }
+
+  function logKeyInput(inputType, data) {
+    p.logs.inputs.push({
+      "input_type": inputType,
+      "data": data,
+      "framecount": p.frameCount,
+      "timestamp": Date.now()
+    });
+  }
+});
+
+// Expose the game instance globally
+window.gameInstance = gameInstance;
+// Expose level loading for dev mode
+window.loadLevel = function(levelNum) {
+  const state = window.getGameState ? window.getGameState() : (window.gameState || (window.gameInstance && window.gameInstance.gameState));
+  if (state) {
+    state.currentLevel = levelNum;
+    // Try common reset/start patterns
+    if (typeof resetGame === 'function') {
+      resetGame();
+    }
+    if (typeof startGame === 'function') {
+      startGame();
+    } else if (state.gamePhase !== undefined) {
+      state.gamePhase = "PLAYING";
+    }
+  }
+};
+
+// Expose getGameState globally
+import { getGameState } from './globals.js';
+window.getGameState = getGameState;
+</file>
+
+<file name="collision.js">
+import { PLAYER_MODES, SCROLL_SPEED } from './globals.js';
+
+export function checkCollisions(p, player, obstacles, portals, gameState) {
+  // Check for obstacle collisions
+  for (let i = 0; i < obstacles.length; i++) {
+    const obstacle = obstacles[i];
+    if (p.collideRectRect(
+      player.x, player.y, player.width, player.height,
+      obstacle.x, obstacle.y, obstacle.width, obstacle.height
+    )) {
+      console.log(`Collision detected with obstacle ${i}, type: ${obstacle.type}, isFirst: ${i === 0}`);
+      
+      // Special case for ground platform - don't die (ground platform is the first obstacle)
+      if (i === 0) {
+        console.log("Ground platform collision - no death");
+        continue;
+      }
+
+      // Only kill player for dangerous obstacle types
+      if (obstacle.type === 'spike' || obstacle.type === 'ceiling') {
+        console.log(`Deadly collision with ${obstacle.type} - player dies`);
+        player.die();
+        return true;
+      }
+
+      // Allow landing on block platforms when colliding from above while falling
+      if (obstacle.type === 'block') {
+        try {
+          const prevBottom = (player.y - player.velocityY) + player.height;
+          const currBottom = player.y + player.height;
+          const platformTop = obstacle.y;
+          const platformBottom = obstacle.y + obstacle.height;
+          const prevTop = (player.y - player.velocityY);
+
+          // Horizontal sweep info to resolve side collisions
+          const prevX = player.x - SCROLL_SPEED;
+          const prevRight = prevX + player.width;
+          const currLeft = player.x;
+          const currRight = player.x + player.width;
+
+          if (player.mode === PLAYER_MODES.CUBE) {
+            // Landing from above
+            if (prevBottom <= platformTop && currBottom >= platformTop && player.velocityY >= 0) {
+              player.y = platformTop - player.height;
+              player.velocityY = 0;
+              player.onGround = true;
+              player.isJumping = false;
+              player.rotation = 0;
+              console.log(`Landed on platform ${i}`);
+              continue;
+            }
+
+            // Hitting the underside while moving upward
+            if (player.velocityY < 0 && prevTop >= platformBottom && (player.y) <= platformBottom) {
+              player.y = platformBottom;
+              player.velocityY = 0;
+              console.log(`Bumped head on platform ${i}`);
+              continue;
+            }
+
+            // Side collision - die on horizontal impact
+            if (prevRight <= obstacle.x && currRight > obstacle.x) {
+              // Came from left - horizontal collision, player dies
+              console.log(`Horizontal collision from left on platform ${i} - player dies`);
+              player.die();
+              return true;
+            } else if (prevX >= obstacle.x + obstacle.width && currLeft < obstacle.x + obstacle.width) {
+              // Came from right - horizontal collision, player dies
+              console.log(`Horizontal collision from right on platform ${i} - player dies`);
+              player.die();
+              return true;
+            }
+          }
+        } catch (err) {
+          console.log('Platform collision resolution failed; defaulting to death on block collision', err);
+          player.die();
+          return true;
+        }
+
+        console.log("Block collision - no death");
+        continue;
+      }
+
+      // If we get here, it's an unknown obstacle type
+      console.log(`Unknown obstacle type: ${obstacle.type} - player dies`);
+      player.die();
+      return true;
+    }
+  }
+  
+  // Check for portal collisions
+  for (const portal of portals) {
+    if (p.collideRectRect(
+      player.x, player.y, player.width, player.height,
+      portal.x, portal.y, portal.width, portal.height
+    )) {
+      player.changeMode(portal.targetMode);
+    }
+  }
+  
+  // Check if player reached the end
+  if (player.x >= gameState.level.endX) {
+    return 'win';
+  }
+  
+  // Check if player fell below the level
+  if (player.y > p.height + 100) {
+    console.log("Player fell below level - dies");
+    player.die();
+    return true;
+  }
+  
+  return false;
+}
+</file>
+
+<file name="player.js">
+import { GRAVITY, JUMP_FORCE, SHIP_LIFT, GROUND_Y, PLAYER_MODES, BLOCK_SIZE } from './globals.js';
+
+export class Player {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.velocityY = 0;
+    this.width = BLOCK_SIZE;
+    this.height = BLOCK_SIZE;
+    this.isJumping = false;
+    this.mode = PLAYER_MODES.CUBE;
+    this.rotation = 0;
+    this.onGround = false;
+    this.dead = false;
+    this.trail = []; // For particle effects
+  }
+
+  jump() {
+    if (this.mode === PLAYER_MODES.CUBE) {
+      // Cube mode: Jump when on ground (continuous input - can hold key to jump repeatedly on landing)
+      if (this.onGround) {
+        this.velocityY = JUMP_FORCE;
+        this.isJumping = true;
+        this.onGround = false;
+      }
+    } else if (this.mode === PLAYER_MODES.SHIP) {
+      // Ship mode: Continuous lift while key is held
+      this.velocityY += SHIP_LIFT;
+    }
+  }
+
+  update(p) {
+    // Apply gravity based on mode
+    if (this.mode === PLAYER_MODES.CUBE) {
+      this.velocityY += GRAVITY;
+    } else if (this.mode === PLAYER_MODES.SHIP) {
+      // Ship has less gravity and can fly up
+      this.velocityY += GRAVITY * 0.5;
+    }
+
+    // Update position
+    this.y += this.velocityY;
+
+    // Check ground collision for cube mode
+    if (this.mode === PLAYER_MODES.CUBE && this.y >= GROUND_Y - this.height) {
+      this.y = GROUND_Y - this.height;
+      this.velocityY = 0;
+      this.onGround = true;
+      this.isJumping = false;
+      this.rotation = 0;
+    } else {
+      this.onGround = false;
+      
+      // Rotate based on velocity
+      if (this.mode === PLAYER_MODES.CUBE) {
+        this.rotation += 0.1;
+      } else if (this.mode === PLAYER_MODES.SHIP) {
+        // Ship rotation follows velocity
+        this.rotation = p.map(this.velocityY, -10, 10, -Math.PI/6, Math.PI/6);
+      }
+    }
+
+    // Limit ship movement to prevent going off-screen
+    if (this.mode === PLAYER_MODES.SHIP) {
+      if (this.y < 0) {
+        this.y = 0;
+        this.velocityY = 0;
+      }
+    }
+
+    // Add trail particles
+    if (p.frameCount % 3 === 0) {
+      this.trail.push({
+        x: this.x,
+        y: this.y + this.height / 2,
+        alpha: 255,
+        size: 5
+      });
+    }
+
+    // Update trail particles
+    for (let i = this.trail.length - 1; i >= 0; i--) {
+      this.trail[i].alpha -= 15;
+      this.trail[i].size -= 0.2;
+      if (this.trail[i].alpha <= 0 || this.trail[i].size <= 0) {
+        this.trail.splice(i, 1);
+      }
+    }
+  }
+
+  draw(p, cameraX) {
+    p.push();
+    
+    // Draw trail
+    for (const particle of this.trail) {
+      p.noStroke();
+      p.fill(255, 255, 255, particle.alpha);
+      p.ellipse(particle.x - cameraX, particle.y, particle.size, particle.size);
+    }
+
+    // Draw player
+    p.translate(this.x - cameraX + this.width / 2, this.y + this.height / 2);
+    p.rotate(this.rotation);
+    
+    if (this.mode === PLAYER_MODES.CUBE) {
+      p.fill(255, 50, 50);
+      p.stroke(255);
+      p.strokeWeight(2);
+      p.rect(-this.width / 2, -this.height / 2, this.width, this.height);
+      
+      // Draw face
+      p.fill(255);
+      p.rect(-this.width / 4, -this.height / 4, this.width / 2, this.height / 2);
+    } else if (this.mode === PLAYER_MODES.SHIP) {
+      p.fill(50, 50, 255);
+      p.stroke(255);
+      p.strokeWeight(2);
+      
+      // Ship shape
+      p.beginShape();
+      p.vertex(-this.width / 2, 0);
+      p.vertex(this.width / 2, -this.height / 3);
+      p.vertex(this.width / 2, this.height / 3);
+      p.endShape(p.CLOSE);
+      
+      // Cockpit
+      p.fill(200, 200, 255);
+      p.ellipse(0, 0, this.width / 3, this.height / 3);
+    }
+    
+    p.pop();
+  }
+
+  changeMode(newMode) {
+    this.mode = newMode;
+    // Reset velocity when changing modes
+    this.velocityY = 0;
+  }
+
+  die() {
+    this.dead = true;
+  }
+
+  reset(x, y) {
+    this.x = x;
+    this.y = y;
+    this.velocityY = 0;
+    this.isJumping = false;
+    this.rotation = 0;
+    this.onGround = false;
+    this.mode = PLAYER_MODES.CUBE;
+    this.dead = false;
+    this.trail = [];
+  }
+}
+</file>
+
+<file name="level.js">
+import { GROUND_Y, BLOCK_SIZE, PLAYER_MODES, CANVAS_HEIGHT } from './globals.js';
+
+export class Obstacle {
+  constructor(x, y, width, height, type = 'block') {
+    this.x = x;
+    this.y = y;
+    this.width = width;
+    this.height = height;
+    this.type = type; // 'block', 'spike', 'ceiling'
+  }
+
+  draw(p, cameraX) {
+    p.push();
+    if (this.type === 'block') {
+      p.fill(100, 100, 100);
+      p.stroke(50);
+      p.strokeWeight(2);
+      p.rect(this.x - cameraX, this.y, this.width, this.height);
+    } else if (this.type === 'spike') {
+      p.fill(200, 50, 50);
+      p.stroke(255);
+      p.strokeWeight(2);
+      p.triangle(
+        this.x - cameraX, this.y + this.height,
+        this.x - cameraX + this.width / 2, this.y,
+        this.x - cameraX + this.width, this.y + this.height
+      );
+    } else if (this.type === 'ceiling') {
+      p.fill(100, 100, 100);
+      p.stroke(50);
+      p.strokeWeight(2);
+      p.rect(this.x - cameraX, this.y, this.width, this.height);
+      
+      // Add spikes to ceiling
+      p.fill(200, 50, 50);
+      p.stroke(255);
+      for (let i = 0; i < this.width; i += BLOCK_SIZE) {
+        p.triangle(
+          this.x - cameraX + i, this.y + this.height,
+          this.x - cameraX + i + BLOCK_SIZE / 2, this.y + this.height - BLOCK_SIZE,
+          this.x - cameraX + i + BLOCK_SIZE, this.y + this.height
+        );
+      }
+    }
+    p.pop();
+  }
+}
+
+export class Portal {
+  constructor(x, y, targetMode) {
+    this.x = x;
+    this.y = y;
+    this.width = BLOCK_SIZE;
+    this.height = BLOCK_SIZE * 2;
+    this.targetMode = targetMode;
+    this.particles = [];
+    this.color = targetMode === PLAYER_MODES.CUBE ? [255, 50, 50] : [50, 50, 255];
+
+    // Make cube (red) portals span the full screen height to prevent skipping
+    if (this.targetMode === PLAYER_MODES.CUBE) {
+      this.y = 0;
+      this.height = CANVAS_HEIGHT;
+    }
+  }
+
+  update(p) {
+    // Add particles
+    if (p.frameCount % 5 === 0) {
+      this.particles.push({
+        x: this.x + p.random(this.width),
+        y: this.y + p.random(this.height),
+        vx: p.random(-1, 1),
+        vy: p.random(-2, -1),
+        alpha: 255,
+        size: p.random(3, 8)
+      });
+    }
+
+    // Update particles
+    for (let i = this.particles.length - 1; i >= 0; i--) {
+      const particle = this.particles[i];
+      particle.x += particle.vx;
+      particle.y += particle.vy;
+      particle.alpha -= 5;
+      if (particle.alpha <= 0) {
+        this.particles.splice(i, 1);
+      }
+    }
+  }
+
+  draw(p, cameraX) {
+    p.push();
+    
+    // Draw particles
+    for (const particle of this.particles) {
+      p.noStroke();
+      p.fill(this.color[0], this.color[1], this.color[2], particle.alpha);
+      p.ellipse(particle.x - cameraX, particle.y, particle.size, particle.size);
+    }
+    
+    // Draw portal
+    p.noFill();
+    p.strokeWeight(3);
+    p.stroke(this.color[0], this.color[1], this.color[2]);
+    p.rect(this.x - cameraX, this.y, this.width, this.height, 10);
+    
+    // Inner glow
+    p.noStroke();
+    p.fill(this.color[0], this.color[1], this.color[2], 100);
+    p.rect(this.x - cameraX + 5, this.y + 5, this.width - 10, this.height - 10, 5);
+    
+    p.pop();
+  }
+}
+
+export class Level {
+  constructor(levelNumber = 1) {
+    this.obstacles = [];
+    this.portals = [];
+    this.startX = 100;
+    this.startY = GROUND_Y - BLOCK_SIZE;
+    this.endX = 0;
+    this.levelNumber = levelNumber;
+    this.generateLevel();
+  }
+
+  generateLevel() {
+    // Ground platform
+    this.obstacles.push(new Obstacle(0, GROUND_Y, 10000, 100, 'block'));
+    
+    // Generate specific level based on level number
+    switch (this.levelNumber) {
+      case 1:
+        this.generateLevel1();
+        break;
+      case 2:
+        this.generateLevel2();
+        break;
+      case 3:
+        this.generateLevel3();
+        break;
+      case 4:
+        this.generateLevel4();
+        break;
+      default:
+        this.generateLevel1();
+    }
+  }
+
+  generateLevel1() {
+    // VERY VERY EASY Level 1 - Tutorial level with minimal obstacles
+    let x = 300;
+    
+    // First obstacle - single spike with huge spacing
+    x += 500;
+    this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, 'spike'));
+    
+    // Long safe area
+    x += 600;
+    
+    // Single low platform (easy to jump over or walk past)
+    this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE * 1.5, BLOCK_SIZE * 2, BLOCK_SIZE, 'block'));
+    
+    // Another long safe area
+    x += 500;
+    
+    // One more spike
+    this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, 'spike'));
+    
+    // Safe run to finish
+    x += 400;
+    this.endX = x + 100;
+    this.length = this.endX + 200;
+  }
+
+  generateLevel2() {
+    // Level 2 - More platforms and longer ship section
+    let x = 300;
+    
+    // Section 1: Staircase of platforms - increased spacing from 120 to 160
+    for (let i = 0; i < 4; i++) {
+      x += 160;
+      this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE * (i + 1), BLOCK_SIZE * 2, BLOCK_SIZE, 'block'));
+    }
+    
+    // Section 2: Spike valley - increased spacing from 160 to 220
+    x += 150;
+    for (let i = 0; i < 5; i++) {
+      x += 220;
+      this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, 'spike'));
+    }
+    
+    // High platform
+    x += 150;
+    this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE * 4, BLOCK_SIZE * 4, BLOCK_SIZE, 'block'));
+    
+    // Ship portal
+    x += 200;
+    this.portals.push(new Portal(x, GROUND_Y - BLOCK_SIZE * 3, PLAYER_MODES.SHIP));
+    
+    // Section 3: Ship corridor with alternating obstacles
+    x += 150;
+    this.obstacles.push(new Obstacle(x, 0, BLOCK_SIZE * 3, BLOCK_SIZE * 2, 'ceiling'));
+    
+    x += 200;
+    this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE * 3, BLOCK_SIZE * 3, BLOCK_SIZE, 'block'));
+    
+    x += 200;
+    this.obstacles.push(new Obstacle(x, 0, BLOCK_SIZE * 4, BLOCK_SIZE * 3, 'ceiling'));
+    
+    x += 250;
+    this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE * 4, BLOCK_SIZE * 2, BLOCK_SIZE, 'block'));
+    
+    x += 200;
+    this.obstacles.push(new Obstacle(x, 0, BLOCK_SIZE * 3, BLOCK_SIZE * 2, 'ceiling'));
+    
+    // Back to cube portal
+    x += 250;
+    this.portals.push(new Portal(x, GROUND_Y - BLOCK_SIZE * 3, PLAYER_MODES.CUBE));
+    
+    // Section 4: Final cube challenges
+    x += 150;
+    this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, 'spike'));
+    
+    x += 180;
+    this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE * 3, BLOCK_SIZE * 2, BLOCK_SIZE * 3, 'block'));
+    
+    x += 150;
+    this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, 'spike'));
+    
+    x += 200;
+    this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, 'spike'));
+    
+    x += 200;
+    this.endX = x + 100;
+    this.length = this.endX + 200;
+  }
+
+  generateLevel3() {
+    // Level 3 - Rapid transitions and tight spaces
+    let x = 300;
+    
+    // Section 1: Quick spike gauntlet - increased spacing significantly to make it playable
+    for (let i = 0; i < 6; i++) {
+      x += 220; // Increased from 160 to 220 (matches level 2 spacing)
+      this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, 'spike'));
+    }
+    
+    // Platform rest area
+    x += 200; // Increased from 150
+    this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE * 2, BLOCK_SIZE * 3, BLOCK_SIZE * 2, 'block'));
+    
+    // Ship portal
+    x += 220; // Increased from 180
+    this.portals.push(new Portal(x, GROUND_Y - BLOCK_SIZE * 3, PLAYER_MODES.SHIP));
+    
+    // Section 2: Tight ship corridor
+    x += 150; // Increased from 120
+    this.obstacles.push(new Obstacle(x, 0, BLOCK_SIZE * 6, BLOCK_SIZE * 2, 'ceiling'));
+    this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE * 5, BLOCK_SIZE * 6, BLOCK_SIZE, 'block'));
+    
+    x += 350; // Increased from 300
+    this.obstacles.push(new Obstacle(x, 0, BLOCK_SIZE * 4, BLOCK_SIZE * 3, 'ceiling'));
+    this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE * 4, BLOCK_SIZE * 4, BLOCK_SIZE, 'block'));
+    
+    // Back to cube
+    x += 300; // Increased from 250
+    this.portals.push(new Portal(x, GROUND_Y - BLOCK_SIZE * 3, PLAYER_MODES.CUBE));
+    
+    // Section 3: Platform jumps
+    x += 200; // Increased from 150
+    for (let i = 0; i < 3; i++) {
+      x += 180; // Increased from 140
+      this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE * 2, BLOCK_SIZE * 2, BLOCK_SIZE * 2, 'block'));
+    }
+    
+    // Ship portal again
+    x += 250; // Increased from 200
+    this.portals.push(new Portal(x, GROUND_Y - BLOCK_SIZE * 3, PLAYER_MODES.SHIP));
+    
+    // Final ship section
+    x += 200; // Increased from 150
+    this.obstacles.push(new Obstacle(x, 0, BLOCK_SIZE * 5, BLOCK_SIZE * 2, 'ceiling'));
+    
+    x += 300; // Increased from 250
+    this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE * 3, BLOCK_SIZE * 3, BLOCK_SIZE, 'block'));
+    
+    // Back to cube for finish
+    x += 250; // Increased from 200
+    this.portals.push(new Portal(x, GROUND_Y - BLOCK_SIZE * 3, PLAYER_MODES.CUBE));
+    
+    x += 250; // Increased from 200
+    this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, 'spike'));
+    
+    x += 200;
+    this.endX = x + 100;
+    this.length = this.endX + 200;
+  }
+
+  generateLevel4() {
+    // Level 4 - Ultimate challenge combining all mechanics
+    let x = 300;
+    
+    // Section 1: Platform parkour
+    for (let i = 0; i < 5; i++) {
+      x += 130;
+      let height = (i % 2 === 0) ? BLOCK_SIZE * 2 : BLOCK_SIZE * 3;
+      this.obstacles.push(new Obstacle(x, GROUND_Y - height, BLOCK_SIZE * 2, BLOCK_SIZE, 'block'));
+    }
+    
+    // Spike trap - increased spacing from BLOCK_SIZE * 2 (60) to 160
+    x += 150;
+    for (let i = 0; i < 3; i++) {
+      x += 160;
+      this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, 'spike'));
+    }
+    
+    // Ship portal
+    x += 180;
+    this.portals.push(new Portal(x, GROUND_Y - BLOCK_SIZE * 3, PLAYER_MODES.SHIP));
+    
+    // Section 2: Complex ship maze
+    x += 150;
+    this.obstacles.push(new Obstacle(x, 0, BLOCK_SIZE * 4, BLOCK_SIZE * 2, 'ceiling'));
+    
+    x += 220;
+    this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE * 5, BLOCK_SIZE * 4, BLOCK_SIZE, 'block'));
+    
+    x += 220;
+    this.obstacles.push(new Obstacle(x, 0, BLOCK_SIZE * 5, BLOCK_SIZE * 3, 'ceiling'));
+    
+    x += 250;
+    this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE * 4, BLOCK_SIZE * 3, BLOCK_SIZE, 'block'));
+    
+    x += 200;
+    this.obstacles.push(new Obstacle(x, 0, BLOCK_SIZE * 3, BLOCK_SIZE * 2, 'ceiling'));
+    this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE * 6, BLOCK_SIZE * 3, BLOCK_SIZE, 'block'));
+    
+    // Back to cube
+    x += 250;
+    this.portals.push(new Portal(x, GROUND_Y - BLOCK_SIZE * 3, PLAYER_MODES.CUBE));
+    
+    // Section 3: Mixed obstacles
+    x += 150;
+    this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, 'spike'));
+    
+    x += 120;
+    this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE * 3, BLOCK_SIZE * 2, BLOCK_SIZE * 3, 'block'));
+    
+    x += 140;
+    this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, 'spike'));
+    
+    x += 140;
+    this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE * 4, BLOCK_SIZE * 3, BLOCK_SIZE, 'block'));
+    
+    // Ship portal for final section
+    x += 180;
+    this.portals.push(new Portal(x, GROUND_Y - BLOCK_SIZE * 3, PLAYER_MODES.SHIP));
+    
+    // Final ship gauntlet
+    x += 150;
+    this.obstacles.push(new Obstacle(x, 0, BLOCK_SIZE * 6, BLOCK_SIZE * 2, 'ceiling'));
+    
+    x += 280;
+    this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE * 4, BLOCK_SIZE * 4, BLOCK_SIZE, 'block'));
+    
+    x += 250;
+    this.obstacles.push(new Obstacle(x, 0, BLOCK_SIZE * 4, BLOCK_SIZE * 3, 'ceiling'));
+    
+    // Final cube section
+    x += 280;
+    this.portals.push(new Portal(x, GROUND_Y - BLOCK_SIZE * 3, PLAYER_MODES.CUBE));
+    
+    x += 150;
+    this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, 'spike'));
+    
+    x += 150;
+    this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, 'spike'));
+    
+    x += 200;
+    this.endX = x + 100;
+    this.length = this.endX + 200;
+  }
+
+  draw(p, cameraX) {
+    // Draw background
+    p.background(50, 50, 80);
+    
+    // Draw grid
+    p.stroke(70, 70, 100, 100);
+    p.strokeWeight(1);
+    for (let i = 0; i < 20; i++) {
+      let gridX = (Math.floor(cameraX / 100) * 100) + (i * 100);
+      p.line(gridX - cameraX, 0, gridX - cameraX, GROUND_Y);
+    }
+    
+    // Draw ground
+    for (const obstacle of this.obstacles) {
+      // Only draw obstacles that are visible
+      if (obstacle.x + obstacle.width > cameraX && obstacle.x < cameraX + p.width) {
+        obstacle.draw(p, cameraX);
+      }
+    }
+    
+    // Draw portals
+    for (const portal of this.portals) {
+      // Only draw portals that are visible
+      if (portal.x + portal.width > cameraX && portal.x < cameraX + p.width) {
+        portal.update(p);
+        portal.draw(p, cameraX);
+      }
+    }
+    
+    // Draw finish line
+    if (this.endX > cameraX - 100 && this.endX < cameraX + p.width + 100) {
+      p.push();
+      p.stroke(255, 255, 0);
+      p.strokeWeight(5);
+      p.line(this.endX - cameraX, 0, this.endX - cameraX, GROUND_Y);
+      
+      // Finish flag
+      p.fill(255, 255, 0);
+      p.noStroke();
+      p.rect(this.endX - cameraX + 5, 50, 40, 30);
+      p.pop();
+    }
+  }
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

@@ -18,7 +18,6 @@ let gameInstance = new p5(p => {
     p.setup = function() {
         p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
         p.frameRate(60);
-        p.randomSeed(42);
         
         gameState.gamePhase = "START";
         
@@ -84,6 +83,12 @@ let gameInstance = new p5(p => {
         if (p.keyCode === INPUT.R && (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE")) {
             startNewGame();
         }
+        
+        // Level progression on win
+        if (p.keyCode === INPUT.SPACE && gameState.gamePhase === "GAME_OVER_WIN") {
+            gameState.level++;
+            startNewGame();
+        }
     };
 
     p.keyReleased = function() {
@@ -93,8 +98,14 @@ let gameInstance = new p5(p => {
     
     function startNewGame() {
         gameState.gamePhase = "PLAYING";
-        gameState.score = 0;
-        gameState.deaths = 0;
+        
+        // Only reset deaths on actual restart, not level progression
+        if (gameState.gamePhase === "GAME_OVER_LOSE") {
+            gameState.score = 0;
+            gameState.deaths = 0;
+            gameState.level = 1;
+        }
+        
         generateLevel(gameState.level);
         
         p.logs.game_info.push({

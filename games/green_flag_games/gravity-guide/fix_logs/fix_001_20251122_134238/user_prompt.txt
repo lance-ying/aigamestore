@@ -1,0 +1,1590 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+when level 2 loads, the green platform is locked in moving either the left or right direction, can you fix that
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 600px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">Gravity Guide</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Basic AI)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Advanced AI)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Guide falling objects into the target zone at the bottom of the screen using your platform. Complete 5 increasingly challenging levels by successfully catching the required number of objects before time runs out. Watch out for obstacles that block your path, and adapt to moving targets in later levels. Precision and timing are key!</p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Arrow Left/Right: Move platform | Q/E: Tilt platform left/right | ENTER: Start game | ESC: Pause/Unpause | R: Restart (return to start screen)</p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script src="../../dev_mode.js"></script>
+    <script type="module" src="/games/gravity-guide/game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="globals.js">
+// globals.js - Global constants and game state
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 600;
+export const TARGET_FPS = 60;
+
+// Game phases
+export const PHASE_START = "START";
+export const PHASE_PLAYING = "PLAYING";
+export const PHASE_PAUSED = "PAUSED";
+export const PHASE_GAME_OVER_WIN = "GAME_OVER_WIN";
+export const PHASE_GAME_OVER_LOSE = "GAME_OVER_LOSE";
+export const PHASE_LEVEL_COMPLETE = "LEVEL_COMPLETE";
+
+// Key codes
+export const KEY_ENTER = 13;
+export const KEY_ESC = 27;
+export const KEY_R = 82;
+export const KEY_LEFT = 37;
+export const KEY_RIGHT = 39;
+export const KEY_SPACE = 32;
+export const KEY_Q = 81;
+export const KEY_E = 69;
+
+// Game state object
+export const gameState = {
+  player: null,
+  entities: [],
+  score: 0,
+  currentLevel: 1,
+  totalLevels: 5,
+  gamePhase: PHASE_START,
+  controlMode: "HUMAN",
+  levelObjectives: {
+    objectsRequired: 0,
+    objectsCaught: 0,
+    objectsLost: 0,
+    timeLimit: 0,
+    timeRemaining: 0
+  },
+  highScore: 0,
+  levelScore: 0,
+  fallingObjects: [],
+  obstacles: [],
+  targetZone: null,
+  levelStartTime: 0,
+  transitionTimer: 0,
+  inputState: {
+    left: false,
+    right: false,
+    tiltLeft: false,
+    tiltRight: false
+  }
+};
+
+// Level definitions
+export const LEVEL_CONFIGS = [
+  {
+    level: 1,
+    name: "The Drop",
+    objectsRequired: 5,
+    totalObjects: 8,
+    timeLimit: 0,
+    objectSpeed: 3.0,
+    objectSpawnInterval: 180,
+    targetWidth: 80,
+    targetSpeed: 0,
+    platformWidth: 120,
+    platformSpeed: 7,
+    obstacles: [],
+    gravity: 0.4
+  },
+  {
+    level: 2,
+    name: "Bouncing Walls",
+    objectsRequired: 7,
+    totalObjects: 12,
+    timeLimit: 0,
+    objectSpeed: 3.5,
+    objectSpawnInterval: 170,
+    targetWidth: 100,
+    targetSpeed: 0,
+    platformWidth: 100,
+    platformSpeed: 8,
+    obstacles: [
+      { x: 150, y: 150, width: 8, height: 80, type: 'static', angle: -0.3 },
+      { x: 450, y: 250, width: 8, height: 80, type: 'static', angle: 0.25 }
+    ],
+    gravity: 0.45
+  },
+  {
+    level: 3,
+    name: "Shifting Sands",
+    objectsRequired: 8,
+    totalObjects: 14,
+    timeLimit: 0,
+    objectSpeed: 4.0,
+    objectSpawnInterval: 160,
+    targetWidth: 90,
+    targetSpeed: 1,
+    platformWidth: 90,
+    platformSpeed: 8.5,
+    obstacles: [
+      { x: 150, y: 120, width: 8, height: 100, type: 'static', angle: -0.35 },
+      { x: 450, y: 200, width: 8, height: 100, type: 'static', angle: 0.3 },
+      { x: 300, y: 160, width: 80, height: 8, type: 'static', angle: -0.2 }
+    ],
+    gravity: 0.5
+  },
+  {
+    level: 4,
+    name: "The Gauntlet",
+    objectsRequired: 9,
+    totalObjects: 16,
+    timeLimit: 0,
+    objectSpeed: 4.5,
+    objectSpawnInterval: 150,
+    targetWidth: 70,
+    targetSpeed: 2,
+    platformWidth: 80,
+    platformSpeed: 9,
+    obstacles: [
+      { x: 150, y: 100, width: 8, height: 120, type: 'static', angle: -0.4 },
+      { x: 450, y: 180, width: 8, height: 120, type: 'static', angle: 0.35 },
+      { x: 300, y: 140, width: 100, height: 8, type: 'static', angle: 0.25 },
+      { x: 350, y: 280, width: 80, height: 8, type: 'moving', moveRange: 100, moveSpeed: 1, angle: -0.3 }
+    ],
+    gravity: 0.55
+  },
+  {
+    level: 5,
+    name: "The Funnel",
+    objectsRequired: 10,
+    totalObjects: 18,
+    timeLimit: 0,
+    objectSpeed: 5.0,
+    objectSpawnInterval: 140,
+    targetWidth: 60,
+    targetSpeed: 2.5,
+    platformWidth: 70,
+    platformSpeed: 10,
+    obstacles: [
+      { x: 120, y: 80, width: 8, height: 140, type: 'static', angle: -0.45 },
+      { x: 480, y: 80, width: 8, height: 140, type: 'static', angle: 0.4 },
+      { x: 250, y: 150, width: 100, height: 8, type: 'static', angle: -0.35 },
+      { x: 350, y: 220, width: 100, height: 8, type: 'static', angle: 0.3 },
+      { x: 180, y: 180, width: 60, height: 8, type: 'moving', moveRange: 80, moveSpeed: 1.5, angle: -0.25 },
+      { x: 420, y: 260, width: 60, height: 8, type: 'moving', moveRange: 80, moveSpeed: 1.2, angle: 0.35 }
+    ],
+    gravity: 0.6
+  }
+];
+// Expose gameState to window for debugging and recording scripts
+if (typeof window !== 'undefined') {
+  window.getGameState = () => gameState;
+}
+</file>
+
+<file name="game.js">
+// game.js - Main game file
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, TARGET_FPS, PHASE_PLAYING, PHASE_START } from './globals.js';
+import { handleKeyPressed, handleKeyReleased, getAIAction } from './input.js';
+import { updateLevel } from './levelManager.js';
+import { render } from './rendering.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+  let lastFrameTime = 0;
+  let aiActionCooldown = 0;
+
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(TARGET_FPS);
+    p.randomSeed(42);
+
+    // Initialize logs
+    p.logs = {
+      game_info: [],
+      inputs: [],
+      player_info: []
+    };
+
+    // Load high score
+    try {
+      const savedHighScore = localStorage.getItem('gravityGuideHighScore');
+      if (savedHighScore) {
+        gameState.highScore = parseInt(savedHighScore, 10);
+      }
+    } catch (e) {
+      console.log('Could not load high score');
+    }
+
+    // Log initial state
+    p.logs.game_info.push({
+      data: { phase: PHASE_START },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  };
+
+  p.draw = function() {
+    const currentTime = Date.now();
+    const deltaTime = currentTime - lastFrameTime;
+    lastFrameTime = currentTime;
+
+    // Handle AI control if in test mode - use cooldown for discrete tap-based actions
+    if (gameState.controlMode !== 'HUMAN' && gameState.gamePhase === PHASE_PLAYING) {
+      if (aiActionCooldown <= 0 && gameState.player) {
+        const aiAction = getAIAction(gameState.controlMode);
+        if (aiAction.left) {
+          gameState.player.moveLeft();
+        } else if (aiAction.right) {
+          gameState.player.moveRight();
+        }
+        // Set cooldown so AI doesn't tap every frame (more realistic tap timing)
+        aiActionCooldown = 8; // Wait 8 frames between AI taps
+      }
+      if (aiActionCooldown > 0) {
+        aiActionCooldown--;
+      }
+    }
+
+    // Update game logic
+    if (gameState.gamePhase === PHASE_PLAYING) {
+      updateLevel(p, deltaTime);
+      
+      // Log player position periodically
+      if (p.frameCount % 30 === 0 && gameState.player) {
+        p.logs.player_info.push({
+          screen_x: gameState.player.x,
+          screen_y: gameState.player.y,
+          game_x: gameState.player.x,
+          game_y: gameState.player.y,
+          framecount: p.frameCount
+        });
+      }
+    }
+
+    // Render
+    render(p);
+  };
+
+  p.keyPressed = function() {
+    if (gameState.controlMode === 'HUMAN') {
+      handleKeyPressed(p, p.key, p.keyCode);
+    }
+    return false;
+  };
+
+  p.keyReleased = function() {
+    if (gameState.controlMode === 'HUMAN') {
+      handleKeyReleased(p, p.key, p.keyCode);
+    }
+    return false;
+  };
+});
+
+// Expose game instance globally
+window.gameInstance = gameInstance;
+// Expose level loading for dev mode
+window.loadLevel = function(levelNum) {
+  const state = window.getGameState ? window.getGameState() : (window.gameState || (window.gameInstance && window.gameInstance.gameState));
+  if (state) {
+    state.currentLevel = levelNum;
+    // Try common reset/start patterns
+    if (typeof resetGame === 'function') {
+      resetGame();
+    }
+    if (typeof startGame === 'function') {
+      startGame();
+    } else if (state.gamePhase !== undefined) {
+      state.gamePhase = "PLAYING";
+    }
+  }
+};
+
+// Expose getGameState function
+window.getGameState = function() {
+  return gameState;
+};
+
+// Control mode switching
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  
+  // Update button states
+  const buttons = document.querySelectorAll('.control-button');
+  buttons.forEach(btn => btn.classList.remove('active'));
+  
+  if (mode === 'HUMAN') {
+    document.getElementById('humanModeBtn').classList.add('active');
+  } else if (mode === 'TEST_1') {
+    document.getElementById('test_1_ModeBtn').classList.add('active');
+  } else if (mode === 'TEST_2') {
+    document.getElementById('test_2_ModeBtn').classList.add('active');
+  }
+  
+  console.log(`Control mode set to: ${mode}`);
+};
+
+export { gameInstance };
+</file>
+
+<file name="levelManager.js">
+// levelManager.js - Level management and progression
+
+import { gameState, LEVEL_CONFIGS, CANVAS_WIDTH, CANVAS_HEIGHT, PHASE_PLAYING, PHASE_LEVEL_COMPLETE, PHASE_GAME_OVER_LOSE, PHASE_GAME_OVER_WIN } from './globals.js';
+import { Player, TargetZone, Obstacle, FallingObject } from './entities.js';
+
+export function initLevel(levelNumber) {
+  const config = LEVEL_CONFIGS[levelNumber - 1];
+  if (!config) return false;
+
+  // Reset level state
+  gameState.currentLevel = levelNumber;
+  gameState.levelScore = 0;
+  gameState.fallingObjects = [];
+  gameState.obstacles = [];
+  gameState.entities = [];
+  
+  // Initialize objectives
+  gameState.levelObjectives = {
+    objectsRequired: config.objectsRequired,
+    objectsCaught: 0,
+    objectsLost: 0,
+    totalObjects: config.totalObjects,
+    objectsSpawned: 0,
+    timeLimit: 0,
+    timeRemaining: 0
+  };
+
+  // Create player platform
+  const platformY = CANVAS_HEIGHT - 40;
+  gameState.player = new Player(
+    CANVAS_WIDTH / 2,
+    platformY,
+    config.platformWidth,
+    15,
+    config.platformSpeed
+  );
+  gameState.entities.push(gameState.player);
+
+  // Create target zone - for level 1, position it higher and make it smaller
+  const targetY = levelNumber === 1 ? CANVAS_HEIGHT - 80 : CANVAS_HEIGHT - 60;
+  const targetHeight = levelNumber === 1 ? 40 : 40;
+  gameState.targetZone = new TargetZone(
+    CANVAS_WIDTH / 2,
+    targetY,
+    config.targetWidth,
+    targetHeight,
+    config.targetSpeed
+  );
+
+  // Create obstacles
+  for (const obstacleConfig of config.obstacles) {
+    const obstacle = new Obstacle(
+      obstacleConfig.x,
+      obstacleConfig.y,
+      obstacleConfig.width,
+      obstacleConfig.height,
+      obstacleConfig.type,
+      obstacleConfig.moveRange || 0,
+      obstacleConfig.moveSpeed || 0,
+      obstacleConfig.angle || 0
+    );
+    gameState.obstacles.push(obstacle);
+  }
+
+  gameState.levelStartTime = Date.now();
+  
+  return config;
+}
+
+export function updateLevel(p, deltaTime) {
+  const config = LEVEL_CONFIGS[gameState.currentLevel - 1];
+  if (!config) return;
+
+  // Spawn objects only until totalObjects limit is reached
+  if (gameState.levelObjectives.objectsSpawned < gameState.levelObjectives.totalObjects) {
+    if (p.frameCount % config.objectSpawnInterval === 0) {
+      spawnObject(config);
+    }
+  }
+
+  // Update player - now uses inputState for tilt controls
+  if (gameState.player) {
+    gameState.player.update();
+  }
+
+  // Update target zone
+  if (gameState.targetZone) {
+    gameState.targetZone.update();
+  }
+
+  // Update obstacles
+  for (const obstacle of gameState.obstacles) {
+    obstacle.update();
+  }
+
+  // Update falling objects
+  for (let i = gameState.fallingObjects.length - 1; i >= 0; i--) {
+    const obj = gameState.fallingObjects[i];
+    obj.update();
+
+    // Check platform collision (can now bounce multiple times)
+    if (gameState.player) {
+      obj.bounceOffPlatform(gameState.player);
+    }
+
+    // Check obstacle collisions
+    for (const obstacle of gameState.obstacles) {
+      obj.checkObstacleCollision(obstacle);
+    }
+
+    // Check target capture
+    if (gameState.targetZone && obj.active) {
+      if (gameState.targetZone.checkCapture(obj)) {
+        obj.active = false;
+        gameState.levelObjectives.objectsCaught++;
+        const points = 100;
+        gameState.score += points;
+        gameState.levelScore += points;
+        
+        // Log score update
+        p.logs.player_info.push({
+          screen_x: obj.x,
+          screen_y: obj.y,
+          game_x: obj.x,
+          game_y: obj.y,
+          framecount: p.frameCount,
+          action: 'object_caught',
+          score: gameState.score
+        });
+      }
+    }
+
+    // Remove inactive objects
+    if (!obj.active) {
+      // Check if it was lost (fell out of bounds without being caught)
+      if (obj.y > CANVAS_HEIGHT && gameState.levelObjectives.objectsCaught + gameState.levelObjectives.objectsLost < gameState.levelObjectives.objectsSpawned) {
+        gameState.levelObjectives.objectsLost++;
+      }
+      gameState.fallingObjects.splice(i, 1);
+    }
+  }
+
+  // Check win condition
+  if (gameState.levelObjectives.objectsCaught >= gameState.levelObjectives.objectsRequired) {
+    endLevel(true, p);
+  }
+  // Check lose condition - failed if all objects spawned but not enough caught
+  else if (gameState.levelObjectives.objectsSpawned >= gameState.levelObjectives.totalObjects &&
+           gameState.fallingObjects.length === 0 &&
+           gameState.levelObjectives.objectsCaught < gameState.levelObjectives.objectsRequired) {
+    endLevel(false, p);
+  }
+}
+
+function spawnObject(config) {
+  const margin = 50;
+  const x = margin + Math.random() * (CANVAS_WIDTH - 2 * margin);
+  const y = -20;
+  const size = 12 + Math.random() * 6;
+  const type = Math.random() > 0.5 ? 'circle' : 'square';
+  
+  const obj = new FallingObject(x, y, size, type, config.gravity);
+  gameState.fallingObjects.push(obj);
+  gameState.levelObjectives.objectsSpawned++;
+}
+
+function endLevel(won, p) {
+  if (won) {
+    // Calculate bonuses - perfect bonus only
+    // Perfect bonus - awarded if caught all required without missing any
+    if (gameState.levelObjectives.objectsLost === 0 && 
+        gameState.levelObjectives.objectsCaught >= gameState.levelObjectives.objectsRequired) {
+      gameState.score += 200;
+      gameState.levelScore += 200;
+    }
+
+    // Check if game is complete
+    if (gameState.currentLevel >= gameState.totalLevels) {
+      gameState.gamePhase = PHASE_GAME_OVER_WIN;
+      
+      // Update high score
+      if (gameState.score > gameState.highScore) {
+        gameState.highScore = gameState.score;
+        try {
+          localStorage.setItem('gravityGuideHighScore', gameState.highScore.toString());
+        } catch (e) {
+          console.log('Could not save high score');
+        }
+      }
+
+      p.logs.game_info.push({
+        data: { phase: PHASE_GAME_OVER_WIN, score: gameState.score },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    } else {
+      gameState.gamePhase = PHASE_LEVEL_COMPLETE;
+      p.logs.game_info.push({
+        data: { phase: PHASE_LEVEL_COMPLETE, level: gameState.currentLevel, score: gameState.score },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  } else {
+    gameState.gamePhase = PHASE_GAME_OVER_LOSE;
+    p.logs.game_info.push({
+      data: { phase: PHASE_GAME_OVER_LOSE, score: gameState.score },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+}
+
+export function renderLevel(p) {
+  // Render target zone
+  if (gameState.targetZone) {
+    gameState.targetZone.render(p);
+  }
+
+  // Render obstacles
+  for (const obstacle of gameState.obstacles) {
+    obstacle.render(p);
+  }
+
+  // Render falling objects
+  for (const obj of gameState.fallingObjects) {
+    obj.render(p);
+  }
+
+  // Render player
+  if (gameState.player) {
+    gameState.player.render(p);
+  }
+
+  // Render UI
+  renderLevelUI(p);
+}
+
+function renderLevelUI(p) {
+  p.push();
+  p.textAlign(p.LEFT, p.TOP);
+  p.textSize(16);
+  p.fill(255);
+  p.noStroke();
+  
+  // Level indicator
+  const config = LEVEL_CONFIGS[gameState.currentLevel - 1];
+  p.text(`LEVEL ${gameState.currentLevel}: ${config.name}`, 10, 10);
+  
+  // Score
+  p.textAlign(p.RIGHT, p.TOP);
+  p.text(`SCORE: ${gameState.score}`, CANVAS_WIDTH - 10, 10);
+  
+  // Objectives
+  p.textAlign(p.CENTER, p.TOP);
+  p.fill(255);
+  p.textSize(14);
+  p.text(`Objects: ${gameState.levelObjectives.objectsCaught}/${gameState.levelObjectives.objectsRequired} | Remaining: ${gameState.levelObjectives.totalObjects - gameState.levelObjectives.objectsSpawned}`, 
+    CANVAS_WIDTH / 2, 35);
+  
+  p.pop();
+}
+</file>
+
+<file name="rendering.js">
+// rendering.js - Rendering for different game phases
+
+import { gameState, PHASE_START, PHASE_PLAYING, PHASE_PAUSED, PHASE_LEVEL_COMPLETE, PHASE_GAME_OVER_WIN, PHASE_GAME_OVER_LOSE, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { renderLevel } from './levelManager.js';
+
+export function render(p) {
+  // Clear background
+  p.background(20, 30, 40);
+
+  switch (gameState.gamePhase) {
+    case PHASE_START:
+      renderStartScreen(p);
+      break;
+    case PHASE_PLAYING:
+      renderLevel(p);
+      break;
+    case PHASE_PAUSED:
+      renderLevel(p);
+      renderPauseOverlay(p);
+      break;
+    case PHASE_LEVEL_COMPLETE:
+      renderLevelCompleteScreen(p);
+      break;
+    case PHASE_GAME_OVER_WIN:
+      renderGameWinScreen(p);
+      break;
+    case PHASE_GAME_OVER_LOSE:
+      renderGameOverScreen(p);
+      break;
+  }
+}
+
+function renderStartScreen(p) {
+  p.push();
+  
+  // Title
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.fill(100, 200, 255);
+  p.noStroke();
+  p.text('GRAVITY GUIDE', CANVAS_WIDTH / 2, 80);
+  
+  // Subtitle
+  p.textSize(16);
+  p.fill(200);
+  p.text('Precision Puzzle Physics', CANVAS_WIDTH / 2, 120);
+  
+  // Description
+  p.textSize(14);
+  p.fill(180);
+  const descY = 160;
+  p.text('Guide falling objects into the target zone', CANVAS_WIDTH / 2, descY);
+  p.text('Complete 5 challenging levels', CANVAS_WIDTH / 2, descY + 25);
+  p.text('Limited objects per level - catch enough to win!', CANVAS_WIDTH / 2, descY + 50);
+  
+  // Instructions
+  p.textSize(16);
+  p.fill(255, 255, 100);
+  p.text('CONTROLS', CANVAS_WIDTH / 2, 250);
+  
+  p.textSize(14);
+  p.fill(220);
+  p.text('← → Arrow Keys: Move Platform', CANVAS_WIDTH / 2, 280);
+  p.text('ESC: Pause/Unpause', CANVAS_WIDTH / 2, 305);
+  p.text('R: Restart', CANVAS_WIDTH / 2, 330);
+  
+  // High Score
+  if (gameState.highScore > 0) {
+    p.textSize(16);
+    p.fill(255, 200, 100);
+    p.text(`HIGH SCORE: ${gameState.highScore}`, CANVAS_WIDTH / 2, 360);
+  }
+  
+  // Start prompt
+  p.textSize(20);
+  p.fill(100, 255, 100);
+  const flash = Math.sin(p.frameCount * 0.1) * 0.5 + 0.5;
+  p.fill(100 + flash * 155, 255, 100 + flash * 155);
+  p.text('PRESS ENTER TO START', CANVAS_WIDTH / 2, CANVAS_HEIGHT - 30);
+  
+  p.pop();
+}
+
+function renderPauseOverlay(p) {
+  p.push();
+  
+  // Semi-transparent overlay
+  p.fill(0, 0, 0, 150);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  // Pause indicator
+  p.textAlign(p.RIGHT, p.TOP);
+  p.textSize(16);
+  p.fill(255, 255, 100);
+  p.text('PAUSED', CANVAS_WIDTH - 10, 10);
+  
+  // Center message
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(32);
+  p.fill(255);
+  p.text('PAUSED', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 30);
+  
+  p.textSize(16);
+  p.fill(200);
+  p.text('Press ESC to resume', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 20);
+  p.text('Press R to restart', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 45);
+  
+  p.pop();
+}
+
+function renderLevelCompleteScreen(p) {
+  p.push();
+  
+  // Background
+  p.fill(20, 50, 80);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  // Title
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(36);
+  p.fill(100, 255, 100);
+  p.text(`LEVEL ${gameState.currentLevel} COMPLETE!`, CANVAS_WIDTH / 2, 80);
+  
+  // Stats
+  p.textSize(18);
+  p.fill(255);
+  p.text(`Level Score: ${gameState.levelScore}`, CANVAS_WIDTH / 2, 150);
+  p.text(`Total Score: ${gameState.score}`, CANVAS_WIDTH / 2, 180);
+  
+  // Objectives summary
+  p.textSize(16);
+  p.fill(200);
+  p.text(`Objects Caught: ${gameState.levelObjectives.objectsCaught}/${gameState.levelObjectives.objectsRequired}`, 
+    CANVAS_WIDTH / 2, 220);
+  
+  // Bonuses
+  const perfect = gameState.levelObjectives.objectsLost === 0;
+  
+  if (perfect) {
+    p.fill(255, 200, 100);
+    p.text('Perfect Bonus: +200', CANVAS_WIDTH / 2, 255);
+  }
+  
+  // Next level prompt
+  p.textSize(20);
+  const flash = Math.sin(p.frameCount * 0.1) * 0.5 + 0.5;
+  p.fill(100 + flash * 155, 255, 100 + flash * 155);
+  p.text('PRESS ENTER FOR NEXT LEVEL', CANVAS_WIDTH / 2, CANVAS_HEIGHT - 50);
+  
+  p.textSize(14);
+  p.fill(200);
+  p.text('Press R to restart', CANVAS_WIDTH / 2, CANVAS_HEIGHT - 20);
+  
+  p.pop();
+}
+
+function renderGameWinScreen(p) {
+  p.push();
+  
+  // Background with celebration effect
+  const colorShift = Math.sin(p.frameCount * 0.05);
+  p.fill(20 + colorShift * 10, 50 + colorShift * 20, 80 + colorShift * 30);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  // Title
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(40);
+  p.fill(255, 215, 0);
+  p.text('CONGRATULATIONS!', CANVAS_WIDTH / 2, 70);
+  
+  p.textSize(24);
+  p.fill(255);
+  p.text('You completed all levels!', CANVAS_WIDTH / 2, 110);
+  
+  // Final score
+  p.textSize(32);
+  p.fill(100, 255, 100);
+  p.text(`FINAL SCORE: ${gameState.score}`, CANVAS_WIDTH / 2, 170);
+  
+  // High score
+  if (gameState.score >= gameState.highScore) {
+    p.textSize(20);
+    p.fill(255, 200, 100);
+    p.text('NEW HIGH SCORE!', CANVAS_WIDTH / 2, 210);
+  } else {
+    p.textSize(16);
+    p.fill(200);
+    p.text(`High Score: ${gameState.highScore}`, CANVAS_WIDTH / 2, 210);
+  }
+  
+  // Stats
+  p.textSize(14);
+  p.fill(180);
+  p.text('You are a master of gravity!', CANVAS_WIDTH / 2, 260);
+  
+  // Prompts
+  p.textSize(18);
+  p.fill(255);
+  p.text('PRESS R TO RESTART', CANVAS_WIDTH / 2, CANVAS_HEIGHT - 50);
+  
+  p.pop();
+}
+
+function renderGameOverScreen(p) {
+  p.push();
+  
+  // Background
+  p.fill(40, 20, 20);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  // Title
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.fill(255, 100, 100);
+  p.text('GAME OVER', CANVAS_WIDTH / 2, 100);
+  
+  // Level failed
+  p.textSize(20);
+  p.fill(255);
+  p.text(`Level ${gameState.currentLevel} Failed`, CANVAS_WIDTH / 2, 150);
+  
+  // Score
+  p.textSize(24);
+  p.fill(200);
+  p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, 200);
+  
+  // Stats
+  p.textSize(16);
+  p.fill(180);
+  p.text(`Objects Caught: ${gameState.levelObjectives.objectsCaught}/${gameState.levelObjectives.objectsRequired}`, 
+    CANVAS_WIDTH / 2, 240);
+  
+  // High score
+  if (gameState.highScore > 0) {
+    p.textSize(16);
+    p.fill(255, 200, 100);
+    p.text(`High Score: ${gameState.highScore}`, CANVAS_WIDTH / 2, 280);
+  }
+  
+  // Prompt
+  p.textSize(20);
+  const flash = Math.sin(p.frameCount * 0.1) * 0.5 + 0.5;
+  p.fill(255, 100 + flash * 155, 100 + flash * 155);
+  p.text('PRESS R TO RESTART', CANVAS_WIDTH / 2, CANVAS_HEIGHT - 50);
+  
+  p.pop();
+}
+</file>
+
+<file name="entities.js">
+// entities.js - Game entity classes
+
+import { CANVAS_WIDTH, CANVAS_HEIGHT, gameState } from './globals.js';
+
+export class Player {
+  constructor(x, y, width, height, speed) {
+    this.x = x;
+    this.y = y;
+    this.width = width;
+    this.height = height;
+    this.speed = speed;
+    this.baseSpeed = speed;
+    this.angle = 0;
+    this.maxAngle = Math.PI / 6; // 30 degrees max tilt
+    this.tiltSpeed = 0.03; // Continuous tilt rate per frame
+    this.angleReturnSpeed = 0.02; // Speed of returning to neutral angle
+    this.tapMoveDistance = speed * 6; // Increased for AI discrete movement
+    this.tiltIncrement = 0.10; // For AI discrete tilting
+  }
+
+  // Discrete movement methods for AI control
+  moveLeft() {
+    this.x -= this.tapMoveDistance;
+    this.x = Math.max(this.width / 2, this.x);
+  }
+
+  moveRight() {
+    this.x += this.tapMoveDistance;
+    this.x = Math.min(CANVAS_WIDTH - this.width / 2, this.x);
+  }
+
+  // Discrete tilt methods for AI control
+  tiltLeft() {
+    this.angle -= this.tiltIncrement;
+    this.angle = Math.max(-this.maxAngle, this.angle);
+  }
+
+  tiltRight() {
+    this.angle += this.tiltIncrement;
+    this.angle = Math.min(this.maxAngle, this.angle);
+  }
+
+  update() {
+    // Continuous horizontal movement based on inputState
+    if (gameState.inputState.left) {
+      this.x -= this.speed;
+    }
+    if (gameState.inputState.right) {
+      this.x += this.speed;
+    }
+
+    // Continuous tilting based on inputState
+    if (gameState.inputState.tiltLeft) {
+      this.angle -= this.tiltSpeed;
+      this.angle = Math.max(-this.maxAngle, this.angle);
+    } else if (gameState.inputState.tiltRight) {
+      this.angle += this.tiltSpeed;
+      this.angle = Math.min(this.maxAngle, this.angle);
+    } else {
+      // Gradually return to neutral angle when no tilt input
+      if (Math.abs(this.angle) > 0.001) {
+        if (this.angle > 0) {
+          this.angle = Math.max(0, this.angle - this.angleReturnSpeed);
+        } else {
+          this.angle = Math.min(0, this.angle + this.angleReturnSpeed);
+        }
+      } else {
+        this.angle = 0;
+      }
+    }
+
+    // Keep within bounds
+    this.x = Math.max(this.width / 2, Math.min(CANVAS_WIDTH - this.width / 2, this.x));
+  }
+
+  render(p) {
+    p.push();
+    p.translate(this.x, this.y);
+    p.rotate(this.angle);
+    p.fill(60, 179, 113); // Medium sea green
+    p.noStroke();
+    p.rectMode(p.CENTER);
+    p.rect(0, 0, this.width, this.height, 5);
+    
+    // Add visual indicator for tilt
+    if (Math.abs(this.angle) > 0.01) {
+      p.stroke(255, 255, 255, 150);
+      p.strokeWeight(2);
+      p.noFill();
+      p.rect(0, 0, this.width + 4, this.height + 4, 5);
+    }
+    
+    p.pop();
+  }
+
+  getLeft() {
+    return this.x - this.width / 2;
+  }
+
+  getRight() {
+    return this.x + this.width / 2;
+  }
+
+  getTop() {
+    return this.y - this.height / 2;
+  }
+
+  getBottom() {
+    return this.y + this.height / 2;
+  }
+}
+
+export class FallingObject {
+  constructor(x, y, size, type, gravity) {
+    this.x = x;
+    this.y = y;
+    this.size = size;
+    this.type = type; // 'circle' or 'square'
+    this.vx = 0;
+    this.vy = 0;
+    this.gravity = gravity;
+    this.rotation = 0;
+    this.rotationSpeed = (Math.random() - 0.5) * 0.1;
+    this.active = true;
+    this.bounceCount = 0;
+    this.restitution = 0.88; // Increased bounce coefficient for higher bounces
+    this.minBounceVelocity = 1.0; // Minimum velocity after bounce
+    this.collisionCooldown = 0; // Frames to wait before processing same collision
+  }
+
+  update() {
+    if (!this.active) return;
+
+    // Always apply gravity
+    this.vy += this.gravity;
+    
+    // Update position
+    this.x += this.vx;
+    this.y += this.vy;
+    this.rotation += this.rotationSpeed;
+
+    // Reduced air resistance for better momentum preservation
+    this.vx *= 0.998;
+    this.vy *= 0.999;
+
+    // Decrement collision cooldown
+    if (this.collisionCooldown > 0) {
+      this.collisionCooldown--;
+    }
+
+    // Check boundaries - bounce off walls with strong separation
+    const separation = 3; // Extra pixels to push away from wall
+    
+    if (this.x - this.size < 0) {
+      this.x = this.size + separation;
+      this.vx = Math.max(this.minBounceVelocity, Math.abs(this.vx) * this.restitution);
+    } else if (this.x + this.size > CANVAS_WIDTH) {
+      this.x = CANVAS_WIDTH - this.size - separation;
+      this.vx = -Math.max(this.minBounceVelocity, Math.abs(this.vx) * this.restitution);
+    }
+
+    // Check if out of bounds
+    if (this.y > CANVAS_HEIGHT + 50) {
+      this.active = false;
+    }
+  }
+
+  render(p) {
+    if (!this.active) return;
+
+    p.push();
+    p.translate(this.x, this.y);
+    p.rotate(this.rotation);
+    p.fill(173, 216, 230); // Light blue
+    p.noStroke();
+    
+    if (this.type === 'circle') {
+      p.ellipse(0, 0, this.size * 2);
+    } else {
+      p.rectMode(p.CENTER);
+      p.rect(0, 0, this.size * 2, this.size * 2, 3);
+    }
+    p.pop();
+  }
+
+  bounceOffPlatform(platform) {
+    const objLeft = this.x - this.size;
+    const objRight = this.x + this.size;
+    const objTop = this.y - this.size;
+    const objBottom = this.y + this.size;
+
+    const platLeft = platform.getLeft();
+    const platRight = platform.getRight();
+    const platTop = platform.getTop();
+    const platBottom = platform.getBottom();
+
+    // Only bounce if moving downward and overlapping
+    if (this.vy > 0 && objRight > platLeft && objLeft < platRight &&
+        objBottom > platTop && objTop < platBottom) {
+      
+      // Position object above platform with extra separation
+      this.y = platTop - this.size - 3;
+      
+      // Calculate bounce angle based on platform tilt
+      const hitOffset = (this.x - platform.x) / (platform.width / 2);
+      
+      // Apply bounce with increased velocity multiplier for higher bounces
+      const baseVelocity = Math.abs(this.vy) * 0.90; // Increased from 0.75
+      this.vy = -baseVelocity;
+      
+      // Add horizontal velocity based on:
+      // 1. Where it hit on the platform (edges add more horizontal)
+      // 2. Platform angle (tilt adds horizontal push)
+      this.vx += hitOffset * 3;
+      this.vx += Math.sin(platform.angle) * 7;
+      
+      // Clamp horizontal velocity
+      const maxVx = 10;
+      this.vx = Math.max(-maxVx, Math.min(maxVx, this.vx));
+      
+      this.bounceCount++;
+      return true;
+    }
+    return false;
+  }
+
+  checkObstacleCollision(obstacle) {
+    // Skip if on cooldown to prevent stuck collisions
+    if (this.collisionCooldown > 0) {
+      return false;
+    }
+
+    // Transform object position to obstacle's local coordinate system
+    const dx = this.x - obstacle.x;
+    const dy = this.y - obstacle.y;
+    
+    // Rotate point to align with obstacle's orientation
+    const cos = Math.cos(-obstacle.angle);
+    const sin = Math.sin(-obstacle.angle);
+    const localX = dx * cos - dy * sin;
+    const localY = dx * sin + dy * cos;
+    
+    // Check collision in local space (axis-aligned)
+    const halfW = obstacle.width / 2;
+    const halfH = obstacle.height / 2;
+    
+    // Find closest point on obstacle to the object center
+    const closestX = Math.max(-halfW, Math.min(halfW, localX));
+    const closestY = Math.max(-halfH, Math.min(halfH, localY));
+    
+    // Calculate distance from object center to closest point
+    const distX = localX - closestX;
+    const distY = localY - closestY;
+    const distSq = distX * distX + distY * distY;
+    
+    // Check if collision occurred
+    if (distSq < this.size * this.size) {
+      const dist = Math.sqrt(distSq);
+      
+      if (dist < 0.01) {
+        // Object center is inside obstacle, push out in Y direction
+        const pushDir = localY > 0 ? 1 : -1;
+        const pushDist = this.size + halfH - Math.abs(localY) + 6; // Increased separation
+        
+        // Transform push back to world space
+        const worldPushX = 0;
+        const worldPushY = pushDir * pushDist;
+        this.y += worldPushY * cos + worldPushX * sin;
+        
+        // Bounce velocity
+        this.vy = Math.abs(this.vy) * this.restitution * pushDir;
+        this.vx *= 0.85;
+        
+        // Add small horizontal nudge to help slide off
+        this.vx += (Math.random() - 0.5) * 0.5;
+        
+        this.collisionCooldown = 3; // Prevent immediate re-collision
+        return true;
+      }
+      
+      // Normal collision - push object away
+      const nx = distX / dist;
+      const ny = distY / dist;
+      
+      // Push distance - increased for better separation
+      const pushDist = this.size - dist + 6;
+      
+      // Transform normal back to world space
+      const worldNx = nx * cos + ny * sin;
+      const worldNy = -nx * sin + ny * cos;
+      
+      // Push object out of obstacle
+      this.x += worldNx * pushDist;
+      this.y += worldNy * pushDist;
+      
+      // Calculate velocity reflection
+      const dotProduct = this.vx * worldNx + this.vy * worldNy;
+      
+      // Only reflect if moving toward obstacle
+      if (dotProduct < 0) {
+        this.vx -= 2 * dotProduct * worldNx;
+        this.vy -= 2 * dotProduct * worldNy;
+        
+        // Apply bounce damping
+        this.vx *= this.restitution;
+        this.vy *= this.restitution;
+        
+        // Add small horizontal nudge to help objects slide off horizontal surfaces
+        if (Math.abs(worldNy) > 0.7) { // Mostly horizontal surface
+          this.vx += (Math.random() - 0.5) * 1.0;
+        }
+        
+        // Ensure objects don't get stuck with zero velocity
+        // Only enforce minimum if velocity is very small
+        const speed = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
+        if (speed < 0.3) {
+          // Give it a small push to keep moving
+          this.vy += this.gravity * 2;
+          this.vx += (Math.random() - 0.5) * 0.5;
+        }
+      }
+      
+      this.collisionCooldown = 3; // Prevent immediate re-collision
+      return true;
+    }
+    
+    return false;
+  }
+}
+
+export class TargetZone {
+  constructor(x, y, width, height, speed) {
+    this.x = x;
+    this.y = y;
+    this.width = width;
+    this.height = height;
+    this.speed = speed;
+    this.direction = 1;
+    this.flashTimer = 0;
+    this.particleEffects = [];
+  }
+
+  update() {
+    if (this.speed > 0) {
+      this.x += this.speed * this.direction;
+      
+      const leftBound = this.width / 2 + 20;
+      const rightBound = CANVAS_WIDTH - this.width / 2 - 20;
+      
+      if (this.x <= leftBound || this.x >= rightBound) {
+        this.direction *= -1;
+        this.x = Math.max(leftBound, Math.min(rightBound, this.x));
+      }
+    }
+
+    if (this.flashTimer > 0) {
+      this.flashTimer--;
+    }
+
+    // Update particles
+    for (let i = this.particleEffects.length - 1; i >= 0; i--) {
+      const p = this.particleEffects[i];
+      p.life--;
+      p.y -= p.vy;
+      p.x += p.vx;
+      p.alpha = p.life / 30;
+      if (p.life <= 0) {
+        this.particleEffects.splice(i, 1);
+      }
+    }
+  }
+
+  render(p) {
+    p.push();
+    
+    // Draw target zone
+    const alpha = this.flashTimer > 0 ? 255 : 150;
+    p.stroke(255, 255, 0, alpha);
+    p.strokeWeight(3);
+    p.noFill();
+    p.rectMode(p.CENTER);
+    p.rect(this.x, this.y, this.width, this.height);
+    
+    // Inner fill
+    p.fill(255, 255, 0, this.flashTimer > 0 ? 100 : 30);
+    p.noStroke();
+    p.rect(this.x, this.y, this.width, this.height);
+    
+    p.pop();
+
+    // Render particles
+    for (const particle of this.particleEffects) {
+      p.push();
+      p.fill(255, 255, 0, particle.alpha * 255);
+      p.noStroke();
+      p.ellipse(particle.x, particle.y, particle.size);
+      p.pop();
+    }
+  }
+
+  checkCapture(obj) {
+    const objLeft = obj.x - obj.size;
+    const objRight = obj.x + obj.size;
+    const objTop = obj.y - obj.size;
+    const objBottom = obj.y + obj.size;
+
+    const targetLeft = this.x - this.width / 2;
+    const targetRight = this.x + this.width / 2;
+    const targetTop = this.y - this.height / 2;
+    const targetBottom = this.y + this.height / 2;
+
+    // For level 1, use a more generous capture area to ensure objects don't rest on platform
+    const isLevel1 = gameState.currentLevel === 1;
+    const captureBuffer = isLevel1 ? 15 : 0;
+
+    if (objRight > targetLeft - captureBuffer && objLeft < targetRight + captureBuffer &&
+        objBottom > targetTop - captureBuffer && objTop < targetBottom) {
+      this.triggerEffect(obj.x, obj.y);
+      return true;
+    }
+    return false;
+  }
+
+  triggerEffect(x, y) {
+    this.flashTimer = 15;
+    
+    // Create particle effect
+    for (let i = 0; i < 8; i++) {
+      const angle = (Math.PI * 2 * i) / 8;
+      this.particleEffects.push({
+        x: x,
+        y: y,
+        vx: Math.cos(angle) * 2,
+        vy: Math.sin(angle) * 2 + 2,
+        size: 6,
+        life: 30,
+        alpha: 1
+      });
+    }
+  }
+
+  getLeft() {
+    return this.x - this.width / 2;
+  }
+
+  getRight() {
+    return this.x + this.width / 2;
+  }
+
+  getTop() {
+    return this.y - this.height / 2;
+  }
+
+  getBottom() {
+    return this.y + this.height / 2;
+  }
+}
+
+export class Obstacle {
+  constructor(x, y, width, height, type, moveRange = 0, moveSpeed = 0, angle = 0) {
+    this.x = x;
+    this.y = y;
+    this.width = width;
+    this.height = height;
+    this.type = type; // 'static' or 'moving'
+    this.moveRange = moveRange;
+    this.moveSpeed = moveSpeed;
+    this.startX = x;
+    this.startY = y;
+    this.direction = 1;
+    this.angle = angle; // Rotation angle in radians
+  }
+
+  update() {
+    if (this.type === 'moving' && this.moveRange > 0) {
+      // Move the obstacle
+      this.x += this.moveSpeed * this.direction;
+      
+      // Calculate boundary positions
+      const leftBound = this.startX - this.moveRange / 2;
+      const rightBound = this.startX + this.moveRange / 2;
+      
+      // Check and handle boundaries
+      if (this.x <= leftBound) {
+        this.x = leftBound;
+        this.direction = 1; // Move right
+      } else if (this.x >= rightBound) {
+        this.x = rightBound;
+        this.direction = -1; // Move left
+      }
+    }
+  }
+
+  render(p) {
+    p.push();
+    p.translate(this.x, this.y);
+    p.rotate(this.angle);
+    p.fill(this.type === 'moving' ? 169 : 139, this.type === 'moving' ? 169 : 69, this.type === 'moving' ? 169 : 19);
+    p.noStroke();
+    p.rectMode(p.CENTER);
+    p.rect(0, 0, this.width, this.height, 3);
+    
+    // Add visual indicator for moving obstacles
+    if (this.type === 'moving') {
+      p.stroke(200);
+      p.strokeWeight(2);
+      p.noFill();
+      p.rect(0, 0, this.width + 4, this.height + 4, 3);
+    }
+    p.pop();
+  }
+}
+</file>
+
+<file name="input.js">
+// input.js - Input handling for both human and AI control
+
+import { gameState, KEY_ENTER, KEY_ESC, KEY_R, KEY_LEFT, KEY_RIGHT, KEY_Q, KEY_E, PHASE_START, PHASE_PLAYING, PHASE_PAUSED, PHASE_LEVEL_COMPLETE, PHASE_GAME_OVER_WIN, PHASE_GAME_OVER_LOSE } from './globals.js';
+import { initLevel } from './levelManager.js';
+
+export function handleKeyPressed(p, key, keyCode) {
+  // Log input
+  p.logs.inputs.push({
+    input_type: 'keyPressed',
+    data: { key: key, keyCode: keyCode },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+
+  // Phase-specific controls
+  if (keyCode === KEY_ENTER) {
+    if (gameState.gamePhase === PHASE_START) {
+      startGame(p);
+    } else if (gameState.gamePhase === PHASE_LEVEL_COMPLETE) {
+      startNextLevel(p);
+    }
+  } else if (keyCode === KEY_ESC) {
+    if (gameState.gamePhase === PHASE_PLAYING) {
+      gameState.gamePhase = PHASE_PAUSED;
+      p.logs.game_info.push({
+        data: { phase: PHASE_PAUSED },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    } else if (gameState.gamePhase === PHASE_PAUSED) {
+      gameState.gamePhase = PHASE_PLAYING;
+      gameState.levelStartTime = Date.now() - (gameState.levelObjectives.timeLimit - gameState.levelObjectives.timeRemaining) * 1000;
+      p.logs.game_info.push({
+        data: { phase: PHASE_PLAYING },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  } else if (keyCode === KEY_R) {
+    if (gameState.gamePhase === PHASE_GAME_OVER_WIN || 
+        gameState.gamePhase === PHASE_GAME_OVER_LOSE ||
+        gameState.gamePhase === PHASE_LEVEL_COMPLETE ||
+        gameState.gamePhase === PHASE_PAUSED) {
+      resetGame(p);
+    }
+  }
+
+  // Gameplay controls - CONTINUOUS movement based on inputState
+  if (gameState.gamePhase === PHASE_PLAYING && gameState.player) {
+    if (keyCode === KEY_LEFT) {
+      gameState.inputState.left = true;
+    } else if (keyCode === KEY_RIGHT) {
+      gameState.inputState.right = true;
+    } else if (keyCode === KEY_Q) {
+      gameState.inputState.tiltLeft = true;
+    } else if (keyCode === KEY_E) {
+      gameState.inputState.tiltRight = true;
+    }
+  }
+}
+
+export function handleKeyReleased(p, key, keyCode) {
+  // Log input
+  p.logs.inputs.push({
+    input_type: 'keyReleased',
+    data: { key: key, keyCode: keyCode },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+  
+  // Release continuous movement controls
+  if (gameState.gamePhase === PHASE_PLAYING) {
+    if (keyCode === KEY_LEFT) {
+      gameState.inputState.left = false;
+    } else if (keyCode === KEY_RIGHT) {
+      gameState.inputState.right = false;
+    } else if (keyCode === KEY_Q) {
+      gameState.inputState.tiltLeft = false;
+    } else if (keyCode === KEY_E) {
+      gameState.inputState.tiltRight = false;
+    }
+  }
+}
+
+function startGame(p) {
+  gameState.score = 0;
+  gameState.currentLevel = 1;
+  initLevel(1);
+  gameState.gamePhase = PHASE_PLAYING;
+  
+  p.logs.game_info.push({
+    data: { phase: PHASE_PLAYING, level: 1 },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function startNextLevel(p) {
+  gameState.currentLevel++;
+  initLevel(gameState.currentLevel);
+  gameState.gamePhase = PHASE_PLAYING;
+  
+  p.logs.game_info.push({
+    data: { phase: PHASE_PLAYING, level: gameState.currentLevel },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function resetGame(p) {
+  gameState.gamePhase = PHASE_START;
+  gameState.score = 0;
+  gameState.currentLevel = 1;
+  gameState.levelScore = 0;
+  gameState.fallingObjects = [];
+  gameState.obstacles = [];
+  gameState.entities = [];
+  gameState.player = null;
+  gameState.targetZone = null;
+  gameState.inputState = { left: false, right: false, tiltLeft: false, tiltRight: false };
+  
+  p.logs.game_info.push({
+    data: { phase: PHASE_START },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+// AI Controller for automated testing - returns discrete action commands
+export function getAIAction(testMode) {
+  if (!gameState.player || !gameState.targetZone) {
+    return { left: false, right: false };
+  }
+
+  const action = { left: false, right: false };
+
+  if (testMode === 'TEST_1') {
+    // Basic AI: Follow target zone
+    const playerX = gameState.player.x;
+    const targetX = gameState.targetZone.x;
+    const threshold = 20;
+
+    if (playerX < targetX - threshold) {
+      action.right = true;
+    } else if (playerX > targetX + threshold) {
+      action.left = true;
+    }
+  } else if (testMode === 'TEST_2') {
+    // Advanced AI: Predict object trajectory and position accordingly
+    let targetX = gameState.targetZone.x;
+    
+    // Find closest falling object
+    let closestObj = null;
+    let closestDist = Infinity;
+    
+    for (const obj of gameState.fallingObjects) {
+      if (obj.active && obj.y < CANVAS_HEIGHT - 100) {
+        const dist = Math.abs(obj.x - gameState.player.x);
+        if (dist < closestDist) {
+          closestDist = dist;
+          closestObj = obj;
+        }
+      }
+    }
+
+    if (closestObj) {
+      targetX = closestObj.x;
+    }
+
+    const playerX = gameState.player.x;
+    const threshold = 15;
+
+    if (playerX < targetX - threshold) {
+      action.right = true;
+    } else if (playerX > targetX + threshold) {
+      action.left = true;
+    }
+  }
+
+  return action;
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

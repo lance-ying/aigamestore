@@ -1,4 +1,4 @@
-import { gameState, PALETTE, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { gameState, PALETTE, CANVAS_WIDTH, CANVAS_HEIGHT, INVULNERABILITY_FRAMES } from './globals.js';
 import { isKeyDown, KEYS } from './input.js';
 import { resolvePlatformCollision, checkAABB } from './physics.js';
 import { createExplosion, Particle } from './particles.js';
@@ -158,7 +158,7 @@ export class Player extends Entity {
     takeDamage(amount) {
         if (this.invincible > 0) return;
         this.health -= amount;
-        this.invincible = 60; // 1 second i-frames
+        this.invincible = INVULNERABILITY_FRAMES; // Use defined constant for i-frames
         createExplosion(this.x + this.width/2, this.y + this.height/2, PALETTE.FG, 10);
     }
     

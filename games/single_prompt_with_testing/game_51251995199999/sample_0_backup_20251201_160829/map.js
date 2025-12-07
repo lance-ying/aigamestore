@@ -1,0 +1,292 @@
+import { gameState, TILE_SIZE, CANVAS_WIDTH, CANVAS_HEIGHT, COLORS } from './globals.js';
+import { getMapKey, worldToGrid } from './utils.js';
+
+// Tile Types
+export const TILE_EMPTY = 0;
+export const TILE_WALL = 1;
+export const TILE_SPIKE = 2;
+export const TILE_COIN = 3;
+
+export class LevelManager {
+    constructor() {
+        this.gridCols = Math.ceil(CANVAS_WIDTH / TILE_SIZE);
+        this.lastGeneratedY = 0; // The Y coordinate (grid) of the top generated row
+        this.noiseOffset = 0;
+    }
+    
+    reset() {
+        gameState.map = {};
+        gameState.entities = gameState.entities.filter(e => e.type === 'PLAYER'); // Keep player, clear others
+        this.lastGeneratedY = Math.ceil(CANVAS_HEIGHT / TILE_SIZE) + 2;
+        this.generateChunk(window.gameInstance, 0, this.lastGeneratedY); // Generate initial area
+        
+        // Initial safe zone
+        for (let x = 0; x < this.gridCols; x++) {
+             for (let y = 0; y < 10; y++) {
+                 // Clear starting area
+                 const key = getMapKey(x, Math.floor(gameState.player.y/TILE_SIZE) - y);
+                 delete gameState.map[key];
+             }
+        }
+        
+        // Floor
+        for (let x = 0; x < this.gridCols; x++) {
+            const key = getMapKey(x, worldToGrid(CANVAS_HEIGHT - TILE_SIZE));
+            gameState.map[key] = TILE_WALL;
+        }
+    }
+    
+    update(p) {
+        // Generate new chunks as player moves up
+        // Player moves into negative Y.
+        // If playerY is close to lastGeneratedY * TILE_SIZE, generate more
+        const playerGridY = worldToGrid(gameState.player.y);
+        const buffer = 20; // Generate 20 rows ahead
+        
+        if (playerGridY - buffer < this.lastGeneratedY) {
+            this.generateChunk(p, this.lastGeneratedY - 20, this.lastGeneratedY);
+            this.lastGeneratedY -= 20;
+        }
+        
+        // Cleanup old chunks (below tide) to save memory
+        const tideGridY = worldToGrid(gameState.tideY);
+        Object.keys(gameState.map).forEach(key => {
+            const [x, y] = key.split(',').map(Number);
+            if (y > tideGridY + 5) {
+                delete gameState.map[key];
+            }
+        });
+    }
+    
+    generateChunk(p, startY, endY) {
+        // NEW: Structured tunnel-based generation for safer gameplay
+        // First, fill everything with walls
+        for (let y = startY; y < endY; y++) {
+            for (let x = 0; x < this.gridCols; x++) {
+                gameState.map[getMapKey(x, y)] = TILE_WALL;
+            }
+        }
+        
+        // Create multiple vertical shafts and horizontal corridors
+        const numPaths = 2 + Math.floor(p.random(2)); // 2-3 vertical paths
+        const pathPositions = [];
+        
+        // Generate path positions with spacing
+        for (let i = 0; i < numPaths; i++) {
+            const minX = 2 + i * Math.floor((this.gridCols - 4) / numPaths);
+            const maxX = minX + Math.floor((this.gridCols - 4) / numPaths) - 2;
+            pathPositions.push(Math.floor(p.random(minX, maxX)));
+        }
+        
+        // Carve vertical shafts (safe upward paths)
+        for (let pathX of pathPositions) {
+            for (let y = startY; y < endY; y++) {
+                // Carve a 3-4 tile wide vertical shaft
+                const width = p.random() > 0.5 ? 3 : 4;
+                const offset = Math.floor(width / 2);
+                
+                for (let dx = -offset; dx <= offset; dx++) {
+                    const x = pathX + dx;
+                    if (x > 0 && x < this.gridCols - 1) {
+                        const key = getMapKey(x, y);
+                        delete gameState.map[key];
+                    }
+                }
+                
+                // Occasionally add coins in the safe path
+                if (p.random() < 0.08) {
+                    gameState.map[getMapKey(pathX, y)] = TILE_COIN;
+                }
+            }
+        }
+        
+        // Create horizontal connecting corridors every few rows
+        for (let y = startY; y < endY; y += Math.floor(p.random(3, 6))) {
+            // Randomly connect some paths
+            if (pathPositions.length > 1 && p.random() < 0.7) {
+                const startPath = pathPositions[Math.floor(p.random(pathPositions.length))];
+                const endPath = pathPositions[Math.floor(p.random(pathPositions.length))];
+                
+                const minX = Math.min(startPath, endPath);
+                const maxX = Math.max(startPath, endPath);
+                
+                // Carve horizontal corridor
+                for (let x = minX; x <= maxX; x++) {
+                    const key = getMapKey(x, y);
+                    delete gameState.map[key];
+                    
+                    // Add floor and ceiling to create tunnel feel
+                    if (y > startY) {
+                        const aboveKey = getMapKey(x, y - 1);
+                        if (!gameState.map[aboveKey]) {
+                            // Sometimes leave open for vertical movement
+                            if (p.random() > 0.3) {
+                                gameState.map[aboveKey] = TILE_WALL;
+                            }
+                        }
+                    }
+                    if (y < endY - 1) {
+                        const belowKey = getMapKey(x, y + 1);
+                        if (!gameState.map[belowKey]) {
+                            if (p.random() > 0.3) {
+                                gameState.map[belowKey] = TILE_WALL;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Add some side passages and alcoves for variety
+        for (let y = startY; y < endY; y++) {
+            if (p.random() < 0.15) {
+                // Find a wall next to empty space
+                for (let x = 1; x < this.gridCols - 1; x++) {
+                    const key = getMapKey(x, y);
+                    if (gameState.map[key] === TILE_WALL) {
+                        // Check if next to an empty space
+                        const neighbors = [
+                            gameState.map[getMapKey(x-1, y)],
+                            gameState.map[getMapKey(x+1, y)]
+                        ];
+                        
+                        if (neighbors.includes(undefined) || neighbors.includes(TILE_EMPTY)) {
+                            // Carve small alcove (1-2 tiles deep)
+                            const depth = Math.floor(p.random(1, 3));
+                            for (let d = 0; d < depth; d++) {
+                                const alcoveKey = getMapKey(x, y);
+                                if (gameState.map[alcoveKey] === TILE_WALL) {
+                                    delete gameState.map[alcoveKey];
+                                }
+                            }
+                            break; // One alcove per row max
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Place coins in safe locations (away from edges and in open areas)
+        for (let y = startY; y < endY; y++) {
+            for (let x = 2; x < this.gridCols - 2; x++) {
+                const key = getMapKey(x, y);
+                if (!gameState.map[key] && p.random() < 0.04) {
+                    // Make sure there's space around it (no immediate walls on all sides)
+                    const hasSpace = !gameState.map[getMapKey(x, y-1)] || 
+                                   !gameState.map[getMapKey(x, y+1)];
+                    if (hasSpace) {
+                        gameState.map[key] = TILE_COIN;
+                    }
+                }
+            }
+        }
+        
+        // CAREFULLY place spikes - only in side areas, never in main vertical paths
+        for (let y = startY; y < endY; y++) {
+            for (let x = 2; x < this.gridCols - 2; x++) {
+                const key = getMapKey(x, y);
+                if (!gameState.map[key] && gameState.map[key] !== TILE_COIN) {
+                    // Check if this is in a main vertical path (safe zone)
+                    let inSafePath = false;
+                    for (let pathX of pathPositions) {
+                        if (Math.abs(x - pathX) <= 2) {
+                            inSafePath = true;
+                            break;
+                        }
+                    }
+                    
+                    // Only place spikes OUTSIDE safe paths and with low probability
+                    if (!inSafePath && p.random() < 0.02) {
+                        // Double-check: make sure there's a wall above or below
+                        // So spikes are on floor/ceiling, not floating in open space
+                        const hasFloor = gameState.map[getMapKey(x, y + 1)] === TILE_WALL;
+                        const hasCeiling = gameState.map[getMapKey(x, y - 1)] === TILE_WALL;
+                        
+                        if (hasFloor || hasCeiling) {
+                            gameState.map[key] = TILE_SPIKE;
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Ensure borders are always walls
+        for (let y = startY; y < endY; y++) {
+            gameState.map[getMapKey(0, y)] = TILE_WALL;
+            gameState.map[getMapKey(this.gridCols - 1, y)] = TILE_WALL;
+        }
+        
+        // Final safety pass: ensure every row has at least one safe upward passage
+        for (let y = startY; y < endY; y++) {
+            let hasSafePath = false;
+            for (let x = 1; x < this.gridCols - 1; x++) {
+                const key = getMapKey(x, y);
+                const above = getMapKey(x, y - 1);
+                if (!gameState.map[key] && !gameState.map[above]) {
+                    hasSafePath = true;
+                    break;
+                }
+            }
+            
+            // If no safe path, force create one
+            if (!hasSafePath) {
+                const safeX = Math.floor(this.gridCols / 2);
+                delete gameState.map[getMapKey(safeX, y)];
+                delete gameState.map[getMapKey(safeX, y - 1)];
+                delete gameState.map[getMapKey(safeX - 1, y)];
+                delete gameState.map[getMapKey(safeX + 1, y)];
+            }
+        }
+    }
+    
+    render(p) {
+        // Render visible tiles
+        const startCol = 0;
+        const endCol = this.gridCols;
+        const startRow = worldToGrid(gameState.cameraY);
+        const endRow = startRow + Math.ceil(CANVAS_HEIGHT / TILE_SIZE) + 1;
+        
+        p.push();
+        p.strokeWeight(1);
+        
+        for (let y = startRow; y <= endRow; y++) {
+            for (let x = startCol; x < endCol; x++) {
+                const key = getMapKey(x, y);
+                const tile = gameState.map[key];
+                
+                if (tile) {
+                    const px = x * TILE_SIZE;
+                    const py = y * TILE_SIZE - gameState.cameraY;
+                    
+                    if (tile === TILE_WALL) {
+                        p.fill(COLORS.WALL);
+                        p.stroke(COLORS.WALL_STROKE);
+                        p.rect(px, py, TILE_SIZE, TILE_SIZE);
+                        
+                        // Inner detail for aesthetic
+                        p.noStroke();
+                        p.fill(COLORS.WALL_STROKE);
+                        p.rect(px + 5, py + 5, TILE_SIZE - 10, TILE_SIZE - 10);
+                    } else if (tile === TILE_SPIKE) {
+                        p.fill(COLORS.SPIKE);
+                        p.noStroke();
+                        // Draw spike triangle
+                        p.triangle(
+                            px + TILE_SIZE/2, py,
+                            px, py + TILE_SIZE,
+                            px + TILE_SIZE, py + TILE_SIZE
+                        );
+                    } else if (tile === TILE_COIN) {
+                        // Coins are rendered as entities usually, but for tile map efficiency we can draw here
+                        // Or spawn entities. Let's draw here for performance.
+                        p.fill(COLORS.COIN);
+                        p.noStroke();
+                        const s = TILE_SIZE * 0.6 + Math.sin(gameState.frameCount * 0.1) * 2;
+                        p.circle(px + TILE_SIZE/2, py + TILE_SIZE/2, s);
+                    }
+                }
+            }
+        }
+        p.pop();
+    }
+}

@@ -1,0 +1,1515 @@
+<analysis>
+- Issue identified: The lightning ability lacks a connecting visual bolt (only sparks appear), and the area damage upgrade lacks both a visual explosion effect and feels ineffective due to a small radius.
+- Files affected: `globals.js`, `entities.js`, `game_logic.js`, `rendering.js`, `upgrades.js`.
+- Changes needed:
+    1.  **globals.js**: Add `explosions` and `lightningBolts` arrays to `gameState`.
+    2.  **entities.js**: Create `Explosion` and `LightningBolt` classes to handle visual logic.
+    3.  **upgrades.js**: Increase the area damage radius values to make the upgrade significantly more effective.
+    4.  **game_logic.js**: Instantiate `Explosion` objects when area damage occurs and `LightningBolt` objects when lightning triggers. Update these entities in the game loop.
+    5.  **rendering.js**: Render the explosions and lightning bolts in the appropriate draw order.
+</analysis>
+
+<code filename="globals.js">
+// globals.js - Global constants and game state
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const TARGET_FPS = 60;
+
+// Game phases
+export const PHASE_START = "START";
+export const PHASE_PLAYING = "PLAYING";
+export const PHASE_PAUSED = "PAUSED";
+export const PHASE_GAME_OVER_WIN = "GAME_OVER_WIN";
+export const PHASE_GAME_OVER_LOSE = "GAME_OVER_LOSE";
+
+// Control keys
+export const KEY_ENTER = 13;
+export const KEY_ESC = 27;
+export const KEY_R = 82;
+export const KEY_SPACE = 32;
+export const KEY_Z = 90;
+export const KEY_LEFT = 37;
+export const KEY_UP = 38;
+export const KEY_RIGHT = 39;
+export const KEY_DOWN = 40;
+export const KEY_SHIFT = 16;
+
+// Game constants
+export const PLAYER_SIZE = 20;
+export const PLAYER_SPEED = 3;
+export const PLAYER_MAX_HEALTH = 100;
+export const BULLET_SPEED = 8;
+export const BULLET_SIZE = 4;
+export const ENEMY_SIZE = 18;
+export const ENEMY_SPEED = 0.9; // Reduced from 1.2 for easier difficulty
+export const XP_ORB_SIZE = 8;
+export const XP_ORB_PICKUP_RANGE = 30;
+
+// Stage Configuration
+// Reduced kills required and increased spawn rate intervals (slower spawns) to lower difficulty
+export const STAGE_CONFIG = [
+  { name: "Easy I", killsRequired: 10, spawnRate: 150, enemyTypes: ['basic'] },
+  { name: "Easy II", killsRequired: 15, spawnRate: 130, enemyTypes: ['basic', 'fast'] },
+  { name: "Medium I", killsRequired: 25, spawnRate: 110, enemyTypes: ['basic', 'fast', 'tank'] },
+  { name: "Medium II", killsRequired: 35, spawnRate: 100, enemyTypes: ['basic', 'fast', 'tank'] },
+  { name: "Hard I", killsRequired: 50, spawnRate: 80, enemyTypes: ['basic', 'fast', 'tank', 'elite'] },
+  { name: "Hard II", killsRequired: 70, spawnRate: 60, enemyTypes: ['basic', 'fast', 'tank', 'elite'] }
+];
+
+// Upgrade types
+export const UPGRADE_TYPES = {
+  FIRE_RATE: 'fire_rate',
+  DAMAGE: 'damage',
+  BULLET_SPEED: 'bullet_speed',
+  MOVE_SPEED: 'move_speed',
+  MAX_HEALTH: 'max_health',
+  HEALTH_REGEN: 'health_regen',
+  PIERCE: 'pierce',
+  MULTISHOT: 'multishot',
+  AREA_DAMAGE: 'area_damage',
+  LIGHTNING: 'lightning',
+  SHIELD: 'shield',
+  SPEED_BOOST: 'speed_boost'
+};
+
+// Game state object
+export const gameState = {
+  player: null,
+  entities: [],
+  bullets: [],
+  enemies: [],
+  xpOrbs: [],
+  particles: [],
+  explosions: [], // Visual effects for area damage
+  lightningBolts: [], // Visual effects for lightning
+  score: 0,
+  gamePhase: PHASE_START,
+  controlMode: "HUMAN",
+  level: 1,
+  experience: 0,
+  experienceToNextLevel: 10,
+  upgradeChoices: [],
+  showingUpgradeScreen: false,
+  gameStartTime: 0,
+  elapsedTime: 0,
+  enemySpawnTimer: 0,
+  enemySpawnRate: 120, // frames between spawns
+  waveNumber: 1,
+  kills: 0,
+  lastFireTime: 0,
+  positionHistory: [],
+  stage: 1,
+  stageKills: 0,
+  stageMessageTimer: 0
+};
+
+// Player stats that can be upgraded
+export const playerStats = {
+  fireRate: 15, // frames between shots
+  damage: 10,
+  bulletSpeed: BULLET_SPEED,
+  moveSpeed: PLAYER_SPEED,
+  maxHealth: PLAYER_MAX_HEALTH,
+  healthRegen: 0,
+  pierce: 0,
+  multishot: 1,
+  areaDamage: 0,
+  hasLightning: false,
+  lightningCooldown: 0,
+  hasShield: false,
+  shieldHealth: 0
+};
+</code>
+
+<code filename="entities.js">
+// entities.js - Game entities
+import { PLAYER_SIZE, PLAYER_MAX_HEALTH, ENEMY_SIZE, BULLET_SIZE, XP_ORB_SIZE } from './globals.js';
+import { playerStats } from './globals.js';
+
+export class Player {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.size = PLAYER_SIZE;
+    this.health = PLAYER_MAX_HEALTH;
+    this.maxHealth = PLAYER_MAX_HEALTH;
+    this.facingAngle = 0; // direction player is facing
+    this.movingDirection = { x: 0, y: 0 };
+    this.isInvulnerable = false;
+    this.invulnerabilityTimer = 0;
+  }
+
+  update(p) {
+    // Health regeneration
+    if (playerStats.healthRegen > 0) {
+      this.health = Math.min(this.maxHealth, this.health + playerStats.healthRegen / 60);
+    }
+
+    // Invulnerability timer
+    if (this.isInvulnerable) {
+      this.invulnerabilityTimer--;
+      if (this.invulnerabilityTimer <= 0) {
+        this.isInvulnerable = false;
+      }
+    }
+
+    // Update max health from stats
+    this.maxHealth = playerStats.maxHealth;
+  }
+
+  move(dx, dy) {
+    this.x += dx;
+    this.y += dy;
+    
+    // Keep player in bounds with padding
+    const padding = this.size / 2;
+    this.x = Math.max(padding, Math.min(600 - padding, this.x));
+    this.y = Math.max(padding, Math.min(400 - padding, this.y));
+
+    // Update facing direction if moving
+    if (dx !== 0 || dy !== 0) {
+      this.facingAngle = Math.atan2(dy, dx);
+    }
+  }
+
+  takeDamage(amount) {
+    if (this.isInvulnerable) return false;
+
+    // Check shield first
+    if (playerStats.hasShield && playerStats.shieldHealth > 0) {
+      playerStats.shieldHealth -= amount;
+      if (playerStats.shieldHealth < 0) {
+        this.health += playerStats.shieldHealth; // overflow damage to health
+        playerStats.shieldHealth = 0;
+      }
+    } else {
+      this.health -= amount;
+    }
+
+    this.isInvulnerable = true;
+    this.invulnerabilityTimer = 30; // 0.5 seconds of invulnerability
+    return true;
+  }
+
+  draw(p) {
+    p.push();
+    p.translate(this.x, this.y);
+
+    // Draw shield if active
+    if (playerStats.hasShield && playerStats.shieldHealth > 0) {
+      p.noFill();
+      p.stroke(100, 200, 255, 150);
+      p.strokeWeight(2);
+      p.circle(0, 0, this.size * 2);
+    }
+
+    // Flashing effect when invulnerable
+    if (this.isInvulnerable && Math.floor(this.invulnerabilityTimer / 5) % 2 === 0) {
+      p.fill(255, 255, 255, 100);
+    } else {
+      p.fill(100, 200, 255);
+    }
+    
+    p.noStroke();
+    
+    // Draw player body
+    p.circle(0, 0, this.size);
+    
+    // Draw direction indicator
+    p.fill(255);
+    p.push();
+    p.rotate(this.facingAngle);
+    p.triangle(8, 0, 0, -4, 0, 4);
+    p.pop();
+    
+    p.pop();
+
+    // Draw health bar
+    this.drawHealthBar(p);
+  }
+
+  drawHealthBar(p) {
+    const barWidth = 40;
+    const barHeight = 4;
+    const barX = this.x - barWidth / 2;
+    const barY = this.y - this.size - 8;
+
+    // Background
+    p.fill(60, 60, 60);
+    p.noStroke();
+    p.rect(barX, barY, barWidth, barHeight);
+
+    // Health
+    const healthPercent = this.health / this.maxHealth;
+    const healthColor = healthPercent > 0.5 ? [100, 255, 100] : healthPercent > 0.25 ? [255, 200, 100] : [255, 100, 100];
+    p.fill(...healthColor);
+    p.rect(barX, barY, barWidth * healthPercent, barHeight);
+  }
+}
+
+export class Enemy {
+  constructor(x, y, type = 'basic') {
+    this.x = x;
+    this.y = y;
+    this.type = type;
+    this.size = ENEMY_SIZE;
+    this.speed = this.getSpeed();
+    this.health = this.getMaxHealth();
+    this.maxHealth = this.health;
+    this.damage = this.getDamage();
+    this.xpValue = this.getXpValue();
+    this.hue = this.getHue();
+    this.rotation = 0;
+    this.oscillation = Math.random() * Math.PI * 2;
+  }
+
+  getSpeed() {
+    // Reduced speeds for easier difficulty
+    switch (this.type) {
+      case 'fast': return 1.5; // was 2.0
+      case 'tank': return 0.6; // was 0.8
+      case 'elite': return 1.1; // was 1.5
+      default: return 0.9; // was 1.2
+    }
+  }
+
+  getMaxHealth() {
+    switch (this.type) {
+      case 'fast': return 20;
+      case 'tank': return 60;
+      case 'elite': return 40;
+      default: return 30;
+    }
+  }
+
+  getDamage() {
+    switch (this.type) {
+      case 'fast': return 8;
+      case 'tank': return 15;
+      case 'elite': return 12;
+      default: return 10;
+    }
+  }
+
+  getXpValue() {
+    switch (this.type) {
+      case 'fast': return 3;
+      case 'tank': return 8;
+      case 'elite': return 10;
+      default: return 5;
+    }
+  }
+
+  getHue() {
+    switch (this.type) {
+      case 'fast': return 60; // yellow
+      case 'tank': return 0; // red
+      case 'elite': return 280; // purple
+      default: return 120; // green
+    }
+  }
+
+  update(p, player) {
+    // Move towards player
+    const dx = player.x - this.x;
+    const dy = player.y - this.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    if (dist > 0) {
+      this.x += (dx / dist) * this.speed;
+      this.y += (dy / dist) * this.speed;
+    }
+
+    this.rotation += 0.05;
+    this.oscillation += 0.1;
+  }
+
+  takeDamage(amount) {
+    this.health -= amount;
+    return this.health <= 0;
+  }
+
+  draw(p) {
+    p.push();
+    p.translate(this.x, this.y);
+    p.rotate(this.rotation);
+
+    // Enemy body with tentacle-like appearance
+    p.colorMode(p.HSB);
+    p.fill(this.hue, 70, 60);
+    p.noStroke();
+    
+    // Main body
+    p.circle(0, 0, this.size);
+
+    // Tentacles or spikes
+    const numTentacles = this.type === 'elite' ? 8 : 6;
+    for (let i = 0; i < numTentacles; i++) {
+      const angle = (Math.PI * 2 * i) / numTentacles;
+      const oscillate = Math.sin(this.oscillation + i) * 2;
+      const length = this.size / 2 + 4 + oscillate;
+      p.fill(this.hue, 70, 40);
+      p.push();
+      p.rotate(angle);
+      p.ellipse(length / 2, 0, length, 3);
+      p.pop();
+    }
+
+    p.colorMode(p.RGB);
+    p.pop();
+
+    // Health bar for stronger enemies
+    if (this.maxHealth > 30) {
+      this.drawHealthBar(p);
+    }
+  }
+
+  drawHealthBar(p) {
+    const barWidth = 30;
+    const barHeight = 3;
+    const barX = this.x - barWidth / 2;
+    const barY = this.y - this.size - 6;
+
+    p.fill(40, 40, 40);
+    p.noStroke();
+    p.rect(barX, barY, barWidth, barHeight);
+
+    const healthPercent = this.health / this.maxHealth;
+    p.fill(255, 100, 100);
+    p.rect(barX, barY, barWidth * healthPercent, barHeight);
+  }
+}
+
+export class Bullet {
+  constructor(x, y, angle, speed, damage, pierce = 0) {
+    this.x = x;
+    this.y = y;
+    this.angle = angle;
+    this.speed = speed;
+    this.size = BULLET_SIZE;
+    this.damage = damage;
+    this.pierce = pierce;
+    this.pierceCount = 0;
+    this.lifetime = 120; // 2 seconds
+    this.trail = [];
+  }
+
+  update() {
+    this.x += Math.cos(this.angle) * this.speed;
+    this.y += Math.sin(this.angle) * this.speed;
+    this.lifetime--;
+
+    // Add trail
+    this.trail.push({ x: this.x, y: this.y });
+    if (this.trail.length > 5) {
+      this.trail.shift();
+    }
+
+    return this.lifetime <= 0 || this.isOutOfBounds();
+  }
+
+  isOutOfBounds() {
+    return this.x < -20 || this.x > 620 || this.y < -20 || this.y > 420;
+  }
+
+  canPierce() {
+    return this.pierceCount < this.pierce;
+  }
+
+  onHit() {
+    this.pierceCount++;
+  }
+
+  draw(p) {
+    // Draw trail
+    for (let i = 0; i < this.trail.length; i++) {
+      const alpha = (i / this.trail.length) * 150;
+      p.fill(255, 200, 50, alpha);
+      p.noStroke();
+      const size = this.size * (i / this.trail.length);
+      p.circle(this.trail[i].x, this.trail[i].y, size);
+    }
+
+    // Draw bullet
+    p.fill(255, 220, 100);
+    p.noStroke();
+    p.circle(this.x, this.y, this.size);
+  }
+}
+
+export class XPOrb {
+  constructor(x, y, value) {
+    this.x = x;
+    this.y = y;
+    this.value = value;
+    this.size = XP_ORB_SIZE;
+    this.lifetime = 600; // 10 seconds
+    this.pulsePhase = Math.random() * Math.PI * 2;
+    this.magnetized = false;
+  }
+
+  update(p, player) {
+    this.lifetime--;
+    this.pulsePhase += 0.1;
+
+    // Magnetize towards player when close
+    const dx = player.x - this.x;
+    const dy = player.y - this.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    if (dist < 100) {
+      this.magnetized = true;
+    }
+
+    if (this.magnetized) {
+      const speed = 4;
+      if (dist > 0) {
+        this.x += (dx / dist) * speed;
+        this.y += (dy / dist) * speed;
+      }
+    }
+
+    return this.lifetime <= 0;
+  }
+
+  draw(p) {
+    const pulse = Math.sin(this.pulsePhase) * 2;
+    p.fill(100, 255, 200, 200);
+    p.noStroke();
+    p.circle(this.x, this.y, this.size + pulse);
+    
+    p.fill(150, 255, 230, 150);
+    p.circle(this.x, this.y, (this.size + pulse) * 0.6);
+  }
+}
+
+export class Particle {
+  constructor(x, y, vx, vy, color, lifetime = 30) {
+    this.x = x;
+    this.y = y;
+    this.vx = vx;
+    this.vy = vy;
+    this.color = color;
+    this.lifetime = lifetime;
+    this.maxLifetime = lifetime;
+    this.size = 4;
+  }
+
+  update() {
+    this.x += this.vx;
+    this.y += this.vy;
+    this.vy += 0.1; // gravity
+    this.lifetime--;
+    return this.lifetime <= 0;
+  }
+
+  draw(p) {
+    const alpha = (this.lifetime / this.maxLifetime) * 255;
+    p.fill(...this.color, alpha);
+    p.noStroke();
+    p.circle(this.x, this.y, this.size);
+  }
+}
+
+export class Explosion {
+  constructor(x, y, radius, color = [255, 100, 50]) {
+    this.x = x;
+    this.y = y;
+    this.maxRadius = radius;
+    this.currentRadius = 5;
+    this.life = 1.0;
+    this.decay = 0.08;
+    this.color = color;
+  }
+
+  update() {
+    this.currentRadius += (this.maxRadius - this.currentRadius) * 0.2;
+    this.life -= this.decay;
+    return this.life <= 0;
+  }
+
+  draw(p) {
+    p.push();
+    p.noFill();
+    p.strokeWeight(2);
+    const alpha = this.life * 255;
+    p.stroke(this.color[0], this.color[1], this.color[2], alpha);
+    p.circle(this.x, this.y, this.currentRadius * 2);
+    p.fill(this.color[0], this.color[1], this.color[2], alpha * 0.3);
+    p.circle(this.x, this.y, this.currentRadius * 2);
+    p.pop();
+  }
+}
+
+export class LightningBolt {
+  constructor(x1, y1, x2, y2) {
+    this.segments = [];
+    this.life = 15; // frames (0.25 seconds)
+    
+    // Generate jagged path
+    let currX = x1;
+    let currY = y1;
+    const dist = Math.sqrt(Math.pow(x2-x1, 2) + Math.pow(y2-y1, 2));
+    const steps = Math.max(2, Math.floor(dist / 15));
+    
+    this.segments.push({x: x1, y: y1});
+    
+    for (let i = 1; i < steps; i++) {
+      const t = i / steps;
+      // Base line position
+      let bx = x1 + (x2 - x1) * t;
+      let by = y1 + (y2 - y1) * t;
+      // Jitter
+      bx += (Math.random() - 0.5) * 30;
+      by += (Math.random() - 0.5) * 30;
+      this.segments.push({x: bx, y: by});
+    }
+    this.segments.push({x: x2, y: y2});
+  }
+
+  update() {
+    this.life--;
+    return this.life <= 0;
+  }
+
+  draw(p) {
+    p.push();
+    const alpha = (this.life / 15) * 255;
+    p.stroke(150, 220, 255, alpha);
+    p.strokeWeight(3);
+    p.noFill();
+    p.beginShape();
+    for (let point of this.segments) {
+      p.vertex(point.x, point.y);
+    }
+    p.endShape();
+    
+    // Glow effect
+    p.stroke(200, 230, 255, alpha * 0.5);
+    p.strokeWeight(6);
+    p.beginShape();
+    for (let point of this.segments) {
+      p.vertex(point.x, point.y);
+    }
+    p.endShape();
+    p.pop();
+  }
+}
+</code>
+
+<code filename="upgrades.js">
+// upgrades.js - Upgrade system
+import { UPGRADE_TYPES } from './globals.js';
+import { playerStats } from './globals.js';
+
+export const upgradeDefinitions = [
+  {
+    id: 'fire_rate_1',
+    type: UPGRADE_TYPES.FIRE_RATE,
+    name: 'Rapid Fire',
+    description: 'Increases fire rate by 20%',
+    apply: () => { playerStats.fireRate = Math.max(3, Math.floor(playerStats.fireRate * 0.8)); }
+  },
+  {
+    id: 'damage_1',
+    type: UPGRADE_TYPES.DAMAGE,
+    name: 'Power Shot',
+    description: 'Increases damage by 30%',
+    apply: () => { playerStats.damage = Math.floor(playerStats.damage * 1.3); }
+  },
+  {
+    id: 'bullet_speed_1',
+    type: UPGRADE_TYPES.BULLET_SPEED,
+    name: 'Velocity Boost',
+    description: 'Increases bullet speed by 25%',
+    apply: () => { playerStats.bulletSpeed *= 1.25; }
+  },
+  {
+    id: 'move_speed_1',
+    type: UPGRADE_TYPES.MOVE_SPEED,
+    name: 'Swift Steps',
+    description: 'Increases movement speed by 20%',
+    apply: () => { playerStats.moveSpeed *= 1.2; }
+  },
+  {
+    id: 'max_health_1',
+    type: UPGRADE_TYPES.MAX_HEALTH,
+    name: 'Vitality',
+    description: 'Increases max health by 30',
+    apply: () => { 
+      playerStats.maxHealth += 30;
+    }
+  },
+  {
+    id: 'health_regen_1',
+    type: UPGRADE_TYPES.HEALTH_REGEN,
+    name: 'Regeneration',
+    description: 'Slowly regenerate health over time',
+    apply: () => { playerStats.healthRegen += 0.5; }
+  },
+  {
+    id: 'pierce_1',
+    type: UPGRADE_TYPES.PIERCE,
+    name: 'Piercing Rounds',
+    description: 'Bullets pierce through 1 enemy',
+    apply: () => { playerStats.pierce += 1; }
+  },
+  {
+    id: 'multishot_1',
+    type: UPGRADE_TYPES.MULTISHOT,
+    name: 'Double Shot',
+    description: 'Fire an additional bullet',
+    apply: () => { playerStats.multishot += 1; }
+  },
+  {
+    id: 'area_damage_1',
+    type: UPGRADE_TYPES.AREA_DAMAGE,
+    name: 'Explosive Rounds',
+    description: 'Bullets explode on impact',
+    apply: () => { playerStats.areaDamage += 40; } // Increased from 20 to 40 for better effect
+  },
+  {
+    id: 'lightning_1',
+    type: UPGRADE_TYPES.LIGHTNING,
+    name: 'Chain Lightning',
+    description: 'Periodically strike enemies with lightning',
+    apply: () => { playerStats.hasLightning = true; }
+  },
+  {
+    id: 'shield_1',
+    type: UPGRADE_TYPES.SHIELD,
+    name: 'Energy Shield',
+    description: 'Gain a shield that absorbs 50 damage',
+    apply: () => { 
+      playerStats.hasShield = true;
+      playerStats.shieldHealth += 50;
+    }
+  },
+  {
+    id: 'fire_rate_2',
+    type: UPGRADE_TYPES.FIRE_RATE,
+    name: 'Machine Gun',
+    description: 'Further increases fire rate',
+    apply: () => { playerStats.fireRate = Math.max(3, Math.floor(playerStats.fireRate * 0.8)); }
+  },
+  {
+    id: 'damage_2',
+    type: UPGRADE_TYPES.DAMAGE,
+    name: 'Heavy Caliber',
+    description: 'Greatly increases damage',
+    apply: () => { playerStats.damage = Math.floor(playerStats.damage * 1.4); }
+  },
+  {
+    id: 'pierce_2',
+    type: UPGRADE_TYPES.PIERCE,
+    name: 'Armor Penetration',
+    description: 'Bullets pierce through 2 more enemies',
+    apply: () => { playerStats.pierce += 2; }
+  },
+  {
+    id: 'multishot_2',
+    type: UPGRADE_TYPES.MULTISHOT,
+    name: 'Triple Shot',
+    description: 'Fire another additional bullet',
+    apply: () => { playerStats.multishot += 1; }
+  },
+  {
+    id: 'area_damage_2',
+    type: UPGRADE_TYPES.AREA_DAMAGE,
+    name: 'Bigger Boom',
+    description: 'Increases explosion radius',
+    apply: () => { playerStats.areaDamage += 50; } // Increased from 30 to 50
+  }
+];
+
+export function getRandomUpgrades(count = 3) {
+  const shuffled = [...upgradeDefinitions].sort(() => Math.random() - 0.5);
+  return shuffled.slice(0, Math.min(count, upgradeDefinitions.length));
+}
+
+export function applyUpgrade(upgrade) {
+  upgrade.apply();
+}
+</code>
+
+<code filename="game_logic.js">
+// game_logic.js - Core game logic
+import { gameState, playerStats } from './globals.js';
+import { 
+  PHASE_PLAYING, PHASE_GAME_OVER_WIN, PHASE_GAME_OVER_LOSE,
+  CANVAS_WIDTH, CANVAS_HEIGHT, XP_ORB_PICKUP_RANGE, STAGE_CONFIG
+} from './globals.js';
+import { Player, Enemy, Bullet, XPOrb, Particle, Explosion, LightningBolt } from './entities.js';
+import { getRandomUpgrades } from './upgrades.js';
+
+export function initGame(p) {
+  // Reset Global Game State
+  gameState.score = 0;
+  gameState.kills = 0;
+  gameState.stage = 1;
+  gameState.gameStartTime = Date.now();
+  gameState.positionHistory = [];
+  
+  // Initialize the first stage
+  resetForStage(p);
+
+  // Log game start
+  p.logs.game_info.push({
+    data: { phase: PHASE_PLAYING, message: "Game Started" },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function resetForStage(p) {
+  // Reset entities
+  gameState.player = new Player(CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+  gameState.entities = [gameState.player];
+  gameState.bullets = [];
+  gameState.enemies = [];
+  gameState.xpOrbs = [];
+  gameState.particles = [];
+  gameState.explosions = [];
+  gameState.lightningBolts = [];
+  
+  // Reset Level/XP (Start at level 0/1 for each stage)
+  gameState.level = 1;
+  gameState.experience = 0;
+  gameState.experienceToNextLevel = 10;
+  gameState.upgradeChoices = [];
+  gameState.showingUpgradeScreen = false;
+  
+  // Reset Stage Progress
+  gameState.stageKills = 0;
+  gameState.stageMessageTimer = 120; // Show stage name for 2 seconds
+  
+  // Reset Timers
+  gameState.elapsedTime = 0;
+  gameState.enemySpawnTimer = 0;
+  const config = STAGE_CONFIG[gameState.stage - 1];
+  gameState.enemySpawnRate = config.spawnRate;
+  gameState.lastFireTime = 0;
+  
+  // Reset Player Stats to base
+  playerStats.fireRate = 15;
+  playerStats.damage = 10;
+  playerStats.bulletSpeed = 8;
+  playerStats.moveSpeed = 3;
+  playerStats.maxHealth = 100;
+  playerStats.healthRegen = 0;
+  playerStats.pierce = 0;
+  playerStats.multishot = 1;
+  playerStats.areaDamage = 0;
+  playerStats.hasLightning = false;
+  playerStats.lightningCooldown = 0;
+  playerStats.hasShield = false;
+  playerStats.shieldHealth = 0;
+}
+
+export function updateGame(p) {
+  if (gameState.showingUpgradeScreen) {
+    return; // Pause game during upgrade selection
+  }
+
+  // Update elapsed time (per stage)
+  gameState.elapsedTime += 1/60;
+  
+  if (gameState.stageMessageTimer > 0) {
+    gameState.stageMessageTimer--;
+  }
+
+  // Check Stage Progression
+  const config = STAGE_CONFIG[gameState.stage - 1];
+  if (gameState.stageKills >= config.killsRequired) {
+    if (gameState.stage < STAGE_CONFIG.length) {
+      // Proceed to next stage
+      gameState.stage++;
+      resetForStage(p);
+      p.logs.game_info.push({
+        data: { event: "stage_complete", stage: gameState.stage },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+      return; // Skip rest of update for this frame
+    } else {
+      // Game Win
+      gameState.gamePhase = PHASE_GAME_OVER_WIN;
+      p.logs.game_info.push({
+        data: { phase: PHASE_GAME_OVER_WIN, score: gameState.score, kills: gameState.kills },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+      return;
+    }
+  }
+
+  // Update player
+  gameState.player.update(p);
+
+  // Track player position for automated testing
+  if (p.frameCount % 10 === 0) {
+    gameState.positionHistory.push({ x: gameState.player.x, y: gameState.player.y, frame: p.frameCount });
+    if (gameState.positionHistory.length > 30) {
+      gameState.positionHistory.shift();
+    }
+  }
+
+  // Log player info
+  if (p.frameCount % 60 === 0) {
+    p.logs.player_info.push({
+      screen_x: gameState.player.x,
+      screen_y: gameState.player.y,
+      game_x: gameState.player.x,
+      game_y: gameState.player.y,
+      framecount: p.frameCount
+    });
+  }
+
+  // Spawn enemies
+  spawnEnemies(p);
+
+  // Update bullets
+  for (let i = gameState.bullets.length - 1; i >= 0; i--) {
+    const bullet = gameState.bullets[i];
+    if (bullet.update()) {
+      gameState.bullets.splice(i, 1);
+    }
+  }
+
+  // Update enemies
+  for (let i = gameState.enemies.length - 1; i >= 0; i--) {
+    const enemy = gameState.enemies[i];
+    enemy.update(p, gameState.player);
+
+    // Check collision with player
+    const dist = Math.sqrt(
+      Math.pow(enemy.x - gameState.player.x, 2) + 
+      Math.pow(enemy.y - gameState.player.y, 2)
+    );
+    if (dist < (enemy.size + gameState.player.size) / 2) {
+      if (gameState.player.takeDamage(enemy.damage)) {
+        createHitParticles(p, gameState.player.x, gameState.player.y, [255, 100, 100]);
+      }
+      
+      if (gameState.player.health <= 0) {
+        gameState.gamePhase = PHASE_GAME_OVER_LOSE;
+        p.logs.game_info.push({
+          data: { phase: PHASE_GAME_OVER_LOSE, score: gameState.score, kills: gameState.kills },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+        return;
+      }
+    }
+  }
+
+  // Check bullet-enemy collisions
+  for (let i = gameState.bullets.length - 1; i >= 0; i--) {
+    const bullet = gameState.bullets[i];
+    let bulletRemoved = false;
+
+    for (let j = gameState.enemies.length - 1; j >= 0; j--) {
+      const enemy = gameState.enemies[j];
+      
+      const dist = Math.sqrt(
+        Math.pow(bullet.x - enemy.x, 2) + 
+        Math.pow(bullet.y - enemy.y, 2)
+      );
+
+      if (dist < (bullet.size + enemy.size) / 2) {
+        // Apply damage
+        const killed = enemy.takeDamage(bullet.damage);
+        
+        // Area damage
+        if (playerStats.areaDamage > 0) {
+          applyAreaDamage(p, bullet.x, bullet.y, playerStats.areaDamage, bullet.damage * 0.5);
+        }
+
+        createHitParticles(p, enemy.x, enemy.y, [255, 200, 100]);
+
+        if (killed) {
+          // Enemy died
+          spawnXPOrb(enemy.x, enemy.y, enemy.xpValue);
+          gameState.enemies.splice(j, 1);
+          gameState.score += enemy.xpValue * 10;
+          gameState.kills++;
+          gameState.stageKills++;
+        }
+
+        bullet.onHit();
+        if (!bullet.canPierce()) {
+          gameState.bullets.splice(i, 1);
+          bulletRemoved = true;
+          break;
+        }
+      }
+    }
+
+    if (bulletRemoved) break;
+  }
+
+  // Update XP orbs
+  for (let i = gameState.xpOrbs.length - 1; i >= 0; i--) {
+    const orb = gameState.xpOrbs[i];
+    if (orb.update(p, gameState.player)) {
+      gameState.xpOrbs.splice(i, 1);
+      continue;
+    }
+
+    // Check pickup
+    const dist = Math.sqrt(
+      Math.pow(orb.x - gameState.player.x, 2) + 
+      Math.pow(orb.y - gameState.player.y, 2)
+    );
+    if (dist < XP_ORB_PICKUP_RANGE) {
+      gameState.experience += orb.value;
+      gameState.xpOrbs.splice(i, 1);
+      createPickupParticles(p, orb.x, orb.y);
+
+      // Check level up
+      if (gameState.experience >= gameState.experienceToNextLevel) {
+        levelUp(p);
+      }
+    }
+  }
+
+  // Update particles
+  for (let i = gameState.particles.length - 1; i >= 0; i--) {
+    if (gameState.particles[i].update()) {
+      gameState.particles.splice(i, 1);
+    }
+  }
+
+  // Update explosions
+  for (let i = gameState.explosions.length - 1; i >= 0; i--) {
+    if (gameState.explosions[i].update()) {
+      gameState.explosions.splice(i, 1);
+    }
+  }
+
+  // Update lightning bolts
+  for (let i = gameState.lightningBolts.length - 1; i >= 0; i--) {
+    if (gameState.lightningBolts[i].update()) {
+      gameState.lightningBolts.splice(i, 1);
+    }
+  }
+
+  // Lightning ability
+  if (playerStats.hasLightning) {
+    if (playerStats.lightningCooldown <= 0 && gameState.enemies.length > 0) {
+      triggerLightning(p);
+      playerStats.lightningCooldown = 180; // 3 seconds
+    } else {
+      playerStats.lightningCooldown--;
+    }
+  }
+}
+
+function spawnEnemies(p) {
+  gameState.enemySpawnTimer--;
+  if (gameState.enemySpawnTimer <= 0) {
+    const config = STAGE_CONFIG[gameState.stage - 1];
+    
+    // Set spawn rate from config
+    gameState.enemySpawnRate = config.spawnRate;
+    gameState.enemySpawnTimer = gameState.enemySpawnRate;
+
+    // Determine enemy type from config
+    const allowedTypes = config.enemyTypes;
+    const type = allowedTypes[Math.floor(Math.random() * allowedTypes.length)];
+
+    // Spawn from random edge
+    let x, y;
+    const edge = Math.floor(Math.random() * 4);
+    switch (edge) {
+      case 0: // top
+        x = Math.random() * CANVAS_WIDTH;
+        y = -20;
+        break;
+      case 1: // right
+        x = CANVAS_WIDTH + 20;
+        y = Math.random() * CANVAS_HEIGHT;
+        break;
+      case 2: // bottom
+        x = Math.random() * CANVAS_WIDTH;
+        y = CANVAS_HEIGHT + 20;
+        break;
+      case 3: // left
+        x = -20;
+        y = Math.random() * CANVAS_HEIGHT;
+        break;
+    }
+
+    const enemy = new Enemy(x, y, type);
+    gameState.enemies.push(enemy);
+  }
+}
+
+function spawnXPOrb(x, y, value) {
+  const orb = new XPOrb(x, y, value);
+  gameState.xpOrbs.push(orb);
+}
+
+function levelUp(p) {
+  gameState.level++;
+  gameState.experience -= gameState.experienceToNextLevel;
+  gameState.experienceToNextLevel = Math.floor(gameState.experienceToNextLevel * 1.3);
+
+  // Show upgrade choices
+  gameState.upgradeChoices = getRandomUpgrades(3);
+  gameState.showingUpgradeScreen = true;
+
+  // Heal player on level up
+  gameState.player.health = Math.min(gameState.player.maxHealth, gameState.player.health + 20);
+
+  p.logs.game_info.push({
+    data: { event: "level_up", level: gameState.level },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+export function fireBullet(p) {
+  const currentTime = p.frameCount;
+  if (currentTime - gameState.lastFireTime < playerStats.fireRate) {
+    return;
+  }
+
+  gameState.lastFireTime = currentTime;
+
+  const player = gameState.player;
+  const spreadAngle = 0.15;
+
+  for (let i = 0; i < playerStats.multishot; i++) {
+    let angle = player.facingAngle;
+    
+    if (playerStats.multishot > 1) {
+      const offset = (i - (playerStats.multishot - 1) / 2) * spreadAngle;
+      angle += offset;
+    }
+
+    const bullet = new Bullet(
+      player.x,
+      player.y,
+      angle,
+      playerStats.bulletSpeed,
+      playerStats.damage,
+      playerStats.pierce
+    );
+    gameState.bullets.push(bullet);
+  }
+}
+
+function applyAreaDamage(p, x, y, radius, damage) {
+  // Visual effect
+  gameState.explosions.push(new Explosion(x, y, radius));
+
+  for (let enemy of gameState.enemies) {
+    const dist = Math.sqrt(
+      Math.pow(enemy.x - x, 2) + 
+      Math.pow(enemy.y - y, 2)
+    );
+    if (dist < radius) {
+      enemy.takeDamage(damage);
+    }
+  }
+}
+
+function triggerLightning(p) {
+  // Strike up to 3 closest enemies
+  const targets = gameState.enemies
+    .map(e => ({
+      enemy: e,
+      dist: Math.sqrt(
+        Math.pow(e.x - gameState.player.x, 2) + 
+        Math.pow(e.y - gameState.player.y, 2)
+      )
+    }))
+    .sort((a, b) => a.dist - b.dist)
+    .slice(0, 3);
+
+  for (let target of targets) {
+    target.enemy.takeDamage(playerStats.damage * 2);
+    createLightningParticles(p, target.enemy.x, target.enemy.y);
+    
+    // Add visual bolt
+    gameState.lightningBolts.push(new LightningBolt(
+      gameState.player.x, 
+      gameState.player.y, 
+      target.enemy.x, 
+      target.enemy.y
+    ));
+  }
+}
+
+function createHitParticles(p, x, y, color) {
+  for (let i = 0; i < 5; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = Math.random() * 2 + 1;
+    const vx = Math.cos(angle) * speed;
+    const vy = Math.sin(angle) * speed;
+    gameState.particles.push(new Particle(x, y, vx, vy, color, 20));
+  }
+}
+
+function createPickupParticles(p, x, y) {
+  for (let i = 0; i < 8; i++) {
+    const angle = (Math.PI * 2 * i) / 8;
+    const speed = 2;
+    const vx = Math.cos(angle) * speed;
+    const vy = Math.sin(angle) * speed;
+    gameState.particles.push(new Particle(x, y, vx, vy, [100, 255, 200], 15));
+  }
+}
+
+function createLightningParticles(p, x, y) {
+  for (let i = 0; i < 10; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = Math.random() * 3 + 2;
+    const vx = Math.cos(angle) * speed;
+    const vy = Math.sin(angle) * speed;
+    gameState.particles.push(new Particle(x, y, vx, vy, [150, 200, 255], 25));
+  }
+}
+</code>
+
+<code filename="rendering.js">
+// rendering.js - Rendering functions
+import { gameState, playerStats } from './globals.js';
+import {
+  PHASE_START, PHASE_PLAYING, PHASE_PAUSED,
+  PHASE_GAME_OVER_WIN, PHASE_GAME_OVER_LOSE,
+  CANVAS_WIDTH, CANVAS_HEIGHT, STAGE_CONFIG
+} from './globals.js';
+
+export function drawGame(p) {
+  p.background(20, 15, 30);
+
+  switch (gameState.gamePhase) {
+    case PHASE_START:
+      drawStartScreen(p);
+      break;
+    case PHASE_PLAYING:
+      drawPlaying(p);
+      if (gameState.showingUpgradeScreen) {
+        drawUpgradeScreen(p);
+      }
+      break;
+    case PHASE_PAUSED:
+      drawPlaying(p);
+      drawPausedOverlay(p);
+      break;
+    case PHASE_GAME_OVER_WIN:
+    case PHASE_GAME_OVER_LOSE:
+      drawPlaying(p);
+      drawGameOverScreen(p);
+      break;
+  }
+}
+
+function drawStartScreen(p) {
+  p.fill(255);
+  p.textAlign(p.CENTER, p.CENTER);
+  
+  // Title
+  p.textSize(48);
+  p.fill(100, 200, 255);
+  p.text("COSMIC SURVIVAL", CANVAS_WIDTH / 2, 80);
+  
+  // Subtitle
+  p.textSize(16);
+  p.fill(150, 150, 255);
+  p.text("The 6 Stages of Fear", CANVAS_WIDTH / 2, 120);
+
+  // Description
+  p.textSize(14);
+  p.fill(200);
+  p.text("Survive waves of Cthulhu monsters!", CANVAS_WIDTH / 2, 160);
+  p.text("Complete 6 stages of increasing difficulty.", CANVAS_WIDTH / 2, 180);
+  p.text("Note: XP and stats reset every stage!", CANVAS_WIDTH / 2, 200);
+
+  // Controls
+  p.textSize(12);
+  p.fill(180);
+  p.textAlign(p.LEFT, p.CENTER);
+  const controlX = 180;
+  p.text("ARROW KEYS: Move", controlX, 240);
+  p.text("SPACE: Fire weapon", controlX, 260);
+  p.text("Z: Special ability (when unlocked)", controlX, 280);
+  p.text("ESC: Pause game", controlX, 300);
+
+  // Start prompt
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(20);
+  p.fill(255, 220, 100);
+  if (Math.floor(p.frameCount / 30) % 2 === 0) {
+    p.text("PRESS ENTER TO START", CANVAS_WIDTH / 2, 350);
+  }
+}
+
+function drawPlaying(p) {
+  // Draw background grid
+  drawGrid(p);
+
+  // Draw particles (behind everything)
+  for (let particle of gameState.particles) {
+    particle.draw(p);
+  }
+
+  // Draw XP orbs
+  for (let orb of gameState.xpOrbs) {
+    orb.draw(p);
+  }
+
+  // Draw explosions (area damage)
+  for (let explosion of gameState.explosions) {
+    explosion.draw(p);
+  }
+
+  // Draw bullets
+  for (let bullet of gameState.bullets) {
+    bullet.draw(p);
+  }
+
+  // Draw enemies
+  for (let enemy of gameState.enemies) {
+    enemy.draw(p);
+  }
+
+  // Draw player
+  if (gameState.player) {
+    gameState.player.draw(p);
+  }
+
+  // Draw lightning bolts (on top)
+  for (let bolt of gameState.lightningBolts) {
+    bolt.draw(p);
+  }
+
+  // Draw UI
+  drawUI(p);
+  
+  // Draw Stage Message Overlay
+  if (gameState.stageMessageTimer > 0) {
+    p.push();
+    const alpha = Math.min(255, gameState.stageMessageTimer * 5);
+    p.fill(255, 255, 255, alpha);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(40);
+    p.text(`STAGE ${gameState.stage}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 20);
+    p.textSize(24);
+    p.text(STAGE_CONFIG[gameState.stage - 1].name, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 20);
+    p.pop();
+  }
+}
+
+function drawGrid(p) {
+  p.stroke(40, 35, 50);
+  p.strokeWeight(1);
+  const gridSize = 40;
+  
+  for (let x = 0; x < CANVAS_WIDTH; x += gridSize) {
+    p.line(x, 0, x, CANVAS_HEIGHT);
+  }
+  for (let y = 0; y < CANVAS_HEIGHT; y += gridSize) {
+    p.line(0, y, CANVAS_WIDTH, y);
+  }
+}
+
+function drawUI(p) {
+  const config = STAGE_CONFIG[gameState.stage - 1];
+
+  // Stage Info
+  p.textAlign(p.CENTER, p.TOP);
+  p.textSize(20);
+  p.fill(255, 220, 100);
+  p.text(`Stage ${gameState.stage}: ${config.name}`, CANVAS_WIDTH / 2, 10);
+  
+  // Progress
+  p.textSize(14);
+  p.fill(200);
+  p.text(`Kills: ${gameState.stageKills} / ${config.killsRequired}`, CANVAS_WIDTH / 2, 35);
+
+  // Level and XP bar
+  p.textAlign(p.LEFT, p.TOP);
+  p.textSize(14);
+  p.fill(255);
+  p.text(`Level ${gameState.level}`, 10, 10);
+  
+  const xpBarX = 10;
+  const xpBarY = 30;
+  const xpBarWidth = 150;
+  const xpBarHeight = 10;
+  
+  p.fill(60, 60, 80);
+  p.noStroke();
+  p.rect(xpBarX, xpBarY, xpBarWidth, xpBarHeight);
+  
+  const xpPercent = gameState.experience / gameState.experienceToNextLevel;
+  p.fill(100, 255, 200);
+  p.rect(xpBarX, xpBarY, xpBarWidth * xpPercent, xpBarHeight);
+
+  // Score
+  p.textAlign(p.RIGHT, p.TOP);
+  p.textSize(14);
+  p.fill(255);
+  p.text(`Score: ${gameState.score}`, CANVAS_WIDTH - 10, 10);
+  p.text(`Total Kills: ${gameState.kills}`, CANVAS_WIDTH - 10, 30);
+
+  // Stats display
+  p.textAlign(p.LEFT, p.TOP);
+  p.textSize(10);
+  p.fill(180);
+  let statY = 55;
+  
+  // Core Stats - Always visible so upgrades are confirmed
+  p.text(`Damage: ${playerStats.damage}`, 10, statY); statY += 12;
+  p.text(`Fire Rate: ${(60/playerStats.fireRate).toFixed(1)}/s`, 10, statY); statY += 12;
+  p.text(`Speed: ${playerStats.moveSpeed.toFixed(1)}`, 10, statY); statY += 12;
+  
+  if (playerStats.maxHealth > 100) {
+    p.text(`Max HP: ${playerStats.maxHealth}`, 10, statY); statY += 12;
+  }
+  if (playerStats.healthRegen > 0) {
+    p.text(`Regen: ${playerStats.healthRegen.toFixed(1)}/s`, 10, statY); statY += 12;
+  }
+
+  // Special Stats
+  if (playerStats.multishot > 1) {
+    p.text(`Multishot: ${playerStats.multishot}`, 10, statY);
+    statY += 12;
+  }
+  if (playerStats.pierce > 0) {
+    p.text(`Pierce: ${playerStats.pierce}`, 10, statY);
+    statY += 12;
+  }
+  if (playerStats.areaDamage > 0) {
+    p.text(`Area DMG: ${playerStats.areaDamage}`, 10, statY);
+    statY += 12;
+  }
+  if (playerStats.hasLightning) {
+    p.text(`⚡ Lightning`, 10, statY);
+    statY += 12;
+  }
+  if (playerStats.hasShield && playerStats.shieldHealth > 0) {
+    p.text(`🛡 Shield: ${Math.floor(playerStats.shieldHealth)}`, 10, statY);
+    statY += 12;
+  }
+}
+
+function drawUpgradeScreen(p) {
+  // Semi-transparent overlay
+  p.fill(0, 0, 0, 200);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+  // Title
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(24);
+  p.fill(255, 220, 100);
+  p.text("LEVEL UP!", CANVAS_WIDTH / 2, 60);
+
+  // Upgrade choices
+  const choiceWidth = 160;
+  const choiceHeight = 120;
+  const spacing = 20;
+  const startX = (CANVAS_WIDTH - (choiceWidth * 3 + spacing * 2)) / 2;
+  const startY = 120;
+
+  for (let i = 0; i < gameState.upgradeChoices.length; i++) {
+    const upgrade = gameState.upgradeChoices[i];
+    const x = startX + i * (choiceWidth + spacing);
+    const y = startY;
+
+    // Box
+    p.fill(40, 40, 60);
+    p.stroke(100, 150, 255);
+    p.strokeWeight(2);
+    p.rect(x, y, choiceWidth, choiceHeight, 5);
+
+    // Number key indicator
+    p.fill(255, 220, 100);
+    p.noStroke();
+    p.textSize(16);
+    p.textAlign(p.CENTER, p.TOP);
+    p.text(`[${i + 1}]`, x + choiceWidth / 2, y + 10);
+
+    // Name
+    p.fill(255);
+    p.textSize(14);
+    p.text(upgrade.name, x + choiceWidth / 2, y + 35);
+
+    // Description
+    p.fill(200);
+    p.textSize(11);
+    const words = upgrade.description.split(' ');
+    let line = '';
+    let lineY = y + 60;
+    for (let word of words) {
+      const testLine = line + word + ' ';
+      if (p.textWidth(testLine) > choiceWidth - 10) {
+        p.text(line, x + choiceWidth / 2, lineY);
+        line = word + ' ';
+        lineY += 14;
+      } else {
+        line = testLine;
+      }
+    }
+    p.text(line, x + choiceWidth / 2, lineY);
+  }
+
+  // Instructions
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(12);
+  p.fill(180);
+  p.text("Press 1, 2, or 3 to choose an upgrade", CANVAS_WIDTH / 2, 300);
+}
+
+function drawPausedOverlay(p) {
+  p.textAlign(p.RIGHT, p.TOP);
+  p.textSize(16);
+  p.fill(255, 220, 100);
+  p.text("PAUSED", CANVAS_WIDTH - 10, 10);
+}
+
+function drawGameOverScreen(p) {
+  // Semi-transparent overlay
+  p.fill(0, 0, 0, 200);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+  p.textAlign(p.CENTER, p.CENTER);
+
+  if (gameState.gamePhase === PHASE_GAME_OVER_WIN) {
+    p.textSize(48);
+    p.fill(100, 255, 150);
+    p.text("VICTORY!", CANVAS_WIDTH / 2, 120);
+    
+    p.textSize(18);
+    p.fill(200);
+    p.text("You conquered all 6 stages!", CANVAS_WIDTH / 2, 170);
+  } else {
+    p.textSize(48);
+    p.fill(255, 100, 100);
+    p.text("DEFEATED", CANVAS_WIDTH / 2, 120);
+    
+    p.textSize(18);
+    p.fill(200);
+    p.text(`Fallen at Stage ${gameState.stage}`, CANVAS_WIDTH / 2, 170);
+  }
+
+  // Stats
+  p.textSize(16);
+  p.fill(255);
+  p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, 220);
+  p.text(`Total Kills: ${gameState.kills}`, CANVAS_WIDTH / 2, 245);
+  p.text(`Max Stage: ${gameState.stage}`, CANVAS_WIDTH / 2, 270);
+
+  // Restart prompt
+  p.textSize(20);
+  p.fill(255, 220, 100);
+  if (Math.floor(p.frameCount / 30) % 2 === 0) {
+    p.text("PRESS R TO RESTART", CANVAS_WIDTH / 2, 350);
+  }
+}
+</code>

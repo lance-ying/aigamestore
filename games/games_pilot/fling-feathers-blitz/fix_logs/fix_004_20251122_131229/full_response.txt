@@ -1,0 +1,532 @@
+<analysis>
+- Issue identified: 
+  1. Pigs need to die instantly when objects land on top of them (currently they take damage based on force thresholds)
+  2. Need significantly more birds per level (currently 3-7 birds, need to increase to 8-15+ per level)
+
+- Files affected: 
+  1. physics.js - collision handling logic needs to detect objects falling from above and apply instant kill
+  2. levels.js - bird arrays need to be expanded for all 9 levels
+
+- Changes needed: 
+  1. In physics.js handleCollisionDamage(), add detection for objects positioned above pigs with downward velocity, and apply instant kill (massive damage like 100)
+  2. In levels.js, increase bird counts: easy levels to 8-10 birds, medium to 12-15 birds, hard to 15-20 birds
+</analysis>
+
+<code filename="physics.js">
+import { gameState, GROUND_Y, CANVAS_WIDTH, CANVAS_HEIGHT, GRAVITY } from './globals.js';
+
+const Matter = window.Matter;
+const Engine = Matter.Engine;
+const World = Matter.World;
+const Bodies = Matter.Bodies;
+const Body = Matter.Body;
+const Events = Matter.Events;
+
+// Initialize Matter.js physics engine
+export function initPhysicsEngine() {
+  gameState.matterEngine = Engine.create({
+    gravity: { x: 0, y: GRAVITY }
+  });
+  
+  gameState.matterWorld = gameState.matterEngine.world;
+  
+  createGround();
+  
+  // Setup collision detection
+  Events.on(gameState.matterEngine, 'collisionStart', handleCollisionStart);
+}
+
+// Create ground body
+function createGround() {
+  gameState.groundBody = Bodies.rectangle(CANVAS_WIDTH / 2, GROUND_Y + 25, CANVAS_WIDTH, 50, {
+    isStatic: true,
+    friction: 0.8,
+    restitution: 0.2
+  });
+  World.add(gameState.matterWorld, gameState.groundBody);
+}
+
+// Update physics
+export function updatePhysics() {
+  if (!gameState.matterEngine) return;
+  
+  Engine.update(gameState.matterEngine, 1000 / 60);
+  
+  // Clean up bodies that fell off screen
+  gameState.entities.forEach(entity => {
+    if (entity.body && entity.body.position.y > CANVAS_HEIGHT + 100) {
+      entity.active = false;
+      if (entity.body && gameState.matterWorld) {
+        World.remove(gameState.matterWorld, entity.body);
+        entity.body = null; // Clear reference to prevent stale body issues
+      }
+    }
+  });
+  
+  // Update particle effects
+  gameState.particleEffects = gameState.particleEffects.filter(particle => {
+    particle.x += particle.vx;
+    particle.y += particle.vy;
+    particle.vy += 0.2; // Gravity
+    particle.life--;
+    return particle.life > 0;
+  });
+}
+
+// Collision handling
+function handleCollisionStart(event) {
+  const pairs = event.pairs;
+  
+  pairs.forEach(pair => {
+    const bodyA = pair.bodyA;
+    const bodyB = pair.bodyB;
+    
+    // Find entities for these bodies
+    const entityA = gameState.entities.find(e => e.body === bodyA);
+    const entityB = gameState.entities.find(e => e.body === bodyB);
+    
+    // Check for pig hitting ground with high velocity
+    if (bodyA === gameState.groundBody && entityB && entityB.type === 'pig') {
+      handleGroundImpact(entityB, bodyB);
+    } else if (bodyB === gameState.groundBody && entityA && entityA.type === 'pig') {
+      handleGroundImpact(entityA, bodyA);
+    }
+    
+    if (!entityA || !entityB) return;
+    
+    // Calculate impact force
+    const speed = Math.sqrt(
+      Math.pow(bodyA.velocity.x - bodyB.velocity.x, 2) +
+      Math.pow(bodyA.velocity.y - bodyB.velocity.y, 2)
+    );
+    
+    const mass = Math.min(bodyA.mass, bodyB.mass);
+    const force = speed * mass;
+    
+    if (force > 1.5) {
+      handleCollisionDamage(entityA, entityB, force);
+    }
+  });
+}
+
+function handleGroundImpact(pig, pigBody) {
+  // Calculate impact velocity (only vertical component matters for ground)
+  const impactSpeed = Math.abs(pigBody.velocity.y);
+  
+  // If pig is falling fast, take damage
+  // Lowered threshold from 2.5 to 1.5 and increased damage
+  if (impactSpeed > 1.5) {
+    const damage = Math.ceil(impactSpeed / 1.5);
+    pig.takeDamage(damage);
+  }
+}
+
+function handleCollisionDamage(e1, e2, force) {
+  const isBird1 = e1.type === 'bird';
+  const isBird2 = e2.type === 'bird';
+  const isPig1 = e1.type === 'pig';
+  const isPig2 = e2.type === 'pig';
+  const isBlock1 = e1.type === 'block';
+  const isBlock2 = e2.type === 'block';
+  
+  // Bird hitting pig - lowered threshold from 2 to 1.5 to match outer collision check
+  if (isBird1 && isPig2 && force > 1.5) {
+    const damage = Math.max(1, Math.floor(force / 2));
+    e2.takeDamage(damage);
+  } else if (isBird2 && isPig1 && force > 1.5) {
+    const damage = Math.max(1, Math.floor(force / 2));
+    e1.takeDamage(damage);
+  }
+  
+  // Bird or block hitting block
+  if ((isBird1 || isBlock1) && isBlock2 && force > e2.durability) {
+    e2.takeDamage(1);
+  }
+  if ((isBird2 || isBlock2) && isBlock1 && force > e1.durability) {
+    e1.takeDamage(1);
+  }
+  
+  // Block landing on pig - INSTANT KILL if falling from above
+  if (isBlock1 && isPig2) {
+    // Check if block is above pig and falling down
+    const isAbove = e1.body.position.y < e2.body.position.y;
+    const isFalling = e1.body.velocity.y > 0.5;
+    if (isAbove && isFalling) {
+      // Instant kill - apply massive damage
+      e2.takeDamage(100);
+    } else if (force > 2.5) {
+      const damage = Math.max(1, Math.ceil(force / 3));
+      e2.takeDamage(damage);
+    }
+  } else if (isBlock2 && isPig1) {
+    const isAbove = e2.body.position.y < e1.body.position.y;
+    const isFalling = e2.body.velocity.y > 0.5;
+    if (isAbove && isFalling) {
+      // Instant kill
+      e1.takeDamage(100);
+    } else if (force > 2.5) {
+      const damage = Math.max(1, Math.ceil(force / 3));
+      e1.takeDamage(damage);
+    }
+  }
+  
+  // Pig landing on pig - INSTANT KILL the one below
+  if (isPig1 && isPig2) {
+    const pig1Above = e1.body.position.y < e2.body.position.y;
+    const pig2Above = e2.body.position.y < e1.body.position.y;
+    const pig1Falling = e1.body.velocity.y > 0.5;
+    const pig2Falling = e2.body.velocity.y > 0.5;
+    
+    if (pig1Above && pig1Falling) {
+      e2.takeDamage(100); // Pig on top kills pig below instantly
+    }
+    if (pig2Above && pig2Falling) {
+      e1.takeDamage(100); // Pig on top kills pig below instantly
+    }
+    
+    // Regular collision damage for non-vertical impacts
+    if (force > 2 && (pig1Falling || pig2Falling) && !pig1Above && !pig2Above) {
+      const damage = Math.max(1, Math.floor(force / 3));
+      if (pig1Falling) e1.takeDamage(damage);
+      if (pig2Falling) e2.takeDamage(damage);
+    }
+  }
+}
+
+// Create particle effect
+export function createParticleEffect(x, y, color, count = 8) {
+  const particles = [];
+  for (let i = 0; i < count; i++) {
+    const angle = (Math.PI * 2 * i) / count;
+    const speed = 2 + Math.random() * 3;
+    particles.push({
+      x: x,
+      y: y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      life: 30,
+      maxLife: 30,
+      color: color,
+      size: 3 + Math.random() * 3
+    });
+  }
+  return particles;
+}
+
+// Clear all bodies from world
+export function clearPhysicsWorld() {
+  if (!gameState.matterWorld) return;
+  
+  // Remove all entities
+  gameState.entities.forEach(entity => {
+    if (entity.body) {
+      World.remove(gameState.matterWorld, entity.body);
+    }
+  });
+  
+  // Remove ground if it exists
+  if (gameState.groundBody) {
+    World.remove(gameState.matterWorld, gameState.groundBody);
+    gameState.groundBody = null;
+  }
+  
+  // Recreate ground
+  createGround();
+}
+</code>
+
+<code filename="levels.js">
+import { Pig, StructureBlock } from './entities.js';
+import { BIRD_TYPES } from './globals.js';
+
+export function getLevelData(levelNumber) {
+  const levels = {
+    // EASY LEVELS (1-3) - Now with 8-10 birds
+    1: {
+      birds: [
+        BIRD_TYPES.RED, BIRD_TYPES.RED, BIRD_TYPES.BLUE, 
+        BIRD_TYPES.RED, BIRD_TYPES.YELLOW, BIRD_TYPES.RED,
+        BIRD_TYPES.BLUE, BIRD_TYPES.RED
+      ],
+      pigs: [
+        { x: 350, y: 300, large: false },
+        { x: 380, y: 300, large: false }
+      ],
+      structures: [
+        // Simple ground platform
+        { x: 365, y: 330, w: 50, h: 10, mat: 'WOOD' },
+        { x: 340, y: 320, w: 10, h: 20, mat: 'WOOD' },
+        { x: 390, y: 320, w: 10, h: 20, mat: 'WOOD' },
+        { x: 365, y: 305, w: 60, h: 10, mat: 'WOOD' }
+      ]
+    },
+    2: {
+      birds: [
+        BIRD_TYPES.RED, BIRD_TYPES.BLUE, BIRD_TYPES.RED,
+        BIRD_TYPES.YELLOW, BIRD_TYPES.RED, BIRD_TYPES.BLUE,
+        BIRD_TYPES.RED, BIRD_TYPES.RED, BIRD_TYPES.YELLOW
+      ],
+      pigs: [
+        { x: 380, y: 300, large: false },
+        { x: 420, y: 300, large: false },
+        { x: 400, y: 270, large: false }
+      ],
+      structures: [
+        // Simple tower
+        { x: 370, y: 335, w: 15, h: 30, mat: 'WOOD' },
+        { x: 400, y: 335, w: 15, h: 30, mat: 'WOOD' },
+        { x: 430, y: 335, w: 15, h: 30, mat: 'WOOD' },
+        // Platform 1
+        { x: 400, y: 310, w: 70, h: 10, mat: 'WOOD' },
+        // Walls
+        { x: 380, y: 290, w: 15, h: 30, mat: 'WOOD' },
+        { x: 420, y: 290, w: 15, h: 30, mat: 'WOOD' },
+        // Top
+        { x: 400, y: 270, w: 50, h: 10, mat: 'WOOD' }
+      ]
+    },
+    3: {
+      birds: [
+        BIRD_TYPES.RED, BIRD_TYPES.YELLOW, BIRD_TYPES.BLUE,
+        BIRD_TYPES.RED, BIRD_TYPES.RED, BIRD_TYPES.BLUE,
+        BIRD_TYPES.YELLOW, BIRD_TYPES.RED, BIRD_TYPES.RED,
+        BIRD_TYPES.BLUE
+      ],
+      pigs: [
+        { x: 360, y: 310, large: false },
+        { x: 400, y: 310, large: false },
+        { x: 380, y: 280, large: false }
+      ],
+      structures: [
+        // Base
+        { x: 360, y: 335, w: 15, h: 30, mat: 'WOOD' },
+        { x: 380, y: 335, w: 15, h: 30, mat: 'WOOD' },
+        { x: 400, y: 335, w: 15, h: 30, mat: 'WOOD' },
+        { x: 420, y: 335, w: 15, h: 30, mat: 'WOOD' },
+        // Floor 1
+        { x: 390, y: 315, w: 70, h: 8, mat: 'WOOD' },
+        { x: 370, y: 295, w: 12, h: 30, mat: 'WOOD' },
+        { x: 410, y: 295, w: 12, h: 30, mat: 'WOOD' },
+        // Floor 2
+        { x: 390, y: 275, w: 50, h: 8, mat: 'WOOD' }
+      ]
+    },
+    
+    // MEDIUM LEVELS (4-6) - Now with 12-15 birds
+    4: {
+      birds: [
+        BIRD_TYPES.RED, BIRD_TYPES.BLUE, BIRD_TYPES.YELLOW, BIRD_TYPES.RED,
+        BIRD_TYPES.BLUE, BIRD_TYPES.RED, BIRD_TYPES.YELLOW, BIRD_TYPES.RED,
+        BIRD_TYPES.BLUE, BIRD_TYPES.RED, BIRD_TYPES.RED, BIRD_TYPES.YELLOW
+      ],
+      pigs: [
+        { x: 380, y: 300, large: false },
+        { x: 420, y: 300, large: false },
+        { x: 400, y: 270, large: true }
+      ],
+      structures: [
+        // Base with mixed materials
+        { x: 370, y: 335, w: 15, h: 30, mat: 'STONE' },
+        { x: 400, y: 335, w: 15, h: 30, mat: 'WOOD' },
+        { x: 430, y: 335, w: 15, h: 30, mat: 'STONE' },
+        // Platform 1
+        { x: 400, y: 310, w: 70, h: 10, mat: 'WOOD' },
+        // Walls
+        { x: 375, y: 290, w: 15, h: 30, mat: 'WOOD' },
+        { x: 425, y: 290, w: 15, h: 30, mat: 'WOOD' },
+        // Top
+        { x: 400, y: 270, w: 60, h: 10, mat: 'STONE' }
+      ]
+    },
+    5: {
+      birds: [
+        BIRD_TYPES.YELLOW, BIRD_TYPES.BLUE, BIRD_TYPES.RED, BIRD_TYPES.BLUE,
+        BIRD_TYPES.RED, BIRD_TYPES.YELLOW, BIRD_TYPES.RED, BIRD_TYPES.BLUE,
+        BIRD_TYPES.RED, BIRD_TYPES.YELLOW, BIRD_TYPES.RED, BIRD_TYPES.BLUE,
+        BIRD_TYPES.RED
+      ],
+      pigs: [
+        { x: 350, y: 310, large: false },
+        { x: 400, y: 290, large: false },
+        { x: 450, y: 310, large: false },
+        { x: 400, y: 260, large: true }
+      ],
+      structures: [
+        // Left tower
+        { x: 340, y: 335, w: 15, h: 30, mat: 'WOOD' },
+        { x: 360, y: 335, w: 15, h: 30, mat: 'STONE' },
+        { x: 350, y: 310, w: 30, h: 10, mat: 'WOOD' },
+        // Right tower
+        { x: 440, y: 335, w: 15, h: 30, mat: 'STONE' },
+        { x: 460, y: 335, w: 15, h: 30, mat: 'WOOD' },
+        { x: 450, y: 310, w: 30, h: 10, mat: 'WOOD' },
+        // Center bridge
+        { x: 400, y: 295, w: 120, h: 8, mat: 'WOOD' },
+        { x: 385, y: 275, w: 15, h: 30, mat: 'STONE' },
+        { x: 415, y: 275, w: 15, h: 30, mat: 'STONE' },
+        { x: 400, y: 255, w: 50, h: 10, mat: 'WOOD' }
+      ]
+    },
+    6: {
+      birds: [
+        BIRD_TYPES.RED, BIRD_TYPES.YELLOW, BIRD_TYPES.BLUE, BIRD_TYPES.YELLOW, BIRD_TYPES.RED,
+        BIRD_TYPES.BLUE, BIRD_TYPES.RED, BIRD_TYPES.YELLOW, BIRD_TYPES.RED, BIRD_TYPES.BLUE,
+        BIRD_TYPES.RED, BIRD_TYPES.YELLOW, BIRD_TYPES.RED, BIRD_TYPES.BLUE, BIRD_TYPES.RED
+      ],
+      pigs: [
+        { x: 370, y: 310, large: false },
+        { x: 430, y: 310, large: false },
+        { x: 400, y: 280, large: true },
+        { x: 380, y: 250, large: false },
+        { x: 420, y: 250, large: false }
+      ],
+      structures: [
+        // Base
+        { x: 360, y: 335, w: 15, h: 30, mat: 'STONE' },
+        { x: 385, y: 335, w: 15, h: 30, mat: 'WOOD' },
+        { x: 415, y: 335, w: 15, h: 30, mat: 'WOOD' },
+        { x: 440, y: 335, w: 15, h: 30, mat: 'STONE' },
+        // Floor 1
+        { x: 400, y: 315, w: 90, h: 8, mat: 'WOOD' },
+        { x: 365, y: 295, w: 15, h: 30, mat: 'STONE' },
+        { x: 400, y: 295, w: 15, h: 30, mat: 'WOOD' },
+        { x: 435, y: 295, w: 15, h: 30, mat: 'STONE' },
+        // Floor 2
+        { x: 400, y: 275, w: 80, h: 8, mat: 'STONE' },
+        { x: 375, y: 260, w: 15, h: 20, mat: 'WOOD' },
+        { x: 405, y: 260, w: 15, h: 20, mat: 'WOOD' },
+        { x: 425, y: 260, w: 15, h: 20, mat: 'WOOD' },
+        // Floor 3
+        { x: 400, y: 245, w: 60, h: 8, mat: 'WOOD' }
+      ]
+    },
+    
+    // HARD LEVELS (7-9) - Now with 15-20 birds
+    7: {
+      birds: [
+        BIRD_TYPES.YELLOW, BIRD_TYPES.BLUE, BIRD_TYPES.RED, BIRD_TYPES.YELLOW, BIRD_TYPES.BLUE,
+        BIRD_TYPES.RED, BIRD_TYPES.YELLOW, BIRD_TYPES.RED, BIRD_TYPES.BLUE, BIRD_TYPES.RED,
+        BIRD_TYPES.YELLOW, BIRD_TYPES.RED, BIRD_TYPES.BLUE, BIRD_TYPES.RED, BIRD_TYPES.YELLOW
+      ],
+      pigs: [
+        { x: 380, y: 300, large: false },
+        { x: 440, y: 300, large: false },
+        { x: 410, y: 270, large: true },
+        { x: 410, y: 240, large: true }
+      ],
+      structures: [
+        // Base fortress
+        { x: 365, y: 330, w: 20, h: 40, mat: 'STONE' },
+        { x: 395, y: 330, w: 20, h: 40, mat: 'STONE' },
+        { x: 425, y: 330, w: 20, h: 40, mat: 'STONE' },
+        { x: 455, y: 330, w: 20, h: 40, mat: 'STONE' },
+        // Floor 1
+        { x: 410, y: 305, w: 100, h: 10, mat: 'STONE' },
+        { x: 380, y: 285, w: 15, h: 30, mat: 'WOOD' },
+        { x: 440, y: 285, w: 15, h: 30, mat: 'WOOD' },
+        // Floor 2
+        { x: 410, y: 265, w: 80, h: 10, mat: 'WOOD' },
+        { x: 390, y: 250, w: 15, h: 20, mat: 'STONE' },
+        { x: 430, y: 250, w: 15, h: 20, mat: 'STONE' },
+        // Roof
+        { x: 410, y: 235, w: 70, h: 10, mat: 'STONE' }
+      ]
+    },
+    8: {
+      birds: [
+        BIRD_TYPES.RED, BIRD_TYPES.YELLOW, BIRD_TYPES.BLUE, BIRD_TYPES.BLUE, BIRD_TYPES.YELLOW, BIRD_TYPES.RED,
+        BIRD_TYPES.BLUE, BIRD_TYPES.RED, BIRD_TYPES.YELLOW, BIRD_TYPES.RED, BIRD_TYPES.BLUE, BIRD_TYPES.YELLOW,
+        BIRD_TYPES.RED, BIRD_TYPES.BLUE, BIRD_TYPES.RED, BIRD_TYPES.YELLOW, BIRD_TYPES.RED, BIRD_TYPES.BLUE
+      ],
+      pigs: [
+        { x: 320, y: 310, large: false },
+        { x: 350, y: 280, large: false },
+        { x: 450, y: 310, large: false },
+        { x: 480, y: 280, large: true },
+        { x: 400, y: 230, large: true }
+      ],
+      structures: [
+        // Left tower
+        { x: 320, y: 330, w: 15, h: 40, mat: 'WOOD' },
+        { x: 345, y: 330, w: 15, h: 40, mat: 'STONE' },
+        { x: 332, y: 300, w: 40, h: 10, mat: 'WOOD' },
+        { x: 332, y: 280, w: 15, h: 30, mat: 'STONE' },
+        // Right tower
+        { x: 455, y: 330, w: 15, h: 40, mat: 'STONE' },
+        { x: 480, y: 330, w: 15, h: 40, mat: 'STONE' },
+        { x: 467, y: 300, w: 40, h: 10, mat: 'STONE' },
+        { x: 467, y: 280, w: 15, h: 30, mat: 'STONE' },
+        // Middle bridge
+        { x: 400, y: 270, w: 80, h: 10, mat: 'STONE' },
+        { x: 385, y: 250, w: 15, h: 30, mat: 'STONE' },
+        { x: 415, y: 250, w: 15, h: 30, mat: 'STONE' },
+        { x: 400, y: 230, w: 50, h: 10, mat: 'STONE' }
+      ]
+    },
+    9: {
+      birds: [
+        BIRD_TYPES.YELLOW, BIRD_TYPES.BLUE, BIRD_TYPES.YELLOW, BIRD_TYPES.RED, BIRD_TYPES.RED, BIRD_TYPES.BLUE, BIRD_TYPES.YELLOW,
+        BIRD_TYPES.RED, BIRD_TYPES.BLUE, BIRD_TYPES.YELLOW, BIRD_TYPES.RED, BIRD_TYPES.BLUE, BIRD_TYPES.RED, BIRD_TYPES.YELLOW,
+        BIRD_TYPES.BLUE, BIRD_TYPES.RED, BIRD_TYPES.YELLOW, BIRD_TYPES.RED, BIRD_TYPES.BLUE, BIRD_TYPES.YELLOW
+      ],
+      pigs: [
+        { x: 360, y: 320, large: false },
+        { x: 390, y: 320, large: false },
+        { x: 420, y: 320, large: false },
+        { x: 450, y: 320, large: false },
+        { x: 380, y: 280, large: true },
+        { x: 430, y: 280, large: true },
+        { x: 405, y: 240, large: true },
+        { x: 405, y: 200, large: true }
+      ],
+      structures: [
+        // Massive base
+        { x: 350, y: 335, w: 20, h: 30, mat: 'STONE' },
+        { x: 380, y: 335, w: 20, h: 30, mat: 'STONE' },
+        { x: 410, y: 335, w: 20, h: 30, mat: 'STONE' },
+        { x: 440, y: 335, w: 20, h: 30, mat: 'STONE' },
+        { x: 470, y: 335, w: 20, h: 30, mat: 'STONE' },
+        // Level 1
+        { x: 405, y: 312, w: 130, h: 8, mat: 'STONE' },
+        { x: 365, y: 295, w: 15, h: 25, mat: 'WOOD' },
+        { x: 395, y: 295, w: 15, h: 25, mat: 'STONE' },
+        { x: 425, y: 295, w: 15, h: 25, mat: 'STONE' },
+        { x: 455, y: 295, w: 15, h: 25, mat: 'WOOD' },
+        // Level 2
+        { x: 405, y: 275, w: 110, h: 8, mat: 'STONE' },
+        { x: 375, y: 260, w: 15, h: 20, mat: 'STONE' },
+        { x: 405, y: 260, w: 15, h: 20, mat: 'STONE' },
+        { x: 435, y: 260, w: 15, h: 20, mat: 'STONE' },
+        // Level 3
+        { x: 405, y: 245, w: 90, h: 8, mat: 'STONE' },
+        { x: 385, y: 230, w: 15, h: 20, mat: 'STONE' },
+        { x: 425, y: 230, w: 15, h: 20, mat: 'STONE' },
+        // Level 4
+        { x: 405, y: 215, w: 70, h: 8, mat: 'STONE' },
+        { x: 390, y: 200, w: 12, h: 20, mat: 'STONE' },
+        { x: 420, y: 200, w: 12, h: 20, mat: 'STONE' },
+        // Top
+        { x: 405, y: 185, w: 50, h: 8, mat: 'STONE' }
+      ]
+    }
+  };
+
+  return levels[levelNumber];
+}
+
+export function createLevel(levelNumber) {
+  const levelData = getLevelData(levelNumber);
+  if (!levelData) return null;
+
+  const pigs = levelData.pigs.map(p => new Pig(p.x, p.y, p.large));
+  const structures = levelData.structures.map(s => 
+    new StructureBlock(s.x, s.y, s.w, s.h, s.mat)
+  );
+
+  return {
+    birds: [...levelData.birds],
+    pigs: pigs,
+    structures: structures
+  };
+}
+</code>

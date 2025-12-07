@@ -1,0 +1,1270 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+can you set it so that there are 6 levels, 2 easy levels, 2 medium levels, and 2 hard levels? 
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Bounce & Collect</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; font-family: Arial, sans-serif; }
+      .control-button:hover { background: #555; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">Bounce & Collect</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST_1 (Basic)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST_2 (Win)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Drop balls from the top of the screen to bounce through a peg-filled board, aiming to hit multiplier gates that duplicate your balls. Each ball lands in a collection bin at the bottom, earning points based on the bin's value. Complete levels by reaching target scores within limited drops. Strategic placement and timing are key to maximizing your score through multipliers!</p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">
+        <strong>LEFT ARROW:</strong> Move drop position left<br>
+        <strong>RIGHT ARROW:</strong> Move drop position right<br>
+        <strong>SPACE:</strong> Drop ball at current position<br>
+        <strong>ENTER:</strong> Start game from start screen<br>
+        <strong>ESC:</strong> Pause/Unpause game<br>
+        <strong>R:</strong> Restart game (from game over screen)
+      </p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="../../dev_mode.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="globals.js">
+// globals.js - Global constants and game state
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+export const GAME_PHASES = {
+  START: "START",
+  PLAYING: "PLAYING",
+  PAUSED: "PAUSED",
+  GAME_OVER_WIN: "GAME_OVER_WIN",
+  GAME_OVER_LOSE: "GAME_OVER_LOSE"
+};
+
+export const CONTROL_MODES = {
+  HUMAN: "HUMAN",
+  TEST_1: "TEST_1",
+  TEST_2: "TEST_2",
+  TEST_3: "TEST_3",
+  TEST_4: "TEST_4",
+  TEST_5: "TEST_5",
+  TEST_6: "TEST_6",
+  TEST_7: "TEST_7"
+};
+
+export const gameState = {
+  player: null,
+  entities: [],
+  balls: [],
+  pegs: [],
+  multiplierGates: [],
+  bins: [],
+  score: 0,
+  dropsRemaining: 10,
+  currentLevel: 1,
+  targetScore: 500,
+  gamePhase: GAME_PHASES.START,
+  controlMode: CONTROL_MODES.HUMAN,
+  engine: null,
+  world: null,
+  dropperX: CANVAS_WIDTH / 2,
+  ballsInPlay: 0,
+  levelComplete: false,
+  testFrameCounter: 0,
+  pauseTestFrames: 0
+};
+
+export const LEVELS = [
+  {
+    level: 1,
+    targetScore: 500,
+    drops: 10,
+    pegs: [
+      // Top row - blocking center
+      { x: 280, y: 80, radius: 8 },
+      { x: 320, y: 80, radius: 8 },
+      // Second row - wide spread
+      { x: 150, y: 120, radius: 8 },
+      { x: 250, y: 120, radius: 8 },
+      { x: 350, y: 120, radius: 8 },
+      { x: 450, y: 120, radius: 8 },
+      // Third row - offset
+      { x: 200, y: 170, radius: 8 },
+      { x: 300, y: 170, radius: 8 },
+      { x: 400, y: 170, radius: 8 },
+      // Fourth row - blocking straight paths
+      { x: 150, y: 220, radius: 8 },
+      { x: 250, y: 220, radius: 8 },
+      { x: 350, y: 220, radius: 8 },
+      { x: 450, y: 220, radius: 8 }
+    ],
+    multipliers: [
+      { x: 200, y: 270, width: 60, height: 10, value: 2 },
+      { x: 400, y: 270, width: 60, height: 10, value: 2 }
+    ]
+  },
+  {
+    level: 2,
+    targetScore: 1500,
+    drops: 12,
+    pegs: [
+      // Static pegs - dense top section
+      { x: 180, y: 80, radius: 8 },
+      { x: 240, y: 80, radius: 8 },
+      { x: 360, y: 80, radius: 8 },
+      { x: 420, y: 80, radius: 8 },
+      // Moving pegs - horizontal movement
+      { x: 300, y: 80, radius: 8, moving: true, moveRange: 40, moveSpeed: 0.02 },
+      // Second row - offset
+      { x: 150, y: 120, radius: 8 },
+      { x: 210, y: 120, radius: 8 },
+      { x: 330, y: 120, radius: 8 },
+      { x: 390, y: 120, radius: 8 },
+      { x: 450, y: 120, radius: 8 },
+      { x: 270, y: 120, radius: 8, moving: true, moveRange: 50, moveSpeed: 0.025 },
+      // Third row - blocking
+      { x: 180, y: 160, radius: 8 },
+      { x: 240, y: 160, radius: 8 },
+      { x: 300, y: 160, radius: 8 },
+      { x: 360, y: 160, radius: 8 },
+      { x: 420, y: 160, radius: 8 },
+      // Fourth row - more obstacles
+      { x: 200, y: 200, radius: 8 },
+      { x: 280, y: 200, radius: 8 },
+      { x: 320, y: 200, radius: 8 },
+      { x: 400, y: 200, radius: 8 }
+    ],
+    multipliers: [
+      { x: 220, y: 250, width: 50, height: 10, value: 2 },
+      { x: 380, y: 250, width: 50, height: 10, value: 3 }
+    ]
+  },
+  {
+    level: 3,
+    targetScore: 3500,
+    drops: 14,
+    pegs: [
+      // Very dense top with moving pegs
+      { x: 120, y: 70, radius: 8 },
+      { x: 180, y: 70, radius: 8, moving: true, moveRange: 30, moveSpeed: 0.03 },
+      { x: 240, y: 70, radius: 8 },
+      { x: 300, y: 70, radius: 8, moving: true, moveRange: 35, moveSpeed: 0.028 },
+      { x: 360, y: 70, radius: 8 },
+      { x: 420, y: 70, radius: 8, moving: true, moveRange: 30, moveSpeed: 0.032 },
+      { x: 480, y: 70, radius: 8 },
+      // Second row
+      { x: 150, y: 110, radius: 8 },
+      { x: 210, y: 110, radius: 8, moving: true, moveRange: 45, moveSpeed: 0.025 },
+      { x: 270, y: 110, radius: 8 },
+      { x: 330, y: 110, radius: 8 },
+      { x: 390, y: 110, radius: 8, moving: true, moveRange: 40, moveSpeed: 0.027 },
+      { x: 450, y: 110, radius: 8 },
+      // Third row - zigzag pattern
+      { x: 120, y: 150, radius: 8 },
+      { x: 200, y: 150, radius: 8 },
+      { x: 280, y: 150, radius: 8, moving: true, moveRange: 35, moveSpeed: 0.03 },
+      { x: 320, y: 150, radius: 8 },
+      { x: 400, y: 150, radius: 8 },
+      { x: 480, y: 150, radius: 8 },
+      // Fourth row - tight spacing
+      { x: 160, y: 190, radius: 8 },
+      { x: 220, y: 190, radius: 8 },
+      { x: 280, y: 190, radius: 8 },
+      { x: 340, y: 190, radius: 8 },
+      { x: 400, y: 190, radius: 8 },
+      { x: 460, y: 190, radius: 8 }
+    ],
+    multipliers: [
+      { x: 150, y: 240, width: 50, height: 10, value: 2 },
+      { x: 300, y: 240, width: 50, height: 10, value: 4 },
+      { x: 450, y: 240, width: 50, height: 10, value: 2 }
+    ]
+  },
+  {
+    level: 4,
+    targetScore: 6000,
+    drops: 15,
+    pegs: [
+      // Center blockade with movement
+      { x: 280, y: 75, radius: 8, moving: true, moveRange: 50, moveSpeed: 0.035 },
+      { x: 320, y: 75, radius: 8, moving: true, moveRange: 50, moveSpeed: 0.035 },
+      { x: 300, y: 95, radius: 8 },
+      // Wide spread with many moving pegs
+      { x: 120, y: 95, radius: 8 },
+      { x: 180, y: 95, radius: 8, moving: true, moveRange: 40, moveSpeed: 0.03 },
+      { x: 240, y: 95, radius: 8 },
+      { x: 360, y: 95, radius: 8 },
+      { x: 420, y: 95, radius: 8, moving: true, moveRange: 40, moveSpeed: 0.028 },
+      { x: 480, y: 95, radius: 8 },
+      // Diamond pattern
+      { x: 150, y: 135, radius: 8, moving: true, moveRange: 35, moveSpeed: 0.032 },
+      { x: 225, y: 135, radius: 8 },
+      { x: 300, y: 135, radius: 8, moving: true, moveRange: 45, moveSpeed: 0.029 },
+      { x: 375, y: 135, radius: 8 },
+      { x: 450, y: 135, radius: 8, moving: true, moveRange: 35, moveSpeed: 0.031 },
+      // Lower obstacles
+      { x: 120, y: 175, radius: 8 },
+      { x: 200, y: 175, radius: 8, moving: true, moveRange: 40, moveSpeed: 0.027 },
+      { x: 280, y: 175, radius: 8 },
+      { x: 320, y: 175, radius: 8 },
+      { x: 400, y: 175, radius: 8, moving: true, moveRange: 40, moveSpeed: 0.033 },
+      { x: 480, y: 175, radius: 8 },
+      // Final row
+      { x: 160, y: 215, radius: 8 },
+      { x: 240, y: 215, radius: 8, moving: true, moveRange: 50, moveSpeed: 0.03 },
+      { x: 360, y: 215, radius: 8, moving: true, moveRange: 50, moveSpeed: 0.03 },
+      { x: 440, y: 215, radius: 8 }
+    ],
+    multipliers: [
+      { x: 180, y: 255, width: 45, height: 10, value: 3 },
+      { x: 420, y: 255, width: 45, height: 10, value: 3 }
+    ]
+  }
+];
+
+export const BIN_CONFIG = [
+  { x: 60, width: 80, value: 10, color: [100, 150, 255] },
+  { x: 150, width: 80, value: 20, color: [120, 200, 255] },
+  { x: 240, width: 80, value: 50, color: [150, 220, 255] },
+  { x: 330, width: 80, value: 20, color: [120, 200, 255] },
+  { x: 420, width: 80, value: 10, color: [100, 150, 255] }
+];
+</file>
+
+<file name="game.js">
+// game.js - Main game logic
+const p5 = window.p5;
+import Matter from 'https://cdn.jsdelivr.net/npm/matter-js@0.19.0/+esm';
+const { Engine, World, Bodies, Body } = Matter;
+
+import { 
+  gameState, 
+  GAME_PHASES, 
+  CONTROL_MODES, 
+  CANVAS_WIDTH, 
+  CANVAS_HEIGHT,
+  LEVELS,
+  BIN_CONFIG
+} from './globals.js';
+
+import { 
+  Ball, 
+  Peg, 
+  MultiplierGate, 
+  Bin, 
+  Dropper 
+} from './entities.js';
+
+import { setupPhysics, createWalls } from './physics.js';
+
+let gameInstance = new p5(p => {
+  let dropper;
+
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(60);
+    p.randomSeed(42);
+
+    // Create Matter.js engine and world
+    gameState.engine = Engine.create();
+    gameState.world = gameState.engine.world;
+    gameState.world.gravity.y = 0.5;
+
+    // Initialize p5.logs
+    p.logs = {
+      game_info: [],
+      player_info: [],
+      inputs: []
+    };
+
+    p.logs.game_info.push({
+      data: { gamePhase: gameState.gamePhase },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+
+    setupPhysics(p);
+    createWalls();
+    initializeLevel(p);
+  };
+
+  p.draw = function() {
+    // Update Matter.js physics engine
+    if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+      Engine.update(gameState.engine, 1000 / 60);
+    }
+
+    // Handle automated testing
+    if (gameState.gamePhase === GAME_PHASES.PLAYING && 
+        gameState.controlMode !== CONTROL_MODES.HUMAN) {
+      handleAutomatedTesting(p);
+    }
+
+    // Update game logic based on game phase
+    switch (gameState.gamePhase) {
+      case GAME_PHASES.START:
+        renderStartScreen(p);
+        break;
+      case GAME_PHASES.PLAYING:
+        updateGame(p);
+        renderGame(p);
+        break;
+      case GAME_PHASES.PAUSED:
+        renderGame(p);
+        renderPausedOverlay(p);
+        break;
+      case GAME_PHASES.GAME_OVER_WIN:
+      case GAME_PHASES.GAME_OVER_LOSE:
+        renderGameOver(p);
+        break;
+    }
+  };
+
+  p.keyPressed = function() {
+    p.logs.inputs.push({
+      input_type: "keyPressed",
+      data: { key: p.key, keyCode: p.keyCode },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+
+    // Phase controls
+    if (p.keyCode === 13 && gameState.gamePhase === GAME_PHASES.START) {
+      gameState.gamePhase = GAME_PHASES.PLAYING;
+      p.logs.game_info.push({
+        data: { gamePhase: GAME_PHASES.PLAYING },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+
+    if (p.keyCode === 27) {
+      if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+        gameState.gamePhase = GAME_PHASES.PAUSED;
+        p.logs.game_info.push({
+          data: { gamePhase: GAME_PHASES.PAUSED },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      } else if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+        gameState.gamePhase = GAME_PHASES.PLAYING;
+        p.logs.game_info.push({
+          data: { gamePhase: GAME_PHASES.PLAYING },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    }
+
+    if (p.keyCode === 82) {
+      if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN ||
+          gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE) {
+        resetGame(p);
+        gameState.gamePhase = GAME_PHASES.START;
+        p.logs.game_info.push({
+          data: { gamePhase: GAME_PHASES.START },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    }
+
+    // Gameplay controls
+    if (gameState.gamePhase === GAME_PHASES.PLAYING && 
+        gameState.controlMode === CONTROL_MODES.HUMAN) {
+      handlePlayerInput(p);
+    }
+
+    return false;
+  };
+
+  function handlePlayerInput(p) {
+    if (p.keyCode === 37) { // LEFT
+      gameState.dropperX = Math.max(50, gameState.dropperX - 10);
+    } else if (p.keyCode === 39) { // RIGHT
+      gameState.dropperX = Math.min(CANVAS_WIDTH - 50, gameState.dropperX + 10);
+    } else if (p.keyCode === 32) { // SPACE
+      dropBall(p);
+    }
+  }
+
+  function handleAutomatedTesting(p) {
+    gameState.testFrameCounter++;
+
+    switch (gameState.controlMode) {
+      case CONTROL_MODES.TEST_1:
+        // Basic testing - drop balls at regular intervals from different positions
+        if (gameState.testFrameCounter % 90 === 0 && gameState.dropsRemaining > 0) {
+          const positions = [150, 250, 350, 450];
+          gameState.dropperX = positions[gameState.testFrameCounter % positions.length];
+          dropBall(p);
+        }
+        break;
+
+      case CONTROL_MODES.TEST_2:
+        // Win test - rapidly drop balls targeting multipliers
+        if (gameState.testFrameCounter % 30 === 0 && gameState.dropsRemaining > 0) {
+          if (gameState.multiplierGates.length > 0) {
+            const gate = gameState.multiplierGates[gameState.testFrameCounter % gameState.multiplierGates.length];
+            gameState.dropperX = gate.x;
+          }
+          dropBall(p);
+        }
+        break;
+
+      case CONTROL_MODES.TEST_3:
+        // Multiplier testing - target multiplier gates specifically
+        if (gameState.testFrameCounter % 60 === 0 && gameState.dropsRemaining > 0) {
+          if (gameState.multiplierGates.length > 0) {
+            const gate = gameState.multiplierGates[0];
+            gameState.dropperX = gate.x;
+            dropBall(p);
+          }
+        }
+        break;
+
+      case CONTROL_MODES.TEST_4:
+        // Game over test - use all drops without scoring
+        if (gameState.testFrameCounter % 45 === 0 && gameState.dropsRemaining > 0) {
+          gameState.dropperX = 60; // Target lowest value bin
+          dropBall(p);
+        }
+        break;
+
+      case CONTROL_MODES.TEST_5:
+        // Pause test - pause and unpause periodically
+        if (gameState.testFrameCounter % 120 === 0) {
+          if (gameState.dropsRemaining > 0) {
+            gameState.dropperX = 300;
+            dropBall(p);
+          }
+        }
+        if (gameState.testFrameCounter % 180 === 60) {
+          gameState.gamePhase = GAME_PHASES.PAUSED;
+          gameState.pauseTestFrames = 60;
+        }
+        if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+          gameState.pauseTestFrames--;
+          if (gameState.pauseTestFrames <= 0) {
+            gameState.gamePhase = GAME_PHASES.PLAYING;
+          }
+        }
+        break;
+
+      case CONTROL_MODES.TEST_6:
+        // Bin scoring test - target each bin specifically
+        if (gameState.testFrameCounter % 90 === 0 && gameState.dropsRemaining > 0) {
+          const binPositions = BIN_CONFIG.map(b => b.x + b.width / 2);
+          gameState.dropperX = binPositions[gameState.testFrameCounter % binPositions.length];
+          dropBall(p);
+        }
+        break;
+
+      case CONTROL_MODES.TEST_7:
+        // Edge case testing - extreme positions and rapid drops
+        if (gameState.testFrameCounter % 40 === 0 && gameState.dropsRemaining > 0) {
+          gameState.dropperX = gameState.testFrameCounter % 80 === 0 ? 50 : CANVAS_WIDTH - 50;
+          dropBall(p);
+        }
+        break;
+    }
+  }
+
+  function initializeLevel(p) {
+    dropper = new Dropper(p);
+    
+    const levelData = LEVELS[gameState.currentLevel - 1];
+    gameState.targetScore = levelData.targetScore;
+    gameState.dropsRemaining = levelData.drops;
+
+    // Create pegs
+    levelData.pegs.forEach(pegData => {
+      const peg = new Peg(
+        p, 
+        pegData.x, 
+        pegData.y, 
+        pegData.radius, 
+        pegData.moving || false,
+        pegData.moveRange || 0,
+        pegData.moveSpeed || 0
+      );
+      gameState.pegs.push(peg);
+      gameState.entities.push(peg);
+    });
+
+    // Create multiplier gates
+    levelData.multipliers.forEach(multData => {
+      const gate = new MultiplierGate(
+        p,
+        multData.x,
+        multData.y,
+        multData.width,
+        multData.height,
+        multData.value
+      );
+      gameState.multiplierGates.push(gate);
+      gameState.entities.push(gate);
+    });
+
+    // Create bins
+    BIN_CONFIG.forEach(binData => {
+      const bin = new Bin(p, binData.x, binData.width, binData.value, binData.color);
+      gameState.bins.push(bin);
+      gameState.entities.push(bin);
+    });
+  }
+
+  function dropBall(p) {
+    if (gameState.dropsRemaining > 0) {
+      const ball = new Ball(p, gameState.dropperX, 30);
+      gameState.balls.push(ball);
+      gameState.entities.push(ball);
+      gameState.dropsRemaining--;
+      gameState.ballsInPlay++;
+
+      p.logs.player_info.push({
+        screen_x: ball.body.position.x,
+        screen_y: ball.body.position.y,
+        game_x: ball.body.position.x,
+        game_y: ball.body.position.y,
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  }
+
+  function updateGame(p) {
+    // Update all entities
+    gameState.entities.forEach(entity => {
+      if (entity.update) {
+        entity.update();
+      }
+    });
+
+    // Check win condition
+    if (gameState.score >= gameState.targetScore && 
+        gameState.ballsInPlay === 0 && 
+        !gameState.levelComplete) {
+      gameState.levelComplete = true;
+      
+      if (gameState.currentLevel < LEVELS.length) {
+        // Move to next level
+        setTimeout(() => {
+          gameState.currentLevel++;
+          clearLevel(p);
+          initializeLevel(p);
+          gameState.levelComplete = false;
+        }, 1000);
+      } else {
+        // All levels complete
+        gameState.gamePhase = GAME_PHASES.GAME_OVER_WIN;
+        p.logs.game_info.push({
+          data: { gamePhase: GAME_PHASES.GAME_OVER_WIN, finalScore: gameState.score },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    }
+
+    // Check lose condition
+    if (gameState.dropsRemaining === 0 && 
+        gameState.ballsInPlay === 0 && 
+        gameState.score < gameState.targetScore) {
+      gameState.gamePhase = GAME_PHASES.GAME_OVER_LOSE;
+      p.logs.game_info.push({
+        data: { gamePhase: GAME_PHASES.GAME_OVER_LOSE, finalScore: gameState.score },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+
+    dropper.update();
+  }
+
+  function clearLevel(p) {
+    // Remove all balls
+    gameState.balls.forEach(ball => {
+      World.remove(gameState.world, ball.body);
+    });
+    gameState.balls = [];
+
+    // Remove all pegs
+    gameState.pegs.forEach(peg => {
+      World.remove(gameState.world, peg.body);
+    });
+    gameState.pegs = [];
+
+    // Remove all multiplier gates
+    gameState.multiplierGates.forEach(gate => {
+      World.remove(gameState.world, gate.body);
+    });
+    gameState.multiplierGates = [];
+
+    // Remove all bins
+    gameState.bins.forEach(bin => {
+      World.remove(gameState.world, [bin.leftWall, bin.rightWall, bin.bottom]);
+    });
+    gameState.bins = [];
+
+    gameState.entities = [];
+    
+    // CRITICAL FIX: Reset ballsInPlay to 0 when clearing level
+    gameState.ballsInPlay = 0;
+  }
+
+  function renderGame(p) {
+    // Background gradient
+    for (let y = 0; y < CANVAS_HEIGHT; y++) {
+      const inter = p.map(y, 0, CANVAS_HEIGHT, 0, 1);
+      const c = p.lerpColor(p.color(20, 30, 60), p.color(60, 40, 80), inter);
+      p.stroke(c);
+      p.line(0, y, CANVAS_WIDTH, y);
+    }
+
+    // Render all entities
+    gameState.entities.forEach(entity => {
+      if (entity.render) {
+        entity.render();
+      }
+    });
+
+    // Render dropper
+    dropper.render();
+
+    // UI
+    renderUI(p);
+  }
+
+  function renderUI(p) {
+    // Score panel - moved to right side to avoid covering pegs
+    p.fill(0, 0, 0, 150);
+    p.noStroke();
+    p.rect(CANVAS_WIDTH - 210, 10, 200, 100, 5);
+
+    p.fill(255);
+    p.textAlign(p.LEFT, p.TOP);
+    p.textSize(14);
+    p.textStyle(p.BOLD);
+    p.text(`Level: ${gameState.currentLevel}/${LEVELS.length}`, CANVAS_WIDTH - 200, 20);
+    p.text(`Score: ${gameState.score}`, CANVAS_WIDTH - 200, 40);
+    p.text(`Target: ${gameState.targetScore}`, CANVAS_WIDTH - 200, 60);
+    p.text(`Drops: ${gameState.dropsRemaining}`, CANVAS_WIDTH - 200, 80);
+
+    // Balls in play indicator
+    if (gameState.ballsInPlay > 0) {
+      p.fill(255, 220, 100);
+      p.text(`Balls: ${gameState.ballsInPlay}`, CANVAS_WIDTH - 200, 100);
+    }
+
+    // Progress bar (also on right side)
+    const barWidth = 180;
+    const barHeight = 10;
+    const progress = Math.min(gameState.score / gameState.targetScore, 1);
+    
+    p.fill(50, 50, 50);
+    p.rect(CANVAS_WIDTH - 200, 120, barWidth, barHeight, 3);
+    
+    p.fill(100, 255, 100);
+    p.rect(CANVAS_WIDTH - 200, 120, barWidth * progress, barHeight, 3);
+  }
+
+  function renderStartScreen(p) {
+    p.background(20, 30, 60);
+
+    // Title
+    p.fill(255, 220, 100);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(48);
+    p.textStyle(p.BOLD);
+    p.text("BOUNCE & COLLECT", CANVAS_WIDTH / 2, 80);
+
+    // Description
+    p.fill(255);
+    p.textSize(14);
+    p.textStyle(p.NORMAL);
+    const desc = [
+      "Drop balls from the top to bounce through pegs.",
+      "Hit multiplier gates to duplicate your balls!",
+      "Land in bins to score points.",
+      "Reach the target score to advance levels.",
+      "Watch out for moving pegs in later levels!"
+    ];
+    desc.forEach((line, i) => {
+      p.text(line, CANVAS_WIDTH / 2, 140 + i * 25);
+    });
+
+    // Controls
+    p.fill(200, 200, 255);
+    p.textSize(12);
+    p.textStyle(p.BOLD);
+    p.text("CONTROLS", CANVAS_WIDTH / 2, 270);
+    
+    p.fill(255);
+    p.textSize(11);
+    p.textStyle(p.NORMAL);
+    const controls = [
+      "← → : Move drop position",
+      "SPACE: Drop ball",
+      "ESC: Pause"
+    ];
+    controls.forEach((line, i) => {
+      p.text(line, CANVAS_WIDTH / 2, 295 + i * 20);
+    });
+
+    // Start prompt
+    p.fill(255, 255, 100);
+    p.textSize(18);
+    p.textStyle(p.BOLD);
+    const pulse = p.sin(p.frameCount * 0.1) * 20 + 235;
+    p.fill(255, pulse, 100);
+    p.text("PRESS ENTER TO START", CANVAS_WIDTH / 2, 370);
+  }
+
+  function renderPausedOverlay(p) {
+    p.fill(0, 0, 0, 150);
+    p.noStroke();
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+    p.fill(255);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(48);
+    p.textStyle(p.BOLD);
+    p.text("PAUSED", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+
+    p.textSize(16);
+    p.textStyle(p.NORMAL);
+    p.text("Press ESC to resume", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 40);
+  }
+
+  function renderGameOver(p) {
+    p.background(20, 30, 60);
+
+    const isWin = gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN;
+
+    // Title
+    p.fill(isWin ? [100, 255, 100] : [255, 100, 100]);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(48);
+    p.textStyle(p.BOLD);
+    p.text(isWin ? "YOU WIN!" : "GAME OVER", CANVAS_WIDTH / 2, 100);
+
+    // Score
+    p.fill(255);
+    p.textSize(24);
+    p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, 180);
+    p.textSize(18);
+    p.text(`Level Reached: ${gameState.currentLevel}`, CANVAS_WIDTH / 2, 220);
+
+    // Message
+    p.textSize(14);
+    if (isWin) {
+      p.text("Congratulations! You beat all levels!", CANVAS_WIDTH / 2, 270);
+    } else {
+      p.text(`You needed ${gameState.targetScore} points to advance.`, CANVAS_WIDTH / 2, 270);
+      p.text("Better luck next time!", CANVAS_WIDTH / 2, 295);
+    }
+
+    // Restart prompt
+    p.fill(255, 255, 100);
+    p.textSize(18);
+    p.textStyle(p.BOLD);
+    const pulse = p.sin(p.frameCount * 0.1) * 20 + 235;
+    p.fill(255, pulse, 100);
+    p.text("PRESS R TO RESTART", CANVAS_WIDTH / 2, 350);
+  }
+
+  function resetGame(p) {
+    clearLevel(p);
+    
+    gameState.score = 0;
+    gameState.currentLevel = 1;
+    gameState.dropsRemaining = 10;
+    gameState.ballsInPlay = 0;
+    gameState.levelComplete = false;
+    gameState.dropperX = CANVAS_WIDTH / 2;
+    gameState.testFrameCounter = 0;
+    gameState.pauseTestFrames = 0;
+
+    initializeLevel(p);
+  }
+});
+
+// Expose globally
+window.gameInstance = gameInstance;
+// Expose level loading for dev mode
+window.loadLevel = function(levelNum) {
+  const state = window.getGameState ? window.getGameState() : (window.gameState || (window.gameInstance && window.gameInstance.gameState));
+  if (state) {
+    state.currentLevel = levelNum;
+    // Try common reset/start patterns
+    if (typeof resetGame === 'function') {
+      resetGame();
+    }
+    if (typeof startGame === 'function') {
+      startGame();
+    } else if (state.gamePhase !== undefined) {
+      state.gamePhase = "PLAYING";
+    }
+  }
+};
+
+// Export getGameState function
+export function getGameState() {
+  return gameState;
+}
+
+window.getGameState = getGameState;
+
+// Control mode switching
+window.setControlMode = function(mode) {
+  if (CONTROL_MODES[mode]) {
+    gameState.controlMode = CONTROL_MODES[mode];
+    gameState.testFrameCounter = 0;
+    gameState.pauseTestFrames = 0;
+    
+    // Update button states
+    document.querySelectorAll('.control-button').forEach(btn => {
+      btn.classList.remove('active');
+    });
+    
+    const modeMap = {
+      'HUMAN': 'humanModeBtn',
+      'TEST_1': 'test_1_ModeBtn',
+      'TEST_2': 'test_2_ModeBtn'
+    };
+    
+    const btnId = modeMap[mode];
+    if (btnId) {
+      const btn = document.getElementById(btnId);
+      if (btn) btn.classList.add('active');
+    }
+  }
+};
+</file>
+
+<file name="entities.js">
+// entities.js - Entity classes for game objects
+import Matter from 'https://cdn.jsdelivr.net/npm/matter-js@0.19.0/+esm';
+const { World, Bodies, Body } = Matter;
+
+import { gameState, CANVAS_HEIGHT, BIN_CONFIG } from './globals.js';
+
+export class Ball {
+  constructor(p, x, y) {
+    this.p = p;
+    this.body = Bodies.circle(x, y, 6, {
+      label: 'ball',
+      restitution: 0.7,
+      friction: 0.001,
+      density: 0.001
+    });
+    World.add(gameState.world, this.body);
+    this.color = [255, 220, 100];
+    this.landed = false;
+    this.landedTime = 0;
+    this.multipliedGates = new Set(); // Track which gates have multiplied this ball
+  }
+
+  update() {
+    // Check if ball has landed in a bin
+    if (this.body.position.y > CANVAS_HEIGHT - 50 && !this.landed) {
+      this.landed = true;
+      this.landedTime = this.p.frameCount;
+      this.scoreInBin();
+      gameState.ballsInPlay--;
+    }
+
+    // Remove ball after it's been landed for a while
+    if (this.landed && this.p.frameCount - this.landedTime > 60) {
+      this.remove();
+    }
+  }
+
+  scoreInBin() {
+    const x = this.body.position.x;
+    for (let bin of BIN_CONFIG) {
+      if (x >= bin.x && x <= bin.x + bin.width) {
+        gameState.score += bin.value;
+        break;
+      }
+    }
+  }
+
+  render() {
+    this.p.push();
+    this.p.translate(this.body.position.x, this.body.position.y);
+    this.p.rotate(this.body.angle);
+    this.p.fill(this.color);
+    this.p.noStroke();
+    this.p.circle(0, 0, 12);
+    
+    // Add shine effect
+    this.p.fill(255, 255, 200, 150);
+    this.p.circle(-2, -2, 4);
+    this.p.pop();
+  }
+
+  remove() {
+    World.remove(gameState.world, this.body);
+    const index = gameState.balls.indexOf(this);
+    if (index > -1) {
+      gameState.balls.splice(index, 1);
+    }
+    const entityIndex = gameState.entities.indexOf(this);
+    if (entityIndex > -1) {
+      gameState.entities.splice(entityIndex, 1);
+    }
+  }
+}
+
+export class Peg {
+  constructor(p, x, y, radius, moving = false, moveRange = 0, moveSpeed = 0) {
+    this.p = p;
+    this.startX = x;
+    this.startY = y;
+    this.moving = moving;
+    this.moveRange = moveRange;
+    this.moveSpeed = moveSpeed;
+    this.moveOffset = Math.random() * Math.PI * 2; // Random starting phase
+    
+    this.body = Bodies.circle(x, y, radius, {
+      label: 'peg',
+      isStatic: true,
+      restitution: 0.8
+    });
+    World.add(gameState.world, this.body);
+    this.color = moving ? [255, 150, 100] : [200, 100, 200];
+    this.hitAnimation = 0;
+  }
+
+  update() {
+    if (this.hitAnimation > 0) {
+      this.hitAnimation--;
+    }
+    
+    // Update position for moving pegs
+    if (this.moving) {
+      const time = this.p.frameCount * this.moveSpeed + this.moveOffset;
+      const newX = this.startX + Math.sin(time) * this.moveRange;
+      Body.setPosition(this.body, { x: newX, y: this.startY });
+    }
+  }
+
+  render() {
+    this.p.push();
+    this.p.translate(this.body.position.x, this.body.position.y);
+    
+    const size = this.body.circleRadius * 2;
+    const animSize = size + this.hitAnimation * 0.5;
+    
+    this.p.fill(this.color);
+    this.p.stroke(this.moving ? [200, 100, 50] : [150, 50, 150]);
+    this.p.strokeWeight(2);
+    this.p.circle(0, 0, animSize);
+    
+    // Inner circle
+    this.p.fill(this.moving ? [255, 180, 120] : [220, 120, 220]);
+    this.p.noStroke();
+    this.p.circle(0, 0, animSize * 0.6);
+    
+    // Add motion indicator for moving pegs
+    if (this.moving) {
+      this.p.fill(255, 200, 100, 100);
+      this.p.circle(0, 0, animSize * 0.3);
+    }
+    
+    this.p.pop();
+  }
+
+  hit() {
+    this.hitAnimation = 10;
+  }
+}
+
+export class MultiplierGate {
+  constructor(p, x, y, width, height, value) {
+    this.p = p;
+    this.x = x;
+    this.y = y;
+    this.width = width;
+    this.height = height;
+    this.value = value;
+    this.body = Bodies.rectangle(x, y, width, height, {
+      label: 'multiplier',
+      isStatic: true,
+      isSensor: true
+    });
+    World.add(gameState.world, this.body);
+    this.activationAnimation = 0;
+  }
+
+  update() {
+    if (this.activationAnimation > 0) {
+      this.activationAnimation--;
+    }
+  }
+
+  render() {
+    this.p.push();
+    this.p.translate(this.x, this.y);
+    
+    const glow = this.activationAnimation > 0 ? 50 : 0;
+    
+    // Gate background
+    this.p.fill(255, 150 + glow, 0, 200);
+    this.p.stroke(255, 200 + glow, 0);
+    this.p.strokeWeight(2);
+    this.p.rect(-this.width / 2, -this.height / 2, this.width, this.height, 5);
+    
+    // Multiplier text
+    this.p.fill(255);
+    this.p.noStroke();
+    this.p.textAlign(this.p.CENTER, this.p.CENTER);
+    this.p.textSize(12);
+    this.p.textStyle(this.p.BOLD);
+    this.p.text(`x${this.value}`, 0, 0);
+    
+    this.p.pop();
+  }
+
+  activate() {
+    this.activationAnimation = 20;
+  }
+}
+
+export class Bin {
+  constructor(p, x, width, value, color) {
+    this.p = p;
+    this.x = x;
+    this.width = width;
+    this.value = value;
+    this.color = color;
+    this.y = CANVAS_HEIGHT - 30;
+    this.height = 30;
+    
+    // Create walls for the bin
+    const wallThickness = 3;
+    this.leftWall = Bodies.rectangle(
+      x - wallThickness / 2,
+      this.y,
+      wallThickness,
+      this.height,
+      { label: 'binWall', isStatic: true, restitution: 0.3 }
+    );
+    this.rightWall = Bodies.rectangle(
+      x + width + wallThickness / 2,
+      this.y,
+      wallThickness,
+      this.height,
+      { label: 'binWall', isStatic: true, restitution: 0.3 }
+    );
+    this.bottom = Bodies.rectangle(
+      x + width / 2,
+      CANVAS_HEIGHT - wallThickness / 2,
+      width,
+      wallThickness,
+      { label: 'binBottom', isStatic: true, restitution: 0.1 }
+    );
+    
+    World.add(gameState.world, [this.leftWall, this.rightWall, this.bottom]);
+  }
+
+  render() {
+    this.p.push();
+    
+    // Bin background
+    this.p.fill(this.color);
+    this.p.noStroke();
+    this.p.rect(this.x, this.y, this.width, this.height);
+    
+    // Bin borders (walls)
+    this.p.fill(80, 100, 150);
+    this.p.rect(this.x - 3, this.y, 3, this.height);
+    this.p.rect(this.x + this.width, this.y, 3, this.height);
+    this.p.rect(this.x, CANVAS_HEIGHT - 3, this.width, 3);
+    
+    // Value text
+    this.p.fill(255);
+    this.p.textAlign(this.p.CENTER, this.p.CENTER);
+    this.p.textSize(16);
+    this.p.textStyle(this.p.BOLD);
+    this.p.text(this.value, this.x + this.width / 2, this.y + this.height / 2);
+    
+    this.p.pop();
+  }
+}
+
+export class Dropper {
+  constructor(p) {
+    this.p = p;
+    this.x = gameState.dropperX;
+  }
+
+  update() {
+    this.x = gameState.dropperX;
+  }
+
+  render() {
+    this.p.push();
+    
+    // Dropper triangle
+    this.p.fill(255, 200, 50);
+    this.p.stroke(200, 150, 0);
+    this.p.strokeWeight(2);
+    this.p.triangle(
+      this.x, 20,
+      this.x - 15, 5,
+      this.x + 15, 5
+    );
+    
+    // Drop indicator line
+    this.p.stroke(255, 200, 50, 100);
+    this.p.strokeWeight(1);
+    this.p.drawingContext.setLineDash([5, 5]);
+    this.p.line(this.x, 25, this.x, 60);
+    this.p.drawingContext.setLineDash([]);
+    
+    this.p.pop();
+  }
+}
+</file>
+
+<file name="physics.js">
+// physics.js - Physics and collision handling
+import Matter from 'https://cdn.jsdelivr.net/npm/matter-js@0.19.0/+esm';
+const { Events, World, Bodies, Body } = Matter;
+
+import { gameState } from './globals.js';
+import { Ball } from './entities.js';
+
+export function setupPhysics(p) {
+  Events.on(gameState.engine, 'collisionStart', (event) => {
+    const pairs = event.pairs;
+    
+    pairs.forEach(pair => {
+      const bodyA = pair.bodyA;
+      const bodyB = pair.bodyB;
+      
+      // Ball hitting peg
+      if ((bodyA.label === 'ball' && bodyB.label === 'peg') ||
+          (bodyA.label === 'peg' && bodyB.label === 'ball')) {
+        const peg = gameState.pegs.find(p => 
+          p.body === bodyA || p.body === bodyB
+        );
+        if (peg) {
+          peg.hit();
+        }
+      }
+      
+      // Ball passing through multiplier gate
+      if ((bodyA.label === 'ball' && bodyB.label === 'multiplier') ||
+          (bodyA.label === 'multiplier' && bodyB.label === 'ball')) {
+        handleMultiplierCollision(p, bodyA, bodyB);
+      }
+    });
+  });
+}
+
+function handleMultiplierCollision(p, bodyA, bodyB) {
+  const ballBody = bodyA.label === 'ball' ? bodyA : bodyB;
+  const multiplierBody = bodyA.label === 'multiplier' ? bodyA : bodyB;
+  
+  const ball = gameState.balls.find(b => b.body === ballBody);
+  const gate = gameState.multiplierGates.find(g => g.body === multiplierBody);
+  
+  // Use a Set to track which gates have multiplied this specific ball
+  if (ball && gate && !ball.multipliedGates.has(gate.body.id) && !ball.landed) {
+    ball.multipliedGates.add(gate.body.id); // Mark this gate as used by this ball
+    gate.activate();
+    
+    // Create additional balls (multiplier value - 1, since original ball continues)
+    for (let i = 0; i < gate.value - 1; i++) {
+      const newBall = new Ball(
+        p,
+        ball.body.position.x + (Math.random() - 0.5) * 10,
+        ball.body.position.y + 5
+      );
+      
+      // Give new balls slight random velocity
+      const angle = (Math.random() - 0.5) * 0.5;
+      const speed = 2 + Math.random() * 2;
+      Body.setVelocity(newBall.body, {
+        x: Math.sin(angle) * speed,
+        y: Math.cos(angle) * speed
+      });
+      
+      gameState.balls.push(newBall);
+      gameState.entities.push(newBall);
+      gameState.ballsInPlay++;
+    }
+  }
+}
+
+export function createWalls() {
+  const wallThickness = 20;
+  
+  const leftWall = Bodies.rectangle(
+    -wallThickness / 2,
+    200,
+    wallThickness,
+    400,
+    { label: 'wall', isStatic: true, restitution: 0.5 }
+  );
+  
+  const rightWall = Bodies.rectangle(
+    600 + wallThickness / 2,
+    200,
+    wallThickness,
+    400,
+    { label: 'wall', isStatic: true, restitution: 0.5 }
+  );
+  
+  World.add(gameState.world, [leftWall, rightWall]);
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

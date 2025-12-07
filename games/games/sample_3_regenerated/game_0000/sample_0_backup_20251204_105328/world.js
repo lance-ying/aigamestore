@@ -1,0 +1,90 @@
+/**
+ * Handles level generation and camera management.
+ * The world is a tall vertical shaft.
+ */
+import { gameState, WORLD_HEIGHT, WORLD_WIDTH, CANVAS_HEIGHT, CANVAS_WIDTH } from './globals.js';
+import { Platform, Decoration } from './entities.js';
+
+export function initWorld() {
+    gameState.platforms = [];
+    gameState.decorations = [];
+    
+    // Create Walls
+    // Left Wall
+    gameState.platforms.push(new Platform(-50, -1000, 50, WORLD_HEIGHT + 2000, 'STONE'));
+    // Right Wall
+    gameState.platforms.push(new Platform(WORLD_WIDTH, -1000, 50, WORLD_HEIGHT + 2000, 'STONE'));
+    
+    // Create Floor
+    gameState.platforms.push(new Platform(0, WORLD_HEIGHT - 50, WORLD_WIDTH, 100, 'STONE'));
+
+    // --- Generate Level Sections (Bottom to Top) ---
+    
+    // 1. Tutorial / Base Area (4000 - 3500)
+    addPlatform(200, 3900, 200, 20, 'STONE');
+    addPlatform(450, 3800, 100, 20, 'STONE');
+    addPlatform(50, 3750, 150, 20, 'STONE');
+    addPlatform(300, 3650, 100, 20, 'WOOD');
+    
+    // 2. The Forest / Mossy Area (3500 - 2500)
+    for (let y = 3500; y > 2500; y -= 150) {
+        let x = Math.random() * 300 + 50;
+        let w = Math.random() * 80 + 60;
+        addPlatform(x, y, w, 20, 'WOOD');
+        
+        // Add some random smaller blocks for difficulty
+        if (Math.random() > 0.5) {
+            addPlatform(Math.random() * 200 + 300, y - 75, 40, 20, 'STONE');
+        }
+        
+        // Decor
+        gameState.decorations.push(new Decoration(Math.random() * 500 + 50, y - 50, 'TORCH'));
+    }
+    
+    // 3. The Sky / Clouds (2500 - 1000)
+    for (let y = 2500; y > 1000; y -= 200) {
+        let x = (y % 400 < 200) ? 100 : 400; // Zigzag pattern
+        addPlatform(x, y, 100, 20, 'STONE');
+        // Add blockers
+        addPlatform(300, y - 100, 40, 40, 'STONE');
+        
+        gameState.decorations.push(new Decoration(Math.random()*600, y, 'CLOUD'));
+    }
+    
+    // 4. The Tower / Space (1000 - 100)
+    for (let y = 1000; y > 200; y -= 250) {
+        // Precise jumps required
+        addPlatform(250, y, 60, 20, 'STONE');
+        addPlatform(100, y - 120, 40, 20, 'STONE');
+        addPlatform(450, y - 120, 40, 20, 'STONE');
+    }
+    
+    // 5. The Top (Goal)
+    addPlatform(200, 150, 200, 40, 'GOAL');
+    
+    // Add "Babe" decoration
+    // TODO: A more distinct sprite, currently just a particle effect in game loop
+}
+
+function addPlatform(x, y, w, h, type) {
+    gameState.platforms.push(new Platform(x, y, w, h, type));
+}
+
+export function updateCamera(p) {
+    if (!gameState.player) return;
+    
+    const targetY = gameState.player.y - CANVAS_HEIGHT / 2;
+    
+    // Smooth Lerp
+    gameState.camera.y += (targetY - gameState.camera.y) * 0.1;
+    
+    // Clamp Camera
+    // We want the camera to be able to go up to the top (negative coords if needed, but here 0)
+    // And down to bottom
+    const minCamY = -200;
+    const maxCamY = WORLD_HEIGHT - CANVAS_HEIGHT;
+    
+    gameState.camera.y = p.constrain(gameState.camera.y, minCamY, maxCamY);
+    
+    gameState.camera.x = 0; // No horizontal scrolling
+}

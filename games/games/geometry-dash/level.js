@@ -240,56 +240,56 @@ export class Level {
     // Level 3 - Rapid transitions and tight spaces
     let x = 300;
     
-    // Section 1: Quick spike gauntlet - increased spacing from 120 to 160
+    // Section 1: Quick spike gauntlet - increased spacing significantly to make it playable
     for (let i = 0; i < 6; i++) {
-      x += 160;
+      x += 220; // Increased from 160 to 220 (matches level 2 spacing)
       this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, 'spike'));
     }
     
     // Platform rest area
-    x += 150;
+    x += 200; // Increased from 150
     this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE * 2, BLOCK_SIZE * 3, BLOCK_SIZE * 2, 'block'));
     
     // Ship portal
-    x += 180;
+    x += 220; // Increased from 180
     this.portals.push(new Portal(x, GROUND_Y - BLOCK_SIZE * 3, PLAYER_MODES.SHIP));
     
     // Section 2: Tight ship corridor
-    x += 120;
+    x += 150; // Increased from 120
     this.obstacles.push(new Obstacle(x, 0, BLOCK_SIZE * 6, BLOCK_SIZE * 2, 'ceiling'));
     this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE * 5, BLOCK_SIZE * 6, BLOCK_SIZE, 'block'));
     
-    x += 300;
+    x += 350; // Increased from 300
     this.obstacles.push(new Obstacle(x, 0, BLOCK_SIZE * 4, BLOCK_SIZE * 3, 'ceiling'));
     this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE * 4, BLOCK_SIZE * 4, BLOCK_SIZE, 'block'));
     
     // Back to cube
-    x += 250;
+    x += 300; // Increased from 250
     this.portals.push(new Portal(x, GROUND_Y - BLOCK_SIZE * 3, PLAYER_MODES.CUBE));
     
     // Section 3: Platform jumps
-    x += 150;
+    x += 200; // Increased from 150
     for (let i = 0; i < 3; i++) {
-      x += 140;
+      x += 180; // Increased from 140
       this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE * 2, BLOCK_SIZE * 2, BLOCK_SIZE * 2, 'block'));
     }
     
     // Ship portal again
-    x += 200;
+    x += 250; // Increased from 200
     this.portals.push(new Portal(x, GROUND_Y - BLOCK_SIZE * 3, PLAYER_MODES.SHIP));
     
     // Final ship section
-    x += 150;
+    x += 200; // Increased from 150
     this.obstacles.push(new Obstacle(x, 0, BLOCK_SIZE * 5, BLOCK_SIZE * 2, 'ceiling'));
     
-    x += 250;
+    x += 300; // Increased from 250
     this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE * 3, BLOCK_SIZE * 3, BLOCK_SIZE, 'block'));
     
     // Back to cube for finish
-    x += 200;
+    x += 250; // Increased from 200
     this.portals.push(new Portal(x, GROUND_Y - BLOCK_SIZE * 3, PLAYER_MODES.CUBE));
     
-    x += 200;
+    x += 250; // Increased from 200
     this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, 'spike'));
     
     x += 200;
@@ -303,78 +303,78 @@ export class Level {
     
     // Section 1: Platform parkour
     for (let i = 0; i < 5; i++) {
-      x += 130;
+      x += 180; // Increased from 130
       let height = (i % 2 === 0) ? BLOCK_SIZE * 2 : BLOCK_SIZE * 3;
       this.obstacles.push(new Obstacle(x, GROUND_Y - height, BLOCK_SIZE * 2, BLOCK_SIZE, 'block'));
     }
     
-    // Spike trap - increased spacing from BLOCK_SIZE * 2 (60) to 160
-    x += 150;
+    // Spike trap - increased spacing
+    x += 200; // Increased from 150
     for (let i = 0; i < 3; i++) {
-      x += 160;
+      x += 220; // Increased from 160
       this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, 'spike'));
     }
     
     // Ship portal
-    x += 180;
+    x += 250; // Increased from 180
     this.portals.push(new Portal(x, GROUND_Y - BLOCK_SIZE * 3, PLAYER_MODES.SHIP));
     
-    // Section 2: Complex ship maze
-    x += 150;
+    // Section 2: Complex ship maze - increased spacing for better reaction time
+    x += 250; // Increased from 150
     this.obstacles.push(new Obstacle(x, 0, BLOCK_SIZE * 4, BLOCK_SIZE * 2, 'ceiling'));
     
-    x += 220;
+    x += 300; // Increased from 220
     this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE * 5, BLOCK_SIZE * 4, BLOCK_SIZE, 'block'));
     
-    x += 220;
+    x += 300; // Increased from 220
     this.obstacles.push(new Obstacle(x, 0, BLOCK_SIZE * 5, BLOCK_SIZE * 3, 'ceiling'));
     
-    x += 250;
+    x += 350; // Increased from 250
     this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE * 4, BLOCK_SIZE * 3, BLOCK_SIZE, 'block'));
     
-    x += 200;
+    x += 300; // Increased from 200
     this.obstacles.push(new Obstacle(x, 0, BLOCK_SIZE * 3, BLOCK_SIZE * 2, 'ceiling'));
     this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE * 6, BLOCK_SIZE * 3, BLOCK_SIZE, 'block'));
     
     // Back to cube
-    x += 250;
+    x += 350; // Increased from 250
     this.portals.push(new Portal(x, GROUND_Y - BLOCK_SIZE * 3, PLAYER_MODES.CUBE));
     
-    // Section 3: Mixed obstacles
-    x += 150;
+    // Section 3: Mixed obstacles - significantly wider spacing
+    x += 250; // Increased from 150
     this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, 'spike'));
     
-    x += 120;
+    x += 220; // Increased from 120
     this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE * 3, BLOCK_SIZE * 2, BLOCK_SIZE * 3, 'block'));
     
-    x += 140;
+    x += 220; // Increased from 140
     this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, 'spike'));
     
-    x += 140;
+    x += 220; // Increased from 140
     this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE * 4, BLOCK_SIZE * 3, BLOCK_SIZE, 'block'));
     
     // Ship portal for final section
-    x += 180;
+    x += 250; // Increased from 180
     this.portals.push(new Portal(x, GROUND_Y - BLOCK_SIZE * 3, PLAYER_MODES.SHIP));
     
     // Final ship gauntlet
-    x += 150;
+    x += 250; // Increased from 150
     this.obstacles.push(new Obstacle(x, 0, BLOCK_SIZE * 6, BLOCK_SIZE * 2, 'ceiling'));
     
-    x += 280;
+    x += 350; // Increased from 280
     this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE * 4, BLOCK_SIZE * 4, BLOCK_SIZE, 'block'));
     
-    x += 250;
+    x += 350; // Increased from 250
     this.obstacles.push(new Obstacle(x, 0, BLOCK_SIZE * 4, BLOCK_SIZE * 3, 'ceiling'));
     
     // Final cube section
-    x += 280;
+    x += 350; // Increased from 280
     this.portals.push(new Portal(x, GROUND_Y - BLOCK_SIZE * 3, PLAYER_MODES.CUBE));
     
-    x += 150;
+    x += 250; // Increased from 150
     this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, 'spike'));
     
-    x += 150;
+    x += 250; // Increased from 150
     this.obstacles.push(new Obstacle(x, GROUND_Y - BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, 'spike'));
     
     x += 200;

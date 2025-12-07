@@ -1,0 +1,915 @@
+<analysis>
+- Issue identified: The user requested a restructure of the game levels (6 levels instead of 5), with specific difficulty distributions (2 easy, 2 medium, 2 hard), win conditions (connect 3 or 4), and visual changes (background color per level).
+- Files affected: `index.html`, `globals.js`, `renderer.js`, `gameLogic.js`, `ai.js`.
+- Changes needed:
+    1.  `globals.js`: Update `LEVELS` array to include 6 levels with specific configurations (size, win length, difficulty, color) matching the "2 easy, 2 medium, 2 hard" requirement.
+    2.  `renderer.js`: Modify `render()` to use the specific background color defined in the level configuration. Update level cap checks from 5 to 6 in UI overlays.
+    3.  `gameLogic.js`: Update game progression logic to handle 6 levels.
+    4.  `index.html`: Update description to reflect 6 levels.
+    5.  `ai.js`: Adjust minimax depth limit dynamically to ensure performance remains playable on the new larger 8x8 grid (Level 6).
+</analysis>
+
+<code filename="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">Gridlock Duel</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Basic)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Win)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Challenge an AI opponent in this strategic grid-based battle! Place your X marks strategically to form a line before the AI completes its O line. Progress through 6 increasingly difficult levels with larger grids and smarter AI opponents. Win rounds to advance, earn points, and set a high score. One mistake means starting over from Level 1!</p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;"><strong>TAP-BASED CONTROLS:</strong> Arrow Keys: Tap to move cursor one cell (release and tap again to move) | Space or Z: Tap to place your X mark | Enter: Start game | Esc: Pause/unpause | R: Restart</p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script src="../../dev_mode.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</code>
+
+<code filename="globals.js">
+// globals.js - Global game state and constants
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+export const GAME_PHASES = {
+  START: "START",
+  PLAYING: "PLAYING",
+  PAUSED: "PAUSED",
+  GAME_OVER_WIN: "GAME_OVER_WIN",
+  GAME_OVER_LOSE: "GAME_OVER_LOSE"
+};
+
+export const GAME_STATES = {
+  TITLE_SCREEN: "TITLE_SCREEN",
+  PLAYING: "PLAYING",
+  LEVEL_COMPLETE: "LEVEL_COMPLETE",
+  GAME_OVER: "GAME_OVER"
+};
+
+export const TURN = {
+  PLAYER: "PLAYER",
+  AI: "AI"
+};
+
+export const CELL_STATE = {
+  EMPTY: null,
+  PLAYER: "X",
+  AI: "O"
+};
+
+export const gameState = {
+  gamePhase: GAME_PHASES.START,
+  gameStatus: GAME_STATES.TITLE_SCREEN,
+  controlMode: "HUMAN",
+  
+  // Game data
+  board: null,
+  boardSize: 3,
+  winLength: 3,
+  currentTurn: TURN.PLAYER,
+  selectedCell: [0, 0],
+  
+  // Score and level
+  score: 0,
+  currentLevel: 1,
+  highScore: 0,
+  
+  // Win/lose tracking
+  winner: null,
+  winningLine: null,
+  
+  // Timing
+  gameTimer: 0,
+  levelCompleteTimer: 0,
+  aiMoveDelay: 0,
+  
+  // Player info for logging
+  player: {
+    x: 0,
+    y: 0,
+    selectedRow: 0,
+    selectedCol: 0
+  },
+  
+  entities: []
+};
+
+// Level configurations - Progressive grid size increase with balanced win conditions
+export const LEVELS = [
+  // Easy Levels (Connect 3)
+  { level: 1, boardSize: 3, winLength: 3, aiDifficulty: "EASY", name: "Novice Grid", bgColor: [40, 60, 40] },
+  { level: 2, boardSize: 4, winLength: 3, aiDifficulty: "EASY", name: "Apprentice Grid", bgColor: [30, 50, 70] },
+  
+  // Medium Levels (Connect 4)
+  { level: 3, boardSize: 5, winLength: 4, aiDifficulty: "MEDIUM", name: "Journeyman Grid", bgColor: [60, 40, 70] },
+  { level: 4, boardSize: 6, winLength: 4, aiDifficulty: "MEDIUM", name: "Master Grid", bgColor: [80, 60, 30] },
+  
+  // Hard Levels (Connect 4 on bigger grid)
+  { level: 5, boardSize: 7, winLength: 4, aiDifficulty: "HARD", name: "Grand Grid", bgColor: [80, 30, 30] },
+  { level: 6, boardSize: 8, winLength: 4, aiDifficulty: "HARD", name: "Ultimate Grid", bgColor: [20, 20, 20] }
+];
+
+// Scoring constants
+export const SCORES = {
+  WIN_ROUND: 500,
+  DRAW_ROUND: 100,
+  LEVEL_COMPLETE: 200
+};
+
+// Export getGameState function
+export function getGameState() {
+  return gameState;
+}
+// Expose gameState to window for debugging and recording scripts
+if (typeof window !== 'undefined') {
+  window.getGameState = () => gameState;
+}
+</code>
+
+<code filename="renderer.js">
+// renderer.js - Rendering logic
+
+import { gameState, GAME_PHASES, GAME_STATES, CELL_STATE, LEVELS, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+let p;
+
+export function initRenderer(p5Instance) {
+  p = p5Instance;
+}
+
+export function render() {
+  // Determine background color
+  let bgColor = [30, 30, 30]; // Default
+  
+  if (gameState.gamePhase !== GAME_PHASES.START) {
+    const levelConfig = LEVELS[gameState.currentLevel - 1];
+    if (levelConfig && levelConfig.bgColor) {
+      bgColor = levelConfig.bgColor;
+    }
+  }
+  
+  p.background(...bgColor);
+  
+  if (gameState.gamePhase === GAME_PHASES.START) {
+    renderTitleScreen();
+  } else if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+    renderPlayingScreen();
+  } else if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+    renderPlayingScreen();
+    renderPauseOverlay();
+  } else if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN || 
+             gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE) {
+    renderGameOverScreen();
+  }
+}
+
+function renderTitleScreen() {
+  p.push();
+  
+  // Title
+  p.fill(255, 255, 255);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text("GRIDLOCK DUEL", CANVAS_WIDTH / 2, 80);
+  
+  // Description
+  p.textSize(16);
+  p.fill(200, 200, 200);
+  p.text("Battle the AI in strategic grid warfare!", CANVAS_WIDTH / 2, 140);
+  p.text("Win rounds to advance through 6 challenging levels", CANVAS_WIDTH / 2, 165);
+  
+  // High Score
+  p.textSize(20);
+  p.fill(255, 215, 0);
+  p.text(`HIGH SCORE: ${String(gameState.highScore).padStart(5, '0')}`, CANVAS_WIDTH / 2, 210);
+  
+  // Instructions
+  p.textSize(14);
+  p.fill(180, 180, 180);
+  p.text("Arrow Keys: Navigate grid", CANVAS_WIDTH / 2, 260);
+  p.text("Space/Z: Place your X mark", CANVAS_WIDTH / 2, 280);
+  p.text("ESC: Pause  |  R: Restart", CANVAS_WIDTH / 2, 300);
+  
+  // Start prompt
+  p.textSize(20);
+  p.fill(100, 255, 100);
+  const alpha = Math.sin(p.frameCount * 0.05) * 127 + 128;
+  p.fill(100, 255, 100, alpha);
+  p.text("PRESS ENTER TO START", CANVAS_WIDTH / 2, 350);
+  
+  p.pop();
+}
+
+function renderPlayingScreen() {
+  // Render HUD
+  renderHUD();
+  
+  // Render game board
+  renderBoard();
+  
+  // Render marks
+  renderMarks();
+  
+  // Render selection highlight
+  if (gameState.currentTurn === "PLAYER" && gameState.gameStatus === GAME_STATES.PLAYING) {
+    renderSelectionHighlight();
+  }
+  
+  // Render winning line if exists
+  if (gameState.winningLine) {
+    renderWinningLine();
+  }
+  
+  // Render level complete message
+  if (gameState.gameStatus === GAME_STATES.LEVEL_COMPLETE) {
+    renderLevelCompleteOverlay();
+  }
+}
+
+function renderHUD() {
+  p.push();
+  p.textAlign(p.LEFT, p.TOP);
+  p.textSize(16);
+  p.fill(255, 255, 255);
+  
+  // Level
+  const levelConfig = LEVELS[gameState.currentLevel - 1];
+  p.text(`LEVEL: ${gameState.currentLevel}`, 10, 10);
+  p.textSize(12);
+  p.fill(200, 200, 200);
+  p.text(levelConfig.name, 10, 30);
+  
+  // Score
+  p.textAlign(p.RIGHT, p.TOP);
+  p.textSize(16);
+  p.fill(255, 255, 255);
+  p.text(`SCORE: ${String(gameState.score).padStart(5, '0')}`, CANVAS_WIDTH - 10, 10);
+  
+  // Turn indicator
+  p.textAlign(p.CENTER, p.TOP);
+  p.textSize(14);
+  if (gameState.gameStatus === GAME_STATES.PLAYING) {
+    const turnColor = gameState.currentTurn === "PLAYER" ? [255, 100, 100] : [100, 100, 255];
+    p.fill(...turnColor);
+    p.text(`${gameState.currentTurn}'S TURN`, CANVAS_WIDTH / 2, 10);
+  }
+  
+  p.pop();
+}
+
+function renderBoard() {
+  const cellSize = calculateCellSize();
+  const gridStartX = (CANVAS_WIDTH - cellSize * gameState.boardSize) / 2;
+  const gridStartY = (CANVAS_HEIGHT - cellSize * gameState.boardSize) / 2 + 30;
+  
+  p.push();
+  p.stroke(255, 255, 255);
+  p.strokeWeight(2);
+  p.noFill();
+  
+  // Draw grid
+  for (let i = 0; i <= gameState.boardSize; i++) {
+    // Vertical lines
+    p.line(
+      gridStartX + i * cellSize,
+      gridStartY,
+      gridStartX + i * cellSize,
+      gridStartY + cellSize * gameState.boardSize
+    );
+    
+    // Horizontal lines
+    p.line(
+      gridStartX,
+      gridStartY + i * cellSize,
+      gridStartX + cellSize * gameState.boardSize,
+      gridStartY + i * cellSize
+    );
+  }
+  
+  p.pop();
+}
+
+function renderMarks() {
+  const cellSize = calculateCellSize();
+  const gridStartX = (CANVAS_WIDTH - cellSize * gameState.boardSize) / 2;
+  const gridStartY = (CANVAS_HEIGHT - cellSize * gameState.boardSize) / 2 + 30;
+  const padding = cellSize * 0.2;
+  
+  p.push();
+  
+  for (let row = 0; row < gameState.boardSize; row++) {
+    for (let col = 0; col < gameState.boardSize; col++) {
+      const mark = gameState.board[row][col];
+      const x = gridStartX + col * cellSize;
+      const y = gridStartY + row * cellSize;
+      
+      if (mark === CELL_STATE.PLAYER) {
+        // Draw X
+        p.stroke(255, 80, 80);
+        p.strokeWeight(5);
+        p.line(x + padding, y + padding, x + cellSize - padding, y + cellSize - padding);
+        p.line(x + cellSize - padding, y + padding, x + padding, y + cellSize - padding);
+      } else if (mark === CELL_STATE.AI) {
+        // Draw O
+        p.stroke(80, 80, 255);
+        p.strokeWeight(5);
+        p.noFill();
+        p.ellipse(x + cellSize / 2, y + cellSize / 2, cellSize - padding * 2);
+      }
+    }
+  }
+  
+  p.pop();
+}
+
+function renderSelectionHighlight() {
+  const cellSize = calculateCellSize();
+  const gridStartX = (CANVAS_WIDTH - cellSize * gameState.boardSize) / 2;
+  const gridStartY = (CANVAS_HEIGHT - cellSize * gameState.boardSize) / 2 + 30;
+  
+  const [row, col] = gameState.selectedCell;
+  const x = gridStartX + col * cellSize;
+  const y = gridStartY + row * cellSize;
+  
+  p.push();
+  p.noFill();
+  p.stroke(255, 255, 100);
+  p.strokeWeight(4);
+  p.rect(x + 2, y + 2, cellSize - 4, cellSize - 4);
+  
+  // Glow effect
+  const alpha = Math.sin(p.frameCount * 0.1) * 50 + 100;
+  p.fill(255, 255, 100, alpha);
+  p.noStroke();
+  p.rect(x, y, cellSize, cellSize);
+  
+  p.pop();
+}
+
+function renderWinningLine() {
+  const cellSize = calculateCellSize();
+  const gridStartX = (CANVAS_WIDTH - cellSize * gameState.boardSize) / 2;
+  const gridStartY = (CANVAS_HEIGHT - cellSize * gameState.boardSize) / 2 + 30;
+  
+  const line = gameState.winningLine;
+  
+  p.push();
+  p.stroke(0, 255, 0);
+  p.strokeWeight(8);
+  
+  if (line.type === 'horizontal') {
+    const y = gridStartY + line.row * cellSize + cellSize / 2;
+    const x1 = gridStartX + line.startCol * cellSize + cellSize / 2;
+    const x2 = gridStartX + line.endCol * cellSize + cellSize / 2;
+    p.line(x1, y, x2, y);
+  } else if (line.type === 'vertical') {
+    const x = gridStartX + line.col * cellSize + cellSize / 2;
+    const y1 = gridStartY + line.startRow * cellSize + cellSize / 2;
+    const y2 = gridStartY + line.endRow * cellSize + cellSize / 2;
+    p.line(x, y1, x, y2);
+  } else if (line.type === 'diagonal-down') {
+    const x1 = gridStartX + line.startCol * cellSize + cellSize / 2;
+    const y1 = gridStartY + line.startRow * cellSize + cellSize / 2;
+    const x2 = gridStartX + line.endCol * cellSize + cellSize / 2;
+    const y2 = gridStartY + line.endRow * cellSize + cellSize / 2;
+    p.line(x1, y1, x2, y2);
+  } else if (line.type === 'diagonal-up') {
+    const x1 = gridStartX + line.startCol * cellSize + cellSize / 2;
+    const y1 = gridStartY + line.startRow * cellSize + cellSize / 2;
+    const x2 = gridStartX + line.endCol * cellSize + cellSize / 2;
+    const y2 = gridStartY + line.endRow * cellSize + cellSize / 2;
+    p.line(x1, y1, x2, y2);
+  }
+  
+  p.pop();
+}
+
+function renderLevelCompleteOverlay() {
+  p.push();
+  
+  // Semi-transparent overlay
+  p.fill(0, 0, 0, 180);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  // Level complete message
+  p.fill(100, 255, 100);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(36);
+  p.text(`LEVEL ${gameState.currentLevel} COMPLETE!`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 40);
+  
+  // Score
+  p.fill(255, 255, 255);
+  p.textSize(20);
+  p.text(`SCORE: ${String(gameState.score).padStart(5, '0')}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+  
+  // Next level prompt
+  const alpha = Math.sin(p.frameCount * 0.1) * 127 + 128;
+  p.fill(255, 255, 255, alpha);
+  p.textSize(18);
+  if (gameState.currentLevel < 6) {
+    p.text("PRESS SPACE FOR NEXT LEVEL", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 50);
+  }
+  
+  p.pop();
+}
+
+function renderPauseOverlay() {
+  p.push();
+  p.fill(255, 255, 255);
+  p.textAlign(p.RIGHT, p.TOP);
+  p.textSize(16);
+  p.text("PAUSED", CANVAS_WIDTH - 10, 40);
+  p.pop();
+}
+
+function renderGameOverScreen() {
+  p.push();
+  
+  // Semi-transparent overlay
+  p.fill(0, 0, 0, 200);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  // Game over message
+  p.textAlign(p.CENTER, p.CENTER);
+  
+  if (gameState.winner === "COMPLETE") {
+    p.fill(255, 215, 0);
+    p.textSize(42);
+    p.text("GAME COMPLETE!", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 80);
+    p.fill(100, 255, 100);
+    p.textSize(24);
+    p.text("You defeated all levels!", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 40);
+  } else if (gameState.winner === CELL_STATE.PLAYER) {
+    p.fill(100, 255, 100);
+    p.textSize(42);
+    p.text("YOU WIN!", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 60);
+  } else if (gameState.winner === CELL_STATE.AI) {
+    p.fill(255, 100, 100);
+    p.textSize(42);
+    p.text("YOU LOSE!", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 60);
+    p.fill(200, 200, 200);
+    p.textSize(18);
+    p.text("AI wins this round", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 20);
+  } else if (gameState.winner === "DRAW") {
+    p.fill(200, 200, 100);
+    p.textSize(42);
+    p.text("DRAW!", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 60);
+    p.fill(200, 200, 200);
+    p.textSize(18);
+    p.text("Board filled with no winner", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 20);
+  }
+  
+  // Final score
+  p.fill(255, 255, 255);
+  p.textSize(24);
+  p.text(`FINAL SCORE: ${String(gameState.score).padStart(5, '0')}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 20);
+  
+  // High score
+  p.fill(255, 215, 0);
+  p.textSize(20);
+  p.text(`HIGH SCORE: ${String(gameState.highScore).padStart(5, '0')}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 50);
+  
+  // Restart prompt
+  const alpha = Math.sin(p.frameCount * 0.1) * 127 + 128;
+  p.fill(255, 255, 255, alpha);
+  p.textSize(18);
+  p.text("PRESS R TO RESTART", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 100);
+  
+  p.pop();
+}
+
+function calculateCellSize() {
+  const maxSize = Math.min(CANVAS_WIDTH - 100, CANVAS_HEIGHT - 150);
+  return Math.floor(maxSize / gameState.boardSize);
+}
+</code>
+
+<code filename="gameLogic.js">
+// gameLogic.js - Core game logic
+
+import { gameState, GAME_PHASES, GAME_STATES, TURN, LEVELS, SCORES, CELL_STATE } from './globals.js';
+import { initializeBoard, checkWinner, isBoardFull, placeMarkOnBoard } from './board.js';
+import { makeAIMove } from './ai.js';
+
+let p;
+
+export function initGameLogic(p5Instance) {
+  p = p5Instance;
+  loadHighScore();
+}
+
+export function startGame() {
+  gameState.gamePhase = GAME_PHASES.PLAYING;
+  gameState.gameStatus = GAME_STATES.PLAYING;
+  gameState.currentLevel = 1;
+  gameState.score = 0;
+  
+  initializeLevel();
+  
+  p.logs.game_info.push({
+    data: { phase: "PLAYING", status: "PLAYING" },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+export function initializeLevel() {
+  const levelConfig = LEVELS[gameState.currentLevel - 1];
+  
+  gameState.boardSize = levelConfig.boardSize;
+  gameState.winLength = levelConfig.winLength;
+  gameState.board = initializeBoard(gameState.boardSize);
+  gameState.currentTurn = TURN.PLAYER;
+  gameState.selectedCell = [0, 0];
+  gameState.winner = null;
+  gameState.winningLine = null;
+  gameState.aiMoveDelay = 0;
+  gameState.levelCompleteTimer = 0;
+  gameState.gameTimer = 0;
+}
+
+export function updateGame() {
+  if (gameState.gamePhase !== GAME_PHASES.PLAYING) {
+    return;
+  }
+  
+  if (gameState.gameStatus === GAME_STATES.PLAYING) {
+    gameState.gameTimer++;
+    
+    // AI turn logic
+    if (gameState.currentTurn === TURN.AI) {
+      if (gameState.aiMoveDelay > 0) {
+        gameState.aiMoveDelay--;
+      } else {
+        executeAIMove();
+      }
+    }
+    
+    // Check for winner
+    const result = checkWinner();
+    if (result) {
+      handleWinner(result);
+    } else if (isBoardFull()) {
+      handleDraw();
+    }
+  } else if (gameState.gameStatus === GAME_STATES.LEVEL_COMPLETE) {
+    gameState.levelCompleteTimer++;
+  }
+}
+
+function executeAIMove() {
+  const levelConfig = LEVELS[gameState.currentLevel - 1];
+  const move = makeAIMove(levelConfig.aiDifficulty);
+  
+  if (move) {
+    const [row, col] = move;
+    placeMarkOnBoard(row, col, CELL_STATE.AI);
+    gameState.currentTurn = TURN.PLAYER;
+  }
+}
+
+function handleWinner(result) {
+  gameState.winner = result.winner;
+  gameState.winningLine = result.line;
+  
+  if (result.winner === CELL_STATE.PLAYER) {
+    // Player wins
+    gameState.score += SCORES.WIN_ROUND;
+    
+    if (gameState.currentLevel < 6) {
+      gameState.score += SCORES.LEVEL_COMPLETE;
+      gameState.gameStatus = GAME_STATES.LEVEL_COMPLETE;
+    } else {
+      // Game complete - beat all levels
+      gameState.gameStatus = GAME_STATES.GAME_OVER;
+      gameState.gamePhase = GAME_PHASES.GAME_OVER_WIN;
+    }
+    
+    updateHighScore();
+  } else {
+    // AI wins
+    gameState.gameStatus = GAME_STATES.GAME_OVER;
+    gameState.gamePhase = GAME_PHASES.GAME_OVER_LOSE;
+    updateHighScore();
+  }
+  
+  p.logs.game_info.push({
+    data: { 
+      winner: result.winner,
+      phase: gameState.gamePhase,
+      status: gameState.gameStatus 
+    },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function handleDraw() {
+  gameState.score += SCORES.DRAW_ROUND;
+  gameState.gameStatus = GAME_STATES.GAME_OVER;
+  gameState.gamePhase = GAME_PHASES.GAME_OVER_LOSE;
+  gameState.winner = "DRAW";
+  
+  updateHighScore();
+  
+  p.logs.game_info.push({
+    data: { 
+      winner: "DRAW",
+      phase: gameState.gamePhase,
+      status: gameState.gameStatus 
+    },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+export function restartGame() {
+  gameState.gamePhase = GAME_PHASES.START;
+  gameState.gameStatus = GAME_STATES.TITLE_SCREEN;
+  gameState.currentLevel = 1;
+  gameState.score = 0;
+  gameState.winner = null;
+  gameState.winningLine = null;
+  gameState.board = null;
+  
+  p.logs.game_info.push({
+    data: { phase: "START", status: "TITLE_SCREEN" },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+export function togglePause() {
+  if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+    gameState.gamePhase = GAME_PHASES.PAUSED;
+    p.logs.game_info.push({
+      data: { phase: "PAUSED" },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  } else if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+    gameState.gamePhase = GAME_PHASES.PLAYING;
+    p.logs.game_info.push({
+      data: { phase: "PLAYING" },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+}
+
+function loadHighScore() {
+  if (typeof localStorage !== 'undefined') {
+    const stored = localStorage.getItem('gridlock_duel_highscore');
+    if (stored) {
+      gameState.highScore = parseInt(stored, 10);
+    }
+  }
+}
+
+function updateHighScore() {
+  if (gameState.score > gameState.highScore) {
+    gameState.highScore = gameState.score;
+    
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('gridlock_duel_highscore', gameState.highScore.toString());
+    }
+  }
+}
+
+export function proceedToNextLevel() {
+  if (gameState.currentLevel < 6) {
+    gameState.currentLevel++;
+    gameState.gameStatus = GAME_STATES.PLAYING;
+    gameState.levelCompleteTimer = 0;
+    initializeLevel();
+  } else {
+    gameState.gameStatus = GAME_STATES.GAME_OVER;
+    gameState.gamePhase = GAME_PHASES.GAME_OVER_WIN;
+    gameState.winner = "COMPLETE";
+  }
+}
+</code>
+
+<code filename="ai.js">
+// ai.js - AI opponent logic
+
+import { gameState, CELL_STATE, TURN } from './globals.js';
+import { placeMarkOnBoard, checkWinner, isBoardFull, getEmptyCells } from './board.js';
+
+export function makeAIMove(difficulty) {
+  const emptyCells = getEmptyCells();
+  
+  if (emptyCells.length === 0) {
+    return null;
+  }
+  
+  let move = null;
+  
+  if (difficulty === "EASY") {
+    move = makeEasyMove(emptyCells);
+  } else if (difficulty === "MEDIUM") {
+    move = makeMediumMove(emptyCells);
+  } else if (difficulty === "HARD") {
+    move = makeHardMove(emptyCells);
+  }
+  
+  return move;
+}
+
+function makeEasyMove(emptyCells) {
+  // Check for immediate win
+  const winMove = findWinningMove(CELL_STATE.AI);
+  if (winMove) return winMove;
+  
+  // Check for immediate block - but only 70% of the time to make it easier
+  if (Math.random() < 0.7) {
+    const blockMove = findWinningMove(CELL_STATE.PLAYER);
+    if (blockMove) return blockMove;
+  }
+  
+  // Random move
+  const randomIndex = Math.floor(Math.random() * emptyCells.length);
+  return emptyCells[randomIndex];
+}
+
+function makeMediumMove(emptyCells) {
+  // Check for immediate win
+  const winMove = findWinningMove(CELL_STATE.AI);
+  if (winMove) return winMove;
+  
+  // Check for immediate block
+  const blockMove = findWinningMove(CELL_STATE.PLAYER);
+  if (blockMove) return blockMove;
+  
+  // Try to create a fork (two ways to win)
+  const forkMove = findForkMove(CELL_STATE.AI);
+  if (forkMove) return forkMove;
+  
+  // Block opponent's fork
+  const blockForkMove = findForkMove(CELL_STATE.PLAYER);
+  if (blockForkMove) return blockForkMove;
+  
+  // Take center if available
+  const center = Math.floor(gameState.boardSize / 2);
+  if (gameState.board[center][center] === CELL_STATE.EMPTY) {
+    return [center, center];
+  }
+  
+  // Take a corner
+  const corners = [
+    [0, 0],
+    [0, gameState.boardSize - 1],
+    [gameState.boardSize - 1, 0],
+    [gameState.boardSize - 1, gameState.boardSize - 1]
+  ];
+  const emptyCorners = corners.filter(([r, c]) => gameState.board[r][c] === CELL_STATE.EMPTY);
+  if (emptyCorners.length > 0) {
+    const randomIndex = Math.floor(Math.random() * emptyCorners.length);
+    return emptyCorners[randomIndex];
+  }
+  
+  // Random move
+  const randomIndex = Math.floor(Math.random() * emptyCells.length);
+  return emptyCells[randomIndex];
+}
+
+function makeHardMove(emptyCells) {
+  // Use minimax algorithm
+  const bestMove = minimax(gameState.board, CELL_STATE.AI, 0, -Infinity, Infinity);
+  return bestMove.move;
+}
+
+function findWinningMove(mark) {
+  const emptyCells = getEmptyCells();
+  
+  for (const [row, col] of emptyCells) {
+    // Try placing mark
+    gameState.board[row][col] = mark;
+    const result = checkWinner();
+    gameState.board[row][col] = CELL_STATE.EMPTY;
+    
+    if (result && result.winner === mark) {
+      return [row, col];
+    }
+  }
+  
+  return null;
+}
+
+function findForkMove(mark) {
+  const emptyCells = getEmptyCells();
+  
+  for (const [row, col] of emptyCells) {
+    gameState.board[row][col] = mark;
+    
+    // Count how many winning moves this creates
+    let winningMoves = 0;
+    const testEmptyCells = getEmptyCells();
+    
+    for (const [testRow, testCol] of testEmptyCells) {
+      gameState.board[testRow][testCol] = mark;
+      const result = checkWinner();
+      gameState.board[testRow][testCol] = CELL_STATE.EMPTY;
+      
+      if (result && result.winner === mark) {
+        winningMoves++;
+      }
+    }
+    
+    gameState.board[row][col] = CELL_STATE.EMPTY;
+    
+    if (winningMoves >= 2) {
+      return [row, col];
+    }
+  }
+  
+  return null;
+}
+
+function minimax(board, player, depth, alpha, beta) {
+  const result = checkWinner();
+  
+  if (result) {
+    if (result.winner === CELL_STATE.AI) {
+      return { score: 10 - depth };
+    } else if (result.winner === CELL_STATE.PLAYER) {
+      return { score: depth - 10 };
+    }
+  }
+  
+  if (isBoardFull()) {
+    return { score: 0 };
+  }
+  
+  // Limit depth for performance on larger boards
+  // Dynamic depth based on board size to prevent lag on 8x8
+  const maxDepth = gameState.boardSize > 5 ? 4 : 6;
+  if (depth >= maxDepth) {
+    return { score: 0 };
+  }
+  
+  const emptyCells = getEmptyCells();
+  let bestMove = null;
+  
+  if (player === CELL_STATE.AI) {
+    let maxScore = -Infinity;
+    
+    for (const [row, col] of emptyCells) {
+      gameState.board[row][col] = CELL_STATE.AI;
+      const result = minimax(board, CELL_STATE.PLAYER, depth + 1, alpha, beta);
+      gameState.board[row][col] = CELL_STATE.EMPTY;
+      
+      if (result.score > maxScore) {
+        maxScore = result.score;
+        bestMove = [row, col];
+      }
+      
+      alpha = Math.max(alpha, maxScore);
+      if (beta <= alpha) {
+        break; // Alpha-beta pruning
+      }
+    }
+    
+    return { score: maxScore, move: bestMove };
+  } else {
+    let minScore = Infinity;
+    
+    for (const [row, col] of emptyCells) {
+      gameState.board[row][col] = CELL_STATE.PLAYER;
+      const result = minimax(board, CELL_STATE.AI, depth + 1, alpha, beta);
+      gameState.board[row][col] = CELL_STATE.EMPTY;
+      
+      if (result.score < minScore) {
+        minScore = result.score;
+        bestMove = [row, col];
+      }
+      
+      beta = Math.min(beta, minScore);
+      if (beta <= alpha) {
+        break; // Alpha-beta pruning
+      }
+    }
+    
+    return { score: minScore, move: bestMove };
+  }
+}
+</code>

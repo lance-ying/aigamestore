@@ -1,0 +1,460 @@
+<analysis>
+- Issue identified: The game freezes (infinite loop) when starting because `level_gen.js` uses a flawed mock object `{random: () => Math.random()}` for random number generation. The `randomInt` utility expects a p5 instance where `random(min, max)` handles range scaling, but the mock ignores arguments and returns 0-1, resulting in `0` after flooring. This causes `len` and `gap` to be 0, trapping the `while` loop in `generateRoom`. Additionally, `particle_system.js` passes `null` to `randomInt`, which would cause a crash when particles are spawned.
+- Files affected: `math_utils.js`, `level_gen.js`, `game.js`
+- Changes needed: 
+    1. Update `math_utils.js` to include a fallback to `Math.random` if the passed `p` object is null or invalid, preventing crashes and fixing logic for non-p5 contexts.
+    2. Update `game.js` to pass the valid p5 instance `p` to `generateRoom`.
+    3. Update `level_gen.js` to accept `p` in `generateRoom` and use it instead of the broken mock object.
+</analysis>
+
+<code filename="math_utils.js">
+/**
+ * math_utils.js
+ * Utility functions for calculations and random generation.
+ */
+
+// Linear interpolation
+export function lerp(start, end, amt) {
+    return (1 - amt) * start + amt * end;
+}
+
+// Constrain value between min and max
+export function clamp(val, min, max) {
+    return Math.min(Math.max(val, min), max);
+}
+
+// Check intersection between two rectangles (AABB)
+export function checkAABB(r1, r2) {
+    return (
+        r1.x < r2.x + r2.w &&
+        r1.x + r1.w > r2.x &&
+        r1.y < r2.y + r2.h &&
+        r1.y + r1.h > r2.y
+    );
+}
+
+// Get a random integer between min and max (inclusive)
+export function randomInt(p, min, max) {
+    // Check if p is a valid p5 instance with random function
+    if (p && typeof p.random === 'function') {
+        return Math.floor(p.random(min, max + 1));
+    }
+    // Fallback for null p or mocks
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+// Get a random element from an array
+export function randomChoice(p, arr) {
+    if (!arr || arr.length === 0) return null;
+    if (p && typeof p.random === 'function') {
+        return arr[Math.floor(p.random(arr.length))];
+    }
+    return arr[Math.floor(Math.random() * arr.length)];
+}
+
+// Easing function for smooth animations
+export function easeOutQuad(t) {
+    return t * (2 - t);
+}
+
+// Generate a unique ID
+export function generateID() {
+    return Math.random().toString(36).substr(2, 9);
+}
+</code>
+
+<code filename="level_gen.js">
+/**
+ * level_gen.js
+ * Procedural generation for rooms.
+ */
+
+import { TILE_SIZE, CANVAS_WIDTH, CANVAS_HEIGHT, COLORS } from './globals.js';
+import { randomInt, randomChoice } from './math_utils.js';
+
+export class TileMap {
+    constructor(cols, rows) {
+        this.cols = cols;
+        this.rows = rows;
+        this.tiles = new Array(cols * rows).fill(0); // 0: Empty, 1: Wall, 2: Spike
+        this.spawnPoint = { x: 50, y: 50 };
+        this.exitPoint = { x: 0, y: 0 };
+    }
+
+    get(col, row) {
+        if (col < 0 || col >= this.cols || row < 0 || row >= this.rows) return 0;
+        return this.tiles[row * this.cols + col];
+    }
+
+    set(col, row, val) {
+        if (col >= 0 && col < this.cols && row >= 0 && row < this.rows) {
+            this.tiles[row * this.cols + col] = val;
+        }
+    }
+
+    isSolid(col, row) {
+        const val = this.get(col, row);
+        return val === 1; // 1 is Wall
+    }
+    
+    isHazard(col, row) {
+        return this.get(col, row) === 2; // 2 is Spike
+    }
+
+    render(p) {
+        p.noStroke();
+        for (let y = 0; y < this.rows; y++) {
+            for (let x = 0; x < this.cols; x++) {
+                const val = this.tiles[y * this.cols + x];
+                const px = x * TILE_SIZE;
+                const py = y * TILE_SIZE;
+
+                if (val === 1) {
+                    // Wall
+                    p.fill(COLORS.WALL);
+                    p.rect(px, py, TILE_SIZE, TILE_SIZE);
+                    // Top detail
+                    if (!this.isSolid(x, y - 1)) {
+                        p.fill(COLORS.WALL_TOP);
+                        p.rect(px, py, TILE_SIZE, 6);
+                    }
+                } else if (val === 2) {
+                    // Spike
+                    p.fill(COLORS.SPIKE);
+                    p.triangle(
+                        px, py + TILE_SIZE,
+                        px + TILE_SIZE, py + TILE_SIZE,
+                        px + TILE_SIZE / 2, py
+                    );
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Generates a procedural room.
+ * Difficulty scales with level parameter.
+ */
+export function generateRoom(p, level) {
+    const cols = Math.ceil(CANVAS_WIDTH / TILE_SIZE);
+    const rows = Math.ceil(CANVAS_HEIGHT / TILE_SIZE);
+    const map = new TileMap(cols, rows);
+
+    // 1. Fill borders
+    for (let x = 0; x < cols; x++) {
+        map.set(x, 0, 1); // Ceiling
+        map.set(x, rows - 1, 1); // Floor
+    }
+    for (let y = 0; y < rows; y++) {
+        map.set(0, y, 1); // Left Wall
+        // Leave Right Wall open for exit usually, or create a gate
+    }
+
+    // 2. Clear start and end areas
+    // Start: Left side
+    map.spawnPoint = { x: TILE_SIZE * 2, y: TILE_SIZE * (rows - 3) };
+    
+    // 3. Generate Terrain Patterns
+    // Strategy: Place "chunks" of platforms.
+    let cursorX = 3;
+    let cursorY = rows - 3;
+    
+    // Helper to place a platform
+    const placePlatform = (x, y, w) => {
+        for(let i=0; i<w; i++) map.set(x+i, y, 1);
+    };
+
+    while (cursorX < cols - 2) {
+        // Decide next feature based on randomness and difficulty
+        let type = randomInt(p, 0, 3);
+        
+        if (type === 0) {
+            // Flat ground
+            let len = randomInt(p, 2, 4);
+            placePlatform(cursorX, cursorY, len);
+            cursorX += len;
+        } else if (type === 1) {
+            // Gap
+            let gap = randomInt(p, 1, 2 + Math.min(1, Math.floor(level/5)));
+            // Maybe put spike at bottom of gap?
+            if (gap > 1 && level > 2) {
+                map.set(cursorX, rows - 2, 2); // Spike
+            }
+            cursorX += gap;
+        } else if (type === 2) {
+            // Step Up/Down
+            let dir = randomChoice(p, [-1, 1]);
+            cursorY = Math.min(Math.max(cursorY + dir * 2, 4), rows - 3);
+            let len = 3;
+            placePlatform(cursorX, cursorY, len);
+            cursorX += len;
+        } else {
+            // Floating Island
+            let h = randomInt(p, 4, rows - 4);
+            placePlatform(cursorX, h, 3);
+            cursorX += 3;
+        }
+    }
+
+    // Ensure exit is reachable (clear right wall)
+    for (let y = 1; y < rows - 1; y++) {
+        map.set(cols - 1, y, 0); 
+    }
+    // Place a small exit platform
+    placePlatform(cols - 3, cursorY, 3);
+
+    return map;
+}
+
+export function spawnEntitiesForRoom(map, level) {
+    const entities = [];
+    const particles = []; // cleared elsewhere
+    
+    // Simple entity spawning logic based on flat platforms
+    for (let x = 4; x < map.cols - 4; x++) {
+        for (let y = 2; y < map.rows - 2; y++) {
+            // If there's a platform here and space above
+            if (map.isSolid(x, y) && !map.isSolid(x, y - 1) && !map.isSolid(x, y - 2)) {
+                
+                // Chance for Coin
+                if (Math.random() < 0.2) {
+                    // Import dynamically or assume Entity classes are available. 
+                    // To keep it clean, we return data objects to be instantiated in game.js
+                    entities.push({ type: 'COIN', x: x * TILE_SIZE + 12, y: (y - 1) * TILE_SIZE + 12 });
+                }
+                
+                // Chance for Enemy
+                if (Math.random() < 0.05 + (level * 0.01)) {
+                    // Check if platform is wide enough
+                    if (map.isSolid(x+1, y) && map.isSolid(x-1, y)) {
+                        entities.push({ type: 'ENEMY', subtype: 'WALKER', x: x * TILE_SIZE, y: (y - 1) * TILE_SIZE });
+                        x += 3; // Space out enemies
+                    }
+                }
+                
+                // Chance for Flyer
+                if (Math.random() < 0.02 + (level * 0.005)) {
+                     entities.push({ type: 'ENEMY', subtype: 'FLYER', x: x * TILE_SIZE, y: (y - 4) * TILE_SIZE });
+                     x += 2;
+                }
+            }
+        }
+    }
+    return entities;
+}
+</code>
+
+<code filename="game.js">
+/**
+ * game.js
+ * Main game loop and entry point.
+ */
+
+import { 
+    CANVAS_WIDTH, CANVAS_HEIGHT, FPS, gameState, COLORS, logGameEvent 
+} from './globals.js';
+import { Player, Enemy, Collectible } from './entities.js';
+import { generateRoom, spawnEntitiesForRoom } from './level_gen.js';
+import { handleInput } from './input.js';
+import { renderUI } from './ui.js';
+import { checkEntityCollision } from './physics.js';
+import { updateAndRenderParticles, spawnParticles } from './particle_system.js';
+import { getAutomatedAction } from './automated_test.js';
+import { clamp } from './math_utils.js';
+
+const p5 = window.p5;
+
+const gameInstance = new p5(p => {
+    
+    // Initialize Logs
+    p.logs = {
+        "game_info": [],
+        "inputs": [],
+        "player_info": []
+    };
+
+    p.setup = function() {
+        let cvs = p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        cvs.id('gameCanvas');
+        p.frameRate(FPS);
+        p.randomSeed(42);
+        
+        handleInput(p); // Setup listeners
+        
+        // Log start
+        logGameEvent(p, 'game', { phase: 'SETUP' });
+    };
+
+    p.draw = function() {
+        // 1. Time Management
+        const now = p.millis();
+        gameState.deltaTime = (now - gameState.lastFrameTime) / 1000;
+        gameState.lastFrameTime = now;
+        gameState.frameCount = p.frameCount;
+
+        // 2. Automated Testing Input Override
+        if (gameState.controlMode !== 'HUMAN') {
+            getAutomatedAction(p);
+            // Handle phase transitions for tests
+            if (gameState.gamePhase === 'START' && gameState.controlMode.includes('TEST')) {
+                 gameState.keys[13] = true; // Force Enter
+                 if (p.frameCount % 10 === 0) p.keyPressed(); // Simulate press
+            }
+            if ((gameState.gamePhase === 'GAME_OVER_LOSE' || gameState.gamePhase === 'GAME_OVER_WIN') && gameState.controlMode.includes('TEST')) {
+                gameState.keys[82] = true; // Force R
+                if (p.frameCount % 10 === 0) p.keyPressed();
+            }
+        }
+
+        // 3. Game State Logic
+        if (gameState.needsReset) {
+            initLevel(p, 0);
+            gameState.needsReset = false;
+        }
+
+        // 4. Rendering & Update Loop
+        p.background(COLORS.BACKGROUND);
+
+        switch (gameState.gamePhase) {
+            case 'START':
+                // Optional: Render a demo background or attract mode here
+                renderUI(p);
+                break;
+
+            case 'PLAYING':
+                updateGame(p);
+                renderGame(p);
+                renderUI(p);
+                break;
+
+            case 'PAUSED':
+                renderGame(p); // Draw game frozen behind overlay
+                renderUI(p);
+                break;
+
+            case 'GAME_OVER_WIN':
+            case 'GAME_OVER_LOSE':
+                renderGame(p);
+                renderUI(p);
+                break;
+        }
+    };
+
+    function initLevel(p, difficulty) {
+        gameState.currentRoom = generateRoom(p, difficulty);
+        gameState.entities = [];
+        gameState.particles = [];
+        
+        // Spawn Player
+        if (!gameState.player) {
+            gameState.player = new Player(gameState.currentRoom.spawnPoint.x, gameState.currentRoom.spawnPoint.y);
+        } else {
+            // Carry over player state but reset pos
+            gameState.player.x = gameState.currentRoom.spawnPoint.x;
+            gameState.player.y = gameState.currentRoom.spawnPoint.y;
+            gameState.player.vx = 0;
+            gameState.player.vy = 0;
+        }
+
+        // Spawn Enemies and Items
+        const spawns = spawnEntitiesForRoom(gameState.currentRoom, difficulty);
+        spawns.forEach(spawn => {
+            if (spawn.type === 'ENEMY') {
+                gameState.entities.push(new Enemy(spawn.x, spawn.y, spawn.subtype));
+            } else if (spawn.type === 'COIN') {
+                gameState.entities.push(new Collectible(spawn.x, spawn.y));
+            }
+        });
+        
+        gameState.isTransitioning = false;
+        gameState.transitionAlpha = 0;
+    }
+
+    function updateGame(p) {
+        // 1. Room Transition
+        if (gameState.isTransitioning) {
+            gameState.transitionAlpha += 10;
+            if (gameState.transitionAlpha >= 255) {
+                // Load next level
+                gameState.roomsCleared++;
+                gameState.score += 100; // Room clear bonus
+                initLevel(p, gameState.roomsCleared);
+            }
+            return; // Pause updates during fade out
+        } else {
+            if (gameState.transitionAlpha > 0) gameState.transitionAlpha -= 10;
+        }
+
+        // 2. Player Update
+        if (gameState.player) {
+            gameState.player.update(p);
+            
+            // Check Hazard Collision
+            let map = gameState.currentRoom;
+            // Check center point of player bottom
+            let cx = Math.floor((gameState.player.x + gameState.player.w/2) / 40);
+            let cy = Math.floor((gameState.player.y + gameState.player.h - 2) / 40);
+            
+            if (map.isHazard(cx, cy)) {
+                gameState.player.die(p);
+            }
+        }
+
+        // 3. Entities Update
+        for (let i = gameState.entities.length - 1; i >= 0; i--) {
+            let ent = gameState.entities[i];
+            ent.update(p);
+            
+            // Player Interaction
+            if (checkEntityCollision(gameState.player, ent)) {
+                if (ent.type === 'COIN') {
+                    gameState.score += 50;
+                    spawnParticles(ent.x + ent.w/2, ent.y + ent.h/2, 'COIN', 5);
+                    gameState.entities.splice(i, 1);
+                    logGameEvent(p, 'game', { event: 'coin_collected', total_score: gameState.score });
+                } else if (ent.type === 'ENEMY') {
+                    // Mario style stomp? Or just damage?
+                    // Let's do simple stomp: if falling and above enemy
+                    if (gameState.player.vy > 0 && gameState.player.y + gameState.player.h < ent.y + ent.h/2) {
+                        gameState.player.vy = -8; // Bounce
+                        spawnParticles(ent.x + ent.w/2, ent.y, 'EXPLOSION', 8);
+                        gameState.score += 200;
+                        gameState.entities.splice(i, 1);
+                        logGameEvent(p, 'game', { event: 'enemy_stomped' });
+                    } else if (gameState.player.invulnerable <= 0) {
+                        gameState.player.die(p);
+                    }
+                }
+            }
+        }
+    }
+
+    function renderGame(p) {
+        // Draw Room
+        if (gameState.currentRoom) {
+            gameState.currentRoom.render(p);
+        }
+
+        // Draw Entities
+        gameState.entities.forEach(ent => ent.render(p));
+
+        // Draw Player
+        if (gameState.player) {
+            gameState.player.render(p);
+        }
+
+        // Draw Particles
+        updateAndRenderParticles(p);
+
+        // Transition Overlay
+        if (gameState.transitionAlpha > 0) {
+            p.fill(0, 0, 0, gameState.transitionAlpha);
+            p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+        }
+    }
+
+}); // End p5 Instance
+
+export default gameInstance;
+</code>

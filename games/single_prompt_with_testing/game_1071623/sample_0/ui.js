@@ -55,15 +55,23 @@ export function renderGameOver(p, win) {
     
     if (win) {
         p.fill(255, 100, 200); // Pink for bandage girl
-        p.text("YOU SAVED NUGGET!", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 20);
+        p.text("YOU SAVED NUGGET!", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 40);
+        
+        p.textSize(20);
+        p.fill(255);
+        p.text(`Level ${gameState.level} Complete!`, CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+        p.text("Press SPACE for Next Level", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 40);
+        p.textSize(14);
+        p.fill(180);
+        p.text("Press R to Restart from Level 1", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 70);
     } else {
         p.fill(200, 0, 0); // Blood red
         p.text("YOU DIED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 20);
+        
+        p.textSize(20);
+        p.fill(255);
+        p.text("Press R to Retry", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 40);
     }
-    
-    p.textSize(20);
-    p.fill(255);
-    p.text("Press R to Restart", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 40);
     p.pop();
 }
 

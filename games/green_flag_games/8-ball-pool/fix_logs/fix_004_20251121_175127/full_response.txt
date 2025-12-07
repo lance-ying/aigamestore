@@ -1,0 +1,305 @@
+<analysis>
+- Issue identified: The cushion gaps for pockets are too small (only 4-8% of table width), and corner guards positioned at pocket locations are blocking balls from entering pockets. The gap percentages (0.08 for middle, 0.06 for corners) create openings that are barely larger than the ball diameter, preventing proper pocket entry.
+- Files affected: entities.js, physics.js
+- Changes needed: 
+  1. Significantly increase gap percentages in cushion creation (from 0.08/0.06 to 0.18/0.15)
+  2. Remove corner guards that block pocket entry
+  3. Slightly increase pocket detection threshold for more reliable capture
+</analysis>
+
+<code filename="entities.js">
+// entities.js - Game entities (balls, cue stick, etc.)
+import Matter from 'https://cdn.jsdelivr.net/npm/matter-js@0.19.0/+esm';
+const { Bodies, Body, World } = Matter;
+
+import { gameState, BALL_RADIUS, BALL_COLORS } from './globals.js';
+
+export class Ball {
+  constructor(p, x, y, number) {
+    this.p = p;
+    this.number = number;
+    this.color = BALL_COLORS[number];
+    this.pocketed = false;
+    
+    // Create Matter.js body
+    this.body = Bodies.circle(x, y, BALL_RADIUS, {
+      label: `ball_${number}`,
+      friction: 0.05,
+      frictionAir: 0.01,
+      restitution: 0.9,
+      density: 0.001,
+      number: number
+    });
+    
+    World.add(gameState.world, this.body);
+  }
+  
+  update() {
+    // Check if ball is moving slowly enough to be considered stopped
+    const vel = this.body.velocity;
+    const speed = Math.sqrt(vel.x * vel.x + vel.y * vel.y);
+    
+    if (speed < 0.1) {
+      Body.setVelocity(this.body, { x: 0, y: 0 });
+      Body.setAngularVelocity(this.body, 0);
+    }
+  }
+  
+  render() {
+    if (this.pocketed) return;
+    
+    this.p.push();
+    this.p.translate(this.body.position.x, this.body.position.y);
+    this.p.rotate(this.body.angle);
+    
+    // Draw ball
+    this.p.fill(this.color.r, this.color.g, this.color.b);
+    this.p.stroke(0);
+    this.p.strokeWeight(1);
+    this.p.circle(0, 0, BALL_RADIUS * 2);
+    
+    // Draw stripe for striped balls
+    if (this.color.type === "stripe") {
+      this.p.fill(255);
+      this.p.noStroke();
+      this.p.rect(-BALL_RADIUS, -BALL_RADIUS * 0.4, BALL_RADIUS * 2, BALL_RADIUS * 0.8);
+    }
+    
+    // Draw number
+    if (this.number !== 0) {
+      this.p.fill(this.color.type === "eight" ? 255 : 0);
+      this.p.noStroke();
+      this.p.textAlign(this.p.CENTER, this.p.CENTER);
+      this.p.textSize(10);
+      this.p.text(this.number, 0, 0);
+    }
+    
+    this.p.pop();
+  }
+  
+  isStopped() {
+    const vel = this.body.velocity;
+    const speed = Math.sqrt(vel.x * vel.x + vel.y * vel.y);
+    return speed < 0.1;
+  }
+}
+
+export class CueStick {
+  constructor(p) {
+    this.p = p;
+    this.length = 150;
+    this.width = 4;
+  }
+  
+  render(cueBall, angle, power) {
+    if (!cueBall || cueBall.pocketed) return;
+    
+    this.p.push();
+    this.p.translate(cueBall.body.position.x, cueBall.body.position.y);
+    this.p.rotate(angle);
+    
+    // Calculate pullback distance based on power
+    const pullback = (power / gameState.maxShotPower) * 50;
+    
+    // Draw cue stick
+    this.p.fill(139, 90, 43);
+    this.p.stroke(101, 67, 33);
+    this.p.strokeWeight(1);
+    this.p.rect(-BALL_RADIUS - 10 - pullback, -this.width / 2, -this.length, this.width);
+    
+    // Draw tip
+    this.p.fill(200, 200, 200);
+    this.p.rect(-BALL_RADIUS - 10 - pullback, -this.width / 2, -10, this.width);
+    
+    this.p.pop();
+  }
+}
+
+export class Table {
+  constructor(p, world) {
+    this.p = p;
+    this.world = world;
+    this.cushions = [];
+    
+    this.createCushions();
+  }
+  
+  createCushions() {
+    const { tableX, tableY, tableWidth, tableHeight } = gameState.levelParams;
+    const cushionThickness = 20;
+    const options = {
+      isStatic: true,
+      friction: 0.9,
+      restitution: 0.8,
+      label: 'cushion',
+      slop: 0.05
+    };
+    
+    // Larger gap percentages to allow balls to enter pockets properly
+    const gapPercent = 0.18; // Increased from 0.08 to allow proper pocket entry
+    const cornerGapPercent = 0.15; // Increased from 0.06 to allow proper corner pocket entry
+    
+    // Top cushions (with gaps for pockets)
+    // Left section (before middle pocket)
+    this.cushions.push(Bodies.rectangle(
+      tableX + tableWidth * 0.25, tableY - cushionThickness / 2,
+      tableWidth * (0.5 - gapPercent), cushionThickness, options
+    ));
+    // Right section (after middle pocket)
+    this.cushions.push(Bodies.rectangle(
+      tableX + tableWidth * 0.75, tableY - cushionThickness / 2,
+      tableWidth * (0.5 - gapPercent), cushionThickness, options
+    ));
+    
+    // Bottom cushions (with gaps for pockets)
+    this.cushions.push(Bodies.rectangle(
+      tableX + tableWidth * 0.25, tableY + tableHeight + cushionThickness / 2,
+      tableWidth * (0.5 - gapPercent), cushionThickness, options
+    ));
+    this.cushions.push(Bodies.rectangle(
+      tableX + tableWidth * 0.75, tableY + tableHeight + cushionThickness / 2,
+      tableWidth * (0.5 - gapPercent), cushionThickness, options
+    ));
+    
+    // Left cushions (with gap at top and bottom for corner pockets)
+    // Top section
+    this.cushions.push(Bodies.rectangle(
+      tableX - cushionThickness / 2, tableY + tableHeight * 0.25,
+      cushionThickness, tableHeight * (0.5 - cornerGapPercent), options
+    ));
+    // Bottom section
+    this.cushions.push(Bodies.rectangle(
+      tableX - cushionThickness / 2, tableY + tableHeight * 0.75,
+      cushionThickness, tableHeight * (0.5 - cornerGapPercent), options
+    ));
+    
+    // Right cushions (with gap at top and bottom for corner pockets)
+    // Top section
+    this.cushions.push(Bodies.rectangle(
+      tableX + tableWidth + cushionThickness / 2, tableY + tableHeight * 0.25,
+      cushionThickness, tableHeight * (0.5 - cornerGapPercent), options
+    ));
+    // Bottom section
+    this.cushions.push(Bodies.rectangle(
+      tableX + tableWidth + cushionThickness / 2, tableY + tableHeight * 0.75,
+      cushionThickness, tableHeight * (0.5 - cornerGapPercent), options
+    ));
+    
+    // Note: Corner guards removed to allow proper pocket entry
+    
+    this.cushions.forEach(cushion => World.add(this.world, cushion));
+  }
+  
+  render() {
+    const { tableX, tableY, tableWidth, tableHeight } = gameState.levelParams;
+    
+    // Draw table felt
+    this.p.fill(34, 139, 34);
+    this.p.stroke(101, 67, 33);
+    this.p.strokeWeight(20);
+    this.p.rect(tableX, tableY, tableWidth, tableHeight);
+    
+    // Draw pockets
+    this.p.fill(0);
+    this.p.noStroke();
+    const pocketRadius = 12 * gameState.levelParams.pocketSizeMultiplier;
+    
+    // Corner pockets
+    this.p.circle(tableX, tableY, pocketRadius * 2);
+    this.p.circle(tableX + tableWidth, tableY, pocketRadius * 2);
+    this.p.circle(tableX, tableY + tableHeight, pocketRadius * 2);
+    this.p.circle(tableX + tableWidth, tableY + tableHeight, pocketRadius * 2);
+    
+    // Middle pockets
+    this.p.circle(tableX + tableWidth / 2, tableY, pocketRadius * 2);
+    this.p.circle(tableX + tableWidth / 2, tableY + tableHeight, pocketRadius * 2);
+    
+    // Draw baulk line
+    this.p.stroke(255, 255, 255, 100);
+    this.p.strokeWeight(1);
+    this.p.line(tableX + 100, tableY, tableX + 100, tableY + tableHeight);
+  }
+}
+</code>
+
+<code filename="physics.js">
+// physics.js - Physics handling and collision detection
+import Matter from 'https://cdn.jsdelivr.net/npm/matter-js@0.19.0/+esm';
+const { Events } = Matter;
+
+import { gameState, POCKET_RADIUS, BALL_RADIUS, getPockets } from './globals.js';
+
+export function setupPhysics(p) {
+  // Collision detection for ball contacts
+  Events.on(gameState.engine, 'collisionStart', (event) => {
+    const pairs = event.pairs;
+    
+    pairs.forEach(pair => {
+      const bodyA = pair.bodyA;
+      const bodyB = pair.bodyB;
+      
+      // Track first ball contact
+      if (gameState.playingPhase === "WAITING" && !gameState.firstContactBall) {
+        if (bodyA.label === "ball_0" && bodyB.label && bodyB.label.startsWith("ball_")) {
+          gameState.firstContactBall = bodyB.number;
+        } else if (bodyB.label === "ball_0" && bodyA.label && bodyA.label.startsWith("ball_")) {
+          gameState.firstContactBall = bodyA.number;
+        }
+      }
+      
+      // Track cushion hits
+      if (gameState.playingPhase === "WAITING") {
+        if ((bodyA.label === "cushion" && bodyB.label && bodyB.label.startsWith("ball_")) ||
+            (bodyB.label === "cushion" && bodyA.label && bodyA.label.startsWith("ball_"))) {
+          gameState.cushionHits++;
+        }
+      }
+    });
+  });
+}
+
+export function checkPockets(p) {
+  const pockets = getPockets();
+  const pocketRadius = POCKET_RADIUS * gameState.levelParams.pocketSizeMultiplier;
+  // More generous capture threshold - ball center just needs to be reasonably close to pocket center
+  const captureThreshold = pocketRadius + BALL_RADIUS * 0.9;
+  const ballsToPocket = [];
+  
+  gameState.ballsOnTable.forEach(ball => {
+    if (ball.pocketed) return;
+    
+    const ballPos = ball.body.position;
+    
+    pockets.forEach(pocket => {
+      const dx = ballPos.x - pocket.x;
+      const dy = ballPos.y - pocket.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      
+      // Use generous threshold so balls that reach the pocket area get captured
+      if (dist < captureThreshold) {
+        ballsToPocket.push(ball);
+      }
+    });
+  });
+  
+  // Pocket the balls
+  ballsToPocket.forEach(ball => {
+    ball.pocketed = true;
+    Matter.World.remove(gameState.world, ball.body);
+    
+    gameState.lastPocketedBalls.push(ball.number);
+    gameState.pocketedBalls.push(ball.number);
+    
+    // Log pocketing
+    p.logs.game_info.push({
+      data: { event: "ball_pocketed", ball: ball.number },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  });
+}
+
+export function checkAllBallsStopped() {
+  return gameState.ballsOnTable.every(ball => ball.pocketed || ball.isStopped());
+}
+</code>

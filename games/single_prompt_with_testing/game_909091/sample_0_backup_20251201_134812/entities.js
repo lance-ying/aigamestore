@@ -1,0 +1,436 @@
+// Game entities: Player, Enemy, Collectible, Projectile, Tile
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, COLORS, TILE_SIZE, WORLD_GRAVITY } from './globals.js';
+import { applyPhysics, resolveTileCollision, checkTileCollision } from './physics.js';
+import { createExplosion } from './particles.js';
+import { collideRectRect, collideRectCircle, collideCircleCircle } from 'https://cdn.jsdelivr.net/npm/p5.collide2d@1.0.0/dist/p5.collide2d.js';
+
+// Base Entity Class
+class Entity {
+    constructor(x, y, width, height) {
+        this.x = x;
+        this.y = y;
+        this.width = width;
+        this.height = height;
+        this.vx = 0;
+        this.vy = 0;
+        this.onGround = false;
+        this.isActive = true;
+        this.facing = 1; // 1 Right, -1 Left
+    }
+}
+
+export class Player extends Entity {
+    constructor(x, y) {
+        super(x, y, 24, 36);
+        this.speed = 5;
+        this.jumpForce = -11;
+        this.health = 3;
+        this.maxHealth = 3;
+        this.invulnerableTimer = 0;
+        this.canShoot = true;
+        this.shootCooldown = 0;
+    }
+
+    update(p) {
+        if (!this.isActive) return;
+
+        // Decrease timers
+        if (this.invulnerableTimer > 0) this.invulnerableTimer--;
+        if (this.shootCooldown > 0) this.shootCooldown--;
+
+        // Input handling (Handled in game.js usually, but applied here)
+        // Physics application
+        applyPhysics(this, WORLD_GRAVITY, 0.85);
+
+        // Map Collision
+        // 1. Move Y
+        this.y += this.vy;
+        this.onGround = false; 
+        
+        // Check collisions with all tiles
+        // Optimization: Filter nearby tiles
+        const nearbyTiles = gameState.tiles.filter(t => 
+            Math.abs(t.x - this.x) < 100 && Math.abs(t.y - this.y) < 100
+        );
+
+        for (const tile of nearbyTiles) {
+            if (collideRectRect(this.x, this.y, this.width, this.height, tile.x, tile.y, tile.width, tile.height)) {
+                resolveTileCollision(this, tile);
+            }
+        }
+
+        // 2. Move X
+        this.x += this.vx;
+        for (const tile of nearbyTiles) {
+            if (collideRectRect(this.x, this.y, this.width, this.height, tile.x, tile.y, tile.width, tile.height)) {
+                resolveTileCollision(this, tile);
+            }
+        }
+
+        // Collectibles collision
+        for (let i = gameState.collectibles.length - 1; i >= 0; i--) {
+            const item = gameState.collectibles[i];
+            if (collideRectCircle(this.x, this.y, this.width, this.height, item.x, item.y, item.size)) {
+                item.collect(this);
+            }
+        }
+
+        // Enemy Collision
+        if (this.invulnerableTimer === 0) {
+            for (const enemy of gameState.entities) {
+                if (enemy instanceof Enemy && enemy.isActive) {
+                    // Check collision
+                    if (collideRectRect(this.x, this.y, this.width, this.height, enemy.x, enemy.y, enemy.width, enemy.height)) {
+                        // Check if jumped on top
+                        const hitFromTop = this.vy > 0 && (this.y + this.height) < (enemy.y + enemy.height / 2);
+                        
+                        if (hitFromTop) {
+                            // Kill enemy
+                            enemy.die();
+                            this.vy = -6; // Bounce
+                            gameState.score += 50;
+                        } else {
+                            // Take damage
+                            this.takeDamage(1);
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Log info
+        if(p.logs && p.logs.player_info) {
+             p.logs.player_info.push({
+                screen_x: this.x - gameState.cameraX,
+                screen_y: this.y - gameState.cameraY,
+                game_x: this.x,
+                game_y: this.y,
+                framecount: gameState.frameCount,
+                timestamp: Date.now()
+             });
+        }
+    }
+
+    takeDamage(amount) {
+        this.health -= amount;
+        this.invulnerableTimer = 60; // 1 second
+        if (this.health <= 0) {
+            this.die();
+        }
+        // Visual feedback
+        createExplosion(this.x + this.width/2, this.y + this.height/2, '#FF0000', 10, gameState);
+    }
+
+    die() {
+        this.isActive = false;
+        createExplosion(this.x + this.width/2, this.y + this.height/2, COLORS.PLAYER_BODY, 30, gameState);
+        gameState.gamePhase = "GAME_OVER_LOSE";
+    }
+    
+    shoot() {
+        if(this.shootCooldown === 0) {
+            const px = this.facing === 1 ? this.x + this.width : this.x - 10;
+            const py = this.y + this.height / 2;
+            const proj = new Projectile(px, py, this.facing * 8, 0);
+            gameState.entities.push(proj);
+            this.shootCooldown = 30; // 0.5s
+        }
+    }
+
+    render(p) {
+        if (!this.isActive) return;
+        
+        // Blink if invulnerable
+        if (this.invulnerableTimer > 0 && Math.floor(p.frameCount / 4) % 2 === 0) return;
+
+        p.push();
+        p.translate(this.x + this.width/2, this.y + this.height/2);
+        
+        // Facing flip
+        p.scale(this.facing, 1);
+        
+        // Body (Leprechaun Green)
+        p.fill(COLORS.PLAYER_BODY);
+        p.rectMode(p.CENTER);
+        p.rect(0, 4, 20, 28, 4);
+        
+        // Head/Hat
+        p.fill(COLORS.PLAYER_HAT);
+        p.rect(0, -12, 24, 8); // Hat brim
+        p.rect(0, -18, 16, 14); // Hat top
+        p.fill('#FFD700'); // Hat buckle
+        p.rect(0, -12, 6, 6);
+        
+        // Face
+        p.fill('#FFCC80'); // Skin
+        p.circle(0, -2, 14);
+        
+        // Beard
+        p.fill('#E65100'); // Orange beard
+        p.arc(0, 0, 16, 16, 0, p.PI);
+        
+        // Eyes
+        p.fill(0);
+        p.circle(3, -4, 2);
+        p.circle(-3, -4, 0); // One eye hidden by turn? No, just style.
+        
+        p.pop();
+    }
+}
+
+export class Enemy extends Entity {
+    constructor(x, y, type) {
+        super(x, y, 30, 30);
+        this.type = type; // 'snail' or 'bee'
+        this.patrolStart = x;
+        this.patrolRange = 100;
+        this.vx = type === 'snail' ? 1 : 2;
+        this.startY = y;
+    }
+
+    update() {
+        if (!this.isActive) return;
+        
+        if (this.type === 'snail') {
+            // Patrol platform
+            this.x += this.vx;
+            
+            // Turn around at edges or walls
+            // Simple range check for simplicity
+            if (this.x > this.patrolStart + this.patrolRange) this.vx = -Math.abs(this.vx);
+            if (this.x < this.patrolStart - this.patrolRange) this.vx = Math.abs(this.vx);
+            
+            // Check wall collisions
+            const nearbyTiles = gameState.tiles.filter(t => Math.abs(t.x - this.x) < 60);
+            for (const tile of nearbyTiles) {
+                if (collideRectRect(this.x + this.vx, this.y, this.width, this.height, tile.x, tile.y, tile.width, tile.height)) {
+                    this.vx *= -1;
+                    break;
+                }
+            }
+            
+            this.facing = this.vx > 0 ? 1 : -1;
+            
+        } else if (this.type === 'bee') {
+            // Fly in sine wave
+            this.x -= this.vx; // Flies left usually
+            this.y = this.startY + Math.sin(gameState.frameCount * 0.05) * 30;
+            
+            if (this.x < -50) this.isActive = false; // Despawn
+        }
+    }
+
+    render(p) {
+        if (!this.isActive) return;
+        p.push();
+        p.translate(this.x + this.width/2, this.y + this.height/2);
+        p.scale(this.type === 'snail' ? this.facing : 1, 1);
+        
+        if (this.type === 'snail') {
+            // Snail Shell
+            p.fill(COLORS.ENEMY_SNAIL);
+            p.arc(0, 5, 26, 26, p.PI, 0);
+            // Body
+            p.fill('#FFCC80');
+            p.rect(0, 10, 30, 10, 5);
+            // Eyes
+            p.fill(255);
+            p.circle(10, -5, 8);
+            p.fill(0);
+            p.circle(11, -5, 3);
+        } else {
+            // Bee
+            p.fill(COLORS.ENEMY_BEE);
+            p.ellipse(0, 0, 30, 20); // Body
+            p.fill(0); // Stripes
+            p.rect(0, 0, 4, 20);
+            p.rect(-6, 0, 4, 16);
+            // Wings
+            p.fill(255, 255, 255, 200);
+            p.ellipse(0, -10, 10, 15);
+            p.scale(1, Math.sin(gameState.frameCount * 0.5)); // Flap
+        }
+        
+        p.pop();
+    }
+
+    die() {
+        this.isActive = false;
+        createExplosion(this.x + this.width/2, this.y + this.height/2, this.type === 'snail' ? COLORS.ENEMY_SNAIL : COLORS.ENEMY_BEE, 15, gameState);
+    }
+}
+
+export class Projectile extends Entity {
+    constructor(x, y, vx, vy) {
+        super(x, y, 10, 10);
+        this.vx = vx;
+        this.vy = vy;
+        this.life = 60; // Frames
+    }
+
+    update() {
+        if (!this.isActive) return;
+        this.x += this.vx;
+        this.y += this.vy;
+        this.vy += 0.2; // Gravity for pinecone arc
+        this.life--;
+        if (this.life <= 0) this.isActive = false;
+
+        // Check enemy collision
+        for (const enemy of gameState.entities) {
+            if (enemy instanceof Enemy && enemy.isActive) {
+                if (collideCircleCircle(this.x, this.y, 10, enemy.x + enemy.width/2, enemy.y + enemy.height/2, enemy.width)) {
+                    enemy.die();
+                    this.isActive = false;
+                    createExplosion(this.x, this.y, '#8D6E63', 5, gameState);
+                    break;
+                }
+            }
+        }
+        
+        // Check ground collision
+        const nearbyTiles = gameState.tiles.filter(t => Math.abs(t.x - this.x) < 50);
+        for(const tile of nearbyTiles) {
+            if(collideRectCircle(tile.x, tile.y, tile.width, tile.height, this.x, this.y, 10)) {
+                this.isActive = false;
+                createExplosion(this.x, this.y, '#8D6E63', 3, gameState);
+            }
+        }
+    }
+
+    render(p) {
+        if (!this.isActive) return;
+        p.push();
+        p.fill('#795548'); // Pinecone brown
+        p.translate(this.x, this.y);
+        p.rotate(gameState.frameCount * 0.2);
+        p.ellipse(0, 0, 10, 12);
+        p.pop();
+    }
+}
+
+export class Tile {
+    constructor(x, y, type) {
+        this.x = x;
+        this.y = y;
+        this.width = TILE_SIZE;
+        this.height = TILE_SIZE;
+        this.type = type; // 'G'=Ground, 'B'=Brick, '?'=Lucky
+        this.isSolid = true;
+        this.active = true; // For lucky blocks
+    }
+
+    interact() {
+        if (this.type === '?' && this.active) {
+            this.active = false;
+            // Spawn coin
+            const coin = new Collectible(this.x + TILE_SIZE/2, this.y - 20, 'coin');
+            // Make it pop up
+            coin.vy = -5;
+            gameState.collectibles.push(coin);
+            gameState.score += 10;
+        }
+    }
+
+    render(p) {
+        p.push();
+        if (this.type === 'G') {
+            // Ground
+            p.fill(COLORS.GROUND_BODY);
+            p.rect(this.x, this.y, this.width, this.height);
+            p.fill(COLORS.GROUND_TOP);
+            p.rect(this.x, this.y, this.width, 10); // Grass top
+        } else if (this.type === 'B') {
+            // Brick
+            p.fill(COLORS.BRICK);
+            p.rect(this.x, this.y, this.width, this.height);
+            p.stroke(0, 50);
+            p.line(this.x, this.y + 10, this.x + this.width, this.y + 10);
+            p.line(this.x, this.y + 30, this.x + this.width, this.y + 30);
+        } else if (this.type === '?') {
+            // Lucky Block
+            p.fill(this.active ? COLORS.LUCKY_BLOCK : '#BCAAA4');
+            p.rect(this.x, this.y, this.width, this.height);
+            p.fill(0);
+            p.textAlign(p.CENTER, p.CENTER);
+            p.textSize(24);
+            p.text('?', this.x + this.width/2, this.y + this.height/2);
+        }
+        p.pop();
+    }
+}
+
+export class Collectible {
+    constructor(x, y, type) {
+        this.x = x;
+        this.y = y;
+        this.type = type; // 'coin', 'clover', 'pot'
+        this.size = 20;
+        this.baseY = y;
+        this.vy = 0; // For spawn animation
+    }
+
+    collect(player) {
+        if (this.type === 'coin') {
+            gameState.score += 10;
+            createExplosion(this.x, this.y, COLORS.COIN, 5, gameState);
+        } else if (this.type === 'clover') {
+            player.health = Math.min(player.health + 1, player.maxHealth);
+            gameState.score += 50;
+            createExplosion(this.x, this.y, COLORS.CLOVER, 10, gameState);
+        } else if (this.type === 'pot') {
+            gameState.gamePhase = "GAME_OVER_WIN";
+            gameState.score += 1000;
+            createExplosion(this.x, this.y, '#FFD700', 50, gameState);
+        }
+
+        // Remove from list
+        const idx = gameState.collectibles.indexOf(this);
+        if (idx > -1) gameState.collectibles.splice(idx, 1);
+    }
+
+    render(p) {
+        // Bobbing animation
+        const bob = Math.sin(gameState.frameCount * 0.1) * 3;
+        
+        // If popping up
+        if (this.vy !== 0) {
+            this.y += this.vy;
+            this.vy += 0.3;
+            if (this.y > this.baseY) {
+                this.y = this.baseY;
+                this.vy = 0;
+            }
+        }
+        
+        const renderY = this.y + bob;
+
+        p.push();
+        p.translate(this.x, renderY);
+        
+        if (this.type === 'coin') {
+            p.fill(COLORS.COIN);
+            p.circle(0, 0, this.size);
+            p.fill('#FFF59D');
+            p.circle(0, 0, this.size * 0.6);
+        } else if (this.type === 'clover') {
+            p.fill(COLORS.CLOVER);
+            p.translate(0, -5);
+            for(let i=0; i<3; i++) {
+                p.rotate(p.TWO_PI/3);
+                p.circle(0, 8, 10);
+            }
+        } else if (this.type === 'pot') {
+            p.fill(COLORS.POT_OF_GOLD);
+            p.arc(0, 10, 40, 40, 0, p.PI); // Pot
+            p.fill('#FFD700');
+            p.ellipse(0, 10, 35, 10); // Gold pile
+            
+            // Rainbow particle effect
+            if (gameState.frameCount % 5 === 0) {
+                createExplosion(this.x, this.y, '#FF00FF', 1, gameState);
+            }
+        }
+        p.pop();
+    }
+}

@@ -1,0 +1,1098 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+physics.js:2 Uncaught SyntaxError: The requested module './globals.js' does not provide an export named 'checkAABB' (at physics.js:2:21)
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Temple Escape 3D</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      /* Ensure game container is strictly sized */
+      #game-container { 
+        width: 600px; 
+        height: 400px; 
+        background: #000;
+        box-shadow: 0 0 20px rgba(0,0,0,0.5);
+      }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button:hover { background: #555; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">Temple Escape 3D</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test1Btn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST 1 (Jump)</button>
+        <button id="test2Btn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST 2 (Turn)</button>
+        <button id="test3Btn" class="control-button" onclick="window.setControlMode('TEST_3')">TEST 3 (Slide)</button>
+        <button id="test4Btn" class="control-button" onclick="window.setControlMode('TEST_4')">TEST 4 (Die)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 10px auto; line-height: 1.4; font-size: 14px;">
+        Run from the demons! Use Arrows/WASD to Jump, Slide, and Turn.
+      </p>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/seedrandom/3.0.5/seedrandom.min.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="globals.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+export const TILE_SIZE = 10;
+export const LANE_WIDTH = 2.5;
+export const PLAYER_SPEED_INITIAL = 12.0; // Units per second
+export const GRAVITY = -40.0;
+export const JUMP_FORCE = 15.0;
+
+export const gameState = {
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    controlMode: "HUMAN", // HUMAN, TEST_1, TEST_2, etc.
+    
+    // Core Three.js
+    scene: null,
+    camera: null,
+    renderer: null,
+    gameContainer: null,
+    
+    // Game Objects
+    player: null,
+    pathManager: null,
+    entities: [], // Obstacles, coins
+    
+    // State
+    score: 0,
+    coins: 0,
+    distance: 0,
+    speed: PLAYER_SPEED_INITIAL,
+    frameCount: 0,
+    deltaTime: 0,
+    
+    // Camera State
+    cameraOffset: new THREE.Vector3(0, 6, 8),
+    cameraLookAtOffset: new THREE.Vector3(0, 2, -5),
+    
+    // Logging
+    logs: {
+        game_info: [],
+        player_info: [],
+        inputs: []
+    }
+};
+
+export function getGameState() {
+    return gameState;
+}
+window.getGameState = getGameState;
+
+// Log helper
+export function logGameEvent(type, data) {
+    if (gameState.logs[type]) {
+        gameState.logs[type].push({
+            ...data,
+            framecount: gameState.frameCount,
+            timestamp: Date.now()
+        });
+    }
+}
+</file>
+
+<file name="game.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, getGameState, logGameEvent, PLAYER_SPEED_INITIAL } from './globals.js';
+import { setupRenderer, setupLighting, renderUI } from './renderer.js';
+import { setupCamera, updateCamera } from './camera.js';
+import { Player, Coin, Obstacle } from './entities.js';
+import { PathManager } from './world.js';
+import { updatePhysics } from './physics.js';
+
+// Expose classes for instance checks
+gameState.CoinClass = Coin;
+gameState.ObstacleClass = Obstacle;
+
+// Input State
+const keys = {
+    ArrowUp: false,
+    ArrowDown: false,
+    ArrowLeft: false,
+    ArrowRight: false,
+    KeyW: false,
+    KeyS: false,
+    KeyA: false,
+    KeyD: false
+};
+
+function init() {
+    // 1. Setup Three.js
+    gameState.scene = new THREE.Scene();
+    setupRenderer();
+    setupCamera();
+    setupLighting();
+    
+    // Seed RNG
+    Math.seedrandom('temple_run_seed');
+    
+    // Listeners
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    
+    // Loop
+    requestAnimationFrame(gameLoop);
+}
+
+function startGame() {
+    // Reset State
+    gameState.score = 0;
+    gameState.coins = 0;
+    gameState.speed = PLAYER_SPEED_INITIAL;
+    gameState.entities = [];
+    
+    // Clear Scene (keep lights/camera)
+    gameState.scene.children = gameState.scene.children.filter(c => c.isLight || c.isCamera);
+    
+    // Create World
+    gameState.pathManager = new PathManager();
+    gameState.player = new Player();
+    
+    gameState.gamePhase = "PLAYING";
+    logGameEvent('game_info', { action: 'start_game' });
+}
+
+function handleKeyDown(e) {
+    // Phase Controls
+    if (e.code === 'Enter' && gameState.gamePhase === "START") startGame();
+    if (e.code === 'KeyR' && (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE")) {
+        gameState.gamePhase = "START";
+    }
+    if (e.code === 'Escape') {
+        if (gameState.gamePhase === "PLAYING") gameState.gamePhase = "PAUSED";
+        else if (gameState.gamePhase === "PAUSED") gameState.gamePhase = "PLAYING";
+    }
+    
+    // Game Controls
+    if (gameState.gamePhase === "PLAYING") {
+        if (e.code === 'ArrowUp' || e.code === 'KeyW' || e.code === 'Space') {
+            gameState.player.jump();
+            logGameEvent('inputs', { key: 'jump' });
+        }
+        if (e.code === 'ArrowDown' || e.code === 'KeyS') {
+            gameState.player.slide();
+            logGameEvent('inputs', { key: 'slide' });
+        }
+        
+        // Turning vs Lane Change
+        if (e.code === 'ArrowLeft' || e.code === 'KeyA') {
+            handleHorizontalInput(1); // Left logic
+        }
+        if (e.code === 'ArrowRight' || e.code === 'KeyD') {
+            handleHorizontalInput(-1); // Right logic
+        }
+    }
+}
+
+function handleHorizontalInput(dir) { // 1 = Left, -1 = Right
+    // Check if in turn zone
+    if (gameState.inTurnZone) {
+        // Check if input matches required turn
+        if (dir === gameState.requiredTurnDir) {
+            // EXECUTE TURN
+            gameState.player.turn(dir);
+            // Snap position to pivot to avoid running into wall during turn
+            gameState.player.mesh.position.x = gameState.turnPivot.x;
+            gameState.player.mesh.position.z = gameState.turnPivot.z;
+            
+            gameState.inTurnZone = false; // Turn consumed
+            logGameEvent('inputs', { key: 'turn', dir: dir });
+        } else {
+             // Wrong turn direction - probably death soon
+        }
+    } else {
+        // Lane Change
+        // Inverted for visual logic?
+        // If dir=1 (Left Key), we want to go Left relative to player.
+        // Player.moveLane(-1) moves Left.
+        // Wait, standardized: moveLane(-1) is Left.
+        // dir is 1 for Left Key. So moveLane(1) ??
+        // Let's fix semantics:
+        // Left Key -> moveLane(1) (Positive Local X is Left)
+        gameState.player.moveLane(dir);
+        logGameEvent('inputs', { key: 'lane_change', dir: dir });
+    }
+}
+
+function handleKeyUp(e) {
+    // Reset flags if needed
+}
+
+// Global hook for test buttons
+window.setControlMode = (mode) => {
+    gameState.controlMode = mode;
+    console.log("Mode set to " + mode);
+    // Auto-restart for clean test state
+    gameState.gamePhase = "START"; 
+};
+
+function runAutoTests() {
+    if (!gameState.player || gameState.gamePhase !== "PLAYING") return;
+    
+    const pPos = gameState.player.mesh.position;
+    const pDir = gameState.player.direction;
+    
+    // Simple AI: Raycast or Check Entities ahead
+    // Find closest entity in front
+    let nearestDist = 999;
+    let nearestEnt = null;
+    
+    // Look for obstacles
+    gameState.entities.forEach(ent => {
+        if (!ent.active || !(ent instanceof Obstacle)) return;
+        
+        const vecToEnt = new THREE.Vector3().subVectors(ent.mesh.position, pPos);
+        const dist = vecToEnt.length();
+        
+        // Dot product to check if in front
+        if (vecToEnt.normalize().dot(pDir) > 0.8 && dist < nearestDist) {
+            nearestDist = dist;
+            nearestEnt = ent;
+        }
+    });
+    
+    // Check for Turns
+    // We can use the inTurnZone flag or distance to end of current segment
+    // But pathManager automatically sets inTurnZone
+    
+    if (gameState.controlMode === "TEST_1" || gameState.controlMode === "TEST_2" || gameState.controlMode === "TEST_3") {
+        
+        // Obstacle Avoidance
+        if (nearestEnt && nearestDist < 8) {
+            if (nearestEnt.type === "LOG" && !gameState.player.isJumping) {
+                gameState.player.jump();
+            } else if (nearestEnt.type === "BEAM" && !gameState.player.isSliding) {
+                gameState.player.slide();
+            }
+        }
+        
+        // Turning
+        if (gameState.inTurnZone) {
+            // Execute correct turn
+            // Note: in TEST_4 we might skip this to fail
+            if (gameState.controlMode !== "TEST_4") {
+                 handleHorizontalInput(gameState.requiredTurnDir);
+            }
+        }
+        
+        // Center Lane logic
+        // If not turning or dodging, try to stay in center
+        // (Optional for stability)
+    }
+    
+    if (gameState.controlMode === "TEST_4") {
+        // Suicide mode: Don't turn
+        // Do nothing
+    }
+}
+
+let lastTime = 0;
+function gameLoop(time) {
+    requestAnimationFrame(gameLoop);
+    
+    const dt = Math.min((time - lastTime) / 1000, 0.1); // Cap dt
+    lastTime = time;
+    
+    gameState.deltaTime = dt;
+    gameState.frameCount++;
+    
+    if (gameState.gamePhase === "PLAYING") {
+        // Logic
+        gameState.score += 10 * dt; // Distance score
+        gameState.speed += 0.1 * dt; // Acceleration
+        
+        if (gameState.controlMode !== "HUMAN") {
+            runAutoTests();
+        }
+        
+        gameState.player.update(dt);
+        gameState.pathManager.update();
+        gameState.entities.forEach(e => {
+            if (e.update) e.update(dt);
+        });
+        
+        updatePhysics(dt);
+        updateCamera(dt);
+    }
+    
+    // Render
+    if (gameState.renderer && gameState.scene && gameState.camera) {
+        gameState.renderer.render(gameState.scene, gameState.camera);
+    }
+    
+    renderUI();
+}
+
+init();
+</file>
+
+<file name="renderer.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export function setupRenderer() {
+    // Create Container
+    const container = document.createElement('div');
+    container.id = 'game-container';
+    container.style.width = `${CANVAS_WIDTH}px`;
+    container.style.height = `${CANVAS_HEIGHT}px`;
+    container.style.position = 'relative';
+    container.style.overflow = 'hidden';
+    document.body.appendChild(container);
+    gameState.gameContainer = container;
+
+    // WebGL Renderer
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(CANVAS_WIDTH, CANVAS_HEIGHT);
+    renderer.shadowMap.enabled = true;
+    container.appendChild(renderer.domElement);
+    gameState.renderer = renderer;
+    
+    // UI Canvas
+    const uiCanvas = document.createElement('canvas');
+    uiCanvas.width = CANVAS_WIDTH;
+    uiCanvas.height = CANVAS_HEIGHT;
+    uiCanvas.style.position = 'absolute';
+    uiCanvas.style.top = '0';
+    uiCanvas.style.left = '0';
+    uiCanvas.style.pointerEvents = 'none';
+    container.appendChild(uiCanvas);
+    gameState.uiContext = uiCanvas.getContext('2d');
+}
+
+export function setupLighting() {
+    const scene = gameState.scene;
+    
+    const amb = new THREE.AmbientLight(0xffffff, 0.6);
+    scene.add(amb);
+    
+    const dir = new THREE.DirectionalLight(0xffffff, 0.8);
+    dir.position.set(20, 50, 20);
+    dir.castShadow = true;
+    dir.shadow.camera.left = -50;
+    dir.shadow.camera.right = 50;
+    dir.shadow.camera.top = 50;
+    dir.shadow.camera.bottom = -50;
+    scene.add(dir);
+    
+    // Fog
+    scene.fog = new THREE.Fog(0x87CEEB, 10, 50);
+    scene.background = new THREE.Color(0x87CEEB);
+}
+
+export function renderUI() {
+    const ctx = gameState.uiContext;
+    ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    // Common Text Settings
+    ctx.fillStyle = 'white';
+    ctx.shadowColor = 'black';
+    ctx.shadowBlur = 2;
+    
+    if (gameState.gamePhase === "START") {
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(0,0,CANVAS_WIDTH, CANVAS_HEIGHT);
+        
+        ctx.font = '30px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = 'white';
+        ctx.fillText("TEMPLE ESCAPE 3D", CANVAS_WIDTH/2, 150);
+        ctx.font = '16px Arial';
+        ctx.fillText("Arrows to Move/Turn/Jump/Slide", CANVAS_WIDTH/2, 200);
+        ctx.fillText("Press ENTER to Start", CANVAS_WIDTH/2, 250);
+        
+    } else if (gameState.gamePhase === "PLAYING") {
+        // HUD
+        ctx.font = '20px Arial';
+        ctx.textAlign = 'left';
+        ctx.fillText(`Score: ${Math.floor(gameState.score)}`, 20, 30);
+        ctx.fillText(`Coins: ${gameState.coins}`, 20, 60);
+        
+        // Speed indicator
+        ctx.fillRect(20, 80, gameState.speed * 2, 10);
+        
+    } else if (gameState.gamePhase === "GAME_OVER_LOSE") {
+        ctx.fillStyle = 'rgba(50,0,0,0.6)';
+        ctx.fillRect(0,0,CANVAS_WIDTH, CANVAS_HEIGHT);
+        
+        ctx.font = '40px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = 'red';
+        ctx.fillText("GAME OVER", CANVAS_WIDTH/2, 150);
+        ctx.fillStyle = 'white';
+        ctx.font = '20px Arial';
+        ctx.fillText(`Final Score: ${Math.floor(gameState.score)}`, CANVAS_WIDTH/2, 200);
+        ctx.fillText("Press R to Restart", CANVAS_WIDTH/2, 250);
+    }
+}
+</file>
+
+<file name="world.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, TILE_SIZE, LANE_WIDTH } from './globals.js';
+import { createStoneTexture } from './utils.js';
+import { Coin, Obstacle } from './entities.js';
+
+// Types of segments
+const SEG_STRAIGHT = 0;
+const SEG_TURN_LEFT = 1;
+const SEG_TURN_RIGHT = 2;
+
+class Segment {
+    constructor(x, y, z, type, direction, length = 1) {
+        this.type = type; // 0=straight, 1=left, 2=right
+        this.direction = direction; // Vector3 direction of this segment
+        this.length = length; // Number of tiles
+        this.mesh = new THREE.Group();
+        
+        // Create floor
+        const geo = new THREE.BoxGeometry(TILE_SIZE, 1, TILE_SIZE);
+        const mat = new THREE.MeshStandardMaterial({ 
+            map: createStoneTexture(),
+            roughness: 0.8 
+        });
+        
+        // Build the physical path
+        // For a straight segment of length N
+        // We actually build N individual tiles to allow fine-grained spawning
+        this.tiles = [];
+        
+        for (let i = 0; i < length; i++) {
+            const tile = new THREE.Mesh(geo, mat);
+            
+            // Position relative to start of segment
+            // If direction is (0,0,-1) [North], tiles are at (0,0,-i*10)
+            const offset = direction.clone().multiplyScalar(i * TILE_SIZE);
+            tile.position.copy(offset);
+            tile.position.y = -0.5; // Floor level
+            tile.receiveShadow = true;
+            
+            this.mesh.add(tile);
+            this.tiles.push({
+                localPos: offset,
+                worldPos: new THREE.Vector3().addVectors(new THREE.Vector3(x,y,z), offset),
+                hasObstacle: false
+            });
+            
+            // Add walls?
+            // Temple Run has no walls usually, just drop offs.
+        }
+        
+        this.mesh.position.set(x, y, z);
+        gameState.scene.add(this.mesh);
+        
+        // Store metadata
+        this.startPos = new THREE.Vector3(x,y,z);
+        this.endPos = this.tiles[this.tiles.length-1].worldPos.clone().add(direction.clone().multiplyScalar(TILE_SIZE));
+    }
+    
+    destroy() {
+        gameState.scene.remove(this.mesh);
+        // Clean up memory
+        this.mesh.traverse(c => {
+            if (c.geometry) c.geometry.dispose();
+            if (c.material) c.material.dispose();
+        });
+    }
+}
+
+export class PathManager {
+    constructor() {
+        this.segments = [];
+        this.activeCoins = [];
+        this.activeObstacles = [];
+        
+        // Initial setup
+        this.currentGenPos = new THREE.Vector3(0, 0, 0);
+        this.currentDirection = new THREE.Vector3(0, 0, -1);
+        
+        // Build initial safe zone
+        this.spawnSegment(SEG_STRAIGHT, 5);
+        
+        // Fill buffer
+        for (let i = 0; i < 5; i++) {
+            this.extendPath();
+        }
+    }
+    
+    spawnSegment(type, length) {
+        const seg = new Segment(
+            this.currentGenPos.x, 
+            this.currentGenPos.y, 
+            this.currentGenPos.z, 
+            type, 
+            this.currentDirection, 
+            length
+        );
+        this.segments.push(seg);
+        
+        // Update generation pointer
+        // For straight, we moved length * TILE_SIZE
+        if (type === SEG_STRAIGHT) {
+             this.currentGenPos.copy(seg.endPos);
+        } else {
+            // For turns, we assume the turn happens AT the last tile of a straight, 
+            // effectively the "Turn" segment is just a 1x1 tile that acts as a pivot
+            // But here we treat it as a specific connector.
+            // Let's simplify: A Turn Segment is 1 tile long.
+            this.currentGenPos.copy(seg.endPos);
+            
+            // Rotate direction for NEXT segment
+            const axis = new THREE.Vector3(0, 1, 0);
+            const angle = (type === SEG_TURN_LEFT) ? Math.PI/2 : -Math.PI/2;
+            this.currentDirection.applyAxisAngle(axis, angle);
+            this.currentDirection.x = Math.round(this.currentDirection.x);
+            this.currentDirection.z = Math.round(this.currentDirection.z);
+        }
+        
+        // Populate with stuff (except first few)
+        if (gameState.score > 50 || this.segments.length > 3) {
+            this.populateSegment(seg);
+        }
+    }
+    
+    extendPath() {
+        // Decide next segment
+        const r = Math.random();
+        // 20% chance to turn, but not too often?
+        // Prevent back-to-back turns for playability
+        const lastType = this.segments[this.segments.length-1].type;
+        
+        if (lastType !== SEG_STRAIGHT || r > 0.8) {
+             this.spawnSegment(SEG_STRAIGHT, Math.floor(Math.random() * 3 + 3)); // 3 to 6 length
+        } else {
+             // Turn
+             const turnType = Math.random() > 0.5 ? SEG_TURN_LEFT : SEG_TURN_RIGHT;
+             this.spawnSegment(turnType, 1);
+             // Always follow turn with a straight to avoid immediate double turns
+             this.spawnSegment(SEG_STRAIGHT, 3);
+        }
+    }
+    
+    populateSegment(seg) {
+        if (seg.type !== SEG_STRAIGHT) return; // Don't put obstacles on corners
+        
+        // Chance for obstacles
+        seg.tiles.forEach((tile, idx) => {
+            if (idx === 0 || idx === seg.tiles.length - 1) return; // Keep ends clear
+            
+            const r = Math.random();
+            // Coins
+            if (r < 0.3) {
+                const lane = Math.floor(Math.random() * 3) - 1; // -1, 0, 1
+                const right = new THREE.Vector3(0,1,0).cross(seg.direction).normalize();
+                const pos = tile.worldPos.clone().add(right.multiplyScalar(lane * LANE_WIDTH));
+                pos.y = 1.0;
+                
+                const coin = new Coin(pos.x, pos.y, pos.z);
+                gameState.entities.push(coin);
+            }
+            // Obstacles
+            else if (r > 0.7 && !tile.hasObstacle) {
+                 const type = Math.random() > 0.5 ? "LOG" : "BEAM";
+                 // Center obstacle
+                 const pos = tile.worldPos.clone();
+                 const obs = new Obstacle(pos.x, pos.y, pos.z, type);
+                 
+                 // Rotate obstacle to face player
+                 // Obs mesh group needs rotation
+                 const angle = Math.atan2(seg.direction.x, seg.direction.z);
+                 obs.mesh.rotation.y = angle;
+                 
+                 gameState.entities.push(obs);
+                 tile.hasObstacle = true;
+            }
+        });
+    }
+    
+    update() {
+        if (!gameState.player) return;
+        
+        // Check if we need to spawn new path
+        const distToGen = gameState.player.mesh.position.distanceTo(this.currentGenPos);
+        if (distToGen < 50) { // Keep 50 units ahead
+            this.extendPath();
+        }
+        
+        // Cleanup old segments behind player
+        if (this.segments.length > 0) {
+            const playerPos = gameState.player.mesh.position;
+            const oldestSeg = this.segments[0];
+            const dist = playerPos.distanceTo(oldestSeg.endPos);
+            
+            // If player is far away AND segment is "behind" (dot product?)
+            // Simple distance check if large enough
+            if (dist > 30 && this.segments.length > 5) {
+                const removed = this.segments.shift();
+                removed.destroy();
+            }
+        }
+        
+        // Check "Turn" logic
+        this.checkTurns();
+    }
+    
+    checkTurns() {
+        // Detect if player is on a turn segment
+        // Simple AABB check against turn segments
+        const playerPos = gameState.player.mesh.position;
+        
+        for (const seg of this.segments) {
+            if (seg.type === SEG_STRAIGHT) continue;
+            
+            // It's a turn
+            const dist = new THREE.Vector2(playerPos.x, playerPos.z).distanceTo(new THREE.Vector2(seg.startPos.x, seg.startPos.z));
+            
+            if (dist < TILE_SIZE / 2) {
+                // Player is inside turn zone
+                gameState.inTurnZone = true;
+                gameState.turnDirection = (seg.type === SEG_TURN_LEFT) ? 1 : -1; // 1 for left, -1 for right relative to player? 
+                // Wait, turn(1) is Left? turn(-1) is Right?
+                // In Player class: turn(dir): rotateY(-PI/2 * dir). If dir=1 -> -90 deg (Right). If dir=-1 -> +90 deg (Left).
+                
+                // Let's standardize:
+                // Player.turn(1) -> Turn LEFT (Positive rotation around Y in ThreeJS is CCW, so Left)
+                // Player.turn(-1) -> Turn RIGHT
+                
+                gameState.requiredTurnDir = (seg.type === SEG_TURN_LEFT) ? 1 : -1;
+                gameState.turnPivot = seg.startPos.clone();
+                return;
+            }
+        }
+        gameState.inTurnZone = false;
+        gameState.requiredTurnDir = 0;
+    }
+}
+</file>
+
+<file name="entities.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, LANE_WIDTH, GRAVITY, JUMP_FORCE, TILE_SIZE } from './globals.js';
+import { createWoodTexture } from './utils.js';
+
+export class Player {
+    constructor() {
+        // Player Group
+        this.mesh = new THREE.Group();
+        
+        // Body
+        const bodyGeo = new THREE.BoxGeometry(0.8, 1.2, 0.5);
+        const bodyMat = new THREE.MeshStandardMaterial({ color: 0x00ff00 }); // Green shirt
+        this.body = new THREE.Mesh(bodyGeo, bodyMat);
+        this.body.position.y = 1.2;
+        this.mesh.add(this.body);
+        
+        // Head
+        const headGeo = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+        const headMat = new THREE.MeshStandardMaterial({ color: 0xffccaa }); // Skin
+        this.head = new THREE.Mesh(headGeo, headMat);
+        this.head.position.y = 2.1;
+        this.mesh.add(this.head);
+        
+        // Legs (visual only for running animation)
+        const legGeo = new THREE.BoxGeometry(0.25, 0.8, 0.3);
+        const legMat = new THREE.MeshStandardMaterial({ color: 0x000088 }); // Blue pants
+        this.legL = new THREE.Mesh(legGeo, legMat);
+        this.legR = new THREE.Mesh(legGeo, legMat);
+        this.legL.position.set(-0.2, 0.4, 0);
+        this.legR.position.set(0.2, 0.4, 0);
+        this.mesh.add(this.legL);
+        this.mesh.add(this.legR);
+
+        this.mesh.castShadow = true;
+        
+        // Physics
+        this.velocity = new THREE.Vector3(0, 0, 0);
+        this.direction = new THREE.Vector3(0, 0, -1); // Facing -Z initially
+        this.currentLane = 0; // -1, 0, 1
+        this.isJumping = false;
+        this.isSliding = false;
+        this.slideTimer = 0;
+        
+        // Bounds for collision
+        this.collider = new THREE.Box3();
+        
+        gameState.scene.add(this.mesh);
+    }
+
+    update(dt) {
+        // Run Animation
+        const runSpeed = 15;
+        this.legL.rotation.x = Math.sin(gameState.frameCount * 0.2) * 0.5;
+        this.legR.rotation.x = Math.cos(gameState.frameCount * 0.2) * 0.5;
+        
+        // Gravity
+        if (this.mesh.position.y > 0) {
+            this.velocity.y += GRAVITY * dt;
+        } else if (this.mesh.position.y <= 0 && !this.isDead) {
+            // Ground collision
+            this.mesh.position.y = 0;
+            this.velocity.y = 0;
+            this.isJumping = false;
+        }
+
+        // Apply Velocity
+        this.mesh.position.y += this.velocity.y * dt;
+        
+        // Move forward constantly based on direction
+        const moveStep = this.direction.clone().multiplyScalar(gameState.speed * dt);
+        this.mesh.position.add(moveStep);
+        
+        // Lane Smoothing
+        // Calculate target position based on lane and direction
+        // If direction is (0,0,-1) [North], lanes are X: -2.5, 0, 2.5
+        // If direction is (-1,0,0) [West], lanes are Z: -2.5, 0, 2.5
+        // This requires knowing current "Track Axis"
+        
+        // Simplified: The PathManager handles the "Logic" of where lanes are.
+        // The player just lerps local X/Z relative to the path center.
+        // We will handle lateral movement in 'handleInput' by shifting position perpendicular to direction.
+        
+        // Update Collider
+        this.collider.setFromObject(this.mesh);
+        // Shrink collider slightly for fair play
+        this.collider.min.addScalar(0.2);
+        this.collider.max.subScalar(0.2);
+        
+        // Handle Slide
+        if (this.isSliding) {
+            this.slideTimer -= dt;
+            if (this.slideTimer <= 0) {
+                this.endSlide();
+            }
+        }
+        
+        // Check falling death
+        if (this.mesh.position.y < -5) {
+            this.die();
+        }
+    }
+    
+    jump() {
+        if (!this.isJumping && !this.isSliding) {
+            this.velocity.y = JUMP_FORCE;
+            this.isJumping = true;
+        }
+    }
+    
+    slide() {
+        if (!this.isSliding && !this.isJumping) {
+            this.isSliding = true;
+            this.slideTimer = 1.0; // 1 second slide
+            
+            // Squash mesh
+            this.mesh.scale.set(1, 0.5, 1);
+            this.mesh.position.y -= 0.5; // Adjust pivot
+        }
+    }
+    
+    endSlide() {
+        this.isSliding = false;
+        this.mesh.scale.set(1, 1, 1);
+        this.mesh.position.y += 0.0; // Physics loop will fix Y
+    }
+    
+    moveLane(dir) { // -1 (left) or 1 (right)
+        // Calculate right vector relative to current direction
+        const right = new THREE.Vector3(0, 1, 0).cross(this.direction).normalize();
+        const moveAmount = LANE_WIDTH * dir;
+        this.mesh.position.add(right.multiplyScalar(moveAmount));
+        
+        // Clamp logic should be handled by checking path bounds?
+        // For now, allow free movement, punish falling off.
+    }
+    
+    turn(dir) { // -1 (left) or 1 (right)
+        // Rotate direction vector 90 degrees
+        const axis = new THREE.Vector3(0, 1, 0);
+        this.direction.applyAxisAngle(axis, -Math.PI / 2 * dir);
+        this.mesh.rotateY(-Math.PI / 2 * dir);
+        
+        // Snap to nearest 90 deg to avoid drift
+        // round direction components
+        this.direction.x = Math.round(this.direction.x);
+        this.direction.z = Math.round(this.direction.z);
+    }
+    
+    die() {
+        gameState.gamePhase = "GAME_OVER_LOSE";
+        this.isDead = true;
+    }
+}
+
+export class Coin {
+    constructor(x, y, z) {
+        const geo = new THREE.TorusGeometry(0.3, 0.1, 8, 16);
+        const mat = new THREE.MeshStandardMaterial({ 
+            color: 0xffd700, 
+            emissive: 0xffaa00,
+            emissiveIntensity: 0.5,
+            metalness: 1.0,
+            roughness: 0.3
+        });
+        this.mesh = new THREE.Mesh(geo, mat);
+        this.mesh.position.set(x, y, z);
+        this.active = true;
+        this.collider = new THREE.Box3();
+        
+        gameState.scene.add(this.mesh);
+    }
+    
+    update(dt) {
+        this.mesh.rotation.y += 3 * dt;
+        this.collider.setFromObject(this.mesh);
+    }
+    
+    collect() {
+        this.active = false;
+        this.mesh.visible = false;
+        gameState.scene.remove(this.mesh);
+    }
+}
+
+export class Obstacle {
+    constructor(x, y, z, type) {
+        // type: "LOG" (jump), "BEAM" (slide), "WALL" (block)
+        this.type = type;
+        this.mesh = new THREE.Group();
+        this.position = new THREE.Vector3(x, y, z);
+        
+        let geo, mat;
+        
+        if (type === "LOG") {
+            geo = new THREE.CylinderGeometry(0.3, 0.3, 4, 8);
+            mat = new THREE.MeshStandardMaterial({ map: createWoodTexture() });
+            const mesh = new THREE.Mesh(geo, mat);
+            mesh.rotation.z = Math.PI / 2;
+            mesh.position.y = 0.3;
+            this.mesh.add(mesh);
+            this.damageBox = new THREE.Box3().setFromObject(mesh);
+        } else if (type === "BEAM") {
+            // High beam, pass under
+            geo = new THREE.BoxGeometry(4, 0.5, 0.5);
+            mat = new THREE.MeshStandardMaterial({ color: 0x8B4513 });
+            const mesh = new THREE.Mesh(geo, mat);
+            mesh.position.y = 2.0;
+            
+            // Posts
+            const postGeo = new THREE.CylinderGeometry(0.1, 0.1, 2, 8);
+            const postL = new THREE.Mesh(postGeo, mat);
+            postL.position.set(-1.8, 1, 0);
+            const postR = new THREE.Mesh(postGeo, mat);
+            postR.position.set(1.8, 1, 0);
+            
+            this.mesh.add(mesh);
+            this.mesh.add(postL);
+            this.mesh.add(postR);
+        } else {
+            // WALL or FIRE
+            geo = new THREE.BoxGeometry(4, 1, 1);
+            mat = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+            const mesh = new THREE.Mesh(geo, mat);
+            mesh.position.y = 0.5;
+            this.mesh.add(mesh);
+        }
+        
+        this.mesh.position.set(x, y, z);
+        gameState.scene.add(this.mesh);
+        
+        this.active = true;
+        this.collider = new THREE.Box3();
+    }
+    
+    update() {
+        // Orient obstacle to be perpendicular to path?
+        // For simplicity, obstacles are spawned already rotated by PathManager
+        this.collider.setFromObject(this.mesh);
+        // Shrink collider slightly
+        this.collider.min.addScalar(0.1);
+        this.collider.max.subScalar(0.1);
+    }
+}
+</file>
+
+<file name="utils.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+// Texture Generators using Canvas API to avoid external assets
+
+export function createStoneTexture() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 256;
+    const ctx = canvas.getContext('2d');
+    
+    // Base grey
+    ctx.fillStyle = '#555';
+    ctx.fillRect(0, 0, 256, 256);
+    
+    // Noise
+    for(let i=0; i<5000; i++) {
+        ctx.fillStyle = Math.random() > 0.5 ? '#666' : '#444';
+        const size = Math.random() * 4 + 1;
+        ctx.fillRect(Math.random()*256, Math.random()*256, size, size);
+    }
+    
+    // Cracks/Bricks
+    ctx.strokeStyle = '#333';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for(let i=0; i<=256; i+=64) {
+        ctx.moveTo(0, i);
+        ctx.lineTo(256, i);
+        ctx.moveTo(i, 0);
+        ctx.lineTo(i, 256);
+    }
+    ctx.stroke();
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.wrapT = THREE.RepeatWrapping;
+    return tex;
+}
+
+export function createWoodTexture() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 64;
+    canvas.height = 64;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#8B4513';
+    ctx.fillRect(0,0,64,64);
+    // Grain
+    ctx.fillStyle = '#A0522D';
+    for(let i=0; i<20; i++) ctx.fillRect(Math.random()*64, 0, 2, 64);
+    
+    return new THREE.CanvasTexture(canvas);
+}
+
+export function checkAABB(box1, box2) {
+    return (
+        box1.min.x <= box2.max.x && box1.max.x >= box2.min.x &&
+        box1.min.y <= box2.max.y && box1.max.y >= box2.min.y &&
+        box1.min.z <= box2.max.z && box1.max.z >= box2.min.z
+    );
+}
+</file>
+
+<file name="camera.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState } from './globals.js';
+
+export function setupCamera() {
+    const aspect = gameState.gameContainer.offsetWidth / gameState.gameContainer.offsetHeight;
+    gameState.camera = new THREE.PerspectiveCamera(60, aspect, 0.1, 100);
+    // Initial position
+    gameState.camera.position.set(0, 5, 10);
+}
+
+export function updateCamera(dt) {
+    if (!gameState.player) return;
+    
+    // Desired position: Behind player, elevated
+    // We need to calculate "Behind" based on player's DIRECTION, not just Z axis
+    // Because player turns 90 degrees.
+    
+    const pPos = gameState.player.mesh.position;
+    const pDir = gameState.player.direction; // Normalized
+    
+    // Offset: -Dir * Distance + Up * Height
+    const dist = 8;
+    const height = 5;
+    
+    const targetPos = pPos.clone()
+        .sub(pDir.clone().multiplyScalar(dist))
+        .add(new THREE.Vector3(0, height, 0));
+        
+    // Look target
+    const lookTarget = pPos.clone().add(pDir.clone().multiplyScalar(5));
+    
+    // Smooth Lerp
+    const t = 5.0 * dt;
+    gameState.camera.position.lerp(targetPos, t);
+    
+    // Smooth LookAt is harder with lerp, so we just lookAt for now or use quaternion slerp
+    // Simple lookAt is usually fine for T-Run style if position is smoothed
+    gameState.camera.lookAt(lookTarget);
+}
+</file>
+
+<file name="physics.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, checkAABB } from './globals.js';
+import { checkAABB as utilsCheckAABB } from './utils.js';
+
+export function updatePhysics(dt) {
+    // Collision detection
+    if (!gameState.player) return;
+    
+    const playerBox = gameState.player.collider;
+    
+    // Check Coins
+    for (let i = gameState.entities.length - 1; i >= 0; i--) {
+        const ent = gameState.entities[i];
+        if (!ent.active) continue;
+        
+        // Rough distance check first
+        if (ent.mesh.position.distanceTo(gameState.player.mesh.position) > 5) continue;
+        
+        if (utilsCheckAABB(playerBox, ent.collider)) {
+            if (ent instanceof gameState.CoinClass) {
+                ent.collect();
+                gameState.score += 50;
+                gameState.coins++;
+            } else if (ent instanceof gameState.ObstacleClass) {
+                // Hit obstacle
+                gameState.player.die();
+            }
+        }
+    }
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>
